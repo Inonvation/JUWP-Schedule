@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- simple water-drop / schedule mark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28c-10,14 -18,24 -18,34a18,18 0 1,0 36,0c0,-10 -8,-20 -18,-34z" />
+    <path
+        android:fillColor="#1FA3A3"
+        android:pathData="M48,62h12v8h-12z" />
+    <path
+        android:fillColor="#1FA3A3"
+        android:pathData="M50,54h8v6h-8z" />
+</vector>

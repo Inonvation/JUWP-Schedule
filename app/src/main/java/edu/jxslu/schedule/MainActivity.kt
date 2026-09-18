@@ -1,0 +1,212 @@
+package edu.jxslu.schedule
+
+import android.content.Intent
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.me.SettingsScreen
+import edu.jxslu.schedule.ui.theme.JuwTheme
+import edu.jxslu.schedule.ui.today.TodayScreen
+import edu.jxslu.schedule.ui.water.WaterViewModel
+import edu.jxslu.schedule.ui.week.WeekScreen
+import edu.jxslu.schedule.domain.ThemeMode
+import me.rerere.hugeicons.stroke.Book01
+import me.rerere.hugeicons.stroke.Calendar01
+import me.rerere.hugeicons.stroke.Settings01
+import me.rerere.hugeicons.HugeIcons
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            JuwRoot {
+                JuwApp()
+            }
+        }
+    }
+}
+
+/**
+ * 主题在根上解析：深浅色由显示偏好里的 [ThemeMode] 决定（默认跟随系统），
+ * 强制浅/深时忽略系统设置。放在 setContent 最外层，全 App（含弹层）统一生效。
+ * 主界面与教务导入 Activity 共用，保证两个窗口深浅色一致。
+ */
+@Composable
+internal fun JuwRoot(content: @Composable () -> Unit) {
+    val prefs by Graph.repository(LocalContext.current).displayPrefs
+        .collectAsStateWithLifecycle(initialValue = null)
+    val darkTheme = when (prefs?.themeMode) {
+        ThemeMode.Light -> false
+        ThemeMode.Dark -> true
+        ThemeMode.System, null -> isSystemInDarkTheme()
+    }
+    JuwTheme(darkTheme = darkTheme) {
+        content()
+    }
+}
+
+private data class BottomTab(
+    val route: String,
+    val labelRes: Int,
+    val icon: ImageVector,
+)
+
+// ---- 转场动画 ----
+// NavHost 现在只承载三个平级 tab：短促交叉淡入淡出，横向滑动感会误导层级。
+// 设置类二级页已全部改为 SubpageActivity 独立窗口（底栏不可达），
+// 它们的进出场动画是 Activity 级 overridePendingTransition（右侧推入/退出），不在这里。
+
+private fun tabEnter(): EnterTransition = fadeIn(tween(180))
+
+private fun tabExit(): ExitTransition = fadeOut(tween(180))
+
+@Composable
+fun JuwApp() {
+    val context = LocalContext.current
+    val navController = rememberNavController()
+    val haptics = rememberAppHaptics()
+    val tabs = listOf(
+        BottomTab(Routes.TODAY, R.string.tab_today, HugeIcons.Calendar01),
+        BottomTab(Routes.WEEK, R.string.tab_week, HugeIcons.Book01),
+        BottomTab(Routes.ME, R.string.tab_me, HugeIcons.Settings01),
+    )
+    val backStack by navController.currentBackStackEntryAsState()
+    val currentRoute = backStack?.destination?.route
+
+    // 胖乖登录态没有 Flow：key 到 currentRoute，从开水页返回（或切 Tab）时重读 token。
+    // 根因：无 key 的 remember 在登录成功返回后仍是旧值，入口卡片一直显示「未登录」。
+    // 二级页改为独立窗口后，返回主窗口触发重组，这里随 currentRoute 重算。
+    val waterLoggedIn = remember(currentRoute) { Graph.qiekj(context).localToken() != null }
+
+    // 胖乖 ViewModel 挂 Activity 作用域：今日页快捷入口与开水页（独立窗口）各自持有，
+    // 这里这份供今日页直接触发 unlock 时使用
+    val waterViewModel: WaterViewModel = viewModel(
+        viewModelStoreOwner = context as ComponentActivity,
+        factory = WaterViewModel.Factory(Graph.qiekj(context)),
+    )
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        bottomBar = {
+            NavigationBar {
+                tabs.forEach { tab ->
+                    NavigationBarItem(
+                        selected = currentRoute == tab.route,
+                        onClick = {
+                            haptics.tap()
+                            navController.navigate(tab.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = stringResource(tab.labelRes),
+                            )
+                        },
+                        label = { Text(stringResource(tab.labelRes)) },
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        NavHost(
+            navController = navController,
+            startDestination = Routes.TODAY,
+            modifier = Modifier.padding(padding),
+            enterTransition = { tabEnter() },
+            exitTransition = { tabExit() },
+            popEnterTransition = { tabEnter() },
+            popExitTransition = { tabExit() },
+        ) {
+            composable(Routes.TODAY) {
+                TodayScreen(
+                    // 教务导入是独立 Activity：新窗口覆盖，底层课表布局不动
+                    onOpenJwImport = {
+                        context.startActivity(Intent(context, JwImportActivity::class.java))
+                    },
+                    // 一键开水快捷入口（已登录胖乖时显示，DESIGN 3.3）
+                    showWaterEntry = waterLoggedIn,
+                    onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
+                    waterViewModel = waterViewModel,
+                )
+            }
+            composable(Routes.WEEK) {
+                WeekScreen(
+                    onOpenJwImport = {
+                        context.startActivity(Intent(context, JwImportActivity::class.java))
+                    },
+                    // 切换弹层「管理课表」→ 独立窗口；
+                    // 眼睛是页内覆盖弹层（不跳页，课表保持可见，见 WeekScreen）
+                    onOpenTimetableManage = {
+                        SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)
+                    },
+                )
+            }
+            composable(Routes.ME) {
+                SettingsScreen(
+                    onOpenJwImport = {
+                        context.startActivity(Intent(context, JwImportActivity::class.java))
+                    },
+                    // 二级页统一独立窗口：底栏不可达，返回栈语义清晰（根因见 SubpageActivity）
+                    onOpenTimetableManage = {
+                        SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)
+                    },
+                    onOpenTimetableSettings = {
+                        SubpageActivity.start(context, SubpageScreen.TIMETABLE_SETTINGS)
+                    },
+                    onOpenDisplaySettings = {
+                        SubpageActivity.start(context, SubpageScreen.DISPLAY_SETTINGS)
+                    },
+                    onOpenDataSettings = {
+                        SubpageActivity.start(context, SubpageScreen.DATA_SETTINGS)
+                    },
+                    onOpenWater = {
+                        SubpageActivity.start(context, SubpageScreen.WATER)
+                    },
+                    waterLoggedIn = waterLoggedIn,
+                )
+            }
+        }
+    }
+}
+
+object Routes {
+    const val TODAY = "today"
+    const val WEEK = "week"
+    const val ME = "me"
+}

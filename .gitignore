@@ -1,0 +1,46 @@
+# ============ 本地机密（绝不入库）============
+.venv-scraper/
+**/credentials.local.json
+**/.env
+*.local.json
+
+# 签名材料：release.jks 与 keystore.properties 丢失即无法给已装用户升级，请离线备份
+release.jks
+*.jks
+*.keystore
+keystore.properties
+
+# ============ 教务抓取产物与探测脚本 ============
+# 含真实学号/姓名/CAS 会话/token 载荷，仅本地留存，不入公开仓库
+scripts/out/
+scripts/_archive/
+# 排版提案：内嵌真实课程名与教师名，仅本地留存
+docs/
+scripts/gen_week_layout_preview.py
+
+# ============ Android / Gradle ============
+.gradle/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+captures/
+.DS_Store
+*.apk
+*.aab
+.cxx/
+.kotlin/
+
+# ============ 工具工作区（本地记忆/会话，非项目产物）============
+.workbuddy/
+.zcode/
+.claude/settings.local.json
+
+# ============ 临时产物 ============
+*.log
+*.db
+*.db-shm
+*.db-wal
+_*.txt
+build_*.txt

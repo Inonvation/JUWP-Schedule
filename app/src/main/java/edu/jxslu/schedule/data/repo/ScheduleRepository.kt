@@ -1,0 +1,673 @@
+package edu.jxslu.schedule.data.repo
+
+import edu.jxslu.schedule.data.DefaultData
+import edu.jxslu.schedule.data.local.CourseEntity
+import edu.jxslu.schedule.data.local.JuwDatabase
+import edu.jxslu.schedule.data.local.SemesterConfigEntity
+import edu.jxslu.schedule.data.local.TimeSlotEntity
+import edu.jxslu.schedule.data.local.TimetableEntity
+import edu.jxslu.schedule.data.local.courseKindFromName
+import edu.jxslu.schedule.data.prefs.DisplayPrefs
+import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.CourseFilter
+import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.SemesterConfig
+import edu.jxslu.schedule.domain.ThemeMode
+import edu.jxslu.schedule.domain.TimeSlot
+import edu.jxslu.schedule.domain.Timetable
+import edu.jxslu.schedule.domain.TimetablePrefs
+import edu.jxslu.schedule.domain.TimeSlotRules
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class CourseJson(
+    val id: Long = 0,
+    val name: String,
+    val teacher: String = "",
+    val position: String = "",
+    val day: Int,
+    val startSection: Int,
+    val endSection: Int,
+    val weeks: List<Int> = emptyList(),
+    val isCustomTime: Boolean = false,
+    val customStartTime: String? = null,
+    val customEndTime: String? = null,
+    val colorIndex: Int = 0,
+    /** [CourseKind] 的小写名。带默认值，保证加字段前导出的旧 JSON 仍能读进来。 */
+    val kind: String = "theory",
+) {
+    fun toDomain(): Course = Course(
+        id = id,
+        name = name,
+        teacher = teacher,
+        position = position,
+        day = day,
+        startSection = startSection,
+        endSection = endSection,
+        weeks = weeks.toSet(),
+        isCustomTime = isCustomTime,
+        customStartTime = customStartTime,
+        customEndTime = customEndTime,
+        colorIndex = colorIndex,
+        kind = courseKindFromName(kind),
+    )
+}
+
+@Serializable
+data class CourseExport(
+    val courses: List<CourseJson> = emptyList(),
+)
+
+/**
+ * 导入/导出共用的 JSON 配置。
+ *
+ * 提到顶层是为了让测试能复用**同一份**配置：之前测试只断言字符串里含某些键名，
+ * 这里把 `ignoreUnknownKeys` 改掉、或者字段加/改默认值，测试都不会红。
+ * 现在测试直接拿它 decode，配置漂移会被测出来。
+ *
+ * `encodeDefaults = true`：kotlinx 默认不写等于默认值的键，于是 `teacher=""`、`kind="theory"`
+ * 这类字段会直接从导出文件里消失。读取侧有默认值兜底、我们自己来回转换不会出错，
+ * 但文件是要给兼容工具互导的（见设置页说明），键时有时无会让对方必须猜默认值。
+ * 全量写出后导出结果自解释，代价只是文件略大。
+ */
+internal val CourseJsonFormat: Json = Json {
+    prettyPrint = true
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
+/**
+ * 校验一条待导入的课程。
+ * 返回 null 表示通过，否则返回给用户看的错误文案（含第几门课，便于对文件定位）。
+ *
+ * 与解码分离：`Json` 只保证结构能读出来，字段取值范围要靠这一层，
+ * 否则 day=9 这种脏数据会一路写进库里，最后表现成「课程不见了」。
+ */
+internal fun validateCourseJson(index: Int, c: CourseJson): String? {
+    val label = "第 ${index + 1} 门课"
+    if (c.name.isBlank()) return "$label：缺少 name"
+    if (c.day !in 1..7) return "$label「${c.name}」：day 应在 1–7，实际为 ${c.day}"
+    if (c.startSection < 1) return "$label「${c.name}」：startSection 应 ≥1"
+    if (c.endSection < c.startSection) {
+        return "$label「${c.name}」：endSection(${c.endSection}) 不能小于 startSection"
+    }
+    if (c.weeks.isEmpty()) return "$label「${c.name}」：缺少 weeks（如 [1,2,3]）"
+    if (c.weeks.any { it !in 1..40 }) return "$label「${c.name}」：weeks 含非法周次"
+    return null
+}
+
+/** 目标课表的导入统计：弹窗按所选目标实时展示（覆盖会清掉 existing 门，合并新增 newCount 门）。 */
+data class ImportStats(val existing: Int, val newCount: Int)
+
+class ScheduleRepository(
+    private val db: JuwDatabase,
+    private val prefs: DisplayPrefsStore,
+) {
+
+    private val json = CourseJsonFormat
+
+    // ------------------------------------------------------------------
+    // 课表清单与当前课表
+    // ------------------------------------------------------------------
+
+    val timetables: Flow<List<Timetable>> =
+        db.timetableDao().observeAll().map { list -> list.map { it.toDomain() } }
+
+    /**
+     * 当前课表的**已解析** id：存储值失效（被删/未设置）时回退到第一张。
+     * 直接暴露解析后的值，调用方不用各自处理「指向已删除课表」的脏状态。
+     */
+    val currentTimetableId: Flow<Long> = combine(
+        db.timetableDao().observeAll(),
+        prefs.currentTimetableId,
+    ) { list, stored ->
+        val id = stored ?: 1L
+        if (list.any { it.id == id }) id else list.firstOrNull()?.id ?: 1L
+    }.distinctUntilChanged()
+
+    // ------------------------------------------------------------------
+    // 当前课表的数据流（换课表即换内容）
+    // ------------------------------------------------------------------
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val courses: Flow<List<Course>> = currentTimetableId.flatMapLatest { id ->
+        db.courseDao().observeForTimetable(id).map { list -> list.map { it.toDomain() } }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val timeSlots: Flow<List<TimeSlot>> = currentTimetableId.flatMapLatest { id ->
+        db.timeSlotDao().observeForTimetable(id).map { list -> list.map { it.toDomain() } }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val semester: Flow<SemesterConfig?> = currentTimetableId.flatMapLatest { id ->
+        db.semesterConfigDao().observeForTimetable(id).map { it?.toDomain() }
+    }
+
+    /**
+     * 显示偏好 = 全局项（主题、触感）+ 当前课表的视图偏好（DESIGN §4.9）。
+     * 对 UI 仍暴露合并后的 [DisplayPrefs]，调用点签名与多课表之前一致。
+     */
+    val displayPrefs: Flow<DisplayPrefs> = combine(
+        currentTimetableId,
+        timetables,
+        prefs.themeMode,
+        prefs.hapticsEnabled,
+        prefs.waterRequireDoubleClick,
+    ) { id, list, theme, haptics, waterDouble ->
+        val p = list.firstOrNull { it.id == id }?.prefs ?: TimetablePrefs()
+        // 夹取沿用旧 DataStore 读路径的防线：旧数据/手改数据超出收紧后的滑块范围会让 Slider 抛异常
+        DisplayPrefs(
+            themeMode = theme,
+            hapticsEnabled = haptics,
+            waterRequireDoubleClick = waterDouble,
+            // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
+            showWeekend = p.showSaturday && p.showSunday,
+            showSaturday = p.showSaturday,
+            showSunday = p.showSunday,
+            showNonCurrentWeek = p.showNonCurrentWeek,
+            courseFilter = p.courseFilter,
+            gridFontDp = p.gridFontDp,
+            gridRoomDp = p.gridRoomDp,
+            gridTeacherDp = p.gridTeacherDp,
+            gridRailDp = p.gridRailDp,
+            gridDateDp = p.gridDateDp,
+            rowHeightScale = p.rowHeightScale.coerceIn(0.5f, 1.5f),
+            cellRadiusDp = p.cellRadiusDp.coerceIn(0f, 12f),
+            cellOpacity = p.cellOpacity.coerceIn(0.5f, 1f),
+            cellCenterH = p.cellCenterH,
+            cellCenterV = p.cellCenterV,
+            showTeacher = p.showTeacher,
+            showNowLine = p.showNowLine,
+            showCellBorder = p.showCellBorder,
+            showGridLines = p.showGridLines,
+            showAtSign = p.showAtSign,
+            tapBlankToAdd = p.tapBlankToAdd,
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // 偏好写入：视图偏好写当前课表行，主题写全局
+    // ------------------------------------------------------------------
+
+    private suspend fun updateTimetablePrefs(id: Long, transform: (TimetablePrefs) -> TimetablePrefs) {
+        val entity = db.timetableDao().getById(id) ?: return
+        db.timetableDao()
+            .upsert(entity.copy(prefsJson = transform(TimetablePrefs.decode(entity.prefsJson)).encode()))
+    }
+
+    private suspend fun updateCurrentPrefs(transform: (TimetablePrefs) -> TimetablePrefs) =
+        updateTimetablePrefs(currentTimetableId.first(), transform)
+
+    suspend fun setShowSaturday(value: Boolean) =
+        updateCurrentPrefs { it.copy(showSaturday = value, showWeekend = value && it.showSunday) }
+
+    suspend fun setShowSunday(value: Boolean) =
+        updateCurrentPrefs { it.copy(showSunday = value, showWeekend = it.showSaturday && value) }
+
+    /** 兼容入口：老调用点一次改两天。新代码请用两个独立 setter。 */
+    suspend fun setShowWeekend(value: Boolean) =
+        updateCurrentPrefs { it.copy(showSaturday = value, showSunday = value, showWeekend = value) }
+
+    suspend fun setShowAtSign(value: Boolean) = updateCurrentPrefs { it.copy(showAtSign = value) }
+
+    suspend fun setTapBlankToAdd(value: Boolean) = updateCurrentPrefs { it.copy(tapBlankToAdd = value) }
+
+    suspend fun setShowNonCurrentWeek(value: Boolean) = updateCurrentPrefs { it.copy(showNonCurrentWeek = value) }
+
+    suspend fun setCourseFilter(value: CourseFilter) =
+        updateCurrentPrefs { it.copy(courseFilter = value) }
+
+    /** null = 清掉覆盖，回到跟随系统。 */
+    suspend fun setGridFontDp(value: Float?) = updateCurrentPrefs { it.copy(gridFontDp = value) }
+
+    suspend fun setGridRoomDp(value: Float?) = updateCurrentPrefs { it.copy(gridRoomDp = value) }
+
+    suspend fun setGridTeacherDp(value: Float?) = updateCurrentPrefs { it.copy(gridTeacherDp = value) }
+
+    /** 时间轴字号；null = 跟随系统（独立于课名）。 */
+    suspend fun setGridRailDp(value: Float?) = updateCurrentPrefs { it.copy(gridRailDp = value) }
+
+    /** 月份 / 日期表头字号；null = 跟随系统（独立于课名）。 */
+    suspend fun setGridDateDp(value: Float?) = updateCurrentPrefs { it.copy(gridDateDp = value) }
+
+    suspend fun setRowHeightScale(value: Float) = updateCurrentPrefs { it.copy(rowHeightScale = value) }
+
+    suspend fun setCellRadiusDp(value: Float) = updateCurrentPrefs { it.copy(cellRadiusDp = value) }
+
+    suspend fun setCellOpacity(value: Float) = updateCurrentPrefs { it.copy(cellOpacity = value) }
+
+    suspend fun setCellCenterH(value: Boolean) = updateCurrentPrefs { it.copy(cellCenterH = value) }
+
+    suspend fun setCellCenterV(value: Boolean) = updateCurrentPrefs { it.copy(cellCenterV = value) }
+
+    suspend fun setShowTeacher(value: Boolean) = updateCurrentPrefs { it.copy(showTeacher = value) }
+
+    suspend fun setShowNowLine(value: Boolean) = updateCurrentPrefs { it.copy(showNowLine = value) }
+
+    suspend fun setShowCellBorder(value: Boolean) = updateCurrentPrefs { it.copy(showCellBorder = value) }
+
+    suspend fun setShowGridLines(value: Boolean) = updateCurrentPrefs { it.copy(showGridLines = value) }
+
+    suspend fun setThemeMode(value: ThemeMode) = prefs.setThemeMode(value)
+
+    /** 触感反馈开关（全局）。 */
+    suspend fun setHapticsEnabled(value: Boolean) = prefs.setHapticsEnabled(value)
+
+    /** 开水双击确认（全局，默认开）。 */
+    suspend fun setWaterRequireDoubleClick(value: Boolean) = prefs.setWaterRequireDoubleClick(value)
+
+    suspend fun setCurrentTimetable(id: Long) = prefs.setCurrentTimetable(id)
+
+    /** null = 清掉默认配置源，回退内置默认。 */
+    suspend fun setDefaultConfigSource(id: Long?) = prefs.setDefaultConfigSource(id)
+
+    suspend fun defaultConfigSourceId(): Long? = prefs.defaultConfigSourceId.first()
+
+    // ------------------------------------------------------------------
+    // 课表管理
+    // ------------------------------------------------------------------
+
+    /**
+     * 新建课表。配置（学期/作息/显示偏好/作息自定义标记）按用户拍板用**引用型**默认：
+     * 实时拷贝 [copyFromId]（缺省取全局默认配置源，再缺省用内置默认）当时的值。
+     */
+    suspend fun createTimetable(name: String, copyFromId: Long? = null): Long {
+        val sourceId = copyFromId ?: prefs.defaultConfigSourceId.first()
+        val source = sourceId?.let { db.timetableDao().getById(it) }
+        val sortOrder = (db.timetableDao().getAll().maxOfOrNull { it.sortOrder } ?: 0) + 1
+        return createTimetableInternal(
+            name = name.trim().ifEmpty { "新课表" },
+            source = source,
+            sortOrder = sortOrder,
+        )
+    }
+
+    /** 复制课表：除配置外连同课程一起拷贝。 */
+    suspend fun duplicateTimetable(id: Long): Long? {
+        val source = db.timetableDao().getById(id) ?: return null
+        val courses = getTimetableCourses(id)
+        val newId = createTimetableInternal(
+            name = "${source.name} 副本",
+            source = source,
+            sortOrder = (db.timetableDao().getAll().maxOfOrNull { it.sortOrder } ?: 0) + 1,
+        )
+        db.courseDao().insertAll(
+            courses.map { CourseEntity.fromDomain(it).copy(id = 0, timetableId = newId) },
+        )
+        return newId
+    }
+
+    private suspend fun createTimetableInternal(
+        name: String,
+        source: TimetableEntity?,
+        sortOrder: Int,
+    ): Long {
+        val id = db.timetableDao().upsert(
+            TimetableEntity(
+                name = name,
+                createdAt = System.currentTimeMillis(),
+                sortOrder = sortOrder,
+                slotsCustomized = source?.slotsCustomized ?: false,
+                prefsJson = source?.prefsJson ?: TimetablePrefs().encode(),
+            ),
+        )
+        if (source != null) {
+            // 引用型拷贝：拿源课表「当时」的学期与作息快照
+            db.semesterConfigDao().getForTimetable(source.id)?.let {
+                db.semesterConfigDao().upsert(it.copy(timetableId = id))
+            }
+            db.timeSlotDao().upsertAll(
+                db.timeSlotDao().getForTimetable(source.id).map { it.copy(timetableId = id) },
+            )
+        } else {
+            db.semesterConfigDao().upsert(
+                SemesterConfigEntity.fromDomain(id, DefaultData.defaultSemester),
+            )
+            writeDefaultTimeSlots(id)
+        }
+        return id
+    }
+
+    suspend fun renameTimetable(id: Long, name: String) {
+        val entity = db.timetableDao().getById(id) ?: return
+        db.timetableDao().upsert(entity.copy(name = name.trim().ifEmpty { entity.name }))
+    }
+
+    /**
+     * 删除课表。返回 false 表示拒绝执行：至少要保留一张课表。
+     * 删除当前课表时自动切到剩下第一张；删除默认配置源时清回内置默认。
+     */
+    suspend fun deleteTimetable(id: Long): Boolean {
+        if (db.timetableDao().count() <= 1) return false
+        db.courseDao().clearForTimetable(id)
+        db.timeSlotDao().clearForTimetable(id)
+        db.semesterConfigDao().deleteForTimetable(id)
+        db.timetableDao().delete(id)
+        if (prefs.defaultConfigSourceId.first() == id) {
+            prefs.setDefaultConfigSource(null)
+        }
+        if (prefs.currentTimetableId.first() == id) {
+            db.timetableDao().getAll().firstOrNull()?.let { prefs.setCurrentTimetable(it.id) }
+        }
+        return true
+    }
+
+    suspend fun timetableCourseCount(id: Long): Int = db.courseDao().countForTimetable(id)
+
+    // ------------------------------------------------------------------
+    // 启动初始化与迁移
+    // ------------------------------------------------------------------
+
+    suspend fun ensureDefaults() {
+        // 课表兜底：全新安装建第一张；升级安装已由 MIGRATION_2_3 插入 id=1
+        if (db.timetableDao().count() == 0) {
+            createTimetableInternal(name = "我的课表", source = null, sortOrder = 0)
+        }
+        migrateLegacyGlobalPrefs()
+        migrateTimeSlotSchema()
+        rebalanceCourseColorsIfColliding()
+    }
+
+    /**
+     * v3 一次性迁移（DESIGN §4.9）：Room migration 是同步的、读不了 DataStore，
+     * 所以旧全局显示偏好与旧「改过作息」标记在这里（可挂起点）搬进课表 1。
+     * 幂等标记防重放：搬过一次后旧键永远不再读。
+     */
+    private suspend fun migrateLegacyGlobalPrefs() {
+        if (prefs.prefsMigrated()) return
+        prefs.legacyViewPrefs()?.let { legacy -> updateTimetablePrefs(1) { legacy } }
+        if (prefs.legacySlotCustomized()) {
+            db.timetableDao().getById(1)?.let {
+                db.timetableDao().upsert(it.copy(slotsCustomized = true))
+            }
+        }
+        prefs.setPrefsMigrated(true)
+    }
+
+    /**
+     * 根因：老版本的节次表是 5 条「大节」（08:00/10:00/…），而课程存的是小节号 1–11，
+     * 语义不一致会让第 7 行以后的课落到网格外。这里按版本号做一次性覆盖。
+     * 用 DataStore 记版本而不是改 Room 版本号：节次表结构没变，只是数据语义变了。
+     *
+     * v3 起作息表按课表各一份：迁移对**未自定义**的每张课表逐张覆盖；
+     * 旧全局 slotCustomized 标记已在 migrateLegacyGlobalPrefs 映射到课表 1。
+     */
+    private suspend fun migrateTimeSlotSchema() {
+        if (prefs.slotSchemaVersion() >= DefaultData.SLOT_SCHEMA_VERSION) return
+        db.timetableDao().getAll()
+            .filter { !it.slotsCustomized }
+            .forEach { writeDefaultTimeSlots(it.id) }
+        prefs.setSlotSchemaVersion(DefaultData.SLOT_SCHEMA_VERSION)
+    }
+
+    private suspend fun writeDefaultTimeSlots(timetableId: Long) {
+        db.timeSlotDao().upsertAll(
+            DefaultData.defaultTimeSlots.map {
+                TimeSlotEntity(timetableId, it.number, it.startTime, it.endTime)
+            },
+        )
+    }
+
+    /**
+     * 既有课程撞色自愈（按课表逐张做：配色以课表为 scope，跨课表的名次互不相干）。
+     *
+     * 根因：调色板 12→16 之前入库的课按 12 取模分配，不同课名超过 12 个时必然回绕撞色。
+     * 色值存在数据库里，扩色板救不了旧数据，所以在启动时检测一次：
+     * 若按「课名排序名次」重排能减少撞色才整体重排；确定性映射保证幂等。
+     */
+    private suspend fun rebalanceCourseColorsIfColliding() {
+        db.timetableDao().getAll().forEach { t ->
+            val courses = getTimetableCourses(t.id)
+            if (courses.isEmpty()) return@forEach
+
+            fun collisionCount(mapping: Map<String, Int>): Int =
+                mapping.values.groupingBy { it }.eachCount().count { it.value > 1 }
+
+            val current = courses.groupBy { it.name }
+                .mapValues { (_, group) -> group.first().colorIndex }
+            val target = ScheduleCalculator.colorIndexesBySortedName(current.keys)
+
+            if (collisionCount(target) >= collisionCount(current)) return@forEach
+
+            courses
+                .filter { it.colorIndex != target[it.name] }
+                .forEach {
+                    db.courseDao().upsert(
+                        CourseEntity.fromDomain(it.copy(colorIndex = target[it.name] ?: it.colorIndex))
+                            .copy(timetableId = t.id),
+                    )
+                }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 课程 CRUD（scope = 当前课表）
+    // ------------------------------------------------------------------
+
+    private suspend fun getTimetableCourses(timetableId: Long): List<Course> =
+        db.courseDao().getForTimetable(timetableId).map { it.toDomain() }
+
+    private suspend fun usedColorIndexes(timetableId: Long): List<Int> =
+        db.courseDao().getForTimetable(timetableId).map { it.colorIndex }
+
+    suspend fun upsertCourse(course: Course): Long {
+        val timetableId = currentTimetableId.first()
+        // 只有新增的课才重新配色；已有课程保留原色，避免改一门课把整屏颜色打乱
+        val target = if (course.id > 0 || course.colorIndex != 0) {
+            course
+        } else {
+            course.copy(colorIndex = ScheduleCalculator.nextColorIndex(usedColorIndexes(timetableId)))
+        }
+        return db.courseDao().upsert(CourseEntity.fromDomain(target).copy(timetableId = timetableId))
+    }
+
+    suspend fun deleteCourse(course: Course) {
+        db.courseDao().delete(CourseEntity.fromDomain(course))
+    }
+
+    suspend fun clearCourses() {
+        db.courseDao().clearForTimetable(currentTimetableId.first())
+    }
+
+    suspend fun replaceAllCourses(courses: List<Course>, timetableId: Long? = null) {
+        val ttId = timetableId ?: currentTimetableId.first()
+        db.courseDao().clearForTimetable(ttId)
+        db.courseDao().insertAll(
+            withSortedNameColors(courses).map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
+        )
+    }
+
+    suspend fun mergeCourses(courses: List<Course>, timetableId: Long? = null): Int {
+        val ttId = timetableId ?: currentTimetableId.first()
+        val existing = getTimetableCourses(ttId)
+        val keys = existing.map { it.mergeKey() }.toHashSet()
+        val used = existing.map { it.colorIndex }.toMutableList()
+        var added = 0
+        for (c in courses) {
+            val key = c.mergeKey()
+            if (key in keys) continue
+            val colored = c.copy(colorIndex = ScheduleCalculator.nextColorIndex(used))
+            db.courseDao().upsert(CourseEntity.fromDomain(colored).copy(timetableId = ttId))
+            used += colored.colorIndex
+            keys += key
+            added++
+        }
+        return added
+    }
+
+    /**
+     * 整批课程按课程名排序后的名次取色。
+     * 这样同一份课表每次导入/覆盖出来的颜色完全一致，且 16 门以内不会撞色。
+     */
+    private fun withSortedNameColors(courses: List<Course>): List<Course> {
+        val mapping = ScheduleCalculator.colorIndexesBySortedName(courses.map { it.name })
+        return courses.map { c ->
+            c.copy(colorIndex = mapping[c.name] ?: ScheduleCalculator.colorIndexFor(c.name))
+        }
+    }
+
+    /** 教务解析结果入库；merge=false 全量覆盖目标课表 */
+    suspend fun importParsedCourses(courses: List<Course>, merge: Boolean, timetableId: Long? = null): Int {
+        if (merge) return mergeCourses(courses, timetableId)
+        replaceAllCourses(courses, timetableId)
+        return courses.size
+    }
+
+    suspend fun updateSemester(config: SemesterConfig) {
+        db.semesterConfigDao().upsert(
+            SemesterConfigEntity.fromDomain(currentTimetableId.first(), config),
+        )
+    }
+
+    fun coursesForWeek(week: Int): Flow<List<Course>> =
+        courses.map { ScheduleCalculator.coursesInWeek(it, week) }
+
+    // ------------------------------------------------------------------
+    // 作息表（scope = 当前课表）
+    // ------------------------------------------------------------------
+
+    /**
+     * 保存用户自定义作息（写入当前课表并标记 slotsCustomized）。
+     * 课表行高、时刻线、「还剩 X 分」、下一节判定全都依赖这张表，
+     * 一旦用户按学校实际调整过，后续任何迁移都不该再覆盖它。
+     * 调用方需先过 [TimeSlotRules.validate]。
+     */
+    suspend fun saveTimeSlots(slots: List<TimeSlot>) {
+        val timetableId = currentTimetableId.first()
+        db.timeSlotDao().upsertAll(
+            slots.sortedBy { it.number }
+                .map { TimeSlotEntity(timetableId, it.number, it.startTime, it.endTime) },
+        )
+        db.timetableDao().getById(timetableId)?.let {
+            db.timetableDao().upsert(it.copy(slotsCustomized = true))
+        }
+    }
+
+    /** 恢复默认作息（当前课表），并重新交回给迁移逻辑管辖。 */
+    suspend fun resetTimeSlotsToDefault() {
+        val timetableId = currentTimetableId.first()
+        writeDefaultTimeSlots(timetableId)
+        db.timetableDao().getById(timetableId)?.let {
+            db.timetableDao().upsert(it.copy(slotsCustomized = false))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // JSON 导入导出（导出 = 当前课表；格式不变，拾光互导兼容）
+    // ------------------------------------------------------------------
+
+    suspend fun exportJson(timetableId: Long? = null): String {
+        val courses = getTimetableCourses(timetableId ?: currentTimetableId.first()).map {
+            CourseJson(
+                id = it.id,
+                name = it.name,
+                teacher = it.teacher,
+                position = it.position,
+                day = it.day,
+                startSection = it.startSection,
+                endSection = it.endSection,
+                weeks = it.weeks.sorted(),
+                isCustomTime = it.isCustomTime,
+                customStartTime = it.customStartTime,
+                customEndTime = it.customEndTime,
+                colorIndex = it.colorIndex,
+                kind = it.kind.name.lowercase(),
+            )
+        }
+        return json.encodeToString(CourseExport.serializer(), CourseExport(courses))
+    }
+
+    /**
+     * 导入 JSON 到指定课表（null = 当前课表）。
+     * 目标选择与覆盖/合并由 UI 弹窗强制确定（DESIGN §4.9），本方法只负责校验与写库。
+     */
+    suspend fun importJson(text: String, merge: Boolean, timetableId: Long? = null): ImportResult {
+        val export = try {
+            json.decodeFromString(CourseExport.serializer(), text)
+        } catch (e: Exception) {
+            return ImportResult.Failure("JSON 解析失败：${e.message ?: "格式不正确"}")
+        }
+        val courses = export.courses
+        if (courses.isEmpty()) {
+            return ImportResult.Failure("文件中没有课程（courses 为空）")
+        }
+        courses.forEachIndexed { index, c ->
+            val err = validateCourseJson(index, c)
+            if (err != null) return ImportResult.Failure(err)
+        }
+        val domain = courses.map { it.toDomain() }
+        return if (merge) {
+            val added = mergeCourses(domain, timetableId)
+            ImportResult.Success(added = added, total = domain.size, merge = true)
+        } else {
+            replaceAllCourses(domain, timetableId)
+            ImportResult.Success(added = domain.size, total = domain.size, merge = false)
+        }
+    }
+
+    /** 解析并校验待导入文件；成功时携带领域模型，供目标课表弹窗按所选目标计算统计。 */
+    suspend fun previewImport(text: String): ImportPreview {
+        val export = try {
+            json.decodeFromString(CourseExport.serializer(), text)
+        } catch (e: Exception) {
+            return ImportPreview.Error("JSON 解析失败：${e.message ?: "格式不正确"}")
+        }
+        if (export.courses.isEmpty()) {
+            return ImportPreview.Error("文件中没有课程（courses 为空）")
+        }
+        export.courses.forEachIndexed { index, c ->
+            validateCourseJson(index, c)?.let { return ImportPreview.Error(it) }
+        }
+        val domain = export.courses.map { it.toDomain() }
+        return ImportPreview.Ok(
+            courses = domain,
+            sample = domain.take(5).joinToString { it.name },
+        )
+    }
+
+    /** 给定目标课表计算覆盖/合并统计（弹窗里随目标切换刷新）。 */
+    suspend fun importStatsFor(courses: List<Course>, timetableId: Long): ImportStats {
+        val existing = getTimetableCourses(timetableId)
+        val keys = existing.map { it.mergeKey() }.toHashSet()
+        return ImportStats(
+            existing = existing.size,
+            newCount = courses.count { it.mergeKey() !in keys },
+        )
+    }
+
+    /**
+     * 合并去重键。
+     * 含 kind：理论课与实验课可能同名、同星期、同节次、同教师（例如「机械制造基础A」两处都有），
+     * 不含类型就会互相吞并，先导入的那份把另一份挤掉。
+     */
+    private fun Course.mergeKey(): String =
+        listOf(
+            name,
+            day.toString(),
+            startSection.toString(),
+            endSection.toString(),
+            teacher,
+            kind.name,
+        ).joinToString("|")
+}
+
+sealed interface ImportResult {
+    data class Success(val added: Int, val total: Int, val merge: Boolean) : ImportResult
+    data class Failure(val message: String) : ImportResult
+}
+
+sealed interface ImportPreview {
+    /** [courses] 已通过校验，可直接作为写库入参与目标统计的输入。 */
+    data class Ok(val courses: List<Course>, val sample: String) : ImportPreview
+    data class Error(val message: String) : ImportPreview
+}

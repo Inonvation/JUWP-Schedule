@@ -1,0 +1,129 @@
+package edu.jxslu.schedule.data.local
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import edu.jxslu.schedule.domain.TimetablePrefs
+
+@Database(
+    entities = [
+        TimetableEntity::class,
+        CourseEntity::class,
+        TimeSlotEntity::class,
+        SemesterConfigEntity::class,
+    ],
+    version = 3,
+    exportSchema = false,
+)
+@TypeConverters(Converters::class)
+abstract class JuwDatabase : RoomDatabase() {
+    abstract fun timetableDao(): TimetableDao
+    abstract fun courseDao(): CourseDao
+    abstract fun timeSlotDao(): TimeSlotDao
+    abstract fun semesterConfigDao(): SemesterConfigDao
+
+    companion object {
+
+        /**
+         * v1 → v2：courses 表加 `kind` 列（区分理论课 / 实验课）。
+         *
+         * 用 ALTER TABLE 而不是重建表：老用户库里已经有课表，
+         * 走 destructive migration 会直接清空——这是不可接受的数据损失。
+         * DEFAULT 'theory' 让历史数据自动落成理论课，语义正确且无需回填。
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE courses ADD COLUMN kind TEXT NOT NULL DEFAULT 'theory'")
+            }
+        }
+
+        /**
+         * v2 → v3：多课表（DESIGN §4.9）。
+         *
+         * - 新表 `timetables`：课表身份 + 课表级设置（显示偏好 JSON + 作息自定义标记）。
+         *   迁移插入 id=1「我的课表」承接全部旧数据；显示偏好的实际值搬迁是异步的
+         *   （Room migration 是同步的读不了 DataStore），放在 ScheduleRepository.ensureDefaults
+         *   里按 `timetable_prefs_migrated` 标记一次性完成。
+         * - `courses` 加 timetableId（DEFAULT 1 = 全部旧课程归入默认课表）+ 索引。
+         * - `time_slots` / `semester_config` 主键要从「全局单份」变成「每课表一份」，
+         *   SQLite 不能改主键，只能建新表 → 搬数据 → 改名。**禁用 destructive**：
+         *   用户设备上有真实课表数据，这一步搬错就是数据丢失。
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS timetables (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "sortOrder INTEGER NOT NULL, " +
+                        "slotsCustomized INTEGER NOT NULL, " +
+                        "prefsJson TEXT NOT NULL)",
+                )
+                // 旧数据的显示偏好先落内置默认；ensureDefaults 的一次性迁移会用
+                // DataStore 里的旧全局值覆盖这一行（幂等标记防重放）
+                db.execSQL(
+                    "INSERT INTO timetables (id, name, createdAt, sortOrder, slotsCustomized, prefsJson) " +
+                        "VALUES (1, '我的课表', ?, 0, 0, ?)",
+                    arrayOf(System.currentTimeMillis(), TimetablePrefs().encode()),
+                )
+
+                db.execSQL(
+                    "ALTER TABLE courses ADD COLUMN timetableId INTEGER NOT NULL DEFAULT 1",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_courses_timetableId ON courses (timetableId)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS time_slots_new (" +
+                        "timetableId INTEGER NOT NULL, " +
+                        "number INTEGER NOT NULL, " +
+                        "startTime TEXT NOT NULL, " +
+                        "endTime TEXT NOT NULL, " +
+                        "PRIMARY KEY(timetableId, number))",
+                )
+                db.execSQL(
+                    "INSERT INTO time_slots_new (timetableId, number, startTime, endTime) " +
+                        "SELECT 1, number, startTime, endTime FROM time_slots",
+                )
+                db.execSQL("DROP TABLE time_slots")
+                db.execSQL("ALTER TABLE time_slots_new RENAME TO time_slots")
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS semester_config_new (" +
+                        "timetableId INTEGER NOT NULL, " +
+                        "startDate TEXT NOT NULL, " +
+                        "totalWeeks INTEGER NOT NULL, " +
+                        "firstDayOfWeek INTEGER NOT NULL, " +
+                        "PRIMARY KEY(timetableId))",
+                )
+                db.execSQL(
+                    "INSERT INTO semester_config_new (timetableId, startDate, totalWeeks, firstDayOfWeek) " +
+                        "SELECT 1, startDate, totalWeeks, firstDayOfWeek FROM semester_config",
+                )
+                db.execSQL("DROP TABLE semester_config")
+                db.execSQL("ALTER TABLE semester_config_new RENAME TO semester_config")
+            }
+        }
+
+        @Volatile
+        private var instance: JuwDatabase? = null
+
+        fun get(context: Context): JuwDatabase =
+            instance ?: synchronized(this) {
+                instance ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    JuwDatabase::class.java,
+                    "juw_schedule.db",
+                )
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .build()
+                    .also { instance = it }
+            }
+    }
+}

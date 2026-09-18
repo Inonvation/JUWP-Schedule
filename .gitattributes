@@ -1,0 +1,23 @@
+# 统一换行符，避免 Windows clone 后 gradlew 带 CRLF 无法执行
+* text=auto
+
+# Gradle wrapper 脚本必须保持各自平台的原生换行
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+*.sh text eol=lf
+
+# 二进制：禁止换行转换与文本 diff
+*.jar binary
+*.jks binary
+*.keystore binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.apk binary
+*.aab binary
+
+# 语言统计
+*.kt text diff=kotlin
+*.kts text diff=kotlin
+*.py text
+*.md text

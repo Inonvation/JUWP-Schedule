@@ -1,0 +1,429 @@
+package edu.jxslu.schedule.ui.week
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.TimeSlot
+import edu.jxslu.schedule.domain.Timetable
+import edu.jxslu.schedule.ui.common.compactPosition
+import edu.jxslu.schedule.ui.common.courseColor
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.FileImport
+import me.rerere.hugeicons.stroke.Import
+
+/**
+ * 周次选择器：只管「看哪一周」。
+ *
+ * 根因：此前周次网格和全部显示开关挤在同一个弹层里，顶栏胶囊与眼睛图标又指向同一个入口——
+ * 用户想改一个显示选项也得从周次弹层里翻。现在拆开：胶囊（周次区）→ 本弹层；
+ * 眼睛图标 → 课表页内覆盖面板（WeekScreen.DisplaySettingsOverlay，复用 DisplaySettingsContent）。
+ * 「我的 → 显示设置」子页（DisplaySettingsScreen）与它共用同一份选项内容，两处不再各写一遍。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WeekPickerSheet(
+    currentWeek: Int,
+    totalWeeks: Int,
+    weeksWithCourses: Set<Int>,
+    onPickWeek: (Int) -> Unit,
+    onBackToCurrentWeek: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("选择周次", style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = onBackToCurrentWeek) { Text("回到本周") }
+            }
+            Spacer(Modifier.height(4.dp))
+            WeekChipGrid(
+                totalWeeks = totalWeeks,
+                currentWeek = currentWeek,
+                weeksWithCourses = weeksWithCourses,
+                onPick = onPickWeek,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeekChipGrid(
+    totalWeeks: Int,
+    currentWeek: Int,
+    weeksWithCourses: Set<Int>,
+    onPick: (Int) -> Unit,
+) {
+    val perRow = 6
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        (1..totalWeeks.coerceAtLeast(1)).chunked(perRow).forEach { chunk ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                chunk.forEach { week ->
+                    WeekChip(
+                        week = week,
+                        selected = week == currentWeek,
+                        hasCourse = week in weeksWithCourses,
+                        onClick = { onPick(week) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(perRow - chunk.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeekChip(
+    week: Int,
+    selected: Boolean,
+    hasCourse: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val bg = when {
+        selected -> scheme.primary
+        hasCourse -> scheme.surfaceVariant
+        else -> scheme.surface
+    }
+    val fg = when {
+        selected -> scheme.onPrimary
+        hasCourse -> scheme.onSurface
+        else -> scheme.onSurface.copy(alpha = 0.35f)
+    }
+    Column(
+        modifier = modifier
+            .height(38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = week.toString(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = fg,
+        )
+        if (hasCourse && !selected) {
+            Box(
+                Modifier
+                    .padding(top = 2.dp)
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(scheme.primary.copy(alpha = 0.6f)),
+            )
+        }
+    }
+}
+
+/**
+ * 课程详情（只读）。
+ * 点课程直接进编辑页容易误触，这里先给一层只读信息，编辑/删除都是二级动作。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CourseDetailSheet(
+    course: Course,
+    slots: List<TimeSlot>,
+    currentWeek: Int,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val accent = courseColor(course.colorIndex)
+    val start = slots.firstOrNull { it.number == course.startSection }
+    val end = slots.firstOrNull { it.number == course.endSection }
+    val timeText = buildString {
+        append("第 ${course.startSection}")
+        if (course.endSection != course.startSection) append("-${course.endSection}")
+        append(" 节")
+        if (start != null && end != null) append("  ${start.startTime}–${end.endTime}")
+    }
+    val weeksText = ScheduleCalculator.formatWeeks(course.weeks)
+    val inThisWeek = currentWeek in course.weeks
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(accent),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = course.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            DetailRow("教师", course.teacher.ifBlank { "—" })
+            DetailRow("地点", compactPosition(course.position).ifBlank { "—" })
+            DetailRow("时间", timeText)
+            DetailRow(
+                "周次",
+                buildString {
+                    append(if (weeksText.isBlank()) "—" else "第 $weeksText 周")
+                    if (weeksText.isNotBlank()) {
+                        append("（共 ${course.weeks.size} 周")
+                        append(if (inThisWeek) "，本周有课）" else "，本周无课）")
+                    }
+                },
+            )
+            // 实验课单列一行：它的来源是另一张课表，且教务不提供教师，
+            // 不注明的话「教师 —」会被当成数据缺失
+            if (course.kind == CourseKind.Lab) {
+                DetailRow("类型", "实验课（实验课表页不含教师信息）")
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // 删除用浅底 + 错误色，编辑用实心主色：主次分明，也避免误触删除
+                Button(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("删除")
+                }
+                Button(
+                    onClick = onEdit,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                ) {
+                    Text("编辑")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 9.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.size(width = 44.dp, height = 20.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+/**
+ * 课表页顶栏「导入」入口弹层：手动加课 / JSON 文件 / 教务导入。
+ *
+ * 根因：此前三种导入散在三处（+ 图标只管加课、JSON 在「我的」页深处、教务导入靠空态提示），
+ * 新用户拿到空课表找不到入口。收进一个弹层后，导入路径都在课表页顶栏一眼可见。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportEntrySheet(
+    onManualAdd: () -> Unit,
+    onJsonImport: () -> Unit,
+    onJwImport: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "导入课表",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.Add01, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "手动添加课程",
+                subtitle = "在网格空白处新增或编辑单门课程",
+                onClick = onManualAdd,
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.FileImport, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "导入 JSON 文件",
+                subtitle = "从导出的课表 JSON 恢复或合并",
+                onClick = onJsonImport,
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.Import, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "从教务导入",
+                subtitle = "登录教务系统，解析学期理论 / 实验课表",
+                onClick = onJwImport,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImportEntryRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            icon()
+        }
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * 课表切换弹层（DESIGN §4.9）：顶栏课表名入口 → 单选切换 + 「管理课表」。
+ *
+ * 单选即切换：courses / 作息 / 学期 / 显示偏好全部随当前课表换流，
+ * 点选项后立刻关弹层让用户看到结果，不做「选中再确认」的多余一步。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TimetableSwitchSheet(
+    timetables: List<Timetable>,
+    currentTimetableId: Long,
+    onSelect: (Long) -> Unit,
+    onOpenManage: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Text("切换课表", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            timetables.forEach { t ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(t.id) }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = t.id == currentTimetableId,
+                        onClick = { onSelect(t.id) },
+                    )
+                    Text(
+                        t.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            HorizontalDivider()
+            TextButton(onClick = onOpenManage) { Text("管理课表…") }
+        }
+    }
+}
