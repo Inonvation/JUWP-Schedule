@@ -98,16 +98,20 @@ $aapt = (Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\build-tools\*\aapt2.exe" |
 **重命名 APK**（带上版本号，避免下载后分不清版本）：
 
 ```powershell
-Copy-Item app\build\outputs\apk\release\app-release.apk "水贝贝-<版本号>.apk"
+Copy-Item app\build\outputs\apk\release\app-release.apk "JUWP-Schedule-<版本号>.apk"
 ```
+
+> **文件名必须用纯 ASCII**（2026-09-18 实测）：GitHub 上传资产时会**静默剥离非 ASCII 字符**，
+> 上传 `水贝贝-0.1.0.apk` 会变成 `-0.1.0.apk`（即便 URL 已正确 percent-encode 也一样）。
+> 用 `JUWP-Schedule-0.1.0.apk`；"水贝贝" 是应用**显示名**，只需出现在 Release 标题和日志里。
 
 ## Step 6 · 创建 Release
 
 标签与标题都用版本号（不带 `v`），正文用双语日志 + 免责声明：
 
 ```powershell
-gh release create <版本号> "水贝贝-<版本号>.apk" `
-  --title "<版本号>" `
+gh release create <版本号> "JUWP-Schedule-<版本号>.apk" `
+  --title "<版本号> · 水贝贝" `
   --notes "<双语更新日志>
 
 ---
@@ -116,7 +120,25 @@ gh release create <版本号> "水贝贝-<版本号>.apk" `
 ```
 
 - 只上传 release APK，**不要**把 `app-debug.apk` 传上去。
-- 创建后回读确认：`gh release view <版本号>`。
+- 创建后必须回读确认：
+
+```powershell
+# 资产名、大小、digest 三项都要核对
+gh api repos/Inonvation/JUWP-Schedule/releases/tags/<版本号> `
+  --jq '.assets[] | "\(.name) | \(.size) | \(.digest)"'
+```
+
+- **用 `digest` 校验完整性**，不要依赖重新下载（本机代理对大文件会中途断流，
+  下到一半的文件大小不符会误判成"上传坏了"）。digest 应等于本地
+  `(Get-FileHash "JUWP-Schedule-<版本号>.apk" -Algorithm SHA256).Hash.ToLower()` 加 `sha256:` 前缀。
+- 上传前先确认 APK 不早于源码：`Get-ChildItem app\src -Recurse -Filter *.kt |
+  Where-Object { $_.LastWriteTime -gt (Get-Item app\build\outputs\apk\release\app-release.apk).LastWriteTime }`
+  —— 有输出就说明 APK 过期，必须重新 `assembleRelease`。
+
+## Step 7 · 发布后
+
+- 打 tag 用 `gh release create` 已自动完成；本地 tag 与远端一致即可。
+- 提醒用户：新版若换了签名，已装 debug 版**无法覆盖安装**，需先导出课表 JSON → 卸载 → 重装 → 导入。
 
 ## 硬性禁止
 
@@ -125,3 +147,5 @@ gh release create <版本号> "水贝贝-<版本号>.apk" `
 - 禁止上传 `release.jks` / `keystore.properties` / 任何含学号或 token 的文件
 - 禁止用 debug 签名包对外分发（debug 与 release 签名不同，用户无法覆盖安装）
 - 禁止复用或回退 `versionCode`
+- 禁止用中文文件名上传资产（会被静默改名）
+- 禁止把 `F:\JUWP-schedule` 之外的本地路径写进日志或 Release 正文
