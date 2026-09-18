@@ -23,7 +23,7 @@
 | 昆工 `kust-schedule` | 基于拾光深度定制分校 | 深度品牌定制范本 |
 | WakeUp 课程表 | 闭源；开源重制质量不稳 | 不采用 |
 | 胖乖生活 | 本地参考 `F:\light-life-v3.0`（及 GitHub `Inonvation/light-life`） | **一键开水/余额/订单 API 直接复用** |
-| HugeIcons Compose | `me.rerere:hugeicons-compose`；查找 skill：`F:\git\rikkahub\.agents\skills\find-hugeicons` | 图标不自绘 |
+| HugeIcons Compose | `me.rerere:hugeicons-compose`；查名用仓库内 skill `.agents/skills/find-hugeicons` | 图标不自绘 |
 
 ### 1.2 用户已拍板的决策
 
@@ -338,11 +338,7 @@ Channel：`android_app`
 
 ### 4.7 图标
 
-编码前用 skill 查名，勿猜：
-
-```
-F:\git\rikkahub\.agents\skills\find-hugeicons
-```
+编码前用 skill 查名，勿猜：`.agents/skills/find-hugeicons`。
 
 常用场景关键词建议：`calendar`, `book`, `water`, `cup`, `wallet`, `setting`, `import`, `refresh`, `moon`, `sun`, `login`, `list`。
 

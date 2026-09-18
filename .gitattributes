@@ -17,7 +17,7 @@ gradlew.bat text eol=crlf
 *.aab binary
 
 # 语言统计
-*.kt text diff=kotlin
-*.kts text diff=kotlin
+*.kt text
+*.kts text
 *.py text
 *.md text

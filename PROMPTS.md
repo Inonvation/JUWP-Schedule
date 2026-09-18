@@ -1,21 +1,26 @@
 # JUWP Schedule · AI 编码提示词包
 
-按阶段复制对应块到 Cursor / Claude Code / 本体 MiMo 等工具。  
-每条提示词都默认：**先读 `DESIGN.md` 与本文件**，不要自由发挥架构。
+按阶段复制对应块到 Cursor / Claude Code / 本体 MiMo 等工具。
+
+> **阶段状态**：P0–P5b 已完成，P6 打磨进行中（见 `README.md` 里程碑表）。
+> 下方各阶段块保留作**历史记录与复用范式**，不要照着重做已完成的阶段。
+
+**阅读纪律（2026-09-18 起）**：不要通读 `DESIGN.md`，按 `AGENTS.md` 的「必读顺序」只读相关章节。
+历史实现记录在 `docs/devlog.md`（仅本地）。
 
 通用粘贴头（每次新会话建议带上）：
 
 ```text
 项目：JUWP Schedule（江西水利电力大学课表 App）
 根目录：F:\JUWP-schedule
-必读：DESIGN.md、PROMPTS.md、AGENTS.md
+必读：AGENTS.md（含必读顺序与工程实况）；DESIGN.md 只读与任务相关的章节
 技术栈：Kotlin + Jetpack Compose + Material3，单模块 :app
 硬约束：
 1) 路线 D：全新 Compose，不 fork 拾光仓库
 2) 不重造轮子：图标 HugeIcons；能用官方/主流库就不要自研
 3) 课表 JSON 字段对齐拾光互通模型（见 DESIGN.md 4.3）
 4) 胖乖 API 以本地 F:\light-life-v3.0 为准，禁止实现刷积分
-5) 教务无 URL 前，用手动课表 + JSON 导入保证可运行
+5) 改导航或课表领域模型前，先改 DESIGN.md 对应章节
 6) 改完代码要能说明如何在 Android Studio 跑起来
 ```
 
