@@ -49,6 +49,10 @@ import me.rerere.hugeicons.stroke.ArrowDown01
  * 「我的 → 显示设置」跨 Tab 触发同一弹层）：真实课表在面板上方保持可见，
  * 所有改动在真实网格上即时生效。
  *
+ * [headerMinDp]：表头高度滑块的动态下限（随日期字号，见 minHeaderHeightForDateFont）。
+ * 与课表布局的渲染兜底取同一个值——滑块从有效下限起步，拖到底也有可见效果，
+ * 不再出现「下限标注 32dp、实际 38dp 起才生效」的死区。
+ *
  * 排版纪律：**不放说明文字**——身后就是真实课表，效果即时可见，文字说明是冗余；
  * 行只留「标题 + 当前值」，面板保持低调，视线留在课表上。
  * 分组可折叠（[CollapsibleSection]），四组默认全展开。
@@ -56,6 +60,7 @@ import me.rerere.hugeicons.stroke.ArrowDown01
 @Composable
 fun DisplaySettingsContent(
     viewModel: MeViewModel,
+    headerMinDp: Float,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -131,23 +136,24 @@ fun DisplaySettingsContent(
                 minText = "${TimetablePrefs.MinRailWidthDp.toInt()}dp",
                 maxText = "${TimetablePrefs.MaxRailWidthDp.toInt()}dp",
             )
+            // 表头高度：下限随日期字号动态抬高（与布局的渲染兜底同一个值，WeekScreen 传入）；
+            // 存储值仍允许落在下限之下（渲染时取大），但滑块与读数从有效下限起步，
+            // 「极大极小」两端都真实可辨
+            val headerMax = TimetablePrefs.MaxDayHeaderHeightDp
+            val headerMin = headerMinDp.coerceIn(TimetablePrefs.MinDayHeaderHeightDp, headerMax)
             SliderSettingRow(
                 title = "表头高度",
                 valueText = dpLabel(
-                    prefs.dayHeaderHeightDp.coerceIn(
-                        TimetablePrefs.MinDayHeaderHeightDp,
-                        TimetablePrefs.MaxDayHeaderHeightDp,
-                    ),
+                    prefs.dayHeaderHeightDp.coerceIn(headerMin, headerMax),
                 ),
-                value = prefs.dayHeaderHeightDp.coerceIn(
-                    TimetablePrefs.MinDayHeaderHeightDp,
-                    TimetablePrefs.MaxDayHeaderHeightDp,
-                ),
-                valueRange = TimetablePrefs.MinDayHeaderHeightDp..TimetablePrefs.MaxDayHeaderHeightDp,
-                onValueChange = { viewModel.setDayHeaderHeightDp(snapStep(it, 1f)) },
+                value = prefs.dayHeaderHeightDp.coerceIn(headerMin, headerMax),
+                valueRange = headerMin..headerMax,
+                onValueChange = {
+                    viewModel.setDayHeaderHeightDp(snapStep(it, 1f).coerceAtLeast(headerMin))
+                },
                 onReset = { viewModel.setDayHeaderHeightDp(TimetablePrefs.DefaultDayHeaderHeightDp) },
-                minText = "${TimetablePrefs.MinDayHeaderHeightDp.toInt()}dp",
-                maxText = "${TimetablePrefs.MaxDayHeaderHeightDp.toInt()}dp",
+                minText = "${headerMin.roundToInt()}dp",
+                maxText = "${headerMax.toInt()}dp",
             )
             SliderSettingRow(
                 title = "格子高度",
@@ -224,6 +230,13 @@ fun DisplaySettingsContent(
                 title = "点空白格新建课程",
                 checked = prefs.tapBlankToAdd,
                 onCheckedChange = viewModel::setTapBlankToAdd,
+            )
+            // 今日页底部固定区的开水卡（DESIGN §3.3）：默认开；关掉后今日页不再展示
+            // （含未登录态）。放在「内容与开关」组尾部，与快捷方式开关语义同级
+            SettingSwitchRow(
+                title = "显示开水卡片",
+                checked = prefs.waterCardEnabled,
+                onCheckedChange = viewModel::setWaterCardEnabled,
             )
             // 周末拆成两项（而非原来的单一「显示周六、周日」）：
             // 根因：一个布尔只能表达「都显示 / 都不显示」，

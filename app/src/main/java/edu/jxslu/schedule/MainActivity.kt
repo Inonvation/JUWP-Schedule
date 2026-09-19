@@ -1,6 +1,5 @@
 package edu.jxslu.schedule
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -181,18 +180,19 @@ fun JuwApp() {
                 TodayScreen(
                     // 教务导入是独立 Activity：新窗口覆盖，底层课表布局不动
                     onOpenJwImport = {
-                        context.startActivity(Intent(context, JwImportActivity::class.java))
+                        JwImportActivity.start(context)
                     },
                     // 「尚未开学」空态 CTA：跳课表设置子页（独立窗口）
                     onOpenTimetableSettings = {
                         SubpageActivity.start(context, SubpageScreen.TIMETABLE_SETTINGS)
                     },
-                    // 一键开水快捷入口（已登录胖乖时显示，DESIGN 3.3）
-                    showWaterEntry = waterLoggedIn,
+                    // 一键开水卡常显（未登录给未登录态，显示设置可关，DESIGN §3.3）；
+                    // 登录态由 WaterViewModel 自带，外层不再按登录与否隐藏整卡
                     onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
-                    // 快捷方式行 chip 长按进设置页（DESIGN §3.8）
-                    onOpenShortcuts = {
-                        SubpageActivity.start(context, SubpageScreen.SHORTCUTS)
+                    // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
+                    // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
+                    onOpenShortcuts = { focusItemId ->
+                        SubpageActivity.start(context, SubpageScreen.SHORTCUTS, focusItemId)
                     },
                     waterViewModel = waterViewModel,
                 )
@@ -200,7 +200,7 @@ fun JuwApp() {
             composable(Routes.WEEK) {
                 WeekScreen(
                     onOpenJwImport = {
-                        context.startActivity(Intent(context, JwImportActivity::class.java))
+                        JwImportActivity.start(context)
                     },
                     // 切换弹层「管理课表」→ 独立窗口；
                     // 眼睛是页内覆盖弹层（不跳页，课表保持可见，见 WeekScreen）
@@ -216,7 +216,7 @@ fun JuwApp() {
             composable(Routes.ME) {
                 SettingsScreen(
                     onOpenJwImport = {
-                        context.startActivity(Intent(context, JwImportActivity::class.java))
+                        JwImportActivity.start(context)
                     },
                     onOpenScores = {
                         SubpageActivity.start(context, SubpageScreen.SCORES)

@@ -81,6 +81,7 @@ import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TimetablePrefs
+import edu.jxslu.schedule.ui.common.CourseDetailSheet
 import edu.jxslu.schedule.ui.common.CourseEditSheet
 import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.GhostCourseCard
@@ -325,6 +326,38 @@ fun WeekScreen(
         openDisplayRequests.collectLatest { displaySheetOpen = true }
     }
 
+    // ---- 网格字号换算（不依赖可用约束，提到 Scaffold 外）----
+    // systemFontScale/gridScale 及各字号 sp 只由设置与列数决定，与 BoxWithConstraints 的
+    // 可用宽高无关；上提到函数级是因为「表头高度」的动态下限 headerMinDp 要同时喂给两处：
+    // 布局（渲染兜底防日期文字截断）与显示设置弹层（滑块 valueRange 从有效下限起步）。
+    val systemFontScale = LocalDensity.current.fontScale
+    // 网格字号：课名目标字号 dp（用户设置或跟随系统）→ 网格内统一倍率，换算规则见 GridFont
+    val gridScale = GridFont.scaleFromDp(
+        GridFont.resolveDp(systemFontScale, state.gridFontDp, days),
+        days,
+    )
+    // 教室/教师：用户设置过目标 dp 时换算成卡片内的实际 sp——网格还套着 gridScale
+    // 的密度倍率，预除一次才能让净渲染值等于目标 dp；未设置传 null，跟随课名等比（旧行为）
+    val roomFontSp = state.gridRoomDp?.let {
+        GridFont.resolveDetailDp(systemFontScale, it, days) / gridScale
+    }
+    val teacherFontSp = state.gridTeacherDp?.let {
+        GridFont.resolveDetailDp(systemFontScale, it, days) / gridScale
+    }
+    // 时间轴 / 日期表头：与课名**完全解耦**。二者不在 gridScale 的语义范围内
+    // （它们是定位参照，不是内容），但仍渲染在 GridTypography 提供的密度里，
+    // 所以要把课名倍率除回去，使净渲染值只由自己的设置决定。
+    //
+    // 根因：这里不能写成 `state.gridRailDp?.let{...}`——用户没拖过滑块时结果是 null，
+    // TimeRail 便回落到硬编码 sp，而那仍会被 gridScale 乘一遍，
+    // 于是「调课名字号，时间轴/日期跟着变」的老问题在默认态下根本没被修掉。
+    // 方案：无论用户是否设置过都解析出一个值——null 走 resolveXxxDp 的
+    // 「基准 × 系统倍率」分支（跟随系统、与课名无关），设置过则取用户值。
+    val railFontSp = GridFont.resolveRailDp(systemFontScale, state.gridRailDp, days) / gridScale
+    val dateFontSp = GridFont.resolveDateDp(systemFontScale, state.gridDateDp, days) / gridScale
+    // 表头高度有效下限：装得下两行日期文字的最小高度（已夹进滑块范围）
+    val headerMinDp = minHeaderHeightForDateFont(dateFontSp)
+
     Scaffold(
         // 底部导航栏 inset 已由外层底栏高度提供，内层不再消费（防底部双倍空白）；
         // 顶栏为自绘 56dp Row，本就不消费状态栏 inset，顶部由外层 padding 避让。
@@ -351,32 +384,6 @@ fun WeekScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            val systemFontScale = LocalDensity.current.fontScale
-            // 网格字号：课名目标字号 dp（用户设置或跟随系统）→ 网格内统一倍率，换算规则见 GridFont
-            val gridScale = GridFont.scaleFromDp(
-                GridFont.resolveDp(systemFontScale, state.gridFontDp, days),
-                days,
-            )
-            // 教室/教师：用户设置过目标 dp 时换算成卡片内的实际 sp——网格还套着 gridScale
-            // 的密度倍率，预除一次才能让净渲染值等于目标 dp；未设置传 null，跟随课名等比（旧行为）
-            val roomFontSp = state.gridRoomDp?.let {
-                GridFont.resolveDetailDp(systemFontScale, it, days) / gridScale
-            }
-            val teacherFontSp = state.gridTeacherDp?.let {
-                GridFont.resolveDetailDp(systemFontScale, it, days) / gridScale
-            }
-            // 时间轴 / 日期表头：与课名**完全解耦**。二者不在 gridScale 的语义范围内
-            // （它们是定位参照，不是内容），但仍渲染在 GridTypography 提供的密度里，
-            // 所以要把课名倍率除回去，使净渲染值只由自己的设置决定。
-            //
-            // 根因：这里不能写成 `state.gridRailDp?.let{...}`——用户没拖过滑块时结果是 null，
-            // TimeRail 便回落到硬编码 sp，而那仍会被 gridScale 乘一遍，
-            // 于是「调课名字号，时间轴/日期跟着变」的老问题在默认态下根本没被修掉。
-            // 方案：无论用户是否设置过都解析出一个值——null 走 resolveXxxDp 的
-            // 「基准 × 系统倍率」分支（跟随系统、与课名无关），设置过则取用户值。
-            val railFontSp = GridFont.resolveRailDp(systemFontScale, state.gridRailDp, days) / gridScale
-            val dateFontSp = GridFont.resolveDateDp(systemFontScale, state.gridDateDp, days) / gridScale
-
             val layout = buildGridLayout(
                 maxHeight = maxHeight,
                 maxWidth = maxWidth,
@@ -386,11 +393,8 @@ fun WeekScreen(
                 railWidth = state.railWidthDp.dp,
                 // 表头高度用户值与「装得下两行日期文字」的下限取大：用户把表头拖小、
                 // 日期字号拉大时兜底防截断。只抬高渲染值，不改写存储值（滑块位置不动）。
-                // 入参用净渲染字号（dateFontSp 已预除 gridScale），与表头实际排出的文字一致
-                dayHeaderHeight = maxOf(
-                    state.dayHeaderHeightDp.dp,
-                    minHeaderHeightForDateFont(dateFontSp).dp,
-                ),
+                // 下限同时是显示设置弹层里滑块的动态起点（见 headerMinDp），两端一致
+                dayHeaderHeight = maxOf(state.dayHeaderHeightDp.dp, headerMinDp.dp),
             )
             val fitsOneScreen = layout.gridHeight + layout.dayHeaderHeight <= maxHeight
 
@@ -533,6 +537,8 @@ fun WeekScreen(
         DisplaySettingsOverlay(
             onDismiss = { displaySheetOpen = false },
             viewModel = viewModel(factory = MeViewModel.Factory(Graph.repository(context))),
+            // 表头滑块的动态下限与布局兜底同源（dateFontSp 同一换算），两端不会各说各话
+            headerMinDp = headerMinDp,
         )
     }
 

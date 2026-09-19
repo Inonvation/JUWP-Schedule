@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -80,6 +81,14 @@ class TodayViewModel(
      */
     val shortcuts: StateFlow<ShortcutSettings> = repo.shortcutSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShortcutSettings())
+
+    /**
+     * 今日页开水卡片开关（DESIGN §3.3 底部固定区）。与 [shortcuts] 同理单独订阅：
+     * 纯设置值，改动不应触发今日页课表状态重算。
+     */
+    val waterCardEnabled: StateFlow<Boolean> = repo.displayPrefs
+        .map { it.waterCardEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     /** 界面每 30 秒调一次：让「还剩 X 分钟」和课的状态跟着时间走。 */
     fun refreshTick() {

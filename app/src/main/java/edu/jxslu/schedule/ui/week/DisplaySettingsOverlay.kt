@@ -90,6 +90,8 @@ internal fun nearestAnchor(heightDp: Dp, anchors: List<Dp>): Dp =
 internal fun DisplaySettingsOverlay(
     viewModel: MeViewModel,
     onDismiss: () -> Unit,
+    /** 表头高度滑块的动态下限（随日期字号，见 minHeaderHeightForDateFont），透传给设置内容 */
+    headerMinDp: Float,
 ) {
     val screenHeightDp = LocalConfiguration.current.screenHeightDp
     val density = LocalDensity.current
@@ -199,6 +201,7 @@ internal fun DisplaySettingsOverlay(
                     }
                     DisplaySettingsContent(
                         viewModel = viewModel,
+                        headerMinDp = headerMinDp,
                         modifier = Modifier.weight(1f),
                     )
                 }

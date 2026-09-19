@@ -126,25 +126,37 @@ class WeekGridLayoutTest {
     fun dayWidthFollowsVisibleDayCount() {
         val week = layout(days = 7)
         val workdays = layout(days = 5)
-        assertEquals((390.dp - 48.dp) / 7, week.dayWidth)
-        assertEquals((390.dp - 48.dp) / 5, workdays.dayWidth)
+        assertEquals((390.dp - 48.dp - GridEndGap) / 7, week.dayWidth)
+        assertEquals((390.dp - 48.dp - GridEndGap) / 5, workdays.dayWidth)
         assertTrue(workdays.dayWidth > week.dayWidth)
     }
 
     /**
+     * 右缘留白契约：网格总宽 = 总宽 − 时间轴 − GridEndGap，右端不贴屏幕边界。
+     * 翻周滑动时相邻两页（本周周日列 ↔ 次周周一列）之间也正好隔出这段留白。
+     */
+    @Test
+    fun gridLeavesGapAtRightEdge() {
+        val week = layout(days = 7)
+        assertDpEquals(390.dp - 48.dp - GridEndGap, week.dayWidth * 7)
+        val workdays = layout(days = 5)
+        assertDpEquals(390.dp - 48.dp - GridEndGap, workdays.dayWidth * 5)
+    }
+
+    /**
      * 时间轴栏宽 / 表头高度可调（显示设置新增项）后的契约：
-     * - 列宽 =（总宽 − 栏宽）/ 列数；
+     * - 列宽 =（总宽 − 栏宽 − 右缘留白）/ 列数；
      * - 网格可用高度 = 总高 − 表头高度，表头调高行高自动收；
      * - 两者默认值与 TimetablePrefs companion 一致（单一来源）。
      */
     @Test
     fun railWidthAndHeaderHeightParticipateInGeometry() {
         val narrow = layout(railWidth = 28.dp)
-        assertEquals((390.dp - 28.dp) / 7, narrow.dayWidth)
+        assertEquals((390.dp - 28.dp - GridEndGap) / 7, narrow.dayWidth)
         assertEquals(28.dp, narrow.railWidth)
 
         val wide = layout(railWidth = 72.dp)
-        assertEquals((390.dp - 72.dp) / 7, wide.dayWidth)
+        assertEquals((390.dp - 72.dp - GridEndGap) / 7, wide.dayWidth)
         assertTrue(narrow.dayWidth > wide.dayWidth)
 
         val tall = layout(dayHeaderHeight = 64.dp)

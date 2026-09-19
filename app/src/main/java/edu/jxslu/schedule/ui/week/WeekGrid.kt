@@ -63,6 +63,7 @@ internal fun TimeRail(
     dateFontSp: Float?,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
+    val outline = MaterialTheme.colorScheme.outlineVariant
     // 字号：用户设置过就用解析后的 sp（已预除课名倍率，净渲染值即目标 dp）；
     // 未设置时回落到本模块的固定基准档（原先的硬编码值），不再跟随课名缩放。
     val sectionSize = (railFontSp ?: 12.5f).sp
@@ -86,6 +87,15 @@ internal fun TimeRail(
                 )
             }
         }
+        // 表头下缘线（时间轴段）：与 WeekPage 网格顶的同款线拼成贯穿整行的表头边界。
+        // 表头带是透明的，没有这条可见边界，「表头高度」滑块的效果只剩课表整体平移可看
+        Box(
+            Modifier
+                .offset(y = layout.dayHeaderHeight)
+                .width(layout.railWidth)
+                .height(1.dp)
+                .background(outline.copy(alpha = 0.35f)),
+        )
         for (section in 1..layout.sections) {
             val slot = slots.firstOrNull { it.number == section }
             Column(
@@ -205,6 +215,14 @@ internal fun WeekPage(
                 .width(layout.dayWidth * days)
                 .height(layout.gridHeight),
         ) {
+            // 表头下缘线（日列段）：贴网格顶=表头带底部，与时间轴段的线连成一条。
+            // 表头带透明，这条线是「表头高度」滑块的可见锚点（DESIGN §3.3）
+            Box(
+                Modifier
+                    .width(layout.dayWidth * days)
+                    .height(1.dp)
+                    .background(outline.copy(alpha = 0.35f)),
+            )
             // 今日列不再铺底色/边线：WakeUp 参考稿里今日只靠表头加粗 + 时刻线定位，
             // 铺底反而让当日卡片颜色被罩了一层，观感发闷
 

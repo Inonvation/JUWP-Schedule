@@ -20,6 +20,15 @@ internal val InterGap = 6.dp
 internal val MinRowHeight = 40.dp
 
 /**
+ * 课表右缘与屏幕右边的留白。
+ *
+ * 根因：此前列宽 =（总宽 − 时间轴宽度）/ 列数，网格精确贴满到屏幕右缘——
+ * 静态看右侧顶死边界，翻周滑动时本周周日列与次周周一列之间零间隔、几乎连成一片。
+ * 收进 16dp 后：网格右端离屏 16dp，滑动途中相邻两周的课也由它隔开。
+ */
+internal val GridEndGap = 16.dp
+
+/**
  * 网格几何：行号 = 小节号（1–11）。
  *
  * 根因：旧实现只有 5 行（大节），却拿小节号当行号用，
@@ -78,7 +87,7 @@ internal fun buildGridLayout(
         rowHeight = rowHeight,
         rowTops = tops,
         rowBottoms = bottoms,
-        dayWidth = (maxWidth - railWidth) / dayCount.coerceAtLeast(1),
+        dayWidth = (maxWidth - railWidth - GridEndGap) / dayCount.coerceAtLeast(1),
         dayHeaderHeight = dayHeaderHeight,
         railWidth = railWidth,
     )
