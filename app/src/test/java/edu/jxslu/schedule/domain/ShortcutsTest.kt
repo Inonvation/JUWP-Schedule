@@ -206,4 +206,70 @@ class ShortcutsTest {
         assertNotEquals(ShortcutOps.newCustomId(), ShortcutOps.newCustomId())
         assertTrue(ShortcutOps.newCustomId().startsWith("custom-"))
     }
+
+    // ---- migratePresets：预设目标自动迁移（历史原值 → 当前值，自定义不动） ----
+
+    /** 构造一个假想的历史版本：拼多多槽位的 uri/name 都与当前不同，其余两条与当前相同。 */
+    private val v1Table = listOf(
+        Shortcuts.PRESET_SHORTCUTS[0].copy(
+            name = "拼多多（旧名）",
+            uri = "pinduoduo://old.example/mdkd",
+        ),
+        Shortcuts.PRESET_SHORTCUTS[1],
+        Shortcuts.PRESET_SHORTCUTS[2],
+    )
+
+    @Test
+    fun migrate_emptyHistoryIsIdentity() {
+        // 当前发布态：还没有历史版本，迁移必须是恒等变换
+        val items = Shortcuts.PRESET_SHORTCUTS + ShortcutItem(id = "c1", name = "x", pkg = "com.a.b")
+        assertEquals(items, Shortcuts.migratePresets(items, history = emptyList()))
+    }
+
+    @Test
+    fun migrate_untouchedSlotUpgradesWholesale() {
+        // 存储里还是历史原值（含旧名）= 用户从未编辑 → 整条升级为当前预设（名与目标都换新）
+        val stored = listOf(v1Table[0], Shortcuts.PRESET_SHORTCUTS[1], Shortcuts.PRESET_SHORTCUTS[2])
+        val migrated = Shortcuts.migratePresets(stored, history = listOf(v1Table))
+        assertEquals(Shortcuts.PRESET_SHORTCUTS[0], migrated[0])
+        assertEquals(Shortcuts.PRESET_SHORTCUTS[1], migrated[1])
+    }
+
+    @Test
+    fun migrate_renamedSlotKeepsNameGetsNewTarget() {
+        // 只改过名（目标仍是历史原值）→ 目标升级、用户名保留
+        val renamed = v1Table[0].copy(name = "我的取件")
+        val migrated = Shortcuts.migratePresets(listOf(renamed), history = listOf(v1Table))
+        assertEquals("我的取件", migrated[0].name)
+        assertEquals(Shortcuts.PRESET_SHORTCUTS[0].uri, migrated[0].uri)
+        assertEquals(Shortcuts.PRESET_SHORTCUTS[0].pkg, migrated[0].pkg)
+    }
+
+    @Test
+    fun migrate_customizedTargetUntouched() {
+        val customized = v1Table[0].copy(uri = "pinduoduo://my-own")
+        val migrated = Shortcuts.migratePresets(listOf(customized), history = listOf(v1Table))
+        assertEquals(customized, migrated[0])
+    }
+
+    @Test
+    fun migrate_customItemsAndUnknownPresetIndexUntouched() {
+        // 自定义条目（presetIndex=-1）即使字段碰巧等于历史预设也不动；未知下标同样跳过
+        val custom = ShortcutItem(
+            id = "c1",
+            name = v1Table[0].name,
+            uri = v1Table[0].uri,
+            pkg = v1Table[0].pkg,
+        )
+        val unknown = v1Table[0].copy(id = "ghost", presetIndex = 9)
+        val items = listOf(custom, unknown)
+        assertEquals(items, Shortcuts.migratePresets(items, history = listOf(v1Table)))
+    }
+
+    @Test
+    fun migrate_alreadyCurrentStaysCurrent() {
+        // 已是当前值的槽位：迁移后保持不变（幂等）
+        val migrated = Shortcuts.migratePresets(Shortcuts.PRESET_SHORTCUTS, history = listOf(v1Table))
+        assertEquals(Shortcuts.PRESET_SHORTCUTS, migrated)
+    }
 }

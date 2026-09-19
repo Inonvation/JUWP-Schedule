@@ -88,6 +88,41 @@ object Shortcuts {
     }
 
     /**
+     * 预设表的历史版本（最新改动在前）。
+     * **维护契约**：改 [PRESET_SHORTCUTS] 里任何预设的目标或名称前，先把改动前的整张表
+     * 追加到这里，否则老用户的「未编辑预设槽」无法自动升级到新目标。
+     */
+    val PRESET_HISTORY: List<List<ShortcutItem>> = emptyList()
+
+    /**
+     * 预设目标自动迁移：存储里的预设槽如果与某个历史版本的预设**目标字段完全一致**，
+     * 说明用户没动过目标——整条升级到当前预设（目标与名称都换新）；
+     * 只改过名的保留用户名、目标照样升级；改过目标的槽位不动。
+     *
+     * 不在存储里记版本号：与所有历史值都不匹配就视为自定义，天然幂等，
+     * 且跨多个版本直接跳迁也成立（每个历史表只用来识别「从那时起没动过」）。
+     */
+    fun migratePresets(
+        items: List<ShortcutItem>,
+        history: List<List<ShortcutItem>> = PRESET_HISTORY,
+    ): List<ShortcutItem> {
+        if (history.isEmpty()) return items
+        return items.map { item ->
+            val index = item.presetIndex
+            if (index < 0) return@map item
+            val current = PRESET_SHORTCUTS.firstOrNull { it.presetIndex == index }
+                ?: return@map item
+            val matched = history.asSequence()
+                .mapNotNull { table -> table.firstOrNull { it.presetIndex == index } }
+                .firstOrNull { old ->
+                    item.uri == old.uri && item.pkg == old.pkg && item.activity == old.activity
+                }
+                ?: return@map item
+            if (item == matched) current else current.copy(name = item.name)
+        }
+    }
+
+    /**
      * 解码失败一律回退预设：shortcuts_json 是自己写自己的数据，真坏了也不该让读路径
      * 抛异常崩掉今日页（口径同 TimetablePrefs.decode）。
      */
