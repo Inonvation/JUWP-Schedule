@@ -58,7 +58,9 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `WeekGridLayoutTest`（网格几何）、`QiangzhiScheduleParserTest`、`SyjxScheduleParserTest`、
 `ImportJsonShapeTest`、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest`、
 `CourseTweakTest`（调课规划：拆分/覆盖/交换/同格去重）、`TodayBoundaryTest`（小组件边界闹钟时刻）、
-`WidgetModelTest`（小组件快照口径与尺寸裁剪）等 24 个测试类。
+`WidgetModelTest`（小组件快照口径与尺寸裁剪）、`ExamMapperTest`（考试→课条目映射）、
+`ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 解析）、`ScoreCalculatorTest`（学期汇总）
+等 28 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` 恒为 1，不能当星期来源。
@@ -131,14 +133,15 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 ## 架构（改代码前对齐）
 
 ```
-MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity 承载二级页
-domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator（纯逻辑，可 JVM 测）
-data/local/      Room v3：courses / time_slots / semester_config / timetables
-data/repo/       ScheduleRepository + JSON 导入校验（ImportPreview/ImportResult）
+MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity 承载二级页（含成绩查询 SCORES）
+domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score（纯逻辑，可 JVM 测）
+data/local/      Room v4：courses / time_slots / semester_config / timetables / scores
+data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
+                 + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
-ui/today|week|me|water|jwvw|timetable|common|theme|widget
+ui/today|week|me|water|jwvw|score|timetable|common|theme|widget
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```

@@ -26,7 +26,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
@@ -59,27 +62,46 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.ExamScheduleParser
 import edu.jxslu.schedule.data.jw.ImportParseResult
 import edu.jxslu.schedule.data.jw.JwImportDiagnosis
 import edu.jxslu.schedule.data.jw.JwSchedulePage
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.jw.QiangzhiScheduleParser
+import edu.jxslu.schedule.data.jw.ScoreParser
 import edu.jxslu.schedule.data.jw.SyjxScheduleParser
 import edu.jxslu.schedule.data.jw.unwrapJsString
 import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.ExamMapper
+import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
+import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.resolveImportTarget
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+
+/** 教务导入窗口的模式（DESIGN §4.14 / §4.15）。 */
+enum class JwImportMode {
+    /** 课表导入：理论 / 实验 / 考试安排，结果写进课表 Course。 */
+    Schedule,
+    /** 成绩导入：抓全部学期成绩，按学期替换入库（DESIGN §4.15）。 */
+    Scores,
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun JwImportScreen(
     onBack: () -> Unit,
+    mode: JwImportMode = JwImportMode.Schedule,
 ) {
     val context = LocalContext.current
     val repo = remember { Graph.repository(context) }
+    val scoreRepo = remember { Graph.scoreRepository(context) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
@@ -92,6 +114,8 @@ fun JwImportScreen(
     var showMergeDialog by remember { mutableStateOf<ImportParseResult.Success?>(null) }
     /** 导入终态反馈（门数 to 是否合并）；非 null 时弹「导入完成」，确认后返回主界面。 */
     var importSuccess by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
+    /** 成绩模式：待确认的导入（学期 → 条数），确认后按学期替换入库。 */
+    var pendingScores by remember { mutableStateOf<List<Pair<String, List<edu.jxslu.schedule.domain.ScoreRecord>>>?>(null) }
     var busy by remember { mutableStateOf(false) }
     var pageState by remember { mutableStateOf<PageState>(PageState.Loading) }
     var statusNote by remember { mutableStateOf("正在打开学校统一身份认证登录…") }
@@ -176,6 +200,7 @@ fun JwImportScreen(
     fun runImport(wv: WebView?) {
         val target = wv ?: return
         // 解析器由当前页面决定：两张课表结构完全不同，选错了只会得到空结果
+        // （考试安排走同源 fetch JSON 接口，由 onClick 分派给 runExamImport，不进本函数）
         val pageKind = JwUrls.schedulePageKind(currentUrl)
         val extractJs = when (pageKind) {
             JwSchedulePage.Theory -> QiangzhiScheduleParser.EXTRACT_JS
@@ -186,6 +211,7 @@ fun JwImportScreen(
                 scope.launch { snackbar.showSnackbar(msg) }
                 return
             }
+            else -> return
         }
         busy = true
         statusNote = if (pageKind == JwSchedulePage.Lab) "正在解析实验课…" else "正在解析课表…"
@@ -214,6 +240,159 @@ fun JwImportScreen(
         }
     }
 
+    /**
+     * 同源 fetch JSON 的通用执行：注入脚本（写 `window.__qzJson`），轮询回收。
+     * evaluateJavascript 不会 await Promise，轮询是最可靠的回收方式；
+     * 页面不跳转所以 window 变量不会丢。超时返回 null。
+     */
+    suspend fun fetchJsonInWebView(
+        wv: WebView?,
+        fetchJs: String,
+        readJs: String,
+        timeoutLoops: Int = 60,
+    ): String? {
+        if (wv == null) return null
+        wv.evaluateJavascript(fetchJs, null)
+        repeat(timeoutLoops) {
+            delay(300)
+            val raw = suspendCancellableCoroutine { cont ->
+                wv.evaluateJavascript(readJs) { r -> if (cont.isActive) cont.resume(r ?: "") }
+            }
+            val value = unwrapJsString(raw)
+            if (!value.isNullOrBlank()) return value
+        }
+        return null
+    }
+
+    /**
+     * 考试导入（DESIGN §4.14）：壳页读学期 → 分页 fetch `xsksap_list` → 转
+     * `Course(kind = Exam)`（日期按学期配置定位到周/星期，无法定位的跳过并计数）。
+     */
+    suspend fun runExamImport(wv: WebView?) {
+        if (wv == null) return
+        if (!JwUrls.isJwHost(currentUrl)) {
+            val msg = "请先打开考试安排查询页（教务域）再导入。"
+            snackbar.showSnackbar(msg); return
+        }
+        busy = true
+        try {
+            // 学期取壳页下拉的当前选中项：与用户在页面上看到的一致
+            val termRaw = suspendCancellableCoroutine { cont ->
+                wv.evaluateJavascript(ExamScheduleParser.READ_TERM_JS) { r ->
+                    if (cont.isActive) cont.resume(r ?: "")
+                }
+            }
+            val term = unwrapJsString(termRaw).orEmpty().trim()
+            // 白名单校验：term 会被拼进注入 JS 的单引号字符串里，非学期格式一律拒绝，
+            // 既防脏值落库，也从根上杜绝引号注入
+            if (!Regex("""\d{4}-\d{4}-\d""").matches(term)) {
+                statusNote = "取不到学期：请在考试安排查询页选择学期后重试"
+                snackbar.showSnackbar(statusNote)
+                return
+            }
+            statusNote = "正在请求 $term 考试安排…"
+            val rows = mutableListOf<ExamEntry>()
+            var count = 0
+            var page = 1
+            do {
+                val body = fetchJsonInWebView(
+                    wv,
+                    ExamScheduleParser.fetchJs(term = term, page = page),
+                    ExamScheduleParser.READ_RESULT_JS,
+                ) ?: run {
+                    statusNote = "请求超时：请检查网络后重试"
+                    snackbar.showSnackbar(statusNote)
+                    return
+                }
+                val parsed = try {
+                    ExamScheduleParser.parseFetchJson(body)
+                } catch (e: Exception) {
+                    statusNote = e.message ?: "解析失败"
+                    snackbar.showSnackbar(statusNote)
+                    return
+                }
+                count = parsed.count
+                rows += parsed.exams
+                page++
+            } while (rows.size < count && page <= 10)
+
+            val slots = repo.timeSlots.first()
+            val semester = repo.semester.first()
+            val (courses, skipped) = ExamMapper.toExamCourses(rows, slots, semester)
+            if (rows.isEmpty()) {
+                statusNote = "$term 暂无考试安排（教务通常考前数周才录入）"
+                snackbar.showSnackbar(statusNote)
+                return
+            }
+            if (courses.isEmpty()) {
+                val msg = buildString {
+                    append("$term 的 ${rows.size} 场考试都无法定位")
+                    if (semester == null) append("：请先在「我的 → 课表设置」配置开学日")
+                    else append("：考试日期超出学期范围")
+                }
+                statusNote = msg
+                snackbar.showSnackbar(msg)
+                return
+            }
+            statusNote = buildString {
+                append("解析到 ${courses.size} 场考试")
+                if (skipped > 0) append("（跳过无法定位的 $skipped 场）")
+                append("，确认后写入")
+            }
+            showMergeDialog = ImportParseResult.Success(courses, term = term)
+        } finally {
+            busy = false
+        }
+    }
+
+    /** 成绩导入（DESIGN §4.15）：全部学期分页 fetch → 按学期分组 → 确认后逐学期替换入库。 */
+    suspend fun runScoreImport(wv: WebView?) {
+        if (wv == null) return
+        if (!JwUrls.isJwHost(currentUrl)) {
+            val msg = "请先登录教务（点击上方入口打开成绩查询页）再导入。"
+            snackbar.showSnackbar(msg); return
+        }
+        busy = true
+        try {
+            statusNote = "正在请求全部学期成绩…"
+            val records = mutableListOf<ScoreRecord>()
+            var count = 0
+            var page = 1
+            do {
+                val body = fetchJsonInWebView(
+                    wv,
+                    ScoreParser.fetchJs(term = "", page = page),
+                    ScoreParser.READ_RESULT_JS,
+                ) ?: run {
+                    statusNote = "请求超时：请检查网络后重试"
+                    snackbar.showSnackbar(statusNote)
+                    return
+                }
+                val parsed = try {
+                    ScoreParser.parseFetchJson(body)
+                } catch (e: Exception) {
+                    statusNote = e.message ?: "解析失败"
+                    snackbar.showSnackbar(statusNote)
+                    return
+                }
+                count = parsed.count
+                records += parsed.records
+                page++
+            } while (records.size < count && page <= 20)
+
+            if (records.isEmpty()) {
+                statusNote = "教务没有返回任何成绩"
+                snackbar.showSnackbar(statusNote)
+                return
+            }
+            val grouped = records.groupBy { it.term }.toSortedMap(compareByDescending { it })
+            statusNote = "解析到 ${grouped.size} 个学期共 ${records.size} 条成绩，确认后写入"
+            pendingScores = grouped.entries.map { (term, list) -> term to list }
+        } finally {
+            busy = false
+        }
+    }
+
     // 独立 Activity 窗口：inset 全部走 M3 默认——TopAppBar 消费状态栏、
     // Scaffold contentWindowInsets 提供底部导航栏 inset（导入按钮区不压手势条）。
     // 此前为「嵌在外层 Scaffold 里」做的双 inset 规避已随窗口拆分一起移除。
@@ -222,7 +401,10 @@ fun JwImportScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("教务导入 · 统一认证", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (mode == JwImportMode.Scores) "成绩导入 · 统一认证" else "教务导入 · 统一认证",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
                         Text(
                             pageTitle,
                             style = MaterialTheme.typography.bodySmall,
@@ -369,10 +551,14 @@ fun JwImportScreen(
                                                     "请使用学校统一身份认证登录"
                                                 "xsMainV" in u ->
                                                     "已登录教务主页，正在打开学期理论课表…"
+                                                page == JwSchedulePage.Exam ->
+                                                    "考试安排查询已打开。点下方「导入考试安排」。"
                                                 page == JwSchedulePage.Lab ->
                                                     "实验课表已打开。点下方「导入实验课表」。"
                                                 page == JwSchedulePage.Theory ->
                                                     "理论课表已打开。点下方「导入理论课表」。"
+                                                "cjcx_frm" in u ->
+                                                    "成绩查询页已打开。点下方「导入成绩」。"
                                                 else -> "已登录教务，可从下方入口打开课表页"
                                             }
 
@@ -554,49 +740,87 @@ fun JwImportScreen(
                 ) {
                     // 两个入口分开：两张课表结构不同，走哪个入口就用哪个解析器，
                     // 不让用户在「导入」时再猜自己开的是哪一页
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (mode == JwImportMode.Schedule) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ScheduleEntryButton(
+                                label = "理论课表",
+                                active = pageKind == JwSchedulePage.Theory,
+                                enabled = !busy,
+                                onClick = {
+                                    pageState = PageState.Loading
+                                    statusNote = "打开学期理论课表…"
+                                    autoNavPending = false
+                                    // 用户显式发起新一轮导航：自动重试闸门重置
+                                    autoRetryUsed = false
+                                    webView?.loadUrl(JwUrls.SCHEDULE_LIST)
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            ScheduleEntryButton(
+                                label = "实验课表",
+                                active = pageKind == JwSchedulePage.Lab,
+                                enabled = !busy,
+                                onClick = {
+                                    pageState = PageState.Loading
+                                    statusNote = "打开实验课表（实践实验 → 实验课表查询）…"
+                                    autoNavPending = false
+                                    autoRetryUsed = false
+                                    webView?.loadUrl(JwUrls.LAB_SCHEDULE)
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                         ScheduleEntryButton(
-                            label = "理论课表",
-                            active = pageKind == JwSchedulePage.Theory,
+                            label = "考试安排",
+                            active = pageKind == JwSchedulePage.Exam,
                             enabled = !busy,
                             onClick = {
                                 pageState = PageState.Loading
-                                statusNote = "打开学期理论课表…"
+                                statusNote = "打开考试安排查询…"
                                 autoNavPending = false
-                                // 用户显式发起新一轮导航：自动重试闸门重置
                                 autoRetryUsed = false
-                                webView?.loadUrl(JwUrls.SCHEDULE_LIST)
+                                webView?.loadUrl(JwUrls.EXAM_QUERY)
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                         )
+                    } else {
                         ScheduleEntryButton(
-                            label = "实验课表",
-                            active = pageKind == JwSchedulePage.Lab,
+                            label = "打开成绩查询页",
+                            active = "cjcx_frm" in currentUrl,
                             enabled = !busy,
                             onClick = {
                                 pageState = PageState.Loading
-                                statusNote = "打开实验课表（实践实验 → 实验课表查询）…"
+                                statusNote = "打开成绩查询页…"
                                 autoNavPending = false
                                 autoRetryUsed = false
-                                webView?.loadUrl(JwUrls.LAB_SCHEDULE)
+                                webView?.loadUrl(JwUrls.SCORE_FRM)
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     Button(
-                        onClick = { runImport(webView) },
+                        onClick = {
+                            when {
+                                mode == JwImportMode.Scores -> scope.launch { runScoreImport(webView) }
+                                JwUrls.schedulePageKind(currentUrl) == JwSchedulePage.Exam ->
+                                    scope.launch { runExamImport(webView) }
+                                else -> runImport(webView)
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(44.dp),
                         // 防误触：currentUrl 在 onPageFinished 才更新，页面没就绪就点导入
                         // 会拿旧 URL 判型、误报「当前不是课表页」。只在课表页且加载就绪时可用。
                         enabled = !busy &&
-                            pageKind != JwSchedulePage.None &&
-                            pageState == PageState.Ready,
+                            pageState == PageState.Ready &&
+                            (mode == JwImportMode.Scores || pageKind != JwSchedulePage.None),
                     ) {
                         Text(
                             when {
                                 busy -> "解析中…"
+                                mode == JwImportMode.Scores -> "导入成绩"
+                                pageKind == JwSchedulePage.Exam -> "导入考试安排"
                                 pageKind == JwSchedulePage.Lab -> "导入实验课表"
                                 pageKind == JwSchedulePage.Theory -> "导入理论课表"
                                 else -> "打开课表页后可导入"
@@ -616,14 +840,16 @@ fun JwImportScreen(
             courses = courses,
             term = draft.term,
             title = when {
-                courses.any { it.kind == CourseKind.Lab } && courses.all { it.kind == CourseKind.Lab } ->
+                courses.all { it.kind == CourseKind.Exam } ->
+                    "解析到 ${courses.size} 场考试"
+                courses.all { it.kind == CourseKind.Lab } ->
                     "解析到 ${courses.size} 条实验课"
                 courses.any { it.kind == CourseKind.Lab } ->
                     "解析到 ${courses.size} 条（实验课 ${courses.count { it.kind == CourseKind.Lab }} 条）"
                 else -> "解析到 ${courses.size} 条课次"
             },
-            // 教务实验课表与理论课表是两批数据，合并是更常见的意图
-            defaultMerge = courses.any { it.kind == CourseKind.Lab },
+            // 实验/考试与理论课表是两批数据，合并是更常见的意图；覆盖会连普通课程一起清空
+            defaultMerge = courses.any { it.kind != CourseKind.Theory },
             repo = repo,
             onConfirm = { target, merge ->
                 showMergeDialog = null
@@ -641,14 +867,56 @@ fun JwImportScreen(
         )
     }
 
-    importSuccess?.let { (count, merge) ->
+    pendingScores?.let { grouped ->
+        val total = grouped.sumOf { it.second.size }
+        AlertDialog(
+            onDismissRequest = { pendingScores = null },
+            title = { Text("确认导入成绩") },
+            text = {
+                Column {
+                    Text("将导入 ${grouped.size} 个学期共 $total 条成绩，相同学期的旧数据会被替换：")
+                    Spacer(Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 220.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        grouped.forEach { (term, list) ->
+                            Text(
+                                "$term · ${list.size} 条",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val pending = grouped
+                        pendingScores = null
+                        scope.launch {
+                            pending.forEach { (term, list) -> scoreRepo.replaceTerm(term, list) }
+                            // 终态反馈后再返回（DESIGN §3.3），与课表导入一致
+                            importSuccess = total to true
+                        }
+                    },
+                ) { Text("导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingScores = null }) { Text("取消") }
+            },
+        )
+    }
+
+    importSuccess?.let { (count, _) ->
         AlertDialog(
             onDismissRequest = onBack,
-            title = { Text("导入完成") },
+            title = { Text(if (mode == JwImportMode.Scores) "成绩导入完成" else "导入完成") },
             text = {
                 Text(
-                    if (merge) "已合并导入 $count 门新课到目标课表（重复课程已跳过）。"
-                    else "已覆盖导入 $count 门课到目标课表。",
+                    if (mode == JwImportMode.Scores) "已导入 $count 条成绩，按学期替换存储。"
+                    else "已合并导入 $count 门新课到目标课表（重复课程已跳过）。",
                 )
             },
             confirmButton = {

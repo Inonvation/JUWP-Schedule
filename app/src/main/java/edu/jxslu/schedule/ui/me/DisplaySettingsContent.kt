@@ -2,6 +2,7 @@ package edu.jxslu.schedule.ui.me
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -310,7 +311,10 @@ private fun CourseFilterRow(
     Column(Modifier.padding(vertical = 12.dp)) {
         Text("显示哪些课程", style = MaterialTheme.typography.bodyLarge)
         Row(
-            modifier = Modifier.padding(top = 10.dp),
+            // 选项增至 4 个（考试），窄屏一行放不下时横向滚动兜底，不让 chip 挤压变形
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             CourseFilter.entries.forEach { option ->

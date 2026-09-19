@@ -13,6 +13,7 @@ import edu.jxslu.schedule.ui.me.DataSettingsScreen
 import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
 import edu.jxslu.schedule.ui.me.WidgetSettingsScreen
+import edu.jxslu.schedule.ui.score.ScoreScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
@@ -35,6 +36,8 @@ enum class SubpageScreen {
     CALENDAR_SETTINGS,
     /** 我的 → 上课提醒（DESIGN §3.7） */
     REMINDER_SETTINGS,
+    /** 我的 → 成绩查询（按学期存储，DESIGN §4.15） */
+    SCORES,
 }
 
 /**
@@ -75,6 +78,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.WIDGET_SETTINGS -> WidgetSettingsScreen(onBack = onBack)
             SubpageScreen.CALENDAR_SETTINGS -> CalendarSettingsScreen(onBack = onBack)
             SubpageScreen.REMINDER_SETTINGS -> ReminderSettingsScreen(onBack = onBack)
+            SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
         }
     }
 

@@ -43,6 +43,7 @@ import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Database
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Eye
+import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.Github
 import me.rerere.hugeicons.stroke.GlassWater
 import me.rerere.hugeicons.stroke.GridView
@@ -80,6 +81,7 @@ private fun openUrl(context: Context, url: String) {
 @Composable
 fun SettingsScreen(
     onOpenJwImport: () -> Unit = {},
+    onOpenScores: () -> Unit = {},
     onOpenTimetableManage: () -> Unit = {},
     onOpenTimetableSettings: () -> Unit = {},
     onOpenDisplaySettings: () -> Unit = {},
@@ -182,6 +184,12 @@ fun SettingsScreen(
                     subtitle = "从学校教务拉取课表",
                     icon = HugeIcons.Import,
                     onClick = onOpenJwImport,
+                )
+                SettingItem(
+                    title = "成绩查询",
+                    subtitle = "按学期查看 · 从教务导入",
+                    icon = HugeIcons.GraduationScroll,
+                    onClick = onOpenScores,
                 )
                 SettingItem(
                     title = "调课",

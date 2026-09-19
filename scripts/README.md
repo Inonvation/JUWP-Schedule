@@ -238,8 +238,23 @@ GET /jsxsd/kscj/cjcx_list?kksj=&kcxz=&kcsx=&kcmc=&xsfs=&pageNum=1&pageSize=200
 | `kw0410id` | 备注详情 id（`xsksap_bz.do?kw0410id=`） | `xnxqid` | 数据所属学期 |
 
 数据发布节奏：考试安排由教务**考前数周才录入**，平时 `count=0` 属正常；成绩考后按批次录入，
-`kz=1` 的课程在评教完成前不显示分数。App 端（WebView 同源 `fetch` 即可拿到 JSON）与导入确认弹窗
-的学期口径：两页壳页的 `select#xnxq01id`/`select#xnxqid` 选中项 = 该数据的实际学期。
+`kz=1` 的课程在评教完成前不显示分数。两页壳页的 `select#xnxq01id`/`select#xnxqid` 选中项 = 该数据的实际学期。
+
+#### 5.4.1 App 端同链路（WebView 注入 fetch，2026-09-19 实现）
+
+App 与脚本走**同一组接口**，对应实现（改接口先改两处）：
+
+| 环节 | 脚本（参考实现） | App 端 |
+|------|------------------|--------|
+| 登录 | `jw_session.py`（CAS→SSO，`trust_env=False`） | 用户在 WebView 自行登录，Cookie 全局 |
+| 取学期 | 页面下拉 selected / `--term` | 注入 `READ_TERM_JS` 读壳页 `select#xnxqid` |
+| 请求数据 | `requests.get(..., params=…)` | 注入 `FETCH_JS`：同源 `fetch(..., {credentials:'same-origin'})` 写 `window.__qzJson`，Kotlin 轮询 `evaluateJavascript` 回收（evaluateJavascript 不 await Promise） |
+| 翻页 | 按 `count` 循环 | 同左（每页一次注入） |
+| 解析 | `fetch_exams.py` / `fetch_scores.py` 的 `to_payload` | `ExamScheduleParser` / `ScoreParser`（样例 fixture 即脚本产物） |
+| 落库 | `out/exams.json` / `out/scores.json` | 考试：`ExamMapper` → `Course(kind=Exam)` 进课表（日期→周/星期、时刻→相交节次，无法定位的跳过并提示）；成绩：`ScoreRepository.replaceTerm` 按学期整体替换 |
+
+学期口径统一：脚本输出顶层 `term` = 实际爬取的学期；App 的考试导入走壳页下拉、成绩导入走
+`kksj=''`（全部学期，按返回数据的 `xnxqid` 分组入库），与「我的 → 成绩查询」的学期 chips 对齐。
 
 ---
 

@@ -214,6 +214,9 @@ fun JuwApp() {
                     onOpenJwImport = {
                         context.startActivity(Intent(context, JwImportActivity::class.java))
                     },
+                    onOpenScores = {
+                        SubpageActivity.start(context, SubpageScreen.SCORES)
+                    },
                     // 二级页统一独立窗口：底栏不可达，返回栈语义清晰（根因见 SubpageActivity）
                     onOpenTimetableManage = {
                         SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)

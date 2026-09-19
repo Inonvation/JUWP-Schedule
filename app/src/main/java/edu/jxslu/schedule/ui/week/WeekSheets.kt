@@ -244,10 +244,12 @@ fun CourseDetailSheet(
                     }
                 },
             )
-            // 实验课单列一行：它的来源是另一张课表，且教务不提供教师，
-            // 不注明的话「教师 —」会被当成数据缺失
-            if (course.kind == CourseKind.Lab) {
-                DetailRow("类型", "实验课（实验课表页不含教师信息）")
+            // 类型单列一行：实验课的来源是另一张课表（教务不提供教师），
+            // 考试的时刻与普通课不同（具体日期+起止时间），都需要向用户交代口径
+            when (course.kind) {
+                CourseKind.Lab -> DetailRow("类型", "实验课（实验课表页不含教师信息）")
+                CourseKind.Exam -> DetailRow("类型", "考试（考场即「地点」）")
+                else -> Unit
             }
             Spacer(Modifier.height(18.dp))
             Row(

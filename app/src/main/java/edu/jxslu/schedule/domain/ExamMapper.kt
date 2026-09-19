@@ -71,10 +71,14 @@ object ExamMapper {
         if (overlap.isNotEmpty()) {
             return overlap.first().number..overlap.last().number
         }
-        // 空档兜底：最后一个「结束时刻 ≤ 考试开始」的节的下一节；更晚则最后一节
+        // 空档兜底：开始时刻早于所有节次取第一节；落在空档（某节结束后、下一节开始前）
+        // 取下一节；晚于所有节次取最后一节。
         val after = ordered.lastOrNull { ScheduleCalculator.toMinutes(it.endTime) <= startMin }
-        val target = after?.let { ordered.firstOrNull { s -> s.number > it.number } }
-            ?: ordered.last()
+        val target = if (after == null) {
+            ordered.first()
+        } else {
+            ordered.firstOrNull { it.number > after.number } ?: ordered.last()
+        }
         return target.number..target.number
     }
 

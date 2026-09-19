@@ -23,19 +23,14 @@ object ExamScheduleParser {
     const val PAGE_SIZE = 200
 
     /**
-     * 注入脚本：学期取壳页 `select#xnxqid` 的当前选中项（与页面展示一致），
-     * [__PAGE__] 由 Kotlin 侧替换为页码。结果写入 `window.__qzJson`（字符串或 "ERR:…"）。
+     * 注入脚本：学期由 Kotlin 侧先用 [READ_TERM_JS] 读出后填进 [__TERM__]（与页面展示一致），
+     * [__PAGE__] 为页码。结果写入 `window.__qzJson`（字符串或 "ERR:…"）。
      */
     val FETCH_JS: String = """
 (function(){
   try {
     window.__qzJson = null;
-    var sel = document.querySelector('select#xnxqid');
-    var term = '';
-    if (sel && sel.selectedIndex >= 0 && sel.options) {
-      term = sel.options[sel.selectedIndex].value || sel.options[sel.selectedIndex].textContent || '';
-    }
-    var url = '/jsxsd/xsks/xsksap_list?xnxqid=' + encodeURIComponent(term)
+    var url = '/jsxsd/xsks/xsksap_list?xnxqid=' + encodeURIComponent('__TERM__')
             + '&xqlb=&pageNum=__PAGE__&pageSize=$PAGE_SIZE';
     fetch(url, { credentials: 'same-origin' })
       .then(function(r){ return r.text(); })
@@ -47,8 +42,17 @@ object ExamScheduleParser {
 })()
 """.trim()
 
+    fun fetchJs(term: String, page: Int): String =
+        FETCH_JS.replace("__TERM__", term).replace("__PAGE__", page.toString())
+
     /** [FETCH_JS] 抓完一轮后读取结果的探针。 */
     val READ_RESULT_JS: String = "window.__qzJson === null ? '' : String(window.__qzJson)"
+
+    /** 从壳页学期下拉读当前选中项（value，如 2026-2027-1）；不在壳页时为空串。 */
+    val READ_TERM_JS: String =
+        "(function(){var s=document.querySelector('select#xnxqid');" +
+            "return (s&&s.selectedIndex>=0&&s.options)?(s.options[s.selectedIndex].value||" +
+            "s.options[s.selectedIndex].textContent||''):'';})()"
 
     data class ExamFetch(
         val term: String?,
