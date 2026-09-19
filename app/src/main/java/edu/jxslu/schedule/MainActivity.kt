@@ -190,6 +190,10 @@ fun JuwApp() {
                     // 一键开水快捷入口（已登录胖乖时显示，DESIGN 3.3）
                     showWaterEntry = waterLoggedIn,
                     onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
+                    // 快捷方式行 chip 长按进设置页（DESIGN §3.8）
+                    onOpenShortcuts = {
+                        SubpageActivity.start(context, SubpageScreen.SHORTCUTS)
+                    },
                     waterViewModel = waterViewModel,
                 )
             }
@@ -241,6 +245,9 @@ fun JuwApp() {
                     },
                     onOpenReminderSettings = {
                         SubpageActivity.start(context, SubpageScreen.REMINDER_SETTINGS)
+                    },
+                    onOpenShortcuts = {
+                        SubpageActivity.start(context, SubpageScreen.SHORTCUTS)
                     },
                     onOpenWater = {
                         SubpageActivity.start(context, SubpageScreen.WATER)

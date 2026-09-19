@@ -43,6 +43,7 @@ import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Database
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Eye
+import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.Github
 import me.rerere.hugeicons.stroke.GlassWater
@@ -90,6 +91,7 @@ fun SettingsScreen(
     onOpenWidgetSettings: () -> Unit = {},
     onOpenCalendarSettings: () -> Unit = {},
     onOpenReminderSettings: () -> Unit = {},
+    onOpenShortcuts: () -> Unit = {},
     onOpenWater: () -> Unit = {},
     /** 胖乖登录态（由外层传入，仅决定开水行文案）；登录/退出在开水页内完成 */
     waterLoggedIn: Boolean = false,
@@ -159,6 +161,13 @@ fun SettingsScreen(
                     subtitle = "字号 · 格子样式 · 显示开关",
                     icon = HugeIcons.Eye,
                     onClick = onOpenDisplaySettings,
+                )
+                // 今日页快捷方式（DESIGN §3.8）：开关在子页内，默认开
+                SettingItem(
+                    title = "快捷方式",
+                    subtitle = "今日页快捷入口 · 添加与编辑",
+                    icon = HugeIcons.Flash,
+                    onClick = onOpenShortcuts,
                 )
             }
 

@@ -13,9 +13,13 @@ import androidx.datastore.preferences.preferencesDataStore
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.ReminderDefaults
+import edu.jxslu.schedule.domain.ShortcutItem
+import edu.jxslu.schedule.domain.ShortcutSettings
+import edu.jxslu.schedule.domain.Shortcuts
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimetablePrefs
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -186,6 +190,20 @@ class DisplayPrefsStore(private val context: Context) {
         )
     }
 
+    /** 今日页快捷方式开关（DESIGN §3.8）。全局项，默认开：这是展示型入口，不打扰人。 */
+    val shortcutsEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_SHORTCUTS_ENABLED] ?: true
+    }
+
+    /** 快捷方式条目列表。键缺失或脏 JSON 都回退内置预设（口径见 [Shortcuts.decode]）。 */
+    val shortcuts: Flow<List<ShortcutItem>> = context.displayDataStore.data.map { p ->
+        p[KEY_SHORTCUTS_JSON]?.let { Shortcuts.decode(it) } ?: Shortcuts.PRESET_SHORTCUTS
+    }
+
+    /** 开关 + 条目二合一快照：今日页与设置页各订阅一次即可。 */
+    val shortcutSettings: Flow<ShortcutSettings> =
+        combine(shortcutsEnabled, shortcuts, ::ShortcutSettings)
+
     /** 当前课表。null = 未设置（用默认课表 1）。 */
     val currentTimetableId: Flow<Long?> = context.displayDataStore.data.map { p ->
         p[KEY_CURRENT_TIMETABLE]
@@ -226,6 +244,23 @@ class DisplayPrefsStore(private val context: Context) {
     suspend fun setReminderLeadMinutes(value: Int) {
         context.displayDataStore.edit {
             it[KEY_REMINDER_LEAD] = ReminderDefaults.coerceLead(value)
+        }
+    }
+
+    suspend fun setShortcutsEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_SHORTCUTS_ENABLED] = value }
+    }
+
+    /**
+     * 快捷方式统一写入口：读-改-写整个 JSON，同值跳写（口径同 [updateViewPrefs]）。
+     * 编辑表单的保存/重置/调序都汇到这一个口，存储格式不外泄。
+     */
+    suspend fun updateShortcuts(transform: (List<ShortcutItem>) -> List<ShortcutItem>) {
+        context.displayDataStore.edit { p ->
+            val current =
+                p[KEY_SHORTCUTS_JSON]?.let { Shortcuts.decode(it) } ?: Shortcuts.PRESET_SHORTCUTS
+            val next = transform(current)
+            if (next != current) p[KEY_SHORTCUTS_JSON] = Shortcuts.encode(next)
         }
     }
 
@@ -340,6 +375,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SLOT_SCHEMA = intPreferencesKey("slot_schema_version")
         val KEY_PREFS_MIGRATED = booleanPreferencesKey("timetable_prefs_migrated")
         val KEY_WIDGET_SETUP_SEEN = booleanPreferencesKey("widget_setup_seen")
+        val KEY_SHORTCUTS_ENABLED = booleanPreferencesKey("shortcuts_enabled")
+        val KEY_SHORTCUTS_JSON = stringPreferencesKey("shortcuts_json")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

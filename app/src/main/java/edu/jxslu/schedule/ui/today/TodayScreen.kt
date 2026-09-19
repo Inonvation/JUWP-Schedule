@@ -1,13 +1,17 @@
 package edu.jxslu.schedule.ui.today
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -23,9 +27,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +66,8 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.ShortcutItem
+import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
@@ -69,14 +79,20 @@ import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.ui.common.CourseEditSheet
 import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.ShortcutIcon
+import edu.jxslu.schedule.ui.common.ShortcutLauncher
+import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
 import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberWaterRequireDoubleClick
 import edu.jxslu.schedule.ui.water.WaterViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Droplet
+import me.rerere.hugeicons.stroke.Edit02
+import me.rerere.hugeicons.stroke.Link01
 import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
 
 /**
@@ -89,7 +105,7 @@ import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
  *   节次编号只在焦点卡标题里出现（`正在上课 · 第3-4节`）。
  * - 已结束的课不显示（保持既有取舍）；今天没有待上课程时才轮到「明天」上桌。
  *
- * 分区顺序：焦点卡 → 今天还有 N 节 → 明天（今天结束后）→ 快捷（开水）。
+ * 分区顺序：焦点卡 → 今天还有 N 节 → 明天（今天结束后）→ 快捷（开水）→ 快捷方式行（§3.8）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +116,8 @@ fun TodayScreen(
     /** 胖乖已登录时显示一键开水卡（DESIGN 3.3）；由外层传入登录态 */
     showWaterEntry: Boolean = false,
     onOpenWater: () -> Unit = {},
+    /** 快捷方式设置页入口（chip 长按触发，DESIGN §3.8） */
+    onOpenShortcuts: () -> Unit = {},
     /** 与开水页共享的 Activity 作用域实例；快捷卡的解锁进度两页一致 */
     waterViewModel: WaterViewModel? = null,
     viewModel: TodayViewModel = viewModel(
@@ -107,10 +125,25 @@ fun TodayScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<Course?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Course?>(null) }
     val snackbar = remember { SnackbarHostState() }
+
+    // 快捷方式拉起失败的兜底通道（DESIGN §3.8）：Snackbar 带「去设置」动作，
+    // 比纯 Toast 多一步「就地修正配置」的出口（菜鸟 Activity 改名这类配置失效场景）
+    val scope = rememberCoroutineScope()
+    val showShortcutError: (String) -> Unit = { message ->
+        scope.launch {
+            val result = snackbar.showSnackbar(
+                message,
+                actionLabel = "去设置",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) onOpenShortcuts()
+        }
+    }
 
     // 「还剩 X 分钟」要跟着时间走
     LaunchedEffect(Unit) {
@@ -182,20 +215,26 @@ fun TodayScreen(
                 }
             }
 
-            !state.inTerm -> CenteredHint(
+            !state.inTerm -> TodayEmptyContent(
                 padding,
                 "尚未开学或未配置学期",
                 "先在「课表设置」里填好开学日期与周数，也能手动加课。",
                 actionLabel = "去设置学期",
                 onAction = onOpenTimetableSettings,
+                shortcuts = shortcuts,
+                onOpenShortcuts = onOpenShortcuts,
+                onShortcutError = showShortcutError,
             )
 
-            state.totalCourseCount == 0 -> CenteredHint(
+            state.totalCourseCount == 0 -> TodayEmptyContent(
                 padding,
                 "课表为空",
                 "课表默认为空，请登录教务系统导入「学期理论课表」，也可手动加课。",
                 actionLabel = "从教务导入",
                 onAction = onOpenJwImport,
+                shortcuts = shortcuts,
+                onOpenShortcuts = onOpenShortcuts,
+                onShortcutError = showShortcutError,
             )
 
             else -> TodayContent(
@@ -207,6 +246,9 @@ fun TodayScreen(
                 } else {
                     null
                 },
+                shortcuts = shortcuts,
+                onOpenShortcuts = onOpenShortcuts,
+                onShortcutError = showShortcutError,
             )
         }
     }
@@ -240,21 +282,36 @@ fun TodayScreen(
     }
 }
 
+/**
+ * 空态（未开学 / 课表为空）：居中提示 + 可选的快捷方式行。
+ * 快捷行在空态也上桌（DESIGN §3.8）——假期恰是取件码高频时段，课表为空不等于入口该消失。
+ */
 @Composable
-private fun CenteredHint(
+private fun TodayEmptyContent(
     padding: PaddingValues,
     title: String,
     body: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    shortcuts: ShortcutSettings = ShortcutSettings(),
+    onOpenShortcuts: () -> Unit = {},
+    onShortcutError: (String) -> Unit = {},
 ) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding),
-        contentAlignment = Alignment.Center,
     ) {
-        EmptyHint(title, body, actionLabel, onAction)
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            EmptyHint(title, body, actionLabel, onAction)
+        }
+        if (shortcuts.enabled && shortcuts.items.isNotEmpty()) {
+            ShortcutQuickRow(shortcuts.items, onOpenShortcuts, onShortcutError)
+            Spacer(Modifier.height(12.dp))
+        }
     }
 }
 
@@ -265,6 +322,10 @@ private fun TodayContent(
     onEdit: (Course) -> Unit,
     /** 胖乖一键开水快捷卡（已登录时非 null）；放列表尾部、课程内容之后 */
     waterEntry: (@Composable () -> Unit)? = null,
+    /** 今日页快捷方式（DESIGN §3.8）：开水卡下方一行横滑 chips */
+    shortcuts: ShortcutSettings = ShortcutSettings(),
+    onOpenShortcuts: () -> Unit = {},
+    onShortcutError: (String) -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier
@@ -315,6 +376,15 @@ private fun TodayContent(
         if (waterEntry != null) {
             item(key = "water") {
                 Box(Modifier.padding(top = 20.dp)) { waterEntry() }
+            }
+        }
+
+        // 快捷方式行（DESIGN §3.8）：开水卡下方；开关关着或列表为空时不占位
+        if (shortcuts.enabled && shortcuts.items.isNotEmpty()) {
+            item(key = "shortcuts") {
+                Box(Modifier.padding(top = 12.dp)) {
+                    ShortcutQuickRow(shortcuts.items, onOpenShortcuts, onShortcutError)
+                }
             }
         }
     }
@@ -689,4 +759,79 @@ private fun waterClock(totalSeconds: Int): String {
     val m = totalSeconds / 60
     val s = totalSeconds % 60
     return "%02d:%02d".format(m, s)
+}
+
+/**
+ * 快捷方式行（DESIGN §3.8）：横向滚动的入口 chips，放开水卡下方（空态也显示）。
+ * 点击立即拉起（执行层与错误口径见 [ShortcutLauncher]，失败走 [onShortcutError] 的
+ * Snackbar 兜底，不做预检确认）；长按弹菜单：添加到桌面 / 快捷方式设置。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ShortcutQuickRow(
+    items: List<ShortcutItem>,
+    onOpenSettings: () -> Unit,
+    onShortcutError: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val haptics = rememberAppHaptics()
+    val shape = RoundedCornerShape(14.dp)
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(items, key = { it.id }) { item ->
+            var menuOpen by remember { mutableStateOf(false) }
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clip(shape)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                        .combinedClickable(
+                            onClick = {
+                                haptics.tap()
+                                ShortcutLauncher.launch(context, item)?.let(onShortcutError)
+                            },
+                            onLongClick = {
+                                haptics.tap()
+                                menuOpen = true
+                            },
+                        )
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                ) {
+                    ShortcutIcon(item, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("添加到桌面") },
+                        leadingIcon = { Icon(HugeIcons.Link01, null, modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuOpen = false
+                            haptics.tap()
+                            // 钉桌面会弹系统确认框，成功无需再提示；失败（桌面不支持等）Toast
+                            ShortcutPinner.pin(context, item)?.let { message ->
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("快捷方式设置") },
+                        leadingIcon = { Icon(HugeIcons.Edit02, null, modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuOpen = false
+                            onOpenSettings()
+                        },
+                    )
+                }
+            }
+        }
+    }
 }

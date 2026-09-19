@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.LocalTimeLike
+import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.buildTodayState
 import edu.jxslu.schedule.ui.common.UndoableMessage
@@ -72,6 +73,13 @@ class TodayViewModel(
             ready.value = true
         }
     }
+
+    /**
+     * 今日页快捷方式（DESIGN §3.8）。不并进 [uiState]：那是课表数据的派生状态，
+     * 快捷方式是纯设置值，分开订阅免得改一条快捷方式把整页状态重算一遍。
+     */
+    val shortcuts: StateFlow<ShortcutSettings> = repo.shortcutSettings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShortcutSettings())
 
     /** 界面每 30 秒调一次：让「还剩 X 分钟」和课的状态跟着时间走。 */
     fun refreshTick() {

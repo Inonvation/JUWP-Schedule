@@ -17,6 +17,25 @@
     <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- 今日页快捷方式（DESIGN §4.16）：API 30+ 包可见性声明。
+         三个 package 让预设包可见（getLaunchIntentForPackage 不再对已安装的 App
+         误报「未安装」）；MAIN/LAUNCHER 让所有有桌面入口的 App 可见——既是编辑表单
+         「从已安装应用选择」的数据源，也让自定义「只填包名」的快捷方式能拉起。
+         仍不可见的（无桌面入口的应用）靠执行层 try/catch 兜底。 -->
+    <queries>
+        <package android:name="com.xunmeng.pinduoduo" />
+        <package android:name="com.taobao.taobao" />
+        <package android:name="com.cainiao.wireless" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="pinduoduo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".JuwApplication"
         android:allowBackup="true"

@@ -16,6 +16,8 @@ import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
 import edu.jxslu.schedule.domain.SemesterConfig
+import edu.jxslu.schedule.domain.ShortcutItem
+import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
@@ -227,9 +229,20 @@ class ScheduleRepository(
         // 时下游两个 VM 不必整体重算
     }.distinctUntilChanged()
 
+    /**
+     * 今日页快捷方式（DESIGN §3.8/§4.16）。全局 DataStore 项，与当前课表无关，直接透传 store。
+     */
+    val shortcutSettings: Flow<ShortcutSettings> = prefs.shortcutSettings
+
     // ------------------------------------------------------------------
     // 偏好写入：视图偏好写全局 DataStore 键，主题等全局项同层
     // ------------------------------------------------------------------
+
+    // 快捷方式（DESIGN §4.16）：开关与条目列表统一走 store 的 updateShortcuts
+    suspend fun setShortcutsEnabled(value: Boolean) = prefs.setShortcutsEnabled(value)
+
+    suspend fun updateShortcuts(transform: (List<ShortcutItem>) -> List<ShortcutItem>) =
+        prefs.updateShortcuts(transform)
 
     /** 视图偏好统一写全局键（2026-09-19 起不再按课表分，DESIGN §4.9）。 */
     private suspend fun updateViewPrefs(transform: (TimetablePrefs) -> TimetablePrefs) =

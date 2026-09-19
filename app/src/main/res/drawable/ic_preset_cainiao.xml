@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 菜鸟快捷方式预设图标（DESIGN §4.16）：圆角蓝底 + 白色包裹箱。
+     自绘矢量而非品牌 logo：拼多多/淘宝两枚是 light-life 带来的位图，菜鸟没有现成素材，
+     用一个语义相近（快递包裹）的中性图形替代，避免往公开仓库塞新商标。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#1677FF"
+        android:pathData="M12,0 h24 a12,12 0 0 1 12,12 v24 a12,12 0 0 1 -12,12 h-24 a12,12 0 0 1 -12,-12 v-24 a12,12 0 0 1 12,-12 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,19.5 h20 a1.5,1.5 0 0 1 1.5,1.5 v12 a1.5,1.5 0 0 1 -1.5,1.5 h-20 a1.5,1.5 0 0 1 -1.5,-1.5 v-12 a1.5,1.5 0 0 1 1.5,-1.5 z" />
+    <path
+        android:fillColor="#1677FF"
+        android:pathData="M22.75,19.5 h2.5 v15 h-2.5 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12.5,13 h23 a1.5,1.5 0 0 1 1.5,1.5 v2 a1.5,1.5 0 0 1 -1.5,1.5 h-23 a1.5,1.5 0 0 1 -1.5,-1.5 v-2 a1.5,1.5 0 0 1 1.5,-1.5 z" />
+</vector>
