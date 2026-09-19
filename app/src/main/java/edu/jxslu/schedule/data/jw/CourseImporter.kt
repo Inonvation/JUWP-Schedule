@@ -134,6 +134,17 @@ object JwUrls {
     }
 
     /**
+     * 允许放行证书错误的域白名单。学校 HTTPS 端点的证书链不被系统 WebView 信任，
+     * 名单内放行；名单外一律取消——无条件放行等于关掉整个 WebView 的传输层校验，
+     * 而统一认证登录表单就在这个 WebView 里，不能为图省事全放。
+     */
+    val TRUSTED_SSL_HOSTS = setOf(
+        "eapp2.juwp.edu.cn",  // 统一认证
+        "jiaowu.juwp.edu.cn", // 教务（:81 与 :8080 同域）
+        "portal.juwp.edu.cn", // 门户
+    )
+
+    /**
      * 取 URL 的 host 段（去掉协议、端口、路径、查询与 fragment）。
      *
      * 根因：此前三个 `isXxxHost` 都是「整串 `in` 子串匹配」，对

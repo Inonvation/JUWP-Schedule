@@ -3,7 +3,6 @@ package edu.jxslu.schedule.ui.jwvw
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.http.SslError
-import android.os.Build
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -61,6 +60,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.jw.ExamScheduleParser
 import edu.jxslu.schedule.data.jw.ImportParseResult
@@ -485,7 +485,9 @@ fun JwImportScreen(
                         FrameLayout(ctx).apply {
                             val wv = WebView(ctx).apply {
                                 configureForJw(this)
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                                if (BuildConfig.DEBUG) {
+                                    // 远程调试只留给 debug 包（minSdk 26 > KITKAT，无需再判版本）：
+                                    // release 放开等于把用户登录会话暴露给 chrome://inspect
                                     WebView.setWebContentsDebuggingEnabled(true)
                                 }
                                 webViewClient = object : WebViewClient() {
@@ -678,8 +680,17 @@ fun JwImportScreen(
                                     handler: SslErrorHandler?,
                                     error: SslError?,
                                 ) {
-                                    handler?.proceed()
-                                    statusNote = "已自动放行学校 HTTPS 证书"
+                                    // 只放行学校域的证书错误（白名单见 JwUrls.TRUSTED_SSL_HOSTS），
+                                    // 其余一律取消。无条件 proceed 会关掉整个 WebView 的传输层校验，
+                                    // 而统一认证登录表单就在这个 WebView 里，等于把凭证暴露给中间人。
+                                    val host = error?.url?.let { JwUrls.hostOf(it) }
+                                    if (host != null && host in JwUrls.TRUSTED_SSL_HOSTS) {
+                                        handler?.proceed()
+                                        statusNote = "已放行学校 HTTPS 证书"
+                                    } else {
+                                        handler?.cancel()
+                                        Log.w(TAG, "ssl error cancelled: host=$host url=${error?.url}")
+                                    }
                                 }
                                 }
                                 webChromeClient = object : WebChromeClient() {
