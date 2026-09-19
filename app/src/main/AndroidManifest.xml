@@ -57,10 +57,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- 教务导入独立窗口：adjustResize 保证登录表单不被键盘遮住 -->
+        <!-- 教务导入独立窗口：adjustResize 保证登录表单不被键盘遮住。
+             锁竖屏（DESIGN §4.4）：转屏会销毁 WebView 丢掉登录进度、并取消导入协程；
+             全 App 唯一锁方向的窗口。 -->
         <activity
             android:name=".JwImportActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <!-- 设置类二级页统一独立窗口（课表管理/课表设置/显示设置/数据/开水），
              底栏不可达，避免子页与 tab 栈混用 -->
@@ -69,7 +72,7 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- 桌面小组件三条目（DESIGN §3.6）：2×2 / 2×4 / 4×4 各一个 receiver，
+        <!-- 桌面小组件三条目（DESIGN §3.6）：2×2 / 4×2 / 4×4 各一个 receiver，
              共用同一个 TodayWidget 实现；差别只有元数据 XML 的默认格位与 label。
              exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
         <receiver
@@ -84,15 +87,15 @@
                 android:resource="@xml/widget_info_2x2" />
         </receiver>
         <receiver
-            android:name=".ui.widget.TodayWidgetReceiverTall"
+            android:name=".ui.widget.TodayWidgetReceiverWide"
             android:exported="false"
-            android:label="@string/widget_label_tall">
+            android:label="@string/widget_label_wide">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/widget_info_2x4" />
+                android:resource="@xml/widget_info_4x2" />
         </receiver>
         <receiver
             android:name=".ui.widget.TodayWidgetReceiverLarge"

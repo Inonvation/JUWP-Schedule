@@ -184,7 +184,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             canPin = caps.canPin,
             onAdd = {
                 showIntro = false
-                // 弹层里的「现在添加」默认走 2×4（推荐）：信息量与可读性平衡最好
+                // 弹层里的「现在添加」默认走 4×2（推荐）：横条在桌面上信息密度与可读性平衡最好
                 onAddClicked(context, widgetEntries[1])
             },
             onDismiss = { showIntro = false },
@@ -211,7 +211,7 @@ private data class WidgetCaps(
 /** 条目 → 预览档位（与 res/xml/widget_info_*.xml 的格位一致）。 */
 private fun WidgetEntry.size(): WidgetSize = when (name) {
     "2×2" -> WidgetSize.Small
-    "2×4" -> WidgetSize.Tall
+    "4×2" -> WidgetSize.Wide
     else -> WidgetSize.Large
 }
 
@@ -515,7 +515,7 @@ private fun IntroDialog(
         title = { Text("把课表放上桌面") },
         text = {
             Text(
-                text = "提供三种尺寸：2×2 只看下一节，2×4 带今日剩余，4×4 完整今日与明日预告。\n\n" +
+                text = "提供三种尺寸：2×2 / 4×2 只看下一节（带日期），4×4 完整今日与明日预告。\n\n" +
                     "小组件在上下课时刻自动更新。若希望刷新更及时，可在页面下方开启" +
                     "「忽略电池优化」与「允许自启动」（可选，不开也能用）。",
                 style = MaterialTheme.typography.bodyMedium,
@@ -523,7 +523,7 @@ private fun IntroDialog(
         },
         confirmButton = {
             if (canPin) {
-                TextButton(onClick = onAdd) { Text("现在添加 2×4") }
+                TextButton(onClick = onAdd) { Text("现在添加 4×2") }
             } else {
                 TextButton(onClick = onDismiss) { Text("知道了") }
             }

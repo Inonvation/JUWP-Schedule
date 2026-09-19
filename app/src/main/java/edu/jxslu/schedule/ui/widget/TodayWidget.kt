@@ -47,7 +47,7 @@ import java.time.LocalDate
 /**
  * 今日课表小组件（DESIGN §3.6）。
  *
- * 三个桌面条目（2×2 / 2×4 / 4×4）共用这一个 [GlanceAppWidget]，靠 [SizeMode.Responsive]
+ * 三个桌面条目（2×2 / 4×2 / 4×4）共用这一个 [GlanceAppWidget]，靠 [SizeMode.Responsive]
  * 声明尺寸档、渲染时按 [LocalSize] 分档控制信息密度。
  *
  * 数据来源与今日页**完全同源**：Room → `buildTodayState()` → [buildWidgetSnapshot]。
@@ -73,9 +73,9 @@ open class TodayWidget : GlanceAppWidget() {
     /**
      * 声明四档尺寸。
      *
-     * 三个条目默认 110×110 / 110×250 / 250×250，另外把「2×4 被横向拉扁」的 250×110
-     * 也列上——用户在桌面拖动改比例后系统按最接近的档给布局；不声明的话横条上会只剩一个卡
-     * （竖条布局硬塞进横条）。
+     * 目录条目默认 110×110（2×2）/ 250×110（4×2）/ 250×250（4×4）；另外把「4×2 被
+     * 竖向拉高」的 110×250 也列上——用户拖动改比例后系统按最接近的档给布局；
+     * 不声明的话竖条形态会只剩一个卡（横条布局硬塞进竖条）。
      */
     override val sizeMode: SizeMode = SizeMode.Responsive(
         setOf(
@@ -186,9 +186,10 @@ internal object WidgetSnapshotStore {
 
 /**
  * 小组件内容。三档信息密度：
- * - [WidgetSize.Small]：只有焦点卡（110dp 高，标题行会把卡片挤没）
- * - [WidgetSize.Wide] / [WidgetSize.Tall]：标题 + 焦点 + 若干行
- * - [WidgetSize.Large]：再加明日块
+ * - [WidgetSize.Small]（2×2） / [WidgetSize.Wide]（4×2）：紧凑日期行 + 焦点卡
+ *   （110dp 高放不下更多；2×2 课名让成一行换日期行的空间）
+ * - [WidgetSize.Tall]（2×4 拉伸兜底）：日期 + 焦点 + 三行剩余
+ * - [WidgetSize.Large]（4×4）：再加明日块
  */
 @Composable
 private fun WidgetContent(model: WidgetModel, size: WidgetSize) {
@@ -208,15 +209,16 @@ private fun WidgetContent(model: WidgetModel, size: WidgetSize) {
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             if (size.showHeader) {
+                // 2×2 用 10sp 紧凑日期行：110dp 高里给焦点卡省出每一dp
                 Text(
                     text = model.header,
                     style = TextStyle(
-                        fontSize = 11.sp,
+                        fontSize = if (size == WidgetSize.Small) 10.sp else 11.sp,
                         color = GlanceTheme.colors.onSurfaceVariant,
                     ),
                     maxLines = 1,
                 )
-                Spacer(GlanceModifier.height(6.dp))
+                Spacer(GlanceModifier.height(if (size == WidgetSize.Small) 4.dp else 6.dp))
             }
 
             FocusBlock(model.focus, size)
@@ -285,11 +287,12 @@ private fun FocusBlock(focus: WidgetFocus, size: WidgetSize) {
                 Text(
                     text = focus.name,
                     style = TextStyle(
-                        fontSize = if (size == WidgetSize.Small) 15.sp else 14.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = GlanceTheme.colors.onSurface,
                     ),
-                    maxLines = 2,
+                    // 2×2 加了日期行后课名让成一行，换地点/教师副行的空间
+                    maxLines = if (size == WidgetSize.Small) 1 else 2,
                 )
                 if (focus.meta.isNotBlank()) {
                     Spacer(GlanceModifier.height(2.dp))

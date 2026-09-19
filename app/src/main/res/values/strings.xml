@@ -7,7 +7,7 @@
 
     <!-- 桌面小组件（DESIGN §3.6）。label 会作为条目名显示在桌面小组件选择器里 -->
     <string name="widget_label_small">水贝贝 · 2×2</string>
-    <string name="widget_label_tall">水贝贝 · 2×4</string>
+    <string name="widget_label_wide">水贝贝 · 4×2</string>
     <string name="widget_label_large">水贝贝 · 4×4</string>
     <string name="widget_description">今日课表：正在上的课、下一节与今日剩余安排，点开进 App 今日页</string>
 </resources>

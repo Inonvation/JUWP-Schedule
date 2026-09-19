@@ -10,7 +10,7 @@ import android.provider.Settings
 import android.widget.Toast
 import edu.jxslu.schedule.ui.widget.TodayWidgetReceiverLarge
 import edu.jxslu.schedule.ui.widget.TodayWidgetReceiverSmall
-import edu.jxslu.schedule.ui.widget.TodayWidgetReceiverTall
+import edu.jxslu.schedule.ui.widget.TodayWidgetReceiverWide
 
 /**
  * 小组件能力检测与系统跳转（DESIGN §3.6 设置页）。
@@ -113,7 +113,7 @@ internal data class WidgetEntry(
 )
 
 internal val widgetEntries = listOf(
-    WidgetEntry("2×2", "只显示正在上 / 下一节课", TodayWidgetReceiverSmall::class.java),
-    WidgetEntry("2×4", "下一节课 + 今日剩余列表", TodayWidgetReceiverTall::class.java),
+    WidgetEntry("2×2", "紧凑日期 + 正在上 / 下一节课", TodayWidgetReceiverSmall::class.java),
+    WidgetEntry("4×2", "日期 + 下一节课（横条）", TodayWidgetReceiverWide::class.java),
     WidgetEntry("4×4", "完整今日 + 明日预告", TodayWidgetReceiverLarge::class.java),
 )

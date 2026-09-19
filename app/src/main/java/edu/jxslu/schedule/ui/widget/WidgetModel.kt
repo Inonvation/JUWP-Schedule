@@ -89,17 +89,22 @@ data class WidgetSnapshot(
 /**
  * 尺寸档：小组件在桌面上实际占多大。
  *
- * 与 `res/xml/widget_info_*.xml` 的三个条目对应；[Wide] 是用户把 2×4 拉到横向后的档位，
- * 不是独立条目——但渲染要能承接，否则横条上只剩一个卡。
+ * 2026-09-19 起目录条目为 2×2 / 4×2 / 4×4（DESIGN §3.6），**所有档位都带日期行**
+ * ——包括 2×2（紧凑样式，课名让出一行）。[Tall] 不再是目录条目，保留给
+ * 「4×2 被竖向拉高」的形态兜底。
  */
 enum class WidgetSize(val maxRows: Int, val showTomorrow: Boolean, val showHeader: Boolean) {
-    /** 2×2：只放焦点课，连日期行都省（110dp 高放不下标题行 + 卡片）。 */
-    Small(maxRows = 0, showTomorrow = false, showHeader = false),
+    /** 2×2：紧凑日期行 + 焦点课（课名一行，地点/教师保留，长名截断）。 */
+    Small(maxRows = 0, showTomorrow = false, showHeader = true),
 
-    /** 4×2 横条：焦点 + 一行剩余。 */
-    Wide(maxRows = 1, showTomorrow = false, showHeader = true),
+    /**
+     * 4×2 横条：目录条目之一。110dp 高只放得下日期行 + 焦点卡
+     * （实测行高预算：日期 17dp + 焦点卡 ≈70dp ≈ 满格），剩余课程不放，
+     * 与 2×2 的差别是横向更宽、日期与焦点卡都更舒展。
+     */
+    Wide(maxRows = 0, showTomorrow = false, showHeader = true),
 
-    /** 2×4 竖条：焦点 + 三行剩余。 */
+    /** 2×4 竖条（4×2 竖向拉伸的兜底档）：焦点 + 三行剩余。 */
     Tall(maxRows = 3, showTomorrow = false, showHeader = true),
 
     /** 4×4：焦点 + 全部剩余 + 明日块。 */
@@ -121,10 +126,11 @@ data class WidgetModel(
 
 /**
  * 按可用宽高选档。分界取各条目默认 dp 的一半左右：
- * 2×2 默认 110dp、2×4 默认 110×250、4×4 默认 250×250。
+ * 2×2 默认 110×110、4×2 默认 250×110、4×4 默认 250×250、2×4（拉伸兜底）110×250。
  *
  * 国产 ROM 给的尺寸不一定对齐整数格位，因此按「够不够放」判，不要求精确等于某档；
- * 横条（宽 ≥ 2 格但高不足 2 格，即用户把 2×4 横向拉扁）走 [WidgetSize.Wide]。
+ * 横条（宽 ≥ 2 格但高不足 2 格）走 [WidgetSize.Wide]——它既是 4×2 条目的默认档，
+ * 也是竖条被横向拉扁后的落点。
  */
 fun widgetSizeFor(widthDp: Int, heightDp: Int): WidgetSize = when {
     heightDp < 180 -> if (widthDp >= 180) WidgetSize.Wide else WidgetSize.Small
@@ -140,7 +146,9 @@ fun WidgetSnapshot.forSize(size: WidgetSize): WidgetModel {
         header = header,
         focus = focus,
         rows = shown,
-        rowsMoreLabel = if (hidden > 0) "还有 $hidden 节" else null,
+        // maxRows = 0 的档位（2×2 / 4×2）整列都不放，「还有 N 节」也省——
+        // 一行提示挤不掉，信息以日期行 + 焦点卡为准
+        rowsMoreLabel = if (hidden > 0 && size.maxRows > 0) "还有 $hidden 节" else null,
         tomorrow = if (size.showTomorrow) tomorrow else null,
     )
 }

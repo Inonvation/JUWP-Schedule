@@ -109,13 +109,28 @@ class WidgetModelTest {
     }
 
     @Test
-    fun forSize_smallDropsRowsAndHeader() {
+    fun forSize_smallKeepsHeaderButDropsRows() {
         val courses = (1..3).map { course(it.toLong(), 1, 2) }
         val snapshot = buildWidgetSnapshot(stateAt(LocalTimeLike(7, 0), courses))
 
         val model = snapshot.forSize(WidgetSize.Small)
         assertEquals(0, model.rows.size)
-        assertTrue(model.rowsMoreLabel != null)
+        // 2×2 也带紧凑日期行（2026-09-19 起）；整列不放行时「还有 N 节」一并省掉
+        assertTrue(model.header.isNotBlank())
+        assertNull(model.rowsMoreLabel)
+    }
+
+    @Test
+    fun forSize_wideIsDatePlusFocusOnly() {
+        val courses = (1..3).map { course(it.toLong(), 1, 2) }
+        val snapshot = buildWidgetSnapshot(stateAt(LocalTimeLike(7, 0), courses))
+
+        // 4×2 目录条目：110dp 高放不下焦点卡之外的行
+        val model = snapshot.forSize(WidgetSize.Wide)
+        assertEquals(0, model.rows.size)
+        assertTrue(model.header.isNotBlank())
+        assertNull(model.rowsMoreLabel)
+        assertNull(model.tomorrow)
     }
 
     @Test
