@@ -207,6 +207,10 @@ fun JuwApp() {
                     onOpenTimetableManage = {
                         SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)
                     },
+                    // 导入图标有调课提醒气泡时（DESIGN §4.17），点击直达「更新课表」
+                    onOpenScheduleUpdate = {
+                        SubpageActivity.start(context, SubpageScreen.SCHEDULE_UPDATE)
+                    },
                     // 「我的 → 显示设置」跨 Tab 触发，弹出的面板与眼睛图标相同
                     // receiveAsFlow：WeekScreen 只需要消费事件；Channel 保证
                     // 订阅者出现前的事件不丢（SharedFlow replay=0 会直接丢）
@@ -236,6 +240,9 @@ fun JuwApp() {
                     },
                     onOpenCourseTweak = {
                         SubpageActivity.start(context, SubpageScreen.COURSE_TWEAK)
+                    },
+                    onOpenTweakDetect = {
+                        SubpageActivity.start(context, SubpageScreen.TWEAK_DETECT)
                     },
                     onOpenWidgetSettings = {
                         SubpageActivity.start(context, SubpageScreen.WIDGET_SETTINGS)

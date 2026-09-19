@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
+import edu.jxslu.schedule.domain.DetectFailurePolicy
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
@@ -106,6 +107,38 @@ data class DisplayPrefs(
     /** 今日页开水卡片显示开关（DESIGN §3.3 底部固定区）。默认开；关 = 不展示（含未登录态）。 */
     val waterCardEnabled: Boolean = true,
 )
+
+/**
+ * 调课自动检测的配置与运行状态（DESIGN §4.17）。功能默认关闭。
+ * 凭证本身不在这里——存 `jw_credentials.xml`（EncryptedSharedPreferences），
+ * 这里只存「有没有可用的凭证态」无关的配置与上次运行结果。
+ */
+data class DetectSettings(
+    /** 总开关；关闭 = 不检测、气泡与周期任务一并停。 */
+    val enabled: Boolean = false,
+    /** 检测周期（小时）。档位见 [DetectDefaults.PERIOD_HOURS]，默认 24 = 每天一次。 */
+    val periodHours: Int = 24,
+    /** 上次成功完成检测（含建基线）的时刻；0 = 从未。 */
+    val lastCheckedAt: Long = 0L,
+    /** 上次失败的说明；空串 = 无。 */
+    val lastError: String = "",
+    /** 连续凭证失败计数（登录成功即清零）；达上限触发 [disabled]。 */
+    val credentialFailures: Int = 0,
+    /** 连续凭证失败触发的自动停用；用户重新开启时清零。 */
+    val disabled: Boolean = false,
+)
+
+/** 检测周期档位与文案的单一来源（DESIGN §4.17：每天 / 每 3 天 / 每周）。 */
+object DetectDefaults {
+    val PERIOD_HOURS = listOf(24, 72, 168)
+
+    fun label(hours: Int): String = when (hours) {
+        24 -> "每天"
+        72 -> "每 3 天"
+        168 -> "每周"
+        else -> "每 $hours 小时"
+    }
+}
 
 // preferencesDataStore 是属性委托，必须用 by；一个文件只能声明一份，重复实例化同一文件会崩溃。
 private val Context.displayDataStore: DataStore<Preferences> by
@@ -306,6 +339,73 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_SCORE_SORT_MODE] = value.name }
     }
 
+    // ---- 调课自动检测（DESIGN §4.17） ----
+
+    val detectSettings: Flow<DetectSettings> = context.displayDataStore.data.map { p ->
+        DetectSettings(
+            enabled = p[KEY_DETECT_ENABLED] ?: false,
+            periodHours = p[KEY_DETECT_PERIOD_HOURS] ?: 24,
+            lastCheckedAt = p[KEY_DETECT_LAST_CHECKED_AT] ?: 0L,
+            lastError = p[KEY_DETECT_LAST_ERROR] ?: "",
+            credentialFailures = p[KEY_DETECT_CREDENTIAL_FAILURES] ?: 0,
+            disabled = p[KEY_DETECT_DISABLED] ?: false,
+        )
+    }
+
+    /** 开关总入口：重新开启时清掉自动停用标记与失败计数（DESIGN §4.17）。 */
+    suspend fun setDetectEnabled(value: Boolean) {
+        context.displayDataStore.edit {
+            it[KEY_DETECT_ENABLED] = value
+            if (value) {
+                it[KEY_DETECT_DISABLED] = false
+                it[KEY_DETECT_CREDENTIAL_FAILURES] = 0
+            }
+        }
+    }
+
+    suspend fun setDetectPeriodHours(hours: Int) {
+        context.displayDataStore.edit {
+            it[KEY_DETECT_PERIOD_HOURS] = DetectDefaults.PERIOD_HOURS
+                .minByOrNull { h -> kotlin.math.abs(h - hours) } ?: 24
+        }
+    }
+
+    /** 检测走完一次（建基线 / 无差异 / 出报告都算）：时间落库、错误与失败计数清零。 */
+    suspend fun recordDetectSuccess(at: Long) {
+        context.displayDataStore.edit {
+            it[KEY_DETECT_LAST_CHECKED_AT] = at
+            it[KEY_DETECT_LAST_ERROR] = ""
+            it[KEY_DETECT_CREDENTIAL_FAILURES] = 0
+        }
+    }
+
+    /** 检测完成了但有需要用户知情的事（如教务换学期）：时间推进，说明落 [lastError] 位展示。 */
+    suspend fun recordDetectNotice(at: Long, message: String) {
+        context.displayDataStore.edit {
+            it[KEY_DETECT_LAST_CHECKED_AT] = at
+            it[KEY_DETECT_LAST_ERROR] = message.take(200)
+            it[KEY_DETECT_CREDENTIAL_FAILURES] = 0
+        }
+    }
+
+    /**
+     * 检测失败落库。[credentialFailed] 为 true 时累加连续凭证失败计数，
+     * 达到 `DetectFailurePolicy.MAX_CREDENTIAL_FAILURES` 自动停用（防触发验证码锁号）。
+     */
+    suspend fun recordDetectFailure(message: String, credentialFailed: Boolean) {
+        context.displayDataStore.edit {
+            it[KEY_DETECT_LAST_ERROR] = message.take(200)
+            if (credentialFailed) {
+                val next = (it[KEY_DETECT_CREDENTIAL_FAILURES] ?: 0) + 1
+                it[KEY_DETECT_CREDENTIAL_FAILURES] = next
+                if (DetectFailurePolicy.shouldDisableAfterCredentialFailure(next)) {
+                    it[KEY_DETECT_DISABLED] = true
+                    it[KEY_DETECT_ENABLED] = false
+                }
+            }
+        }
+    }
+
     /**
      * 快捷方式统一写入口：读-改-写整个 JSON，同值跳写（口径同 [updateViewPrefs]）。
      * 编辑表单的保存/重置/调序都汇到这一个口，存储格式不外泄。
@@ -438,6 +538,14 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCORE_INCLUDE_FREE_ELECTIVES = booleanPreferencesKey("score_include_free_electives")
         val KEY_SCORE_GROUP_BY_YEAR = booleanPreferencesKey("score_group_by_year")
         val KEY_SCORE_SORT_MODE = stringPreferencesKey("score_sort_mode")
+
+        // ---- 调课自动检测（DESIGN §4.17；凭证不在这里，见 JwCredentialStore） ----
+        val KEY_DETECT_ENABLED = booleanPreferencesKey("tweak_detect_enabled")
+        val KEY_DETECT_PERIOD_HOURS = intPreferencesKey("tweak_detect_period_hours")
+        val KEY_DETECT_LAST_CHECKED_AT = longPreferencesKey("tweak_detect_last_checked_at")
+        val KEY_DETECT_LAST_ERROR = stringPreferencesKey("tweak_detect_last_error")
+        val KEY_DETECT_CREDENTIAL_FAILURES = intPreferencesKey("tweak_detect_credential_failures")
+        val KEY_DETECT_DISABLED = booleanPreferencesKey("tweak_detect_disabled")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

@@ -2,6 +2,8 @@ package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
+import edu.jxslu.schedule.data.local.DetectBaselineEntity
+import edu.jxslu.schedule.data.local.DetectReportEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.ScoreEntity
 import edu.jxslu.schedule.data.local.SemesterConfigEntity
@@ -12,7 +14,11 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
+import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
+import edu.jxslu.schedule.domain.DetectGroup
+import edu.jxslu.schedule.domain.DetectReportPayload
+import edu.jxslu.schedule.domain.DetectSnapshotPayload
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
@@ -722,6 +728,98 @@ class ScheduleRepository(
         if (merge) return mergeCourses(courses, timetableId)
         replaceAllCourses(courses, timetableId)
         return courses.size
+    }
+
+    // ------------------------------------------------------------------
+    // 调课自动检测（DESIGN §4.17）：基线 / 报告的读写与应用
+    // ------------------------------------------------------------------
+
+    /** 待处理的差异报告（unread）；课表页气泡、导入弹层的「检测课表更新」与通知都读它。 */
+    val pendingDetectReport: Flow<DetectReportPayload?> =
+        currentTimetableId.flatMapLatest { id ->
+            db.detectReportDao().observe(id).map { e ->
+                e?.takeIf { it.unread }?.let { DetectReportPayload.decode(it.payload) }
+            }
+        }.distinctUntilChanged()
+
+    suspend fun detectBaseline(timetableId: Long): DetectSnapshotPayload? =
+        db.detectBaselineDao().get(timetableId)?.let { DetectSnapshotPayload.decode(it.payload) }
+
+    /** 检测的本地侧：当前课表全量（含考试与自定义条目——三方合并按 kind+课程名配对，天然不受影响）。 */
+    suspend fun detectLocalCourses(timetableId: Long): List<Course> = getTimetableCourses(timetableId)
+
+    suspend fun saveDetectBaseline(timetableId: Long, payload: DetectSnapshotPayload) {
+        db.detectBaselineDao().upsert(
+            DetectBaselineEntity(
+                timetableId = timetableId,
+                term = payload.term ?: "",
+                payload = payload.encode(),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /**
+     * 教务导入确认落库后刷新基线（§4.4/§4.8 的确认弹窗路径都要调）：
+     * 「教务数据成为本地数据」就是基线的定义。考试与 JSON 导入不进来——
+     * 前者不参与检测，后者不是教务数据。
+     */
+    suspend fun refreshBaselineFromJwImport(timetableId: Long?, courses: List<Course>, term: String?) {
+        val ttId = timetableId ?: currentTimetableId.first()
+        val theory = courses.filter { it.kind == CourseKind.Theory }
+        val lab = courses.filter { it.kind == CourseKind.Lab }
+        if (theory.isEmpty() && lab.isEmpty()) return
+        saveDetectBaseline(ttId, DetectSnapshotPayload.fromCourses(term, theory, lab))
+    }
+
+    suspend fun saveDetectReport(timetableId: Long, payload: DetectReportPayload) {
+        db.detectReportDao().upsert(
+            DetectReportEntity.unread(timetableId, payload.encode(), System.currentTimeMillis()),
+        )
+    }
+
+    /** 应用/忽略报告后清气泡：内容保留，设置页状态区仍可回看。 */
+    suspend fun markDetectReportRead() {
+        db.detectReportDao().markRead(currentTimetableId.first())
+    }
+
+    /** 清掉当前课表的检测数据（关闭功能/删除课表时；基线一并清，下次开启重建）。 */
+    suspend fun clearDetectData(timetableId: Long? = null) {
+        val ttId = timetableId ?: currentTimetableId.first()
+        db.detectBaselineDao().delete(ttId)
+        db.detectReportDao().delete(ttId)
+    }
+
+    /**
+     * 应用「更新课表」页勾选的差异（DESIGN §4.17）。一个事务内完成：
+     * 每个勾选组删掉本地该 (kind, 课程名) 的全部行 → 插入教务侧行
+     * （沿用被替换第一行的配色，纯新增课走 nextColorIndex；教务停课组只删不插），
+     * 并把基线**整体推进**为报告里的教务全量快照——只勾一部分时，未勾选的组
+     * 视为用户默许忽略，下次检测不再报；「忽略本次」整个不动（见 UI 层）。
+     */
+    suspend fun applyDetectGroups(groups: List<DetectGroup>, report: DetectReportPayload) {
+        if (groups.isEmpty()) return
+        val ttId = currentTimetableId.first()
+        db.withTransaction {
+            val all = getTimetableCourses(ttId)
+            val used = all.map { it.colorIndex }.toMutableList()
+            val deleteIds = mutableListOf<Long>()
+            val inserts = mutableListOf<CourseEntity>()
+            for (group in groups) {
+                val replaced = all.filter { it.kind == group.kind && it.name == group.name }
+                deleteIds += replaced.map { it.id }
+                val color = replaced.firstOrNull()?.colorIndex
+                    ?: ScheduleCalculator.nextColorIndex(used)
+                used += color
+                inserts += group.remoteCourses.map {
+                    CourseEntity.fromDomain(it.copy(id = 0, colorIndex = color)).copy(timetableId = ttId)
+                }
+            }
+            if (deleteIds.isNotEmpty()) db.courseDao().deleteByIds(deleteIds)
+            if (inserts.isNotEmpty()) db.courseDao().insertAll(inserts)
+            saveDetectBaseline(ttId, report.snapshot)
+            db.detectReportDao().markRead(ttId)
+        }
     }
 
     /**

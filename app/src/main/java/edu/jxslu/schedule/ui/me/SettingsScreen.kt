@@ -52,6 +52,7 @@ import me.rerere.hugeicons.stroke.Import
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Layout2Row
 import me.rerere.hugeicons.stroke.Palette
+import me.rerere.hugeicons.stroke.Radar01
 import me.rerere.hugeicons.stroke.Vibrate
 
 /** 公开仓库地址（MIT）；「开源仓库」点击后经系统浏览器打开。 */
@@ -93,6 +94,8 @@ fun SettingsScreen(
     onOpenReminderSettings: () -> Unit = {},
     onOpenShortcuts: () -> Unit = {},
     onOpenWater: () -> Unit = {},
+    /** 我的 → 调课自动检测设置（DESIGN §4.17） */
+    onOpenTweakDetect: () -> Unit = {},
     /** 胖乖登录态（由外层传入，仅决定开水行文案）；登录/退出在开水页内完成 */
     waterLoggedIn: Boolean = false,
     viewModel: MeViewModel = viewModel(
@@ -205,6 +208,13 @@ fun SettingsScreen(
                     subtitle = "把某天的课调到另一天",
                     icon = HugeIcons.CalendarSync,
                     onClick = onOpenCourseTweak,
+                )
+                // 调课自动检测设置（DESIGN §4.17）：默认关闭；手动检测在课表页导入弹层
+                SettingItem(
+                    title = "调课自动检测",
+                    subtitle = "自动登录教务比对课表 · 默认关闭",
+                    icon = HugeIcons.Radar01,
+                    onClick = onOpenTweakDetect,
                 )
                 SettingItem(
                     title = "上课提醒",

@@ -2,6 +2,7 @@ package edu.jxslu.schedule
 
 import android.content.Context
 import edu.jxslu.schedule.data.local.JuwDatabase
+import edu.jxslu.schedule.data.jw.JwCredentialStore
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
@@ -21,6 +22,15 @@ object Graph {
 
     @Volatile
     private var scoreRepository: ScoreRepository? = null
+
+    @Volatile
+    private var jwCredentialStore: JwCredentialStore? = null
+
+    /** 教务登录凭证存储单例（DESIGN §4.17）：EncryptedSharedPreferences 创建有开销，进程内一份。 */
+    fun jwCredentialStore(context: Context): JwCredentialStore =
+        jwCredentialStore ?: synchronized(this) {
+            jwCredentialStore ?: JwCredentialStore(context.applicationContext).also { jwCredentialStore = it }
+        }
 
     /** 显示偏好用 applicationContext 建，保证与 Activity 生命周期无关。 */
     fun displayPrefs(context: Context): DisplayPrefsStore =

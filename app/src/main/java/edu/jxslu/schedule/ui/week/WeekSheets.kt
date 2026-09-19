@@ -39,6 +39,7 @@ import me.rerere.hugeicons.stroke.File02
 import me.rerere.hugeicons.stroke.FileExport
 import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.Import
+import me.rerere.hugeicons.stroke.RefreshCcwDot
 import me.rerere.hugeicons.stroke.CalendarSync
 
 /**
@@ -178,10 +179,14 @@ private fun WeekChip(
 }
 
 /**
- * 课表页顶栏「导入」入口弹层：手动加课 / JSON 文件 / 教务导入。
+ * 课表页顶栏「导入」入口弹层：手动加课 / JSON 文件 / 教务导入 / 检测课表更新。
  *
  * 根因：此前三种导入散在三处（+ 图标只管加课、JSON 在「我的」页深处、教务导入靠空态提示），
  * 新用户拿到空课表找不到入口。收进一个弹层后，导入路径都在课表页顶栏一眼可见。
+ *
+ * 「检测课表更新」（DESIGN §4.17）2026-09-19 从「我的」页迁来：手动检测与导入同属
+ * 「把教务数据弄进来」这一类动作，放同一弹层里用户不必跨页找；[detectChecking] 为 true 时
+ * 该行文案变「正在检测…」且不可点——网络操作 1–3 秒，行内反馈足够，不弹进度框。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -189,6 +194,10 @@ fun ImportEntrySheet(
     onManualAdd: () -> Unit,
     onJsonImport: () -> Unit,
     onJwImport: () -> Unit,
+    /** 手动检测调课（DESIGN §4.17）；无差异 Snackbar、有差异进「更新课表」 */
+    onDetectUpdate: () -> Unit,
+    /** 检测进行中：行内文案切换 + 防重复点击 */
+    detectChecking: Boolean,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -221,6 +230,15 @@ fun ImportEntrySheet(
                 title = "从教务导入",
                 subtitle = "登录教务系统，解析学期理论 / 实验课表",
                 onClick = onJwImport,
+            )
+            ImportEntryRow(
+                icon = {
+                    Icon(HugeIcons.RefreshCcwDot, contentDescription = null, modifier = Modifier.size(22.dp))
+                },
+                title = if (detectChecking) "正在检测…" else "检测课表更新",
+                subtitle = "按教务最新课表检查是否被调课",
+                enabled = !detectChecking,
+                onClick = onDetectUpdate,
             )
         }
     }
@@ -280,13 +298,16 @@ private fun ImportEntryRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
+    /** false = 进行中/不可点：文案照常显示，点击与按压反馈一起禁用 */
+    enabled: Boolean = true,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
+    val contentAlpha = if (enabled) 1f else 0.4f
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 4.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -295,7 +316,7 @@ private fun ImportEntryRow(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f * contentAlpha)),
             contentAlignment = Alignment.Center,
         ) {
             icon()
@@ -305,12 +326,12 @@ private fun ImportEntryRow(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
-                color = onSurface,
+                color = onSurface.copy(alpha = contentAlpha),
             )
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
+                color = onSurface.copy(alpha = 0.55f * contentAlpha),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

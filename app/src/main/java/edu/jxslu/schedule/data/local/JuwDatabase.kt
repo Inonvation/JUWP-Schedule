@@ -16,8 +16,10 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         TimeSlotEntity::class,
         SemesterConfigEntity::class,
         ScoreEntity::class,
+        DetectBaselineEntity::class,
+        DetectReportEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -27,6 +29,8 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun timeSlotDao(): TimeSlotDao
     abstract fun semesterConfigDao(): SemesterConfigDao
     abstract fun scoreDao(): ScoreDao
+    abstract fun detectBaselineDao(): DetectBaselineDao
+    abstract fun detectReportDao(): DetectReportDao
 
     companion object {
 
@@ -142,6 +146,32 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 → v5：调课自动检测（DESIGN §4.17）。
+         * 新表 `detect_baselines`（教务基线快照）与 `detect_reports`（最新差异报告），
+         * 都按 timetableId 主键、每课表一份；CREATE TABLE 非 destructive。
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS detect_baselines (" +
+                        "timetableId INTEGER NOT NULL, " +
+                        "term TEXT NOT NULL, " +
+                        "payload TEXT NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(timetableId))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS detect_reports (" +
+                        "timetableId INTEGER NOT NULL, " +
+                        "payload TEXT NOT NULL, " +
+                        "unread INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(timetableId))",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -152,7 +182,7 @@ abstract class JuwDatabase : RoomDatabase() {
                     JuwDatabase::class.java,
                     "juw_schedule.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { instance = it }
             }

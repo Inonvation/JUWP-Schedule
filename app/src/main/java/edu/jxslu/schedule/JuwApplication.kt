@@ -1,12 +1,14 @@
 package edu.jxslu.schedule
 
 import android.app.Application
+import edu.jxslu.schedule.data.jw.JwDetectScheduler
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class JuwApplication : Application() {
@@ -27,6 +29,18 @@ class JuwApplication : Application() {
             // 提醒关/无课时 scheduleNext 内部是撤销闹钟的空跑，很廉价。
             ClassReminder.scheduleNext(this@JuwApplication)
             ClassReminder.ensurePeriodicWork(this@JuwApplication)
+            // 调课自动检测（DESIGN §4.17）：周期任务按当前设置重排（开→排/关→撤），
+            // 距上次检测超过一个周期时冷启动立即补测一次（兜 WorkManager 被 ROM 推迟）。
+            // 功能默认关闭，关闭态下这两步都是零成本空跑。
+            val detectPrefs = Graph.displayPrefs(this@JuwApplication)
+            val detectSettings = detectPrefs.detectSettings.first()
+            JwDetectScheduler.ensurePeriodicWork(this@JuwApplication, detectSettings)
+            val detectOverdue = detectSettings.lastCheckedAt == 0L ||
+                System.currentTimeMillis() - detectSettings.lastCheckedAt >
+                detectSettings.periodHours * 3_600_000L
+            if (detectSettings.enabled && !detectSettings.disabled && detectOverdue) {
+                JwDetectScheduler.enqueueOneTime(this@JuwApplication)
+            }
         }
         // 课表数据一变就推给桌面：用户在 App 里改完课，回桌面立刻是新内容，
         // 不必等下一个 15 分钟兜底。flows 本身是 Room 驱动，只在真实写库时发射，无轮询。

@@ -29,7 +29,7 @@
 | AGP | **8.7.3** |
 | Kotlin | **2.1.21**（+ compose / serialization / KSP 同版本） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
-| Room DB | **v4**：v2 加 `courses.kind`（理论/实验），v3 加多课表（`timetables` 表 + `courses.timetableId`），v4 加成绩表 `scores`。逐级 `ALTER TABLE`/`CREATE TABLE`，**禁止**改 destructive |
+| Room DB | **v5**：v2 加 `courses.kind`（理论/实验），v3 加多课表（`timetables` 表 + `courses.timetableId`），v4 加成绩表 `scores`，v5 加调课检测（`detect_baselines`/`detect_reports`）。逐级 `ALTER TABLE`/`CREATE TABLE`，**禁止**改 destructive |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN 3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**） |
@@ -61,8 +61,10 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `WidgetModelTest`（小组件快照口径与尺寸裁剪）、`ExamMapperTest`（考试→课条目映射，含历史学期估算）、
 `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 解析）、`ScoreCalculatorTest`（学期/学年汇总）、
 `ScoreGroupsTest`（成绩学年分组与年级标签）、
-`ShortcutsTest`（快捷方式：拉起口径/表单校验/预设表/JSON 兜底/列表操作）
-等 30 个测试类。
+`ShortcutsTest`（快捷方式：拉起口径/表单校验/预设表/JSON 兜底/列表操作）、
+`ScheduleDetectTest`（调课检测三方合并：归因/冲突/调课不误报/序列化 roundtrip）、
+`JwHttpSessionTest`（检测登录链路：重定向解析参数顺序、IPv4 优先 DNS）
+等 32 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` 恒为 1，不能当星期来源。
@@ -137,7 +139,8 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 ```
 MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity 承载二级页（含成绩查询 SCORES）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score（纯逻辑，可 JVM 测）
-data/local/      Room v4：courses / time_slots / semester_config / timetables / scores
+data/local/      Room v5：courses / time_slots / semester_config / timetables / scores
+                 / detect_baselines / detect_reports（调课检测，DESIGN §4.17）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）

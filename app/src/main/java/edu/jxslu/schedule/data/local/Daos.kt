@@ -130,3 +130,39 @@ interface ScoreDao {
     @Query("DELETE FROM scores")
     suspend fun deleteAll()
 }
+
+/** 调课自动检测的基线快照（DESIGN §4.17）：每课表一份，upsert 整体替换。 */
+@Dao
+interface DetectBaselineDao {
+    @Query("SELECT * FROM detect_baselines WHERE timetableId = :timetableId")
+    suspend fun get(timetableId: Long): DetectBaselineEntity?
+
+    @Upsert
+    suspend fun upsert(baseline: DetectBaselineEntity)
+
+    @Query("DELETE FROM detect_baselines WHERE timetableId = :timetableId")
+    suspend fun delete(timetableId: Long)
+
+    @Query("DELETE FROM detect_baselines")
+    suspend fun deleteAll()
+}
+
+/** 调课自动检测的最新差异报告（DESIGN §4.17）：每课表一份，气泡与入口读 `unread`。 */
+@Dao
+interface DetectReportDao {
+    @Query("SELECT * FROM detect_reports WHERE timetableId = :timetableId")
+    suspend fun get(timetableId: Long): DetectReportEntity?
+
+    @Query("SELECT * FROM detect_reports WHERE timetableId = :timetableId")
+    fun observe(timetableId: Long): Flow<DetectReportEntity?>
+
+    @Upsert
+    suspend fun upsert(report: DetectReportEntity)
+
+    /** 应用/忽略后清气泡：只清标记，报告内容保留（设置页状态区可回看）。 */
+    @Query("UPDATE detect_reports SET unread = 0 WHERE timetableId = :timetableId")
+    suspend fun markRead(timetableId: Long)
+
+    @Query("DELETE FROM detect_reports WHERE timetableId = :timetableId")
+    suspend fun delete(timetableId: Long)
+}

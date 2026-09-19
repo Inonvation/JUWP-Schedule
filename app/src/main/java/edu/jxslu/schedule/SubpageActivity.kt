@@ -14,6 +14,8 @@ import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.ShortcutSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
 import edu.jxslu.schedule.ui.me.WidgetSettingsScreen
+import edu.jxslu.schedule.ui.detect.ScheduleUpdateScreen
+import edu.jxslu.schedule.ui.detect.TweakDetectScreen
 import edu.jxslu.schedule.ui.score.ScoreScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
@@ -41,6 +43,10 @@ enum class SubpageScreen {
     SHORTCUTS,
     /** 我的 → 成绩查询（按学期存储，DESIGN §4.15） */
     SCORES,
+    /** 我的 → 调课自动检测（开关 · 周期 · 凭证，DESIGN §4.17） */
+    TWEAK_DETECT,
+    /** 调课检测的「更新课表」页（差异勾选合并流程，DESIGN §4.17；通知与气泡直达） */
+    SCHEDULE_UPDATE,
 }
 
 /**
@@ -88,6 +94,11 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SHORTCUTS ->
                 ShortcutSettingsScreen(onBack = onBack, focusItemId = focusItemId)
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
+            SubpageScreen.TWEAK_DETECT -> TweakDetectScreen(
+                onBack = onBack,
+                onOpenScheduleUpdate = { SubpageActivity.start(this, SubpageScreen.SCHEDULE_UPDATE) },
+            )
+            SubpageScreen.SCHEDULE_UPDATE -> ScheduleUpdateScreen(onBack = onBack)
         }
     }
 
@@ -102,13 +113,16 @@ class SubpageActivity : ComponentActivity() {
         private const val EXTRA_SCREEN = "screen"
         private const val EXTRA_FOCUS_ITEM = "focus_item"
 
+        /** 通知 PendingIntent 用：只构造意图，不启动（start 里的窗口动画对非 Activity 无意义）。 */
+        fun intent(context: Context, screen: SubpageScreen): Intent =
+            Intent(context, SubpageActivity::class.java).putExtra(EXTRA_SCREEN, screen.name)
+
         /**
          * [focusItemId] 只对 [SubpageScreen.SHORTCUTS] 生效：非空时设置页打开后
          * 直接展开该条目的编辑弹层（Snackbar「去设置」的就近修正闭环）。
          */
         fun start(context: Context, screen: SubpageScreen, focusItemId: String? = null) {
-            val intent = Intent(context, SubpageActivity::class.java)
-                .putExtra(EXTRA_SCREEN, screen.name)
+            val intent = intent(context, screen)
             if (focusItemId != null) intent.putExtra(EXTRA_FOCUS_ITEM, focusItemId)
             context.startActivity(intent)
             // 新窗口从右缘推入；退场传 0 = 主窗口原地不动，被覆盖而非被推走。

@@ -912,6 +912,11 @@ fun JwImportScreen(
                         courses
                     }
                     val imported = repo.importParsedCourses(toImport, merge, targetId)
+                    // 教务数据成为本地数据 → 检测基线随之推进（DESIGN §4.17）；
+                    // 考试条目不参与检测，仓库侧过滤，只有理论/实验导入才动基线
+                    if (examDraft == null) {
+                        repo.refreshBaselineFromJwImport(targetId, toImport, draft.term)
+                    }
                     // 导入到非当前课表后切过去，返回主界面直接看到结果
                     repo.setCurrentTimetable(targetId)
                     // 终态反馈后再返回（DESIGN §3.3）：此前导入成功直接 onBack，
