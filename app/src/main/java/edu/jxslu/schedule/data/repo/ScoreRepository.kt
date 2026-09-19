@@ -3,9 +3,7 @@ package edu.jxslu.schedule.data.repo
 import androidx.room.withTransaction
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.ScoreEntity
-import edu.jxslu.schedule.domain.ScoreCalculator
 import edu.jxslu.schedule.domain.ScoreRecord
-import edu.jxslu.schedule.domain.TermSummary
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -25,17 +23,9 @@ class ScoreRepository(private val db: JuwDatabase) {
     fun observeForTerm(term: String): Flow<List<ScoreRecord>> =
         dao.observeForTerm(term).map { list -> list.map { it.toDomain() } }
 
-    /** 全部成绩按学期分组（汇总页/备份用）。 */
+    /** 全部成绩按学期分组（成绩页两个分组视图共用）。 */
     fun observeAllGroupedByTerm(): Flow<Map<String, List<ScoreRecord>>> =
         dao.observeAll().map { list -> list.map { it.toDomain() }.groupBy { it.term } }
-
-    /** 各学期汇总（列表按学期倒序排列）。 */
-    fun observeSummaries(): Flow<List<TermSummary>> =
-        observeAllGroupedByTerm().map { grouped ->
-            grouped.entries
-                .map { (term, records) -> ScoreCalculator.summarize(term, records) }
-                .filterNotNull()
-        }
 
     /** 按学期替换：该学期先删后插，importedAt 统一取本次导入时间。 */
     suspend fun replaceTerm(term: String, records: List<ScoreRecord>) {

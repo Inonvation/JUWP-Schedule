@@ -41,6 +41,10 @@ interface CourseDao {
 
     @Query("SELECT COUNT(*) FROM courses WHERE timetableId = :timetableId")
     suspend fun countForTimetable(timetableId: Long): Int
+
+    /** 课程数观察流：课表设置页目标信息行（DESIGN §4.9）。 */
+    @Query("SELECT COUNT(*) FROM courses WHERE timetableId = :timetableId")
+    fun observeCountForTimetable(timetableId: Long): Flow<Int>
 }
 
 @Dao
@@ -112,6 +116,10 @@ interface ScoreDao {
 
     @Query("SELECT * FROM scores WHERE term = :term")
     suspend fun getForTerm(term: String): List<ScoreEntity>
+
+    /** 备份导出用全量快照（DESIGN §4.3）。 */
+    @Query("SELECT * FROM scores ORDER BY term DESC")
+    suspend fun getAll(): List<ScoreEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(scores: List<ScoreEntity>)

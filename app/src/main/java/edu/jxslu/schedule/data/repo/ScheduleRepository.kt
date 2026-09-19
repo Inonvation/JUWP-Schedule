@@ -3,6 +3,7 @@ package edu.jxslu.schedule.data.repo
 import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
+import edu.jxslu.schedule.data.local.ScoreEntity
 import edu.jxslu.schedule.data.local.SemesterConfigEntity
 import edu.jxslu.schedule.data.local.TimeSlotEntity
 import edu.jxslu.schedule.data.local.TimetableEntity
@@ -15,6 +16,7 @@ import edu.jxslu.schedule.domain.CourseTweaker
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
+import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
@@ -75,6 +77,95 @@ data class CourseExport(
     val courses: List<CourseJson> = emptyList(),
     /** 数据所属学年学期（如 2026-2027-1），来自教务/脚本导出；旧文件或手工编辑没有则缺省。 */
     val term: String? = null,
+    /**
+     * 成绩备份段（DESIGN §4.3/§4.15）：换机/重装随课表一起恢复。
+     * 读取侧 ignoreUnknownKeys——旧版 App 忽略该段、新版读旧文件缺省为空，两版互不破坏。
+     */
+    val scores: List<ScoreBackupJson> = emptyList(),
+    /**
+     * 学期配置备份段（DESIGN §4.3）：导出当前课表、导入恢复到目标课表。
+     * 旧文件没有此键 → 不动目标课表的学期配置。
+     */
+    val semester: SemesterBackupJson? = null,
+    /**
+     * 作息备份段（DESIGN §4.3）：一条一个 40 分钟小节（小节号口径 §3.5）。
+     * 旧文件没有此键 → 不动目标课表的作息。
+     */
+    val timeSlots: List<TimeSlotBackupJson> = emptyList(),
+)
+
+/**
+ * 备份文件里的单条成绩。字段与 [ScoreRecord] 对齐、全带默认值：
+ * 手工编辑或旧格式缺字段时降级为空值而不是解码失败。
+ */
+/** 备份文件里的学期配置段（DESIGN §4.3）：全带默认值，异构文件缺字段时降级而不是解码失败。 */
+@Serializable
+data class SemesterBackupJson(
+    /** yyyy-MM-dd。 */
+    val startDate: String = "",
+    val totalWeeks: Int = 20,
+    val firstDayOfWeek: Int = 1,
+)
+
+/** 备份文件里的作息段：一条一个 40 分钟小节（小节号口径见 DESIGN §3.5）。 */
+@Serializable
+data class TimeSlotBackupJson(
+    val number: Int,
+    val startTime: String = "",
+    val endTime: String = "",
+)
+
+@Serializable
+data class ScoreBackupJson(
+    val term: String = "",
+    val courseNo: String = "",
+    val name: String = "",
+    val unit: String = "",
+    val credit: Double = 0.0,
+    val hours: Double = 0.0,
+    val examForm: String = "",
+    val courseAttr: String = "",
+    val category: String = "",
+    /** 数值分；等级制成绩为 null。 */
+    val score: Double? = null,
+    val scoreStr: String = "",
+    val gradePoint: Double? = null,
+    val status: String = "",
+    val pendingReview: Boolean = false,
+)
+
+fun ScoreBackupJson.toScoreRecord(): ScoreRecord = ScoreRecord(
+    term = term.trim(),
+    courseNo = courseNo,
+    name = name,
+    unit = unit,
+    credit = credit,
+    hours = hours,
+    examForm = examForm,
+    courseAttr = courseAttr,
+    category = category,
+    score = score,
+    scoreStr = scoreStr,
+    gradePoint = gradePoint,
+    status = status,
+    pendingReview = pendingReview,
+)
+
+fun ScoreRecord.toBackupJson(): ScoreBackupJson = ScoreBackupJson(
+    term = term,
+    courseNo = courseNo,
+    name = name,
+    unit = unit,
+    credit = credit,
+    hours = hours,
+    examForm = examForm,
+    courseAttr = courseAttr,
+    category = category,
+    score = score,
+    scoreStr = scoreStr,
+    gradePoint = gradePoint,
+    status = status,
+    pendingReview = pendingReview,
 )
 
 /**
@@ -131,6 +222,7 @@ class ScheduleRepository(
         val dynamicColor: Boolean,
         val haptics: Boolean,
         val waterDouble: Boolean,
+        val waterCard: Boolean,
     )
 
     // ------------------------------------------------------------------
@@ -177,14 +269,15 @@ class ScheduleRepository(
      * 对 UI 仍暴露合并后的 [DisplayPrefs]，调用点签名与分层时期一致。
      */
     val displayPrefs: Flow<DisplayPrefs> = combine(
-        // 全局项先合成一层：combine 的类型安全重载最多 5 参，全局项再加就得收拢
+        // 全局项先合成一层：combine 的类型安全重载最多 5 参，全局项已满员
         combine(
             prefs.themeMode,
             prefs.dynamicColor,
             prefs.hapticsEnabled,
             prefs.waterRequireDoubleClick,
-        ) { theme, dynamicColor, haptics, waterDouble ->
-            GlobalPrefs(theme, dynamicColor, haptics, waterDouble)
+            prefs.waterCardEnabled,
+        ) { theme, dynamicColor, haptics, waterDouble, waterCard ->
+            GlobalPrefs(theme, dynamicColor, haptics, waterDouble, waterCard)
         },
         prefs.viewPrefs,
     ) { global, p ->
@@ -194,6 +287,7 @@ class ScheduleRepository(
             dynamicColor = global.dynamicColor,
             hapticsEnabled = global.haptics,
             waterRequireDoubleClick = global.waterDouble,
+            waterCardEnabled = global.waterCard,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
             showSaturday = p.showSaturday,
@@ -240,6 +334,9 @@ class ScheduleRepository(
 
     // 快捷方式（DESIGN §4.16）：开关与条目列表统一走 store 的 updateShortcuts
     suspend fun setShortcutsEnabled(value: Boolean) = prefs.setShortcutsEnabled(value)
+
+    /** 今日页开水卡片开关（DESIGN §3.3 底部固定区）。 */
+    suspend fun setWaterCardEnabled(value: Boolean) = prefs.setWaterCardEnabled(value)
 
     suspend fun updateShortcuts(transform: (List<ShortcutItem>) -> List<ShortcutItem>) =
         prefs.updateShortcuts(transform)
@@ -664,11 +761,29 @@ class ScheduleRepository(
         }
     }
 
-    suspend fun updateSemester(config: SemesterConfig) {
-        db.semesterConfigDao().upsert(
-            SemesterConfigEntity.fromDomain(currentTimetableId.first(), config),
-        )
+    /**
+     * 写**指定课表**的学期配置（DESIGN §4.9）：课表设置页可切换编辑目标，
+     * 不再隐式只写当前课表。
+     */
+    suspend fun updateSemesterFor(timetableId: Long, config: SemesterConfig) {
+        db.semesterConfigDao().upsert(SemesterConfigEntity.fromDomain(timetableId, config))
     }
+
+    /**
+     * 指定课表的学期配置（DESIGN §4.14）：考试导入在确认弹窗选定目标课后，
+     * 用**目标课表**的开学日重算周次——多课表各有自己的开学日，站在 A 课表
+     * 把考试导进 B 课表时只有按 B 定位才落得准。
+     */
+    suspend fun semesterFor(timetableId: Long): SemesterConfig? =
+        db.semesterConfigDao().getForTimetable(timetableId)?.toDomain()
+
+    /** 指定课表学期配置的观察流：课表设置子页切换目标后实时跟随（DESIGN §4.9）。 */
+    fun observeSemesterFor(timetableId: Long): Flow<SemesterConfig?> =
+        db.semesterConfigDao().observeForTimetable(timetableId).map { it?.toDomain() }
+
+    /** 指定课表的课程数观察流：课表设置页目标信息行（DESIGN §4.9）。 */
+    fun observeCourseCountFor(timetableId: Long): Flow<Int> =
+        db.courseDao().observeCountForTimetable(timetableId)
 
     fun coursesForWeek(week: Int): Flow<List<Course>> =
         courses.map { ScheduleCalculator.coursesInWeek(it, week) }
@@ -725,7 +840,20 @@ class ScheduleRepository(
                 kind = it.kind.name.lowercase(),
             )
         }
-        return json.encodeToString(CourseExport.serializer(), CourseExport(courses))
+        // 成绩全局归属学生（DESIGN §4.15），随备份一起带走；timetableId 不影响它
+        val scores = db.scoreDao().getAll().map { it.toDomain().toBackupJson() }
+        // 学期配置与作息按课表（DESIGN §4.3）：导出的就是这份课表的时间口径，恢复时跟课表走
+        val ttId = timetableId ?: currentTimetableId.first()
+        val semester = db.semesterConfigDao().getForTimetable(ttId)?.toDomain()?.let {
+            SemesterBackupJson(it.startDate, it.totalWeeks, it.firstDayOfWeek)
+        }
+        val slots = db.timeSlotDao().getForTimetable(ttId).map {
+            TimeSlotBackupJson(it.number, it.startTime, it.endTime)
+        }
+        return json.encodeToString(
+            CourseExport.serializer(),
+            CourseExport(courses = courses, scores = scores, semester = semester, timeSlots = slots),
+        )
     }
 
     /**
@@ -746,6 +874,7 @@ class ScheduleRepository(
     /**
      * 导入 JSON 到指定课表（null = 当前课表）。
      * 目标选择与覆盖/合并由 UI 弹窗强制确定（DESIGN §4.9），本方法只负责校验与写库。
+     * 文件携带成绩段时**整体替换**现有成绩（先清后插，DESIGN §4.3）；空段/缺段不动成绩。
      */
     suspend fun importJson(text: String, merge: Boolean, timetableId: Long? = null): ImportResult {
         val export = try {
@@ -761,13 +890,79 @@ class ScheduleRepository(
             val err = validateCourseJson(index, c)
             if (err != null) return ImportResult.Failure(err)
         }
+        // 成绩在校验阶段一并挡下：课程写了一半才发现成绩段脏数据，等于留下半套备份
+        val scoreRecords = export.scores.map { it.toScoreRecord() }
+        scoreRecords.forEachIndexed { index, s ->
+            if (s.term.isBlank() || s.name.isBlank()) {
+                return ImportResult.Failure("第 ${index + 1} 条成绩缺少 term 或 name")
+            }
+        }
+        // 学期/作息段同样先全量校验（DESIGN §4.3）：宁可整体拒绝，不留「课程对了时间错」的半套
+        val backupSemester = export.semester?.let { s ->
+            val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
+                ?: return ImportResult.Failure("备份里的开学日期格式不正确：${s.startDate}")
+            SemesterConfig(date.toString(), s.totalWeeks.coerceIn(1, 30), s.firstDayOfWeek)
+        }
+        val backupSlots = export.timeSlots.map { TimeSlot(it.number, it.startTime, it.endTime) }
+        if (backupSlots.isNotEmpty()) {
+            TimeSlotRules.validate(backupSlots)?.let {
+                return ImportResult.Failure("备份里的作息表有问题：$it")
+            }
+        }
         val domain = courses.map { it.toDomain() }
+        val restoredScores = if (scoreRecords.isEmpty()) {
+            0
+        } else {
+            db.withTransaction {
+                db.scoreDao().deleteAll()
+                db.scoreDao().insertAll(
+                    scoreRecords.map { ScoreEntity.fromDomain(it, System.currentTimeMillis()) },
+                )
+            }
+            scoreRecords.size
+        }
+        // 配置恢复到**目标课表**（与课程同落点）；恢复作息视为用户数据，置位防结构性迁移覆盖
+        val ttId = timetableId ?: currentTimetableId.first()
+        var restoredSemester = false
+        var restoredSlots = 0
+        if (backupSemester != null || backupSlots.isNotEmpty()) {
+            db.withTransaction {
+                if (backupSemester != null) {
+                    db.semesterConfigDao().upsert(SemesterConfigEntity.fromDomain(ttId, backupSemester))
+                    restoredSemester = true
+                }
+                if (backupSlots.isNotEmpty()) {
+                    db.timeSlotDao().clearForTimetable(ttId)
+                    db.timeSlotDao().upsertAll(
+                        backupSlots.map { TimeSlotEntity(ttId, it.number, it.startTime, it.endTime) },
+                    )
+                    db.timetableDao().getById(ttId)?.let {
+                        db.timetableDao().upsert(it.copy(slotsCustomized = true))
+                    }
+                    restoredSlots = backupSlots.size
+                }
+            }
+        }
         return if (merge) {
             val added = mergeCourses(domain, timetableId)
-            ImportResult.Success(added = added, total = domain.size, merge = true)
+            ImportResult.Success(
+                added = added,
+                total = domain.size,
+                merge = true,
+                restoredScores = restoredScores,
+                restoredSemester = restoredSemester,
+                restoredSlots = restoredSlots,
+            )
         } else {
             replaceAllCourses(domain, timetableId)
-            ImportResult.Success(added = domain.size, total = domain.size, merge = false)
+            ImportResult.Success(
+                added = domain.size,
+                total = domain.size,
+                merge = false,
+                restoredScores = restoredScores,
+                restoredSemester = restoredSemester,
+                restoredSlots = restoredSlots,
+            )
         }
     }
 
@@ -785,10 +980,26 @@ class ScheduleRepository(
             validateCourseJson(index, c)?.let { return ImportPreview.Error(it) }
         }
         val domain = export.courses.map { it.toDomain() }
+        val scores = export.scores.map { it.toScoreRecord() }
+        // 学期/作息段也先验一遍（与 importJson 同口径）：弹窗阶段就把坏备份挡下
+        val backupSemester = export.semester?.let { s ->
+            val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
+                ?: return ImportPreview.Error("备份里的开学日期格式不正确：${s.startDate}")
+            SemesterConfig(date.toString(), s.totalWeeks.coerceIn(1, 30), s.firstDayOfWeek)
+        }
+        val backupSlots = export.timeSlots.map { TimeSlot(it.number, it.startTime, it.endTime) }
+        if (backupSlots.isNotEmpty()) {
+            TimeSlotRules.validate(backupSlots)?.let {
+                return ImportPreview.Error("备份里的作息表有问题：$it")
+            }
+        }
         return ImportPreview.Ok(
             courses = domain,
             sample = domain.take(5).joinToString { it.name },
             term = export.term?.takeIf { it.isNotBlank() },
+            scores = scores,
+            semester = backupSemester,
+            slotCount = backupSlots.size,
         )
     }
 
@@ -819,7 +1030,17 @@ class ScheduleRepository(
 }
 
 sealed interface ImportResult {
-    data class Success(val added: Int, val total: Int, val merge: Boolean) : ImportResult
+    data class Success(
+        val added: Int,
+        val total: Int,
+        val merge: Boolean,
+        /** 随文件整体替换的成绩条数；0 = 文件没带成绩段。 */
+        val restoredScores: Int = 0,
+        /** 是否随文件恢复了目标课表的学期配置。 */
+        val restoredSemester: Boolean = false,
+        /** 随文件恢复的作息条数；0 = 文件没带作息段。 */
+        val restoredSlots: Int = 0,
+    ) : ImportResult
     data class Failure(val message: String) : ImportResult
 }
 
@@ -830,6 +1051,12 @@ sealed interface ImportPreview {
         val sample: String,
         /** 文件声明的学年学期，仅用于导入确认弹窗展示；不影响写库。 */
         val term: String? = null,
+        /** 文件携带的成绩（DESIGN §4.3）：导入时整体替换，弹窗按它出提示。 */
+        val scores: List<ScoreRecord> = emptyList(),
+        /** 文件带的学期配置（null = 没有）；随预览展示到确认弹窗注记。 */
+        val semester: SemesterConfig? = null,
+        /** 文件带的作息条数（0 = 没有）。 */
+        val slotCount: Int = 0,
     ) : ImportPreview
     data class Error(val message: String) : ImportPreview
 }

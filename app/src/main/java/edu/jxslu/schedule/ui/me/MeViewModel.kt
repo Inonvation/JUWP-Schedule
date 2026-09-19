@@ -23,11 +23,15 @@ import edu.jxslu.schedule.ui.common.ImportTarget
 import edu.jxslu.schedule.ui.common.readTextFromUri
 import edu.jxslu.schedule.ui.common.resolveImportTarget
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +54,11 @@ data class MeUiState(
     val timetableName: String = "",
     val timetables: List<Timetable> = emptyList(),
     val currentTimetableId: Long = 0L,
+    /** 课表设置子页：正在配置的课表（默认 = 当前课表）及其学期口径（DESIGN §4.9）。 */
+    val configTargetId: Long = 0L,
+    val configSemester: SemesterConfig? = null,
+    val configCourseCount: Int = 0,
+    val configWeek: Int = 0,
     val message: String? = null,
 )
 
@@ -59,6 +68,7 @@ sealed interface OneShot {
     data class ConfirmImport(val preview: ImportPreview.Ok, val text: String) : OneShot
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     /** 六源合成：combine 无类型安全重载超过 5 个，课表配置先收进一个 data class。 */
@@ -72,10 +82,30 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         MeConfig(semester, courses, timeSlots, prefs, timetables)
     }
 
+    /** 课表设置子页的编辑目标：0 = 跟随当前课表（进页默认）；用户点 chips 后固定选中。 */
+    private val configTargetOverride = MutableStateFlow(0L)
+
+    fun selectConfigTarget(timetableId: Long) {
+        configTargetOverride.value = timetableId
+    }
+
+    /** 解析后的编辑目标：override 优先，否则跟随当前课表。 */
+    private val configTargetId: Flow<Long> = configTargetOverride.flatMapLatest { override ->
+        if (override == 0L) repo.currentTimetableId else flowOf(override)
+    }
+
+    /** 目标课表的学期配置与课程数：chips 切到哪张就观察哪张（DESIGN §4.9）。 */
+    private val targetConfigFlow = configTargetId.flatMapLatest { id ->
+        combine(repo.observeSemesterFor(id), repo.observeCourseCountFor(id)) { semester, count ->
+            TargetConfig(id, semester, count)
+        }
+    }
+
     val uiState: StateFlow<MeUiState> = combine(
         configFlow,
         repo.currentTimetableId,
-    ) { config, currentTimetableId ->
+        targetConfigFlow,
+    ) { config, currentTimetableId, target ->
         val week = config.semester
             ?.let { ScheduleCalculator.weekNumberOf(it, LocalDate.now()) } ?: 0
         MeUiState(
@@ -90,6 +120,11 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
             timetableName = config.timetables.firstOrNull { it.id == currentTimetableId }?.name.orEmpty(),
             timetables = config.timetables,
             currentTimetableId = currentTimetableId,
+            configTargetId = target.id,
+            configSemester = target.semester,
+            configCourseCount = target.courseCount,
+            configWeek = target.semester
+                ?.let { ScheduleCalculator.weekNumberOf(it, LocalDate.now()) } ?: 0,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MeUiState())
 
@@ -102,6 +137,10 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         _oneShot.value = null
     }
 
+    /**
+     * 保存学期配置到**当前选中的课表**（课表设置页可切换编辑目标，DESIGN §4.9）：
+     * 目标课表没配过学期时以本次输入直接建行。
+     */
     fun saveSemester(startDate: String, totalWeeks: Int) {
         viewModelScope.launch {
             val ok = runCatching { ScheduleCalculator.parseDate(startDate) }.isSuccess
@@ -110,9 +149,12 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
                 return@launch
             }
             val weeks = totalWeeks.coerceIn(1, 30)
-            val old = uiState.value.semester ?: SemesterConfig(startDate, weeks, 1)
-            repo.updateSemester(old.copy(startDate = startDate, totalWeeks = weeks))
-            _oneShot.value = OneShot.Message("学期设置已保存")
+            val state = uiState.value
+            val targetId = state.configTargetId.takeIf { it != 0L } ?: state.currentTimetableId
+            val old = repo.semesterFor(targetId) ?: SemesterConfig(startDate, weeks, 1)
+            repo.updateSemesterFor(targetId, old.copy(startDate = startDate, totalWeeks = weeks))
+            val name = state.timetables.firstOrNull { it.id == targetId }?.name.orEmpty()
+            _oneShot.value = OneShot.Message("已保存「${name.ifBlank { "课表" }}」的学期设置")
         }
     }
 
@@ -175,9 +217,23 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
             when (val r = repo.importJson(text, merge, targetId)) {
                 is ImportResult.Success -> {
                     repo.setCurrentTimetable(targetId)
+                    val base = if (merge) {
+                        "合并完成：新增 ${r.added} / 文件共 ${r.total}"
+                    } else {
+                        "已覆盖导入 ${r.total} 门课"
+                    }
                     _oneShot.value = OneShot.Message(
-                        if (merge) "合并完成：新增 ${r.added} / 文件共 ${r.total}"
-                        else "已覆盖导入 ${r.total} 门课",
+                        buildString {
+                            append(base)
+                            if (r.restoredScores > 0) append("；成绩已整体替换（${r.restoredScores} 条）")
+                            val configParts = buildList {
+                                if (r.restoredSemester) add("学期配置")
+                                if (r.restoredSlots > 0) add("作息 ${r.restoredSlots} 节")
+                            }
+                            if (configParts.isNotEmpty()) {
+                                append("；已恢复目标课表的${configParts.joinToString("与")}")
+                            }
+                        },
                     )
                 }
                 is ImportResult.Failure ->
@@ -257,6 +313,9 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     fun setTapBlankToAdd(value: Boolean) = viewModelScope.launch { repo.setTapBlankToAdd(value) }
 
+    /** 今日页开水卡片开关（DESIGN §3.3 底部固定区）。 */
+    fun setWaterCardEnabled(value: Boolean) = viewModelScope.launch { repo.setWaterCardEnabled(value) }
+
     /** 兼容入口：老调用点一次改两天。 */
     fun setShowWeekend(value: Boolean) = viewModelScope.launch { repo.setShowWeekend(value) }
 
@@ -310,6 +369,13 @@ private data class MeConfig(
     val timeSlots: List<TimeSlot>,
     val prefs: DisplayPrefs,
     val timetables: List<Timetable>,
+)
+
+/** [MeViewModel.targetConfigFlow] 的切片：正在配置的课表及其学期口径。 */
+private data class TargetConfig(
+    val id: Long,
+    val semester: SemesterConfig?,
+    val courseCount: Int,
 )
 
 fun meFactory(context: Context) = MeViewModel.Factory(Graph.repository(context))

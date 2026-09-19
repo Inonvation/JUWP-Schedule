@@ -176,4 +176,86 @@ class ImportJsonShapeTest {
         assertEquals("2026-2027-1", decode(withTerm).term)
         assertNull("旧文件没有 term 键，必须仍能读进来", decode(good).term)
     }
+
+    // ---- 成绩备份段（DESIGN §4.3）----
+
+    private val record = edu.jxslu.schedule.domain.ScoreRecord(
+        term = "2025-2026-2",
+        courseNo = "050221005",
+        name = "跨文化交际",
+        unit = "外国语学院",
+        credit = 2.0,
+        hours = 32.0,
+        examForm = "考试",
+        courseAttr = "必修",
+        category = "专业必修课",
+        score = 86.5,
+        scoreStr = "86.5",
+        gradePoint = 3.7,
+        status = "正常考试",
+        pendingReview = false,
+    )
+
+    /** 成绩条目导出再导入逐字段一致，来回一趟不能丢信息。 */
+    @Test
+    fun scoreBackupJsonRoundTrips() {
+        val json = record.toBackupJson()
+        val text = CourseJsonFormat.encodeToString(
+            CourseExport.serializer(),
+            CourseExport(courses = emptyList(), scores = listOf(json)),
+        )
+        val back = decode(text).scores.single().toScoreRecord()
+        assertEquals(record, back)
+    }
+
+    /** 缺字段（手工编辑/旧工具产出）降级为默认值，不能解码失败。 */
+    @Test
+    fun scoreBackupPartialFieldsFallBackToDefaults() {
+        val sparse = """
+            {"courses":[{"name":"高数","day":1,"startSection":1,"endSection":2,"weeks":[1]}],
+             "scores":[{"term":"2025-2026-2","name":"高数"}]}
+        """.trimIndent()
+        val s = decode(sparse).scores.single().toScoreRecord()
+        assertEquals("高数", s.name)
+        assertEquals("2025-2026-2", s.term)
+        assertEquals(0.0, s.credit, 1e-9)
+        assertNull(s.score)
+        assertNull(s.gradePoint)
+    }
+
+    /** 没有 scores 键的旧文件照常读入，成绩段为空 = 导入时不动成绩。 */
+    @Test
+    fun oldFileWithoutScoresHasEmptyScoreList() {
+        assertTrue(decode(good).scores.isEmpty())
+    }
+
+    // ---- 学期配置与作息备份段（DESIGN §4.3）----
+
+    /** 学期/作息段导出再导入逐字段一致；键名是与旧备份互通的一部分，改名会破坏兼容。 */
+    @Test
+    fun semesterAndSlotsSurviveRoundTrip() {
+        val export = CourseExport(
+            courses = listOf(CourseJson(name = "高数", day = 1, startSection = 1, endSection = 2, weeks = listOf(1))),
+            semester = SemesterBackupJson(startDate = "2026-09-07", totalWeeks = 20, firstDayOfWeek = 1),
+            timeSlots = listOf(
+                TimeSlotBackupJson(1, "08:30", "09:10"),
+                TimeSlotBackupJson(11, "20:30", "21:10"),
+            ),
+        )
+        val back = decode(CourseJsonFormat.encodeToString(CourseExport.serializer(), export))
+        assertEquals("2026-09-07", back.semester!!.startDate)
+        assertEquals(20, back.semester!!.totalWeeks)
+        assertEquals(1, back.semester!!.firstDayOfWeek)
+        assertEquals(2, back.timeSlots.size)
+        assertEquals(11, back.timeSlots[1].number)
+        assertEquals("20:30", back.timeSlots[1].startTime)
+    }
+
+    /** 旧备份（或外部工具导出）没有 semester/timeSlots 键：照常解码，配置段为空 = 导入不动配置。 */
+    @Test
+    fun oldFileWithoutConfigSegmentsFallsBackToEmpty() {
+        val export = decode(good)
+        assertNull(export.semester)
+        assertTrue(export.timeSlots.isEmpty())
+    }
 }

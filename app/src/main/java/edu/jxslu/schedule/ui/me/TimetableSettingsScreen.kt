@@ -1,7 +1,9 @@
 package edu.jxslu.schedule.ui.me
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +54,10 @@ import java.time.format.DateTimeFormatter
  * 交互重构：开学日期从手输文本框改为**日历弹窗**（系统 DatePicker），
  * 总周数从手输改为**滚轮选择**——日期格式/周数范围由控件兜住，
  * 不再依赖用户敲对 yyyy-MM-dd，也省掉一个「保存」按钮（选完即存）。
+ *
+ * 2026-09-19：学期区支持**切换课表**（chips，默认选中当前课表）——每张课表各有
+ * 独立的开学日期/总周数，选中哪张就编辑哪张，读写都按目标课表落（DESIGN §4.9）；
+ * 作息区仍固定编辑当前课表。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,9 +84,11 @@ fun TimetableSettingsScreen(
         }
     }
 
-    val semester = state.semester
+    // 编辑目标 = 学期区 chips 选中的课表（configTargetId）；无配置时展示默认值兜底
+    val semester = state.configSemester
     val startDateText = semester?.startDate ?: DefaultData.defaultSemester.startDate
     val totalWeeks = semester?.totalWeeks ?: DefaultData.defaultSemester.totalWeeks
+    val targetName = state.timetables.firstOrNull { it.id == state.configTargetId }?.name.orEmpty()
 
     // 根因：迁到 SubpageActivity 独立窗口后没有外层 Scaffold 垫状态栏，
     // windowInsets 归零（嵌 NavHost 时期防双倍空白的老规避）会让顶栏顶进状态栏；
@@ -106,12 +115,38 @@ fun TimetableSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SettingsSection(
-                title = "学期",
-                subtitle = "仅对当前课表「${state.timetableName.ifBlank { "—" }}」生效；" +
-                    "新建课表默认拷贝「默认配置」源课表的这些值",
+                title = if (targetName.isBlank()) "学期" else "学期 · $targetName",
+                subtitle = "每张课表各有独立的开学日期与总周数（新建课表拷贝「默认配置」源）；" +
+                    "默认编辑当前课表，点下方可切换",
             ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    state.timetables.forEach { timetable ->
+                        FilterChip(
+                            selected = timetable.id == state.configTargetId,
+                            onClick = { viewModel.selectConfigTarget(timetable.id) },
+                            label = {
+                                Text(
+                                    if (timetable.id == state.currentTimetableId) {
+                                        "${timetable.name} · 当前"
+                                    } else {
+                                        timetable.name
+                                    },
+                                )
+                            },
+                        )
+                    }
+                }
                 Text(
-                    "当前第 ${state.currentWeek} 周 · 共 ${state.courseCount} 门课",
+                    if (state.configSemester == null) {
+                        "该课表还没配过学期，选一次开学日期即自动创建"
+                    } else {
+                        "该课表第 ${state.configWeek} 周 · 共 ${state.configCourseCount} 门课"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
@@ -130,6 +165,11 @@ fun TimetableSettingsScreen(
                 )
             }
 
+            Text(
+                "作息表固定编辑当前课表「${state.timetableName.ifBlank { "—" }}」，不随上方切换",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
             TimeSlotEditorCard(
                 slots = state.timeSlots,
                 onSave = viewModel::saveTimeSlots,
