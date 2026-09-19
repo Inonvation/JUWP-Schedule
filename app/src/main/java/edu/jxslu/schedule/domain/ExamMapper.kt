@@ -82,69 +82,133 @@ object ExamMapper {
         return target.number..target.number
     }
 
-    /**
-     * 考试日期 → (教学周, 星期)。日期非法或不在学期范围内返回 null
-     * （超范围无法在网格定位，导入层跳过）。
-     */
-    fun weekAndDay(
-        config: SemesterConfig,
-        dateStr: String,
-    ): Pair<Int, Int>? {
-        val date = try {
-            LocalDate.parse(dateStr, dateFmt)
-        } catch (_: Exception) {
-            return null
-        }
-        val week = ScheduleCalculator.weekNumberOf(config, date)
-        if (week !in 1..config.totalWeeks) return null
-        // Java DayOfWeek: MONDAY=1 … SUNDAY=7，与「1=周一 … 7=周日」口径一致
-        return week to date.dayOfWeek.value
-    }
+/**
+ * 考试日期 → (教学周, 星期)。日期非法或不在学期范围内返回 null
+ * （超范围无法在网格定位，导入层跳过）。
+ */
+fun weekAndDay(
+    config: SemesterConfig,
+    dateStr: String,
+): Pair<Int, Int>? {
+    val date = parseDate(dateStr) ?: return null
+    val week = ScheduleCalculator.weekNumberOf(config, date)
+    if (week !in 1..config.totalWeeks) return null
+    // Java DayOfWeek: MONDAY=1 … SUNDAY=7，与「1=周一 … 7=周日」口径一致
+    return week to date.dayOfWeek.value
+}
 
-    /**
-     * 考试 → `Course(kind = Exam)`。日期/时刻无法定位时返回 null。
-     * `colorIndex` 由导入路径统一重排（withSortedNameColors），这里恒传 0。
-     */
-    fun toExamCourse(
-        entry: ExamEntry,
-        slots: List<TimeSlot>,
-        config: SemesterConfig,
-    ): Course? {
-        if (entry.name.isBlank()) return null
-        val location = listOf(entry.room, entry.campus)
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString(" ")
-        val (week, day) = weekAndDay(config, entry.date) ?: return null
-        val sections = sectionsForTimeRange(slots, entry.startTime, entry.endTime) ?: return null
-        return Course(
-            id = 0,
-            name = entry.name.trim(),
-            teacher = entry.teacher.trim(),
-            position = location,
-            day = day,
-            startSection = sections.first,
-            endSection = sections.last,
-            weeks = setOf(week),
-            isCustomTime = true,
-            customStartTime = entry.startTime.ifBlank { null },
-            customEndTime = entry.endTime.ifBlank { null },
-            colorIndex = 0,
-            kind = CourseKind.Exam,
-        )
-    }
+/** 学期号格式：`2025-2026-2`（学年-学年-第几学期）。 */
+private val termRe = Regex("""^(\d{4})-(\d{4})-([12])$""")
 
-    /** 批量转换并按可定位性分组：返回 (可导入的课程, 无法定位的条数)。 */
-    fun toExamCourses(
-        entries: List<ExamEntry>,
-        slots: List<TimeSlot>,
-        config: SemesterConfig?,
-    ): Pair<List<Course>, Int> {
-        if (config == null) return emptyList<Course>() to entries.size
-        var skipped = 0
-        val courses = entries.mapNotNull { entry ->
-            toExamCourse(entry, slots, config) ?: run { skipped++; null }
-        }
-        return courses to skipped
+/** 估算周次的宽松上限：真实学期含考试周不会超过它，用于挡脏数据落成离谱周次。 */
+private const val ESTIMATED_MAX_WEEKS = 30
+
+/**
+ * 历史/未来学期的估算开学日（DESIGN §4.14）。教务不提供学期起止日期（课表页只有
+ * 「第 N 周」），只能按校历惯例估算：第 1 学期取**含 9 月 1 日那一周的周一**、
+ * 第 2 学期取**含 3 月 1 日那一周的周一**（如 2025-2026-2 → 2026-02-23）。
+ * 估算值可能与实际相差一两周，仅用于非当前学期的兜底定位，调用方必须向用户披露。
+ * 学期号无法识别返回 null。
+ */
+fun estimatedTermStart(term: String?): LocalDate? {
+    if (term == null) return null
+    val m = termRe.matchEntire(term.trim()) ?: return null
+    val y1 = m.groupValues[1].toInt()
+    val anchor = if (m.groupValues[3] == "1") {
+        LocalDate.of(y1, 9, 1)
+    } else {
+        LocalDate.of(y1 + 1, 3, 1)
     }
+    // 该 ISO 周的周一（dayOfWeek: 周一=1）
+    return anchor.minusDays((anchor.dayOfWeek.value - 1).toLong())
+}
+
+/**
+ * 两级定位（DESIGN §4.14）：先按学期配置精确推算；失败且学期号可识别时按估算开学日兜底
+ * （考试属于历史/未来学期，其日期必然落在当前配置范围之外）。
+ */
+private fun locate(dateStr: String, config: SemesterConfig?, term: String?): Pair<Int, Int>? {
+    if (config != null) {
+        weekAndDay(config, dateStr)?.let { return it }
+    }
+    val start = estimatedTermStart(term) ?: return null
+    val date = parseDate(dateStr) ?: return null
+    val week = ((startOfWeek(date).toEpochDay() - startOfWeek(start).toEpochDay()) / 7 + 1).toInt()
+    return if (week in 1..ESTIMATED_MAX_WEEKS) week to date.dayOfWeek.value else null
+}
+
+private fun startOfWeek(date: LocalDate): LocalDate =
+    date.minusDays((date.dayOfWeek.value - 1).toLong())
+
+private fun parseDate(dateStr: String): LocalDate? = try {
+    LocalDate.parse(dateStr.trim(), dateFmt)
+} catch (_: Exception) {
+    null
+}
+
+/**
+ * 考试 → `Course(kind = Exam)`。日期/时刻无法定位时返回 null。
+ * [term] 是本批考试所属学期（来自壳页下拉），用于配置定位失败时的估算兜底。
+ * `colorIndex` 由导入路径统一重排（withSortedNameColors），这里恒传 0。
+ */
+fun toExamCourse(
+    entry: ExamEntry,
+    slots: List<TimeSlot>,
+    config: SemesterConfig?,
+    term: String? = null,
+): Course? {
+    if (entry.name.isBlank()) return null
+    val location = listOf(entry.room, entry.campus)
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString(" ")
+    val (week, day) = locate(entry.date, config, term) ?: return null
+    val sections = sectionsForTimeRange(slots, entry.startTime, entry.endTime) ?: return null
+    return Course(
+        id = 0,
+        name = entry.name.trim(),
+        teacher = entry.teacher.trim(),
+        position = location,
+        day = day,
+        startSection = sections.first,
+        endSection = sections.last,
+        weeks = setOf(week),
+        isCustomTime = true,
+        customStartTime = entry.startTime.ifBlank { null },
+        customEndTime = entry.endTime.ifBlank { null },
+        colorIndex = 0,
+        kind = CourseKind.Exam,
+    )
+}
+
+/** 批量映射结果：可导入课程 + 无法定位条数 + 按估算开学日定位的条数。 */
+data class ExamMappingResult(
+    val courses: List<Course>,
+    val skipped: Int,
+    /** 估算开学日定位的条数（>0 时 UI 必须披露估算口径）。 */
+    val estimated: Int,
+)
+
+/** 批量转换：[term] 供历史/未来学期的估算兜底（DESIGN §4.14）。 */
+fun toExamCourses(
+    entries: List<ExamEntry>,
+    slots: List<TimeSlot>,
+    config: SemesterConfig?,
+    term: String? = null,
+): ExamMappingResult {
+    var skipped = 0
+    var estimated = 0
+    val courses = entries.mapNotNull { entry ->
+        val mapped = toExamCourse(entry, slots, config, term)
+        if (mapped == null) {
+            skipped++
+            null
+        } else {
+            // 只有「配置定位失败（或无配置）、靠估算兜底」才计入 estimated
+            if (config == null || weekAndDay(config, entry.date) == null) estimated++
+            mapped
+        }
+    }
+    return ExamMappingResult(courses, skipped, estimated)
+}
 }

@@ -112,19 +112,69 @@ class ExamMapperTest {
     @Test
     fun batchConversionCountsSkipped() {
         val ok = entry.copy(name = "热工基础", date = "2026-05-26")
-        val (courses, skipped) = ExamMapper.toExamCourses(
+        val r = ExamMapper.toExamCourses(
             listOf(entry, ok, entry.copy(date = "2026-08-01")),
             slots,
             config,
         )
-        assertEquals(2, courses.size)
-        assertEquals(1, skipped)
+        assertEquals(2, r.courses.size)
+        assertEquals(1, r.skipped)
+        assertEquals(0, r.estimated) // 日期都在配置学期内，无需估算
     }
 
     @Test
-    fun nullSemesterSkipsEverything() {
-        val (courses, skipped) = ExamMapper.toExamCourses(listOf(entry), slots, null)
-        assertEquals(0, courses.size)
-        assertEquals(1, skipped)
+    fun nullSemesterSkipsEverythingWithoutTerm() {
+        val r = ExamMapper.toExamCourses(listOf(entry), slots, null)
+        assertEquals(0, r.courses.size)
+        assertEquals(1, r.skipped)
+    }
+
+    // ---- 历史/未来学期的估算定位（DESIGN §4.14）----
+
+    @Test
+    fun estimatedTermStartFollowsCalendarConvention() {
+        // 第 1 学期：含 9 月 1 日那一周的周一（2026-09-01 是周二 → 2026-08-31）
+        assertEquals(java.time.LocalDate.of(2026, 8, 31), ExamMapper.estimatedTermStart("2026-2027-1"))
+        // 第 2 学期：含 3 月 1 日那一周的周一（2026-03-01 是周日 → 2026-02-23）
+        assertEquals(java.time.LocalDate.of(2026, 2, 23), ExamMapper.estimatedTermStart("2025-2026-2"))
+        // 学期号无法识别
+        assertNull(ExamMapper.estimatedTermStart("2025-2026-3"))
+        assertNull(ExamMapper.estimatedTermStart("bad"))
+        assertNull(ExamMapper.estimatedTermStart(null))
+    }
+
+    @Test
+    fun outOfConfigExamFallsBackToEstimatedTermStart() {
+        // 配置是当前秋季学期（2026-08-31 开学）；2025-2026-2 的考试日期（2026-05）对它
+        // 而言落在范围外，按该学期估算开学日 2026-02-23 定位：2026-05-18 = 第 13 周周一
+        val fallConfig = SemesterConfig(startDate = "2026-08-31", totalWeeks = 20, firstDayOfWeek = 1)
+        val r = ExamMapper.toExamCourses(listOf(entry), slots, fallConfig, term = "2025-2026-2")
+        assertEquals(1, r.courses.size)
+        assertEquals(0, r.skipped)
+        assertEquals(1, r.estimated)
+        assertEquals(13, r.courses.single().weeks.single())
+        assertEquals(1, r.courses.single().day)
+    }
+
+    @Test
+    fun estimateWorksWithoutConfiguredSemester() {
+        // 未配置开学日也能靠估算定位（学期号可识别时）
+        val r = ExamMapper.toExamCourses(listOf(entry), slots, null, term = "2025-2026-2")
+        assertEquals(1, r.courses.size)
+        assertEquals(1, r.estimated)
+        assertEquals(13, r.courses.single().weeks.single())
+    }
+
+    @Test
+    fun estimateOutOfRangeStillSkipped() {
+        // 2026-11-01 距估算开学日 2026-02-23 已超过 30 周，估算口径也救不了
+        val r = ExamMapper.toExamCourses(
+            listOf(entry.copy(date = "2026-11-01")),
+            slots,
+            null,
+            term = "2025-2026-2",
+        )
+        assertEquals(0, r.courses.size)
+        assertEquals(1, r.skipped)
     }
 }
