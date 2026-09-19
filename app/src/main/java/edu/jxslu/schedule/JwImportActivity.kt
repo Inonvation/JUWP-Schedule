@@ -1,5 +1,6 @@
 package edu.jxslu.schedule
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -18,6 +19,10 @@ import edu.jxslu.schedule.ui.jwvw.JwImportScreen
  * 返回后课表自动刷新。Cookie 在 CookieManager 全局生效，登录会话不受影响。
  *
  * [EXTRA_MODE] 决定导入对象：课表（默认）或成绩（DESIGN §4.15）。
+ *
+ * 动画与 [SubpageActivity] 同款：打开 = 新窗口从右缘推入覆盖主窗口（slide_in_right），
+ * 关闭 = 向右滑出（slide_out_right），主窗口全程原地不动。此前该窗口没配转场，
+ * 教务导入是从主界面进入频率最高的页面，缺席反而最扎眼。
  */
 class JwImportActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,6 +38,12 @@ class JwImportActivity : ComponentActivity() {
         }
     }
 
+    override fun finish() {
+        super.finish()
+        @Suppress("DEPRECATION") // API 34+ 的 overrideActivityTransition 需要 34 才可用，minSdk 26 仍走这条
+        overridePendingTransition(0, R.anim.slide_out_right)
+    }
+
     companion object {
         private const val EXTRA_MODE = "mode"
 
@@ -40,6 +51,11 @@ class JwImportActivity : ComponentActivity() {
             val intent = Intent(context, JwImportActivity::class.java)
                 .putExtra(EXTRA_MODE, mode.name)
             context.startActivity(intent)
+            // 只有 context 是 Activity 时才有窗口动画可言
+            (context as? Activity)?.let {
+                @Suppress("DEPRECATION")
+                it.overridePendingTransition(R.anim.slide_in_right, 0)
+            }
         }
     }
 }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 二级页（SubpageActivity / JwImportActivity）打开动画：新窗口从右缘平移推入，
+     覆盖在主窗口之上（主窗口不传动画、保持不动，即纯「覆盖」语义）。
+     平台 android.R.anim 只有 slide_in_left / slide_out_right，右推入必须自备。 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <translate
+        android:fromXDelta="100%"
+        android:toXDelta="0"
+        android:duration="280"
+        android:interpolator="@android:interpolator/decelerate_quad" />
+</set>

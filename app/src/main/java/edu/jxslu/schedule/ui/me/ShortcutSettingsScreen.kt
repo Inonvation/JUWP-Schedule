@@ -80,6 +80,7 @@ import edu.jxslu.schedule.ui.common.shortcutIconChoices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -185,6 +186,8 @@ private fun drawableToBitmap(drawable: Drawable): Bitmap {
 @Composable
 fun ShortcutSettingsScreen(
     onBack: () -> Unit,
+    /** Snackbar「去设置」带来的条目 id：落库数据到位后自动展开其编辑弹层（一次性） */
+    focusItemId: String? = null,
     viewModel: ShortcutSettingsViewModel = viewModel(
         factory = ShortcutSettingsViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -194,6 +197,16 @@ fun ShortcutSettingsScreen(
     var editing by remember { mutableStateOf<ShortcutDraft?>(null) }
     var pendingDelete by remember { mutableStateOf<ShortcutItem?>(null) }
     var confirmResetAll by remember { mutableStateOf(false) }
+
+    // 就近修正闭环：从今日页 Snackbar 过来时，数据落库后直接展开目标条目；
+    // id 失效（条目已删）就安静落在列表页
+    var focusConsumed by remember { mutableStateOf(false) }
+    LaunchedEffect(focusItemId) {
+        if (focusItemId == null || focusConsumed) return@LaunchedEffect
+        val item = viewModel.findItem(focusItemId) ?: return@LaunchedEffect
+        focusConsumed = true
+        editing = item.toDraft()
+    }
 
     Scaffold(
         topBar = {
@@ -720,6 +733,8 @@ private fun InstalledAppPicker(
                                 }
                                 Row(
                                     modifier = Modifier
+                                        // 搜索过滤时列表项平滑重排/进出场，不整列硬跳
+                                        .animateItem()
                                         .fillMaxWidth()
                                         .clickable { onPick(app) }
                                         .padding(vertical = 8.dp, horizontal = 4.dp),
@@ -805,6 +820,13 @@ class ShortcutSettingsViewModel(private val repo: ScheduleRepository) : ViewMode
             repo.updateShortcuts { ShortcutOps.resetAll() }
         }
     }
+
+    /**
+     * 直达定位用：绕开 [settings] 的种子值（种子 = 默认预设，不是用户数据），
+     * 直接等落库数据的第一帧。找不到（条目已删）返回 null，调用方安静跳过。
+     */
+    suspend fun findItem(id: String): ShortcutItem? =
+        repo.shortcutSettings.first().items.firstOrNull { it.id == id }
 
     class Factory(private val repo: ScheduleRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

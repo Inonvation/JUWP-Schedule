@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 二级页关闭动画：顶层窗口向右滑出，露出其下保持不动的主窗口。
+     进（decelerate 减速停住）与出（accelerate 加速离场）曲线配对，
+     视觉上推入/退出速度在屏幕边缘衔接自然。 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <translate
+        android:fromXDelta="0"
+        android:toXDelta="100%"
+        android:duration="240"
+        android:interpolator="@android:interpolator/accelerate_quad" />
+</set>
