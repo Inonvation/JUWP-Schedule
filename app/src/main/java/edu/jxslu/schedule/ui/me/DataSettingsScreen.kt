@@ -21,8 +21,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,7 +65,13 @@ fun DataSettingsScreen(
     LaunchedEffect(oneShot) {
         when (val s = oneShot) {
             is OneShot.Message -> {
-                snackbar.showSnackbar(s.text)
+                // 清空等操作带撤销动作：Snackbar 给「撤销」，点了就回滚
+                val result = snackbar.showSnackbar(
+                    s.text,
+                    actionLabel = if (s.undo != null) "撤销" else null,
+                    duration = SnackbarDuration.Short,
+                )
+                if (result == SnackbarResult.ActionPerformed) s.undo?.invoke()
                 viewModel.consumeOneShot()
             }
             is OneShot.ConfirmImport -> Unit
@@ -138,7 +146,7 @@ fun DataSettingsScreen(
 
             SettingsSection(
                 title = "危险操作",
-                subtitle = "清空只影响当前课表，不可撤销。",
+                subtitle = "清空当前课表全部课程；提示条消失前可点「撤销」恢复。",
             ) {
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
@@ -164,6 +172,7 @@ fun DataSettingsScreen(
         ImportTargetDialogHost(
             courses = confirm.preview.courses,
             title = "导入 JSON 课表",
+            term = confirm.preview.term,
             defaultMerge = false,
             repo = Graph.repository(context),
             onConfirm = { target, merge -> viewModel.confirmImport(target, merge) },
@@ -177,8 +186,8 @@ fun DataSettingsScreen(
             title = { Text("确认清空全部课程？") },
             text = {
                 Text(
-                    "将删除当前课表「${state.timetableName.ifBlank { "—" }}」中的全部课程（不可撤销）。\n" +
-                        "清空后请重新从教务导入。",
+                    "将删除当前课表「${state.timetableName.ifBlank { "—" }}」中的全部课程。\n" +
+                        "清空后提示条消失前可撤销；请重新从教务导入或从 JSON 恢复。",
                 )
             },
             confirmButton = {

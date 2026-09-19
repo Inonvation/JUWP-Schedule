@@ -48,6 +48,12 @@ object SyjxScheduleParser {
 (function(){
   try {
     var out = [];
+    // 学期口径：取学期下拉的当前选中项（带 xnxq01id 参数重载后服务端会渲染对应 selected）
+    var term = '';
+    var termSel = document.querySelector('select#xnxq01id');
+    if (termSel && termSel.selectedIndex >= 0 && termSel.options) {
+      term = (termSel.options[termSel.selectedIndex].textContent || '').trim();
+    }
     var tbody = document.querySelector('tbody.qz-weeklyTable-thbody')
              || document.querySelector('table.qz-weeklyTable tbody');
     if (!tbody) return JSON.stringify({ ok:false, error:'未找到实验课表容器' });
@@ -86,7 +92,7 @@ object SyjxScheduleParser {
         }
       }
     }
-    return JSON.stringify({ ok: true, items: out, title: document.title || '', url: location.href });
+    return JSON.stringify({ ok: true, items: out, term: term, title: document.title || '', url: location.href });
   } catch (e) {
     return JSON.stringify({ ok: false, error: String(e) });
   }
@@ -106,7 +112,7 @@ object SyjxScheduleParser {
                 if (courses.isEmpty()) {
                     ImportParseResult.Failure("解析到 ${blocks.size} 个课块，但星期/节次/周次不完整")
                 } else {
-                    ImportParseResult.Success(courses)
+                    ImportParseResult.Success(courses, term = extractTermField(jsonText))
                 }
             }
         }

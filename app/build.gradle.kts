@@ -43,6 +43,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 包名隔离：debug 与 release 签名不同，同包名会互相覆盖安装（数据全丢）。
+            // 加 .debug 后缀后是两个独立应用，可共存；应用名由 src/debug/res 覆盖为「水贝贝 Debug」。
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             // 有正式 keystore 用它；否则回退 AGP debug 签名（仅本地调试，不可对外分发）。
             // 注意：debug 与 release 签名不同，二者无法互相覆盖安装。
@@ -112,6 +118,13 @@ dependencies {
     implementation("androidx.room:room-runtime:2.7.1")
     implementation("androidx.room:room-ktx:2.7.1")
     ksp("androidx.room:room-compiler:2.7.1")
+
+    // 桌面小组件（DESIGN §3.6 / §4.13）：Compose 风格 API，与项目技术栈一致。
+    // 传递引入 work-runtime（Glance 内部排更新走 androidx.startup 默认初始化）与 core-remoteviews；
+    // compose runtime 由 BOM 的 1.7.4 抬到 1.7.8（glance 的 requirement，同 1.7 线，Gradle 取高）。
+    implementation("androidx.glance:glance-appwidget:1.2.0")
+    // 小组件兜底刷新：WorkManager 15 分钟周期任务（进程被杀后仍能刷）
+    implementation("androidx.work:work-runtime-ktx:2.7.1")
 
     // 非传递：只取图标 AAR，避免拉到需 compileSdk 36 的 androidx.core 1.17
     implementation("com.github.rikkahub:hugeicons-compose:1.4") {

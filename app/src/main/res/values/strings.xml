@@ -4,10 +4,10 @@
     <string name="tab_today">今日</string>
     <string name="tab_week">课表</string>
     <string name="tab_me">我的</string>
-    <string name="today_placeholder_title">今日课表</string>
-    <string name="today_placeholder_body">P1 脚手架已就绪。\n后续版本将显示：本周第 N 周、下一节课高亮、一键开水入口。\n教务导入可先手动加课或导入 JSON。</string>
-    <string name="week_placeholder_title">周课表</string>
-    <string name="week_placeholder_body">P1 脚手架已就绪。\n后续版本将显示：星期 × 节次网格、左右滑切换周次、点击课程编辑。</string>
-    <string name="me_placeholder_title">我的</string>
-    <string name="me_placeholder_body">P1 脚手架已就绪。\n后续版本将提供：学期/作息设置、教务导入、课程管理、胖乖生活、关于与免责声明。</string>
+
+    <!-- 桌面小组件（DESIGN §3.6）。label 会作为条目名显示在桌面小组件选择器里 -->
+    <string name="widget_label_small">水贝贝 · 2×2</string>
+    <string name="widget_label_tall">水贝贝 · 2×4</string>
+    <string name="widget_label_large">水贝贝 · 4×4</string>
+    <string name="widget_description">今日课表：正在上的课、下一节与今日剩余安排，点开进 App 今日页</string>
 </resources>

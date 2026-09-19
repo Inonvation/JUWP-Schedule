@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.jw
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,6 +53,27 @@ class QiangzhiScheduleParserTest {
         assertEquals(1, items.size)
         assertEquals("高数", items[0].name)
         assertEquals(3, items[0].day)
+    }
+
+    /** 注入 JSON 带页面学期时，透传到 Success.term（导入确认弹窗展示的口径来源）。 */
+    @Test
+    fun parseExtractJsonCarriesTerm() {
+        val json = """
+            {"ok":true,"term":"2026-2027-1","title":"个人课表信息","items":[
+              {"name":"高数","detail":"老师:张;时间:1-8周[1-2节];地点:A101","day":3}
+            ]}
+        """.trimIndent()
+        val result = QiangzhiScheduleParser.parseExtractJson(json)
+        assertTrue("应解析成功：$result", result is ImportParseResult.Success)
+        assertEquals("2026-2027-1", (result as ImportParseResult.Success).term)
+    }
+
+    /** 学期字段只为展示服务：缺失、空白、整个 JSON 非法都必须降级成 null，不能抛异常。 */
+    @Test
+    fun extractTermFieldDegradesToNull() {
+        assertNull(extractTermField("""{"ok":true,"items":[]}"""))
+        assertNull(extractTermField("""{"ok":true,"term":"  ","items":[]}"""))
+        assertNull(extractTermField("not a json"))
     }
 
     @Test

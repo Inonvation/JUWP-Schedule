@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.ui.week
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,12 +36,15 @@ import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
-import edu.jxslu.schedule.ui.common.compactPosition
+import edu.jxslu.schedule.domain.compactPosition
 import edu.jxslu.schedule.ui.common.courseColor
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.File02
+import me.rerere.hugeicons.stroke.FileExport
 import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.Import
+import me.rerere.hugeicons.stroke.CalendarSync
 
 /**
  * 周次选择器：只管「看哪一周」。
@@ -48,12 +52,14 @@ import me.rerere.hugeicons.stroke.Import
  * 根因：此前周次网格和全部显示开关挤在同一个弹层里，顶栏胶囊与眼睛图标又指向同一个入口——
  * 用户想改一个显示选项也得从周次弹层里翻。现在拆开：胶囊（周次区）→ 本弹层；
  * 眼睛图标 → 课表页内覆盖面板（WeekScreen.DisplaySettingsOverlay，复用 DisplaySettingsContent）。
- * 「我的 → 显示设置」子页（DisplaySettingsScreen）与它共用同一份选项内容，两处不再各写一遍。
+ * 「我的 → 显示设置」跨 Tab 触发同一个覆盖面板（见 MainActivity），显示设置只有一个形态。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WeekPickerSheet(
     currentWeek: Int,
+    /** 真实的「本周」周次（todayWeek）：与正在查看的 [currentWeek] 是两回事，徽标用它。 */
+    todayWeek: Int,
     totalWeeks: Int,
     weeksWithCourses: Set<Int>,
     onPickWeek: (Int) -> Unit,
@@ -79,6 +85,7 @@ fun WeekPickerSheet(
             WeekChipGrid(
                 totalWeeks = totalWeeks,
                 currentWeek = currentWeek,
+                todayWeek = todayWeek,
                 weeksWithCourses = weeksWithCourses,
                 onPick = onPickWeek,
             )
@@ -90,6 +97,7 @@ fun WeekPickerSheet(
 private fun WeekChipGrid(
     totalWeeks: Int,
     currentWeek: Int,
+    todayWeek: Int,
     weeksWithCourses: Set<Int>,
     onPick: (Int) -> Unit,
 ) {
@@ -104,6 +112,7 @@ private fun WeekChipGrid(
                     WeekChip(
                         week = week,
                         selected = week == currentWeek,
+                        isThisWeek = week == todayWeek,
                         hasCourse = week in weeksWithCourses,
                         onClick = { onPick(week) },
                         modifier = Modifier.weight(1f),
@@ -121,6 +130,7 @@ private fun WeekChipGrid(
 private fun WeekChip(
     week: Int,
     selected: Boolean,
+    isThisWeek: Boolean,
     hasCourse: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -138,9 +148,18 @@ private fun WeekChip(
     }
     Column(
         modifier = modifier
-            .height(38.dp)
+            .height(44.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
+            // 「本周」描边：翻走几周后打开面板也找得回今天在哪一周（选中态自绘 primary 底，
+            // 不叠描边）
+            .then(
+                if (isThisWeek && !selected) {
+                    Modifier.border(1.5.dp, scheme.primary, RoundedCornerShape(10.dp))
+                } else {
+                    Modifier
+                },
+            )
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -326,6 +345,54 @@ fun ImportEntrySheet(
                 title = "从教务导入",
                 subtitle = "登录教务系统，解析学期理论 / 实验课表",
                 onClick = onJwImport,
+            )
+        }
+    }
+}
+
+/**
+ * 课表页顶栏「分享」入口弹层（DESIGN §4.12）：日历同步 / CSV / JSON。
+ *
+ * 形态与 [ImportEntrySheet] 一致（标题 + 三行入口）；具体动作在 WeekScreen 接线。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ShareEntrySheet(
+    onSyncCalendar: () -> Unit,
+    onExportCsv: () -> Unit,
+    onExportJson: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "分享课表",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.CalendarSync, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "一键同步到手机日历",
+                subtitle = "写入系统日历并按设置提醒；重复同步自动去重",
+                onClick = onSyncCalendar,
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.FileExport, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "导出为 CSV（日历格式）",
+                subtitle = "Google 日历可直接导入的通用格式",
+                onClick = onExportCsv,
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.File02, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "导出为 JSON",
+                subtitle = "完整课表数据，可在其他设备导入水贝贝",
+                onClick = onExportJson,
             )
         }
     }

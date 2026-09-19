@@ -35,6 +35,12 @@ object QiangzhiScheduleParser {
 (function(){
   try {
     var out = [];
+    // 学期口径：取学期下拉的当前选中项（带 xnxq01id 参数重载后服务端会渲染对应 selected）
+    var term = '';
+    var termSel = document.querySelector('select#xnxq01id');
+    if (termSel && termSel.selectedIndex >= 0 && termSel.options) {
+      term = (termSel.options[termSel.selectedIndex].textContent || '').trim();
+    }
     var rows = document.querySelectorAll('tbody tr');
     var carry = {};
     for (var r = 0; r < rows.length; r++) {
@@ -65,7 +71,7 @@ object QiangzhiScheduleParser {
         col += colspan;
       }
     }
-    return JSON.stringify({ ok: true, items: out, title: document.title || '', url: location.href });
+    return JSON.stringify({ ok: true, items: out, term: term, title: document.title || '', url: location.href });
   } catch (e) {
     return JSON.stringify({ ok: false, error: String(e) });
   }
@@ -87,7 +93,7 @@ object QiangzhiScheduleParser {
                         "解析到 ${items.size} 条，但周次/星期字段不完整（失败 $failed 条）",
                     )
                 } else {
-                    ImportParseResult.Success(courses)
+                    ImportParseResult.Success(courses, term = extractTermField(json))
                 }
             }
         } catch (e: Exception) {

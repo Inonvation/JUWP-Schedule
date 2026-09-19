@@ -36,12 +36,16 @@ class WeekGridLayoutTest {
         maxWidth: Dp = 390.dp,
         days: Int = 7,
         rowHeightScale: Float = 1f,
+        railWidth: Dp = 48.dp,
+        dayHeaderHeight: Dp = 44.dp,
     ) = buildGridLayout(
         maxHeight = maxHeight,
         maxWidth = maxWidth,
         sectionCount = 11,
         dayCount = days,
         rowHeightScale = rowHeightScale,
+        railWidth = railWidth,
+        dayHeaderHeight = dayHeaderHeight,
     )
 
     /**
@@ -125,6 +129,48 @@ class WeekGridLayoutTest {
         assertEquals((390.dp - 48.dp) / 7, week.dayWidth)
         assertEquals((390.dp - 48.dp) / 5, workdays.dayWidth)
         assertTrue(workdays.dayWidth > week.dayWidth)
+    }
+
+    /**
+     * 时间轴栏宽 / 表头高度可调（显示设置新增项）后的契约：
+     * - 列宽 =（总宽 − 栏宽）/ 列数；
+     * - 网格可用高度 = 总高 − 表头高度，表头调高行高自动收；
+     * - 两者默认值与 TimetablePrefs companion 一致（单一来源）。
+     */
+    @Test
+    fun railWidthAndHeaderHeightParticipateInGeometry() {
+        val narrow = layout(railWidth = 28.dp)
+        assertEquals((390.dp - 28.dp) / 7, narrow.dayWidth)
+        assertEquals(28.dp, narrow.railWidth)
+
+        val wide = layout(railWidth = 72.dp)
+        assertEquals((390.dp - 72.dp) / 7, wide.dayWidth)
+        assertTrue(narrow.dayWidth > wide.dayWidth)
+
+        val tall = layout(dayHeaderHeight = 64.dp)
+        assertEquals(64.dp, tall.dayHeaderHeight)
+        // 行高收窄：可用高度少了（612 - 64） vs （612 - 44）
+        assertTrue(tall.rowHeight < layout(dayHeaderHeight = 44.dp).rowHeight)
+        assertDpEquals(612.dp - 64.dp, tall.gridHeight)
+    }
+
+    /**
+     * 表头高度下限随日期字号抬高（防「表头拖到最小 + 日期字号拉到最大」时两行文字被截断）：
+     * - 基准日期字号（7 列 12sp）下，44dp 默认表头已足够，下限不生效；
+     * - 字号越大下限越高；日期 14sp 时下限 > 44dp，必须抬高；
+     * - 结果始终夹在 [32, 64] 滑块范围内。
+     */
+    @Test
+    fun minHeaderHeightFollowsDateFont() {
+        // 12sp 基准：12 * 1.92 * 1.3 + 10 ≈ 40dp < 44dp 默认值，默认表头足够
+        assertTrue(minHeaderHeightForDateFont(12f) <= 44f)
+        // 14sp：14 * 1.92 * 1.3 + 10 ≈ 45dp > 44dp，需要抬高
+        assertTrue(minHeaderHeightForDateFont(14f) > 44f)
+        // 极端输入也不越界
+        assertEquals(32f, minHeaderHeightForDateFont(0f), 0f)
+        assertEquals(64f, minHeaderHeightForDateFont(100f), 0f)
+        // 单调：字号越大下限越高
+        assertTrue(minHeaderHeightForDateFont(14f) > minHeaderHeightForDateFont(7f))
     }
 
     /** 作息表最后一节（第 11 小节）的结束分钟数，作 dayEndMinutes 哨兵保持「挂满全天」的旧语义 */

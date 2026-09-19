@@ -4,10 +4,10 @@
 页面: GET /jsxsd/xskb/xskb_list.do?viweType=0   （强智 newL 模板）
 
 用法:
-  .venv-scraper/Scripts/python.exe scripts/fetch_courses.py
+  .venv-scraper/Scripts/python.exe scripts/fetch_courses.py [--term 2025-2026-2]
 
 输出:
-  scripts/out/courses.json        对齐 DESIGN 4.3 的课表 JSON
+  scripts/out/courses.json        对齐 DESIGN 4.3 的课表 JSON（顶层 term = 实际爬到的学期）
   scripts/out/courses_raw.json    解析中间产物（含原始 detail 文本，便于排错）
   scripts/out/xskb_vt0.html       页面快照（解析器回归时可当 fixture）
 
@@ -180,17 +180,29 @@ def to_design(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def main() -> int:
+    import argparse
     import json
+
+    parser = argparse.ArgumentParser(description="抓取学期理论课表")
+    parser.add_argument("--term", help="学年学期，如 2025-2026-2；缺省取教务当前学期")
+    args = parser.parse_args()
 
     cred = jw_session.load_credentials()
     jw = jw_session.login(cred)
 
+    url = SCHEDULE_URL + (f"&xnxq01id={args.term}" if args.term else "")
     html = jw_session.get_html(
-        jw, SCHEDULE_URL, must_contain="个人课表", save=OUT / "xskb_vt0.html"
+        jw, url, must_contain="个人课表", save=OUT / "xskb_vt0.html"
     )
     print("[4] 课表 HTML", len(html), "bytes")
 
     items, meta = parse_courses(html)
+    got = meta.get("term")
+    # 口径一致性：教务忽略未知学期参数时下拉仍停在当前学期，输出口径必须等于实际爬到的学期
+    if args.term and got != args.term:
+        raise RuntimeError(
+            f"请求学期 {args.term} 与教务返回学期 {got} 不一致（学期参数可能未被接受）"
+        )
     courses = to_design(items)
     payload = {
         "source": "jiaowu.juwp.edu.cn 强智 /jsxsd/xskb/xskb_list.do?viweType=0",

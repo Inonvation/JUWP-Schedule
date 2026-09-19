@@ -1,5 +1,10 @@
 package edu.jxslu.schedule.ui.today
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +30,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -49,6 +58,11 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.TodayState
+import edu.jxslu.schedule.domain.clockOf
+import edu.jxslu.schedule.domain.dayLabel
+import edu.jxslu.schedule.domain.metaLine
+import edu.jxslu.schedule.domain.sectionRange
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.calculateActualCost
@@ -56,20 +70,20 @@ import edu.jxslu.schedule.ui.common.CourseEditSheet
 import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
-import edu.jxslu.schedule.ui.common.compactPosition
 import edu.jxslu.schedule.ui.common.courseColor
+import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberWaterRequireDoubleClick
 import edu.jxslu.schedule.ui.water.WaterViewModel
 import kotlinx.coroutines.delay
-import java.time.format.DateTimeFormatter
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Droplet
+import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
 
 /**
  * 今日课表。
  *
  * 页面只有一条骨架：**顶部焦点卡（正在上课 / 下一节） + 一列时间轴课程行**。
- * - 焦点课只出现一次：焦点卡拿走第一门课，[TodayUiState.listCourses] 已把该课剔除，
+ * - 焦点课只出现一次：焦点卡拿走第一门课，[TodayState.listCourses] 已把该课剔除，
  *   旧版「状态卡 + 列表首项」显示同一节课的问题不复存在。
  * - 时间只在行首出现一次（`10:15`），行内不再重复「第 N 节」与时刻——
  *   节次编号只在焦点卡标题里出现（`正在上课 · 第3-4节`）。
@@ -81,6 +95,8 @@ import me.rerere.hugeicons.stroke.Droplet
 @Composable
 fun TodayScreen(
     onOpenJwImport: () -> Unit = {},
+    /** 「尚未开学」空态的 CTA：跳课表设置（学期起止） */
+    onOpenTimetableSettings: () -> Unit = {},
     /** 胖乖已登录时显示一键开水卡（DESIGN 3.3）；由外层传入登录态 */
     showWaterEntry: Boolean = false,
     onOpenWater: () -> Unit = {},
@@ -94,12 +110,23 @@ fun TodayScreen(
     var editing by remember { mutableStateOf<Course?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Course?>(null) }
+    val snackbar = remember { SnackbarHostState() }
 
     // 「还剩 X 分钟」要跟着时间走
     LaunchedEffect(Unit) {
         while (true) {
             viewModel.refreshTick()
             delay(30_000)
+        }
+    }
+
+    // 撤销型反馈（DESIGN §3.3）：删除课程后给「撤销」
+    val undoable by viewModel.undoable.collectAsStateWithLifecycle()
+    LaunchedEffect(undoable) {
+        undoable?.let { m ->
+            val result = snackbar.showSnackbar(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) m.undo()
+            viewModel.consumeUndoable()
         }
     }
 
@@ -123,7 +150,7 @@ fun TodayScreen(
                         Text(stringResource(R.string.tab_today))
                         Text(
                             text = buildString {
-                                append(state.date.format(monthDayFmt))
+                                append(state.date.format(MONTH_DAY_FORMAT))
                                 append(" 周${dayLabel(state.day)}")
                                 if (state.week > 0) append(" · 第 ${state.week} 周")
                             },
@@ -135,14 +162,32 @@ fun TodayScreen(
                 // 一键开水入口不挂顶栏：列表尾部快捷卡整体可点进开水页，顶栏图标重复
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         when {
-            state.loading -> CenteredHint(padding, "加载中…", "正在读取本机课表")
+            state.loading -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "正在读取本机课表",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                }
+            }
 
             !state.inTerm -> CenteredHint(
                 padding,
                 "尚未开学或未配置学期",
-                "请在「我的」中设置开学日期，或先手动添加课程。",
+                "先在「课表设置」里填好开学日期与周数，也能手动加课。",
+                actionLabel = "去设置学期",
+                onAction = onOpenTimetableSettings,
             )
 
             state.totalCourseCount == 0 -> CenteredHint(
@@ -215,7 +260,7 @@ private fun CenteredHint(
 
 @Composable
 private fun TodayContent(
-    state: TodayUiState,
+    state: TodayState,
     padding: PaddingValues,
     onEdit: (Course) -> Unit,
     /** 胖乖一键开水快捷卡（已登录时非 null）；放列表尾部、课程内容之后 */
@@ -228,10 +273,19 @@ private fun TodayContent(
         contentPadding = PaddingValues(bottom = 16.dp),
     ) {
         val focus = state.ongoing ?: state.next
-        if (focus == null) {
-            item(key = "done") { DoneBlock(state) }
-        } else {
-            item(key = "focus") { FocusCard(state, focus, onEdit) }
+        // 焦点卡 ↔「上完/没课」的切换给淡入淡出：这是今日页最常发生的状态跳变
+        //（下课瞬间），硬切显得突兀
+        item(key = "focus") {
+            AnimatedContent(
+                targetState = focus,
+                contentKey = { it?.id },
+                transitionSpec = {
+                    fadeIn(tween(220)) togetherWith fadeOut(tween(150))
+                },
+                label = "todayFocus",
+            ) { f ->
+                if (f == null) DoneBlock(state) else FocusCard(state, f, onEdit)
+            }
         }
 
         // 「今天还有」只列焦点之外的课；正在上的课已在焦点卡里，不重复出现。
@@ -246,6 +300,8 @@ private fun TodayContent(
                     course = course,
                     slots = state.slots,
                     onClick = { onEdit(course) },
+                    // 删除/新增课程时列表项平滑进出场，不再整列硬跳
+                    modifier = Modifier.animateItem(),
                 )
             }
         }
@@ -273,13 +329,14 @@ private fun TodayContent(
  */
 @Composable
 private fun FocusCard(
-    state: TodayUiState,
+    state: TodayState,
     focus: Course,
     onEdit: (Course) -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val primary = MaterialTheme.colorScheme.primary
     val ongoing = state.ongoing != null
+    val haptics = rememberAppHaptics()
 
     val countdown: String? = if (ongoing) {
         state.ongoingCountdown
@@ -300,7 +357,10 @@ private fun FocusCard(
             .height(IntrinsicSize.Min)
             .clip(RoundedCornerShape(14.dp))
             .background(primary.copy(alpha = 0.08f))
-            .clickable { onEdit(focus) },
+            .clickable {
+                haptics.tap()
+                onEdit(focus)
+            },
     ) {
         Box(
             Modifier
@@ -384,7 +444,7 @@ private fun ProgressBar(progress: Float) {
 
 /** 今天结束后的落点：上完课 / 本来就没课。 */
 @Composable
-private fun DoneBlock(state: TodayUiState) {
+private fun DoneBlock(state: TodayState) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     Column(
         modifier = Modifier
@@ -436,11 +496,15 @@ private fun CourseTimelineRow(
     val onSurface = MaterialTheme.colorScheme.onSurface
     val accent = courseColor(course.colorIndex)
     val meta = metaLine(slots, course)
+    val haptics = rememberAppHaptics()
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(onClickLabel = "编辑课程") {
+                haptics.tap()
+                onClick()
+            }
             .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.Top,
     ) {
@@ -483,12 +547,12 @@ private fun CourseTimelineRow(
 }
 
 /**
- * 明日预告。只在 [TodayUiState.tomorrowVisible]（今天已无待上课程）时渲染，
+ * 明日预告。只在 [TodayState.tomorrowVisible]（今天已无待上课程）时渲染，
  * 用与今天相同的行组件，保证「明天也是课表」而不是另一套排版。
  */
 @Composable
 private fun TomorrowBlock(
-    state: TodayUiState,
+    state: TodayState,
     onEdit: (Course) -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -540,49 +604,8 @@ private fun TomorrowBlock(
     }
 }
 
-/** `第3-4节` / `第5节` */
-private fun sectionRange(course: Course): String {
-    val start = course.startSection
-    val end = course.endSection
-    return if (end > start) "第${start}-${end}节" else "第${start}节"
-}
+// monthDayFmt 已收拢为 domain/TodayFormat.kt 的 MONTH_DAY_FORMAT（与调课页共用）
 
-/** 起始时刻 `10:15`；取不到给 `--:--`。自定义时间课以 customStartTime 为准。 */
-private fun clockOf(slots: List<TimeSlot>, course: Course): String =
-    ScheduleCalculator.courseStartMinutes(slots, course)?.let(::minutesToClock) ?: "--:--"
-
-private fun minutesToClock(minutes: Int): String =
-    "%02d:%02d".format(minutes / 60, minutes % 60)
-
-/** `10:15–11:40 · @南B208 · 陈磊`；自定义时间课用 customStart/EndTime。 */
-private fun metaLine(slots: List<TimeSlot>, course: Course): String {
-    val start = ScheduleCalculator.courseStartMinutes(slots, course)
-    val end = ScheduleCalculator.courseEndMinutes(slots, course)
-    val range = if (start != null && end != null) {
-        "${minutesToClock(start)}–${minutesToClock(end)}"
-    } else {
-        null
-    }
-    val location = compactPosition(course.position)
-    return listOfNotNull(
-        range,
-        location.takeIf { it.isNotBlank() }?.let { "@$it" },
-        course.teacher.takeIf { it.isNotBlank() },
-    ).joinToString(" · ")
-}
-
-private val monthDayFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("M月d日")
-
-private fun dayLabel(day: Int): String = when (day) {
-    1 -> "一"
-    2 -> "二"
-    3 -> "三"
-    4 -> "四"
-    5 -> "五"
-    6 -> "六"
-    7 -> "日"
-    else -> day.toString()
-}
 
 /**
  * 一键开水快捷卡：与开水页共享同一 ViewModel，点「开水」直接走解锁流程，

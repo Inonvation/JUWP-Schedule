@@ -1,9 +1,6 @@
-package edu.jxslu.schedule.ui.today
+package edu.jxslu.schedule.domain
 
 import edu.jxslu.schedule.data.DefaultData
-import edu.jxslu.schedule.domain.Course
-import edu.jxslu.schedule.domain.LocalTimeLike
-import edu.jxslu.schedule.domain.SemesterConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

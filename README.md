@@ -21,8 +21,8 @@
 | Gradle | Wrapper 自带 **8.10.2** |
 | Kotlin | **2.1.21** |
 | minSdk / targetSdk | 26 / 35 |
-| applicationId | `edu.jxslu.schedule` |
-| 应用显示名 | 水贝贝 |
+| applicationId | `edu.jxslu.schedule`（debug 变体为 `.debug` 后缀，可与正式包共存） |
+| 应用显示名 | 水贝贝（debug 变体显示「水贝贝 Debug」） |
 
 ## 用 Android Studio 打开
 

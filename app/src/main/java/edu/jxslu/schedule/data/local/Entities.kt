@@ -6,16 +6,17 @@ import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
-import edu.jxslu.schedule.domain.TimetablePrefs
 
 /**
  * 单个课表的元信息与课表级设置（DESIGN §4.9）。
  *
- * 学期配置、作息表、课程都以 timetableId 归属；显示偏好以 JSON 存在本表：
- * 这些值没有查询需求，放 JSON 列让「复制配置到新课表」变成拷一行，加字段也不用动 Room 版本号。
+ * 学期配置、作息表、课程都以 timetableId 归属。显示偏好 v3 时期以 JSON 存在本表，
+ * 2026-09-19 起全局化（DataStore `view_prefs_json`）——[prefsJson] 列保留只为 schema
+ * 稳定（迁移只增不删），新代码不读不写。
  */
 @Entity(tableName = "timetables")
 data class TimetableEntity(
@@ -25,7 +26,7 @@ data class TimetableEntity(
     val sortOrder: Int,
     /** 用户是否手工改过作息；结构性作息迁移只对未自定义的课表生效。 */
     val slotsCustomized: Boolean = false,
-    /** [TimetablePrefs] 的 JSON。解码失败退默认值（见 TimetablePrefs.decode）。 */
+    /** 【退役列】v3 的课表级显示偏好 JSON。仅历史迁移（globalizeViewPrefs）还会读。 */
     val prefsJson: String,
 ) {
     fun toDomain(): Timetable = Timetable(
@@ -34,19 +35,7 @@ data class TimetableEntity(
         createdAt = createdAt,
         sortOrder = sortOrder,
         slotsCustomized = slotsCustomized,
-        prefs = TimetablePrefs.decode(prefsJson),
     )
-
-    companion object {
-        fun fromDomain(t: Timetable): TimetableEntity = TimetableEntity(
-            id = t.id,
-            name = t.name,
-            createdAt = t.createdAt,
-            sortOrder = t.sortOrder,
-            slotsCustomized = t.slotsCustomized,
-            prefsJson = t.prefs.encode(),
-        )
-    }
 }
 
 @Entity(
@@ -164,4 +153,72 @@ class Converters {
     @TypeConverter
     fun toWeeksSet(value: String): Set<Int> =
         value.split(',').mapNotNull { it.trim().toIntOrNull() }.toSet()
+}
+
+/**
+ * 课程成绩（DESIGN §4.15）。全局归属学生、不挂 timetableId；
+ * 写入口径是「按学期替换」——同一学期先删后插，重复导入不产生重复行。
+ */
+@Entity(
+    tableName = "scores",
+    indices = [Index("term")],
+)
+data class ScoreEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 学年学期，如 2025-2026-2 */
+    val term: String,
+    val courseNo: String,
+    val name: String,
+    val unit: String,
+    val credit: Double,
+    val hours: Double,
+    val examForm: String,
+    val courseAttr: String,
+    val category: String,
+    /** 数值分；等级制成绩为 null */
+    val score: Double?,
+    val scoreStr: String,
+    val gradePoint: Double?,
+    val status: String,
+    val pendingReview: Boolean,
+    val importedAt: Long,
+) {
+    fun toDomain(): ScoreRecord = ScoreRecord(
+        id = id,
+        term = term,
+        courseNo = courseNo,
+        name = name,
+        unit = unit,
+        credit = credit,
+        hours = hours,
+        examForm = examForm,
+        courseAttr = courseAttr,
+        category = category,
+        score = score,
+        scoreStr = scoreStr,
+        gradePoint = gradePoint,
+        status = status,
+        pendingReview = pendingReview,
+    )
+
+    companion object {
+        fun fromDomain(record: ScoreRecord, importedAt: Long): ScoreEntity = ScoreEntity(
+            id = record.id.takeIf { it > 0 } ?: 0,
+            term = record.term,
+            courseNo = record.courseNo,
+            name = record.name,
+            unit = record.unit,
+            credit = record.credit,
+            hours = record.hours,
+            examForm = record.examForm,
+            courseAttr = record.courseAttr,
+            category = record.category,
+            score = record.score,
+            scoreStr = record.scoreStr,
+            gradePoint = record.gradePoint,
+            status = record.status,
+            pendingReview = record.pendingReview,
+            importedAt = importedAt,
+        )
+    }
 }

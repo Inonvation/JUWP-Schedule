@@ -5,10 +5,10 @@
 入口: 教务 → 实践实验 → 实验课表查询（菜单 data-id = NEW_XSD_PYGL_WDKB_SYKBCX）
 
 用法:
-  .venv-scraper/Scripts/python.exe scripts/fetch_lab_courses.py
+  .venv-scraper/Scripts/python.exe scripts/fetch_lab_courses.py [--term 2025-2026-2]
 
 输出:
-  scripts/out/lab_courses.json    聚合后的实验课次
+  scripts/out/lab_courses.json    聚合后的实验课次（顶层 term = 实际爬到的学期）
   scripts/out/syxkb.html          页面快照（解析器回归时可当 fixture）
 
 页面结构（2026-09-17 实测，与其他课表页完全不同，勿套用 fetch_courses 的规则）:
@@ -153,13 +153,26 @@ def parse_lab_courses(html: str) -> tuple[list[dict[str, Any]], list[dict[str, A
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="抓取实验课表")
+    parser.add_argument("--term", help="学年学期，如 2025-2026-2；缺省取教务当前学期")
+    args = parser.parse_args()
+
     cred = jw_session.load_credentials()
     jw = jw_session.login(cred)
 
-    html = jw_session.get_html(jw, LAB_SCHEDULE, must_contain="实验课表", save=OUT / "syxkb.html")
+    url = LAB_SCHEDULE if not args.term else f"{LAB_SCHEDULE}?xnxq01id={args.term}"
+    html = jw_session.get_html(jw, url, must_contain="实验课表", save=OUT / "syxkb.html")
     print("[4] 实验课表 HTML", len(html), "bytes")
 
     raw, courses, meta = parse_lab_courses(html)
+    got = meta.get("term")
+    # 口径一致性：教务忽略未知学期参数时下拉仍停在当前学期，输出口径必须等于实际爬到的学期
+    if args.term and got != args.term:
+        raise RuntimeError(
+            f"请求学期 {args.term} 与教务返回学期 {got} 不一致（学期参数可能未被接受）"
+        )
     payload = {
         "source": "jiaowu.juwp.edu.cn 强智 /jsxsd/syjx/toXskb.do",
         "term": meta.get("term"),

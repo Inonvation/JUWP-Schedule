@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.ui.common
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,11 +16,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,14 +37,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.compactPosition
+import edu.jxslu.schedule.domain.dayLabel
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ClipboardPen
+import me.rerere.hugeicons.stroke.FlaskRound
 
 /**
  * 课程调色板：中饱和粉彩，实色块配白字。
@@ -119,35 +132,63 @@ private fun Modifier.courseDashedBorder(
     )
 }
 
-private val parenRegex = Regex("[（(]([^）)]*)[）)]")
-private val openParenTailRegex = Regex("[（(]([^）)]*)$")
+/**
+ * 考试卡的白色**实线**描边（DESIGN §4.14）：与普通课的虚线拉开形状差异，
+ * 用户先靠「实线 vs 虚线」扫出异常格，再靠徽章图标确认是考试。
+ * 密度收敛策略与 [courseDashedBorder] 相同：深色下降透明度避免亮刺。
+ */
+private fun Modifier.courseSolidBorder(
+    cornerRadiusDp: Float,
+    dark: Boolean,
+): Modifier = drawBehind {
+    val strokePx = 1.dp.toPx()
+    val inset = strokePx / 2f
+    val radiusPx = (cornerRadiusDp.dp.toPx() - inset).coerceAtLeast(0f)
+    drawRoundRect(
+        color = Color.White.copy(alpha = if (dark) 0.45f else 0.95f),
+        topLeft = Offset(inset, inset),
+        size = Size(size.width - strokePx, size.height - strokePx),
+        cornerRadius = CornerRadius(radiusPx),
+        style = Stroke(width = strokePx),
+    )
+}
 
 /**
- * 地点压缩。
- *
- * 根因：教务返回的是 `教学南大楼(南B302)` 这种带楼栋全名的写法，
- * 7 列布局下单列内容宽约 37dp，原样显示会被截成 `教学南…`，反而看不到教室号。
- *
- * 规则（按顺序）：
- * 1. 取最后一对括号里的非空内容 → `教学南大楼(南B302)` → `南B302`
- * 2. 括号没闭合也认 → `教学北大楼(北B102` → `北B102`
- *    （老版本解析把结尾右括号 trim 掉了，库里已经存了一批这样的脏数据，只能在这层兜住）
- * 3. 只剩括号残留（教务对无地点课程返回 `()`）→ 视为无地点
- * 4. 没有括号就原样返回
+ * 类型图标（DESIGN §4.14）：实验 = 烧瓶、考试 = 试卷笔；理论课没有徽章。
+ * 图标名来自本地 JAR 检索（find-hugeicons），勿凭记忆改名。
  */
-fun compactPosition(position: String): String {
-    val raw = position.trim()
-    if (raw.isEmpty()) return ""
-    val inners = parenRegex.findAll(raw)
-        .map { it.groupValues[1].trim() }
-        .filter { it.isNotEmpty() }
-        .toList()
-    if (inners.isNotEmpty()) return inners.last()
+private fun kindIcon(kind: CourseKind): ImageVector? = when (kind) {
+    CourseKind.Theory -> null
+    CourseKind.Lab -> HugeIcons.FlaskRound
+    CourseKind.Exam -> HugeIcons.ClipboardPen
+}
 
-    val tail = openParenTailRegex.find(raw)?.groupValues?.get(1)?.trim()
-    if (!tail.isNullOrEmpty()) return tail
-
-    return if (raw.any { it == '(' || it == '（' || it == ')' || it == '）' }) "" else raw
+/**
+ * 类型徽章：圆形半透明白底 + 深色线性图标，取代旧版「右下角两个小字」——
+ * 两个字在色块海里存在感太弱；圆底反差先被扫到，图标再确认类型。
+ * [diameter] 由调用方按卡片尺寸给：网格卡 14dp、单节小卡 11dp。
+ */
+@Composable
+private fun KindBadge(
+    kind: CourseKind,
+    diameter: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val icon = kindIcon(kind) ?: return
+    Box(
+        modifier = modifier
+            .size(diameter)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.88f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = kind.label,
+            tint = Color.Black.copy(alpha = 0.66f),
+            modifier = Modifier.size(diameter * 0.62f),
+        )
+    }
 }
 
 /**
@@ -157,6 +198,9 @@ fun compactPosition(position: String): String {
  * 小圆角、白色虚线描边；内容**顶部起排**（课名 → @地点），教师沉到块底部——
  * 之前全部居中让多行课名的块上下留白不均，且教师位置随内容漂移，扫读时没有固定锚点。
  * 居中方式与教师显隐由 [GridCellStyle] 控制（显示设置里可调）。
+ *
+ * 类型区分（实验/考试）：右下角图标徽章；考试卡另加白色**实线**描边，
+ * 与普通课的虚线描边拉开形状差异。颜色仍按课程名分配，不挪用类型语义。
  *
  * [days] 决定字号：7 天时单列内容宽约 40dp，中文一行 3 字，超出会被截断，因此课名压到 11sp；
  * 5 天模式单列约 70dp，可以放宽到 12.5sp（见 DESIGN 3.2）。
@@ -181,19 +225,22 @@ fun GridCourseCard(
     val columnAlign = if (style.centerHorizontal) Alignment.CenterHorizontally else Alignment.Start
     // surface 明度区分深浅色：深色下描边收敛，避免白虚线扎眼
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val hasBadge = course.kind != CourseKind.Theory
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(style.cornerRadiusDp.dp))
             .background(accent.copy(alpha = style.opacity))
             .then(
-                if (style.showBorder) {
-                    Modifier.courseDashedBorder(style.cornerRadiusDp, isDark)
-                } else {
-                    Modifier
+                when {
+                    // 考试用实线描边：先靠形状差异从色块海里扫出来
+                    course.kind == CourseKind.Exam ->
+                        Modifier.courseSolidBorder(style.cornerRadiusDp, isDark)
+                    style.showBorder -> Modifier.courseDashedBorder(style.cornerRadiusDp, isDark)
+                    else -> Modifier
                 },
             )
-            .clickable(onClick = onClick),
+            .clickable(onClickLabel = "查看课程详情", onClick = onClick),
     ) {
         Column(
             modifier = Modifier
@@ -238,23 +285,18 @@ fun GridCourseCard(
                     color = Color.White.copy(alpha = 0.74f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    // 实验角标占据右下角，教师名预先让位，避免长教师名压到角标底下
-                    modifier = Modifier.padding(
-                        end = if (course.kind == CourseKind.Lab) 20.dp else 0.dp,
-                    ),
+                    // 类型徽章占据右下角，教师名预先让位，避免长教师名压到徽章底下
+                    modifier = Modifier.padding(end = if (hasBadge) 18.dp else 0.dp),
                 )
             }
         }
-        // 实验课标一个右下角小字。用标注而不是换色：颜色已被「不同课程不同色」占用，
-        // 再拿颜色区分类型会和既有语义打架。
-        if (course.kind == CourseKind.Lab) {
-            Text(
-                text = "实验",
-                style = TextStyle(fontSize = 8.5.sp, lineHeight = 10.sp),
-                color = Color.White.copy(alpha = 0.8f),
+        if (hasBadge) {
+            KindBadge(
+                kind = course.kind,
+                diameter = 14.dp,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 2.dp, bottom = 0.dp),
+                    .padding(end = 2.dp, bottom = 2.dp),
             )
         }
     }
@@ -307,13 +349,14 @@ fun SingleSectionCard(
             .clip(RoundedCornerShape(style.cornerRadiusDp.dp))
             .background(accent.copy(alpha = style.opacity))
             .then(
-                if (style.showBorder) {
-                    Modifier.courseDashedBorder(style.cornerRadiusDp, isDark)
-                } else {
-                    Modifier
+                when {
+                    course.kind == CourseKind.Exam ->
+                        Modifier.courseSolidBorder(style.cornerRadiusDp, isDark)
+                    style.showBorder -> Modifier.courseDashedBorder(style.cornerRadiusDp, isDark)
+                    else -> Modifier
                 },
             )
-            .clickable(onClick = onClick),
+            .clickable(onClickLabel = "查看课程详情", onClick = onClick),
         contentAlignment = if (style.centerHorizontal) Alignment.Center else Alignment.CenterStart,
     ) {
         Text(
@@ -329,16 +372,15 @@ fun SingleSectionCard(
             textAlign = if (style.centerHorizontal) TextAlign.Center else TextAlign.Start,
             modifier = Modifier.padding(horizontal = 2.dp),
         )
-        // 单节课块（约 40–53dp）放不下「实验」二字，退化成一个小圆点；
+        // 单节课块（约 40–53dp）放不下 14dp 徽章，缩到 11dp 挤右上角；
         // 完整类型在点开后的课程详情里给
-        if (course.kind == CourseKind.Lab) {
-            Box(
-                Modifier
+        if (course.kind != CourseKind.Theory) {
+            KindBadge(
+                kind = course.kind,
+                diameter = 11.dp,
+                modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-                    .size(4.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.8f)),
+                    .padding(top = 2.dp, end = 2.dp),
             )
         }
     }
@@ -372,6 +414,11 @@ fun EmptyHint(
     }
 }
 
+/**
+ * 课程信息表单。星期/节次是**滚轮选择**而不是裸数字输入框：
+ * 「星期填 9」「节次填 99」这类脏输入在数字框里畅通无阻，滚轮从根上取缔；
+ * 课程名错误态由 [nameError] 驱动（空名保存时行内提示，不再静默无反应）。
+ */
 @Composable
 fun CourseEditorFields(
     name: String,
@@ -389,11 +436,19 @@ fun CourseEditorFields(
     weeksText: String,
     onWeeks: (String) -> Unit,
     maxSection: Int = 11,
+    nameError: String? = null,
 ) {
+    var dayPickerOpen by remember { mutableStateOf(false) }
+    var startPickerOpen by remember { mutableStateOf(false) }
+    var endPickerOpen by remember { mutableStateOf(false) }
+
     OutlinedTextField(
         value = name,
+        // 错误态的清除由父级在 onName 里做（父级持有 name 与 error 两个状态）
         onValueChange = onName,
         label = { Text("课程名称") },
+        isError = nameError != null,
+        supportingText = { nameError?.let { Text(it) } },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
     )
@@ -415,30 +470,27 @@ fun CourseEditorFields(
     )
     Spacer(modifier = Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = day.toString(),
-            onValueChange = { it.toIntOrNull()?.let(onDay) },
-            label = { Text("星期") },
+        SelectorField(
+            label = "星期",
+            value = dayLabel(day),
+            onClick = { dayPickerOpen = true },
             modifier = Modifier.weight(1f),
-            singleLine = true,
         )
-        OutlinedTextField(
-            value = startSection.toString(),
-            onValueChange = { it.toIntOrNull()?.let(onStart) },
-            label = { Text("起始节") },
+        SelectorField(
+            label = "起始节",
+            value = "$startSection",
+            onClick = { startPickerOpen = true },
             modifier = Modifier.weight(1f),
-            singleLine = true,
         )
-        OutlinedTextField(
-            value = endSection.toString(),
-            onValueChange = { it.toIntOrNull()?.let(onEnd) },
-            label = { Text("结束节") },
+        SelectorField(
+            label = "结束节",
+            value = "$endSection",
+            onClick = { endPickerOpen = true },
             modifier = Modifier.weight(1f),
-            singleLine = true,
         )
     }
     Text(
-        text = "节次按小节填 1–$maxSection（上午第 2 节就填 2，晚自习是 9–11）",
+        text = "节次按小节选（上午第 2 节就选 2，晚自习是 9–11）",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         modifier = Modifier.padding(top = 6.dp),
@@ -458,6 +510,77 @@ fun CourseEditorFields(
         TextButton(onClick = { onWeeks("1-16") }) { Text("1-16周") }
         TextButton(onClick = { onWeeks(oddWeeks()) }) { Text("单周") }
         TextButton(onClick = { onWeeks(evenWeeks()) }) { Text("双周") }
+    }
+
+    if (dayPickerOpen) {
+        WheelValueDialog(
+            title = "星期",
+            values = (1..7).map { dayLabel(it) },
+            initialIndex = (day - 1).coerceIn(0, 6),
+            onConfirm = { index ->
+                dayPickerOpen = false
+                onDay(index + 1)
+            },
+            onDismiss = { dayPickerOpen = false },
+        )
+    }
+    if (startPickerOpen) {
+        WheelValueDialog(
+            title = "起始节",
+            values = (1..maxSection).map { "第 $it 节" },
+            initialIndex = (startSection - 1).coerceIn(0, maxSection - 1),
+            onConfirm = { index ->
+                startPickerOpen = false
+                onStart(index + 1)
+            },
+            onDismiss = { startPickerOpen = false },
+        )
+    }
+    if (endPickerOpen) {
+        WheelValueDialog(
+            title = "结束节",
+            values = (startSection..maxSection).map { "第 $it 节" },
+            initialIndex = (endSection - startSection).coerceIn(0, maxSection - startSection),
+            onConfirm = { index ->
+                endPickerOpen = false
+                onEnd(index + startSection)
+            },
+            onDismiss = { endPickerOpen = false },
+        )
+    }
+}
+
+/** 滚轮选择入口：仿 OutlinedTextField 的边框 + 上浮小标签，整块可点、无键盘。 */
+@Composable
+private fun SelectorField(
+    label: String,
+    value: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberAppHaptics()
+    Column(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .clickable {
+                haptics.tap()
+                onClick()
+            }
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+        )
     }
 }
 

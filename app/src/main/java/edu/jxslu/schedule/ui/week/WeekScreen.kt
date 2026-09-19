@@ -34,8 +34,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +80,7 @@ import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
+import edu.jxslu.schedule.domain.TimetablePrefs
 import edu.jxslu.schedule.ui.common.CourseEditSheet
 import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.GhostCourseCard
@@ -86,157 +89,33 @@ import edu.jxslu.schedule.ui.common.GridCourseCard
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.SingleSectionCard
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.readTextFromUri
 import edu.jxslu.schedule.ui.common.resolveImportTarget
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.Eye
 import me.rerere.hugeicons.stroke.Import
+import me.rerere.hugeicons.stroke.Share08
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-private val dayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-private val monthDayFmt = DateTimeFormatter.ofPattern("M/d")
+// dayLabels / monthDayFmt 在 WeekGrid.kt（表头与顶栏共用）；fullDateFmt 仅顶栏用
 private val fullDateFmt = DateTimeFormatter.ofPattern("yyyy/M/d")
 
+// 顶栏高度保留本文件定义；时间轴栏宽 / 表头高度已用户可调（显示设置滑块），
+// 默认值与滑块范围统一收敛到 TimetablePrefs companion（单一来源），几何唯一来源是
+// buildGridLayout（WeekGridLayout.kt）产出的 GridLayout（railWidth / dayHeaderHeight 字段）。
 private val TopBarHeight = 56.dp
-private val RailWidth = 48.dp
-private val DayHeaderHeight = 44.dp
-/** 色块在格子里的内缩。只留 1dp：WakeUp 风格的紧凑感来自「块几乎填满格子」，此前 3dp×2 加上行距显得松散。 */
-private val CellGap = 1.dp
-
-/**
- * 大节之间的空隙。根因：此前 12dp（加上课块两侧各 1dp 内缩，同日相邻课块实际空 14dp），
- * 真机反馈同一天两节课之间的空白偏大——课块本身已内缩 1dp，12:3 的「20 分钟:5 分钟」
- * 设计比例在视觉上只贡献了松散感。收成 6dp：保留「大节间 > 大节内」的层级即可，
- * 不再追求与作息分钟数成比例。
- */
-private val IntraGap = 3.dp
-private val InterGap = 6.dp
-
-/** 再挤不能低于这个高度，否则课程名放不下；不足时整表竖滑。 */
-private val MinRowHeight = 40.dp
-
-/**
- * 网格几何：行号 = 小节号（1–11）。
- *
- * 根因：旧实现只有 5 行（大节），却拿小节号当行号用，
- * 于是 7-8 节的课落到第 7 行、9-10 节落到第 9 行，直接被画到网格外。
- * 现在行数与 `TimeSlot.number` 一一对应，不会再错位。
- */
-internal data class GridLayout(
-    val rowHeight: Dp,
-    /** 下标 0 是第 1 节的顶部 */
-    val rowTops: List<Dp>,
-    val rowBottoms: List<Dp>,
-    val dayWidth: Dp,
-) {
-    val gridHeight: Dp get() = rowBottoms.last()
-    val sections: Int get() = rowTops.size
-
-    fun topOf(section: Int): Dp = rowTops[(section - 1).coerceIn(0, rowTops.lastIndex)]
-    fun bottomOf(section: Int): Dp = rowBottoms[(section - 1).coerceIn(0, rowBottoms.lastIndex)]
-    fun heightOf(startSection: Int, endSection: Int): Dp = bottomOf(endSection) - topOf(startSection)
-}
-
-internal fun buildGridLayout(
-    maxHeight: Dp,
-    maxWidth: Dp,
-    sectionCount: Int,
-    dayCount: Int,
-    rowHeightScale: Float = 1f,
-): GridLayout {
-    val groups = ScheduleCalculator.BIG_SECTIONS
-    val intraCount = groups.sumOf { it.last - it.first }
-    val interCount = (groups.size - 1).coerceAtLeast(0)
-
-    val available = maxHeight - DayHeaderHeight
-    val rawRow = (available - IntraGap * intraCount - InterGap * interCount) / sectionCount
-    // 倍率乘在自适应值上（不是乘在 MinRowHeight 上）：>1 时超出屏幕走竖滑，<1 时仍受下限保护
-    val rowHeight = maxOf(rawRow * rowHeightScale, MinRowHeight)
-
-    val tops = ArrayList<Dp>(sectionCount)
-    val bottoms = ArrayList<Dp>(sectionCount)
-    var y = 0.dp
-    for (section in 1..sectionCount) {
-        tops += y
-        y += rowHeight
-        bottoms += y
-        if (section < sectionCount) {
-            y += if (ScheduleCalculator.isBigSectionEnd(section)) InterGap else IntraGap
-        }
-    }
-    return GridLayout(
-        rowHeight = rowHeight,
-        rowTops = tops,
-        rowBottoms = bottoms,
-        dayWidth = (maxWidth - RailWidth) / dayCount.coerceAtLeast(1),
-    )
-}
-
-/**
- * 当前时刻在网格里的位置。
- *
- * [inBreak]=false 表示正处在一节课内，位置按 40 分钟线性插值；
- * [inBreak]=true 表示落在课间/午休/晚休，此时**贴到离得近的那一端**
- * （下课的下一行顶部，或下一节的行顶），而不是在整段间隔里线性走。
- *
- * 根因：网格的纵向比例是设计比例而非时间比例——17:10→19:00 这 110 分钟的晚饭
- * 只占 12dp，而 40 分钟一节课占约 50dp。若在间隔里线性插值，17:36 的时刻线
- * 只会落在 17:10 下方 2.8dp，看起来像「卡住/偏了」；而它其实是准确的，
- * 是「把 110 分钟压进 12dp」这件事让它没法同时表示准确与直观。
- * 改成吸附后：下课边界与上课边界二选一，位置稳定且语义清楚（已上完 / 即将开始）。
- */
-internal data class NowMarker(val offsetY: Dp, val inBreak: Boolean)
-
-internal fun nowMarker(
-    slots: List<TimeSlot>,
-    layout: GridLayout,
-    now: LocalTimeLike,
-    dayEndMinutes: Int?,
-): NowMarker? {
-    val minutes = now.toMinutes()
-    // 终点按当日课程收口：上完最后一节就消失，而不是挂到作息表 21:10；
-    // dayEndMinutes == null = 今天没课（或结束时间无法判定），整天不画线。
-    // 起点仍按作息表：次日到第一节开始（默认 08:30）线自动回来。
-    if (dayEndMinutes == null || minutes >= dayEndMinutes) return null
-    val first = slots.minByOrNull { it.number } ?: return null
-    // 还没到第一节：不画线，免得凌晨时刻线贴在网格顶部像个 bug
-    if (minutes < ScheduleCalculator.toMinutes(first.startTime)) return null
-
-    for (section in 1..layout.sections) {
-        val slot = slots.firstOrNull { it.number == section } ?: continue
-        val start = ScheduleCalculator.toMinutes(slot.startTime)
-        val end = ScheduleCalculator.toMinutes(slot.endTime)
-        if (end <= start) continue
-
-        if (minutes in start until end) {
-            val frac = (minutes - start).toFloat() / (end - start)
-            val top = layout.topOf(section)
-            return NowMarker(top + (layout.bottomOf(section) - top) * frac, inBreak = false)
-        }
-        if (minutes < start) {
-            if (section == 1) return null
-            val prev = slots.firstOrNull { it.number == section - 1 } ?: return null
-            val prevEnd = ScheduleCalculator.toMinutes(prev.endTime)
-            if (minutes < prevEnd) continue
-            // 距离哪一端近就贴哪一端：刚下课贴行底，快上课贴下一节行顶
-            val offset = if (minutes - prevEnd <= start - minutes) {
-                layout.bottomOf(section - 1)
-            } else {
-                layout.topOf(section)
-            }
-            return NowMarker(offset, inBreak = true)
-        }
-    }
-    return null
-}
 
 /**
  * 周课表：小节 × 星期网格。
@@ -247,6 +126,8 @@ internal fun nowMarker(
 fun WeekScreen(
     onOpenJwImport: () -> Unit = {},
     onOpenTimetableManage: () -> Unit = {},
+    /** 外部请求打开显示设置（「我的 → 显示设置」跨 Tab 触发），与眼睛图标同一弹层 */
+    openDisplayRequests: Flow<Unit> = emptyFlow(),
     viewModel: WeekViewModel = viewModel(
         factory = WeekViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -264,6 +145,7 @@ fun WeekScreen(
     var importOpen by remember { mutableStateOf(false) }
     var switchOpen by remember { mutableStateOf(false) }
     var displaySheetOpen by remember { mutableStateOf(false) }
+    var shareOpen by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Course?>(null) }
 
     // JSON 文件导入（弹层入口）：读文件 → preview → 目标课表选择弹窗 → importJson，
@@ -279,13 +161,7 @@ fun WeekScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val text = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes().toString(Charsets.UTF_8)
-                    }
-                }.getOrNull()
-            }
+            val text = readTextFromUri(context, uri)
             if (text.isNullOrBlank()) {
                 snackbar.showSnackbar("读取文件失败")
                 return@launch
@@ -306,6 +182,72 @@ fun WeekScreen(
                 if (merge) "合并完成：新增 ${r.added} / 文件共 ${r.total}" else "已覆盖导入 ${r.total} 门课",
             )
             is ImportResult.Failure -> snackbar.showSnackbar(r.message)
+        }
+    }
+
+    // ---- 分享（DESIGN §4.12）----
+    // CSV/JSON 走 SAF 另存为（与「我的 → 导出 JSON」同形态）；日历同步先运行时申请
+    // READ/WRITE_CALENDAR，授予后续跑（授予回调里执行同步），拒绝则 Snackbar 提示。
+    val fileDateTag = remember { LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")) }
+    val csvLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri -> if (uri != null) viewModel.exportCsv(context, uri) }
+    val jsonExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> if (uri != null) viewModel.exportJson(context, uri) }
+    var pendingCalendarSync by remember { mutableStateOf(false) }
+
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (grants.values.all { it }) {
+            pendingCalendarSync = true
+        } else {
+            scope.launch { snackbar.showSnackbar("未授予日历权限，无法同步") }
+            pendingCalendarSync = false
+        }
+    }
+
+    // 权限授予后的续跑放 LaunchedEffect，避免在 launcher 回调里直接调 VM 引发重组竞态
+    LaunchedEffect(pendingCalendarSync) {
+        if (pendingCalendarSync) {
+            pendingCalendarSync = false
+            shareOpen = false
+            viewModel.syncToCalendar(context)
+        }
+    }
+
+    fun startCalendarSync() {
+        val needed = listOf(
+            android.Manifest.permission.READ_CALENDAR,
+            android.Manifest.permission.WRITE_CALENDAR,
+        ).filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isEmpty()) {
+            shareOpen = false
+            viewModel.syncToCalendar(context)
+        } else {
+            calendarPermissionLauncher.launch(needed.toTypedArray())
+        }
+    }
+
+    // VM 分享结果 → Snackbar（一次性，消费后置空）
+    val shareMessage by viewModel.shareMessage.collectAsStateWithLifecycle()
+    LaunchedEffect(shareMessage) {
+        shareMessage?.let {
+            snackbar.showSnackbar(it)
+            viewModel.consumeShareMessage()
+        }
+    }
+
+    // 撤销型反馈（DESIGN §3.3）：删除课程等动作执行后给「撤销」，点了就回滚
+    val undoableMessage by viewModel.undoableMessage.collectAsStateWithLifecycle()
+    LaunchedEffect(undoableMessage) {
+        undoableMessage?.let { m ->
+            val result = snackbar.showSnackbar(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) m.undo()
+            viewModel.consumeUndoableMessage()
         }
     }
 
@@ -348,7 +290,13 @@ fun WeekScreen(
         val ps = pagerState ?: return@LaunchedEffect
         val target = state.week.coerceIn(1, totalWeeks) - 1
         if (ps.settledPage != target) {
-            ps.scrollToPage(target)
+            // 相邻周动画滚回（回本周最常见就是从 ±1 页滑走）；远距瞬移，
+            // 避免动画一路掠过中间几周造成无意义闪烁
+            if (kotlin.math.abs(target - ps.settledPage) == 1) {
+                ps.animateScrollToPage(target)
+            } else {
+                ps.scrollToPage(target)
+            }
         }
     }
 
@@ -371,6 +319,12 @@ fun WeekScreen(
         }
     }
 
+    // 「我的 → 显示设置」跨 Tab 触发：跳到课表 Tab 后自动弹出与眼睛图标相同的覆盖面板。
+    // 用冷流 + collectLatest：每次跳 Tab 只发一个事件，重复点击也不会重复置位。
+    LaunchedEffect(openDisplayRequests) {
+        openDisplayRequests.collectLatest { displaySheetOpen = true }
+    }
+
     Scaffold(
         // 底部导航栏 inset 已由外层底栏高度提供，内层不再消费（防底部双倍空白）；
         // 顶栏为自绘 56dp Row，本就不消费状态栏 inset，顶部由外层 padding 避让。
@@ -386,6 +340,7 @@ fun WeekScreen(
                     onOpenDisplay = { displaySheetOpen = true },
                     onOpenTimetables = { switchOpen = true },
                     onOpenImport = { importOpen = true },
+                    onOpenShare = { shareOpen = true },
                 )
             }
         },
@@ -396,14 +351,6 @@ fun WeekScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            val layout = buildGridLayout(
-                maxHeight = maxHeight,
-                maxWidth = maxWidth,
-                sectionCount = sectionCount,
-                dayCount = days,
-                rowHeightScale = state.rowHeightScale,
-            )
-            val fitsOneScreen = layout.gridHeight + DayHeaderHeight <= maxHeight
             val systemFontScale = LocalDensity.current.fontScale
             // 网格字号：课名目标字号 dp（用户设置或跟随系统）→ 网格内统一倍率，换算规则见 GridFont
             val gridScale = GridFont.scaleFromDp(
@@ -430,11 +377,31 @@ fun WeekScreen(
             val railFontSp = GridFont.resolveRailDp(systemFontScale, state.gridRailDp, days) / gridScale
             val dateFontSp = GridFont.resolveDateDp(systemFontScale, state.gridDateDp, days) / gridScale
 
+            val layout = buildGridLayout(
+                maxHeight = maxHeight,
+                maxWidth = maxWidth,
+                sectionCount = sectionCount,
+                dayCount = days,
+                rowHeightScale = state.rowHeightScale,
+                railWidth = state.railWidthDp.dp,
+                // 表头高度用户值与「装得下两行日期文字」的下限取大：用户把表头拖小、
+                // 日期字号拉大时兜底防截断。只抬高渲染值，不改写存储值（滑块位置不动）。
+                // 入参用净渲染字号（dateFontSp 已预除 gridScale），与表头实际排出的文字一致
+                dayHeaderHeight = maxOf(
+                    state.dayHeaderHeightDp.dp,
+                    minHeaderHeightForDateFont(dateFontSp).dp,
+                ),
+            )
+            val fitsOneScreen = layout.gridHeight + layout.dayHeaderHeight <= maxHeight
+
             val body: @Composable () -> Unit = {
                 val ps = pagerState
                 if (ps == null) {
-                    // 初始化未完成：网格不渲染，避免 Pager 以第 1 周先出一帧（根因见 pagerState 注释）
-                    Box(Modifier.fillMaxSize())
+                    // 初始化未完成：网格不渲染，避免 Pager 以第 1 周先出一帧（根因见 pagerState 注释）。
+                    // 但也不能纯白屏——给一个居中的进度指示（此前是无任何反馈的空白）
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    }
                 } else {
                     Row(Modifier.fillMaxSize()) {
                         TimeRail(
@@ -507,7 +474,7 @@ fun WeekScreen(
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    Box(Modifier.height(DayHeaderHeight + layout.gridHeight)) {
+                    Box(Modifier.height(layout.dayHeaderHeight + layout.gridHeight)) {
                         GridTypography(gridScale) { body() }
                     }
                     if (state.totalCourseCount == 0) {
@@ -564,7 +531,6 @@ fun WeekScreen(
     // 「完成」按钮 / 点遮罩 / 系统返回。滚动冲突从根上消失，而不是靠参数对冲。
     if (displaySheetOpen) {
         DisplaySettingsOverlay(
-            titled = state.timetableName,
             onDismiss = { displaySheetOpen = false },
             viewModel = viewModel(factory = MeViewModel.Factory(Graph.repository(context))),
         )
@@ -573,6 +539,7 @@ fun WeekScreen(
     if (pickerOpen) {
         WeekPickerSheet(
             currentWeek = state.week,
+            todayWeek = state.todayWeek,
             totalWeeks = totalWeeks,
             weeksWithCourses = weeksWithCourses,
             onPickWeek = { week ->
@@ -608,10 +575,26 @@ fun WeekScreen(
         )
     }
 
+    if (shareOpen) {
+        ShareEntrySheet(
+            onSyncCalendar = { startCalendarSync() },
+            onExportCsv = {
+                shareOpen = false
+                csvLauncher.launch("水贝贝课表_$fileDateTag.csv")
+            },
+            onExportJson = {
+                shareOpen = false
+                jsonExportLauncher.launch("水贝贝课表_$fileDateTag.json")
+            },
+            onDismiss = { shareOpen = false },
+        )
+    }
+
     jsonPreview?.let { preview ->
         ImportTargetDialogHost(
             courses = preview.courses,
             title = "导入 JSON 课表",
+            term = preview.term,
             defaultMerge = false,
             repo = repo,
             onConfirm = { target, merge ->
@@ -730,6 +713,7 @@ private fun WeekTopBar(
     onOpenDisplay: () -> Unit,
     onOpenTimetables: () -> Unit,
     onOpenImport: () -> Unit,
+    onOpenShare: () -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val haptics = rememberAppHaptics()
@@ -786,6 +770,14 @@ private fun WeekTopBar(
             }
         }
         Spacer(Modifier.weight(1f))
+        IconButton(onClick = { haptics.tap(); onOpenShare() }) {
+            Icon(
+                HugeIcons.Share08,
+                contentDescription = "分享课表",
+                tint = onSurface.copy(alpha = 0.75f),
+                modifier = Modifier.size(20.dp),
+            )
+        }
         IconButton(onClick = { haptics.tap(); onOpenDisplay() }) {
             Icon(
                 HugeIcons.Eye,
@@ -848,437 +840,4 @@ private fun BackToCurrentWeekButton(
             Text("回到本周", style = MaterialTheme.typography.labelLarge)
         }
     }
-}
-
-/**
- * 显示设置覆盖面板（替代 ModalBottomSheet，见调用点注释里的根因）。
- *
- * 结构：
- * - 全屏 Box 内先铺一层半透明遮罩（点击即关），再在底部放一块固定高度面板；
- * - 面板**没有**拖拽手势、也没有 sheet 的 nestedScroll 连接——它只是一个 Column，
- *   内部靠 DisplaySettingsContent 自己的 verticalScroll 滚动，滚动不会外泄成关闭动作；
- * - 系统返回由 [BackHandler] 接住，交给同一个关闭出口。
- */
-@Composable
-private fun DisplaySettingsOverlay(
-    titled: String,
-    viewModel: MeViewModel,
-    onDismiss: () -> Unit,
-) {
-    val screenHeightDp = LocalConfiguration.current.screenHeightDp
-
-    BackHandler { onDismiss() }
-
-    Box(Modifier.fillMaxSize()) {
-        // 遮罩：点它就关。用无波纹 clickable，避免整屏按下时出现大面积涟漪
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f))
-                .clickable(
-                    onClickLabel = "关闭显示设置",
-                    role = Role.Button,
-                    indication = null,
-                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    onClick = onDismiss,
-                ),
-        )
-        Card(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                // 高度封顶 72%：上方留出至少四分之一屏的课表，改动才能即时被看见
-                .heightIn(min = 220.dp, max = (screenHeightDp * 0.72f).dp),
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        ) {
-            // 必须 fillMaxHeight：Card 只给了 heightIn 上界（不是固定高），
-            // 内层 Column 不撑满的话 weight(1f) 拿不到确定高度，
-            // 下面 fillMaxSize 的内容区会退化成「按内容量高」——面板高度随滚动内容跳变。
-            Column(Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 20.dp, end = 12.dp, top = 10.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "显示设置",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("完成") }
-                }
-                DisplaySettingsContent(
-                    viewModel = viewModel,
-                    headerNote = "课表级设置 · 「${titled.ifBlank { "—" }}」· 改动即时生效",
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TimeRail(
-    layout: GridLayout,
-    slots: List<TimeSlot>,
-    monthLabel: String?,
-    railFontSp: Float?,
-    dateFontSp: Float?,
-) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    // 字号：用户设置过就用解析后的 sp（已预除课名倍率，净渲染值即目标 dp）；
-    // 未设置时回落到本模块的固定基准档（原先的硬编码值），不再跟随课名缩放。
-    val sectionSize = (railFontSp ?: 12.5f).sp
-    val startSize = (railFontSp?.let { it * 0.76f } ?: 9.5f).sp
-    val endSize = (railFontSp?.let { it * 0.72f } ?: 9f).sp
-    Box(Modifier.width(RailWidth).fillMaxHeight()) {
-        // 表头位置的月份角标：跟随所选周的周一所在月份，切周时跟着变
-        if (monthLabel != null) {
-            Box(
-                Modifier
-                    .width(RailWidth)
-                    .height(DayHeaderHeight),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = monthLabel,
-                    fontSize = (dateFontSp ?: 11f).sp,
-                    fontWeight = FontWeight.Medium,
-                    color = onSurface.copy(alpha = 0.5f),
-                )
-            }
-        }
-        for (section in 1..layout.sections) {
-            val slot = slots.firstOrNull { it.number == section }
-            Column(
-                modifier = Modifier
-                    .offset(y = DayHeaderHeight + layout.topOf(section))
-                    .width(RailWidth)
-                    .height(layout.rowHeight),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = section.toString(),
-                    fontSize = sectionSize,
-                    lineHeight = sectionSize * 1.12f,
-                    fontWeight = FontWeight.SemiBold,
-                    color = onSurface.copy(alpha = 0.82f),
-                )
-                if (slot != null) {
-                    Text(
-                        text = slot.startTime,
-                        fontSize = startSize,
-                        lineHeight = startSize * 1.26f,
-                        color = onSurface.copy(alpha = 0.5f),
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = slot.endTime,
-                        fontSize = endSize,
-                        lineHeight = endSize * 1.22f,
-                        color = onSurface.copy(alpha = 0.32f),
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-        // 左侧当前时间胶囊已移除：时刻信息在每节的起止时间上已有，胶囊盖在节次文字上反而添乱；
-        // 当前时刻只保留网格内今日列的线（见 WeekPage），一条线索就够了
-    }
-}
-
-@Composable
-private fun WeekPage(
-    week: Int,
-    layout: GridLayout,
-    visibleDays: List<Int>,
-    allCourses: List<Course>,
-    slots: List<TimeSlot>,
-    semester: SemesterConfig?,
-    isTodayWeek: Boolean,
-    todayDay: Int,
-    now: LocalTimeLike,
-    showNonCurrentWeek: Boolean,
-    cellStyle: GridCellStyle,
-    showNowLine: Boolean,
-    showGridLines: Boolean,
-    dateFontSp: Float?,
-    tapBlankToAdd: Boolean,
-    onAddEmpty: (day: Int, section: Int) -> Unit,
-    onOpenCourse: (Course) -> Unit,
-) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val primary = MaterialTheme.colorScheme.primary
-    val outline = MaterialTheme.colorScheme.outlineVariant
-    val haptics = rememberAppHaptics()
-
-    // 列号一律由 visibleDays 的下标决定，不能用 day-1：
-    // 单独隐藏周六后，周日在可见序列里是第 6 列（下标 5）而不是第 7 列。
-    val days = visibleDays.size
-    val weekCourses = remember(week, allCourses) {
-        ScheduleCalculator.coursesInWeek(allCourses, week)
-    }
-    val otherWeekCourses = remember(week, allCourses) {
-        allCourses.filter { week !in it.weeks }
-    }
-    val occupied = remember(weekCourses) {
-        weekCourses.map { it.day to it.startSection }.toSet()
-    }
-    val todayVisible = isTodayWeek && todayDay in visibleDays
-
-    Column(Modifier.fillMaxSize()) {
-        // ---- 星期表头（WakeUp 式：周几取单字，下挂日期；今日整列加粗深色，不做圆底徽章——
-        //      7 列窄列里徽章会把日期挤出对齐，今日列已有时刻线定位，不缺这一处强调）
-        Row(
-            Modifier
-                .height(DayHeaderHeight)
-                .fillMaxWidth(),
-        ) {
-            visibleDays.forEach { day ->
-                val label = dayLabels[day - 1]
-                val isToday = todayVisible && day == todayDay
-                val date = weekDate(semester, week, day)
-                Column(
-                    Modifier
-                        .width(layout.dayWidth)
-                        .height(DayHeaderHeight),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text(
-                        text = label.removePrefix("周"),
-                        fontSize = (dateFontSp ?: 12f).sp,
-                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isToday) onSurface else onSurface.copy(alpha = 0.5f),
-                    )
-                    Text(
-                        text = date?.format(monthDayFmt) ?: "—",
-                        fontSize = (dateFontSp?.let { it * 0.92f } ?: 11f).sp,
-                        fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isToday) onSurface else onSurface.copy(alpha = 0.4f),
-                    )
-                }
-            }
-        }
-
-        Box(
-            Modifier
-                .width(layout.dayWidth * days)
-                .height(layout.gridHeight),
-        ) {
-            // 今日列不再铺底色/边线：WakeUp 参考稿里今日只靠表头加粗 + 时刻线定位，
-            // 铺底反而让当日卡片颜色被罩了一层，观感发闷
-
-            // ---- 空位点击加课（显示设置可关：关掉后空白格只作留白，避免滑动/误触时弹编辑）
-            if (tapBlankToAdd) {
-                visibleDays.forEachIndexed { column, day ->
-                    for (section in 1..layout.sections) {
-                        if ((day to section) in occupied) continue
-                        Box(
-                            Modifier
-                                .offset(
-                                    x = layout.dayWidth * column,
-                                    y = layout.topOf(section),
-                                )
-                                .width(layout.dayWidth)
-                                .height(layout.bottomOf(section) - layout.topOf(section))
-                                .clickable { onAddEmpty(day, section) },
-                        )
-                    }
-                }
-            }
-
-            // ---- 行分隔：大节之间一条线，大节内一条极浅线（不画竖线）；显示设置可关
-            if (showGridLines) {
-                for (section in 1 until layout.sections) {
-                    val isBigEnd = ScheduleCalculator.isBigSectionEnd(section)
-                    val y = if (isBigEnd) {
-                        layout.bottomOf(section) + InterGap / 2
-                    } else {
-                        layout.bottomOf(section) + IntraGap / 2
-                    }
-                    Box(
-                        Modifier
-                            .offset(y = y)
-                            .width(layout.dayWidth * days)
-                            .height(1.dp)
-                            .background(
-                                if (isBigEnd) outline.copy(alpha = 0.35f) else outline.copy(alpha = 0.16f),
-                            ),
-                    )
-                }
-            }
-
-            // ---- 非本周灰态（默认关）
-            if (showNonCurrentWeek) {
-                val claimed = occupied.toMutableSet()
-                otherWeekCourses
-                    .sortedWith(compareBy({ it.day }, { it.startSection }, { it.name }))
-                    .forEach { course ->
-                        val column = ScheduleCalculator.columnOf(visibleDays, course.day)
-                            ?: return@forEach
-                        val span = (course.startSection..course.endSection).toList()
-                        if (span.isEmpty()) return@forEach
-                        if (span.any { (course.day to it) in claimed }) return@forEach
-                        span.forEach { claimed += course.day to it }
-                        GhostCourseCard(
-                            name = course.name,
-                            days = days,
-                            cornerRadiusDp = cellStyle.cornerRadiusDp,
-                            modifier = Modifier
-                                .offset(
-                                    x = layout.dayWidth * column + CellGap,
-                                    y = layout.topOf(course.startSection) + CellGap,
-                                )
-                                .width(layout.dayWidth - CellGap * 2)
-                                .height(layout.heightOf(course.startSection, course.endSection) - CellGap * 2),
-                        )
-                    }
-            }
-
-            // ---- 本周课程
-            // 周内撞色兜底：学期级 16 色不够分时（理论 + 实验课混排），同一周里不同课名可能共用颜色，
-            // 渲染时就地换成当周空闲色；onOpenCourse 仍传原始 course——存储色才是权威，避免编辑时把周内替色写回库
-            val colorOverrides = remember(weekCourses) {
-                ScheduleCalculator.weekColorOverrides(weekCourses)
-            }
-            weekCourses
-                .sortedWith(compareBy({ it.day }, { it.startSection }))
-                .forEach { course ->
-                    val column = ScheduleCalculator.columnOf(visibleDays, course.day)
-                        ?: return@forEach
-                    val override = colorOverrides[course.name]
-                    val display = if (override != null) course.copy(colorIndex = override) else course
-                    val cardModifier = Modifier
-                        .offset(
-                            x = layout.dayWidth * column + CellGap,
-                            y = layout.topOf(course.startSection) + CellGap,
-                        )
-                        .width(layout.dayWidth - CellGap * 2)
-                        .height(
-                            layout.heightOf(course.startSection, course.endSection) - CellGap * 2,
-                        )
-                    if (course.startSection == course.endSection) {
-                        SingleSectionCard(
-                            course = display,
-                            days = days,
-                            onClick = {
-                                haptics.tap()
-                                onOpenCourse(course)
-                            },
-                            modifier = cardModifier,
-                            style = cellStyle,
-                        )
-                    } else {
-                        GridCourseCard(
-                            course = display,
-                            days = days,
-                            onClick = {
-                                haptics.tap()
-                                onOpenCourse(course)
-                            },
-                            modifier = cardModifier,
-                            style = cellStyle,
-                        )
-                    }
-                }
-
-            // ---- 当前时刻线（显示设置可关）。列号同样走 visibleDays 下标。
-            if (todayVisible && showNowLine) {
-                val todayColumn = ScheduleCalculator.columnOf(visibleDays, todayDay) ?: 0
-                // 终点收口到今日最后一节课：weekCourses 已是当前筛选口径，
-                // 被筛掉的课不参与收口，避免「线还挂着、课却看不见」的错位
-                val dayEnd = remember(weekCourses, slots, todayDay) {
-                    ScheduleCalculator.dayLastEndMinutes(weekCourses, slots, todayDay)
-                }
-                nowMarker(slots, layout, now, dayEnd)?.let { marker ->
-                    Box(
-                        Modifier
-                            .offset(x = layout.dayWidth * todayColumn, y = marker.offsetY)
-                            .width(layout.dayWidth)
-                            .height(1.5.dp)
-                            .drawBehind {
-                                if (marker.inBreak) {
-                                    // 课间画虚线：位置贴在行边界上，虚线提示「这不在上课」
-                                    val y = size.height / 2f
-                                    drawLine(
-                                        color = primary,
-                                        start = Offset(0f, y),
-                                        end = Offset(size.width, y),
-                                        strokeWidth = size.height,
-                                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(7f, 5f)),
-                                    )
-                                } else {
-                                    drawRect(primary)
-                                }
-                            },
-                    )
-                    Box(
-                        Modifier
-                            .offset(
-                                x = layout.dayWidth * todayColumn - 3.5.dp,
-                                y = marker.offsetY - 2.5.dp,
-                            )
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(if (marker.inBreak) primary.copy(alpha = 0.55f) else primary),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyScheduleHint(
-    filter: CourseFilter,
-    onOpenJwImport: () -> Unit,
-    tapBlankToAdd: Boolean = true,
-    modifier: Modifier = Modifier,
-) {
-    val filtered = filter != CourseFilter.All
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            text = if (filtered) "没有${filter.label}" else "课表为空",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = when {
-                filtered -> "当前只显示「${filter.label}」。可在「显示设置」里切回全部。"
-                // 关掉空白格加课后，提示必须同步改口，否则会指向一个不会发生的动作
-                tapBlankToAdd -> "左右滑动切换周次，点空白格可加课。"
-                else -> "左右滑动切换周次。空白格加课已在显示设置里关闭。"
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-            textAlign = TextAlign.Center,
-        )
-        // 筛选状态下的空网格不是「没导入」，不该出现导入引导
-        if (!filtered) {
-            TextButton(onClick = onOpenJwImport) { Text("从教务导入") }
-        }
-    }
-}
-
-private fun weekDate(semester: SemesterConfig?, week: Int, day: Int): LocalDate? {
-    if (semester == null || week < 1 || day !in 1..7) return null
-    return runCatching {
-        val startMonday = ScheduleCalculator.startOfWeek(
-            ScheduleCalculator.parseDate(semester.startDate),
-        )
-        startMonday
-            .plusWeeks((week - 1).toLong())
-            .plusDays((day - 1).toLong())
-    }.getOrNull()
 }

@@ -40,6 +40,8 @@ fun CourseEditSheet(
     var weeks by remember(course) {
         mutableStateOf(course?.let { weeksToInput(it.weeks) } ?: "1-16")
     }
+    var nameError by remember(course) { mutableStateOf<String?>(null) }
+    val haptics = rememberAppHaptics()
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -54,7 +56,11 @@ fun CourseEditSheet(
             )
             CourseEditorFields(
                 name = name,
-                onName = { name = it },
+                onName = {
+                    name = it
+                    // 开始输入即清错误态：错误只对「保存时为空」这一次负责
+                    if (nameError != null) nameError = null
+                },
                 teacher = teacher,
                 onTeacher = { teacher = it },
                 position = position,
@@ -62,27 +68,40 @@ fun CourseEditSheet(
                 day = day.toIntOrNull() ?: 1,
                 onDay = { day = it.toString() },
                 startSection = start.toIntOrNull() ?: 1,
-                onStart = { start = it.toString() },
+                onStart = {
+                    start = it.toString()
+                    // 起始节被调大超过结束节时，结束节跟上去，避免保存出 end<start 的脏课
+                    if ((end.toIntOrNull() ?: it) < it) end = it.toString()
+                },
                 endSection = end.toIntOrNull() ?: 1,
                 onEnd = { end = it.toString() },
                 weeksText = weeks,
                 onWeeks = { weeks = it },
+                nameError = nameError,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
                 if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除") }
+                    TextButton(onClick = {
+                        haptics.tap()
+                        onDelete()
+                    }) { Text("删除") }
                 }
                 TextButton(onClick = onDismiss) { Text("取消") }
                 TextButton(
                     onClick = {
                         val nameVal = name.trim()
-                        if (nameVal.isEmpty()) return@TextButton
+                        if (nameVal.isEmpty()) {
+                            // 此前是静默 return：用户按了保存却毫无反应，只会以为 App 坏了
+                            nameError = "请填写课程名称"
+                            return@TextButton
+                        }
+                        haptics.tap()
                         val d = (day.toIntOrNull() ?: 1).coerceIn(1, 7)
-                        val s = start.toIntOrNull() ?: 1
-                        val e = (end.toIntOrNull() ?: s).coerceAtLeast(s)
+                        val s = (start.toIntOrNull() ?: 1).coerceIn(1, 11)
+                        val e = (end.toIntOrNull() ?: s).coerceIn(s, 11)
                         val w = parseWeeksInput(weeks).ifEmpty { setOf(1) }
                         onSave(
                             Course(

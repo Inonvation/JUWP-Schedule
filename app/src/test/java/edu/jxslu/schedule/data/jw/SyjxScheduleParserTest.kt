@@ -154,6 +154,20 @@ class SyjxScheduleParserTest {
         assertEquals("同一地点跨周应合并", setOf(14, 15), courses.first { it.day == 5 }.weeks)
     }
 
+    /** 注入 JSON 带页面学期时，透传到 Success.term（导入确认弹窗展示的口径来源）。 */
+    @Test
+    fun decodesInjectedJsonCarriesTerm() {
+        val payload = """
+            {"ok":true,"term":"2025-2026-2","title":"实验课表","url":"http://jiaowu.juwp.edu.cn:8080/jsxsd/syjx/toXskb.do",
+             "items":[
+               {"name":"机电传动控制B","position":"工程训练中心207","day":6,"week":1,"sections":"3-4"}
+             ]}
+        """.trimIndent()
+        val result = SyjxScheduleParser.parseExtractJson(payload)
+        assertTrue("应解析成功：$result", result is ImportParseResult.Success)
+        assertEquals("2025-2026-2", (result as ImportParseResult.Success).term)
+    }
+
     /** 页面不对 / 还没查询时，给可读的失败提示而不是空列表。 */
     @Test
     fun emptyPageFails() {

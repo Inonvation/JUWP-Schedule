@@ -11,6 +11,7 @@ import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -59,11 +60,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.jw.ImportParseResult
+import edu.jxslu.schedule.data.jw.JwImportDiagnosis
 import edu.jxslu.schedule.data.jw.JwSchedulePage
 import edu.jxslu.schedule.data.jw.JwUrls
+import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.jw.QiangzhiScheduleParser
 import edu.jxslu.schedule.data.jw.SyjxScheduleParser
-import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.data.jw.unwrapJsString
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.resolveImportTarget
@@ -83,18 +86,92 @@ fun JwImportScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableIntStateOf(0) }
     var pageTitle by remember { mutableStateOf("学校统一身份认证") }
-    var currentUrl by remember { mutableStateOf(JwUrls.ENTRY) }
+    var currentUrl by remember { mutableStateOf(JwUrls.SSO_WARMUP) }
     var canGoBack by remember { mutableStateOf(false) }
-    var showMergeDialog by remember { mutableStateOf<List<Course>?>(null) }
+    // 弹窗直接持有解析结果：courses 之外还要带上页面学期（term）供确认弹窗展示
+    var showMergeDialog by remember { mutableStateOf<ImportParseResult.Success?>(null) }
+    /** 导入终态反馈（门数 to 是否合并）；非 null 时弹「导入完成」，确认后返回主界面。 */
+    var importSuccess by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
     var busy by remember { mutableStateOf(false) }
     var pageState by remember { mutableStateOf<PageState>(PageState.Loading) }
     var statusNote by remember { mutableStateOf("正在打开学校统一身份认证登录…") }
     var autoNavPending by remember { mutableStateOf(false) }
+    // 主 frame 最近一次失败的 URL，由失败回调写入、由 URL 相同的 onPageFinished 消费。
+    //
+    // 为什么必须按 URL 匹配 + 一次性消费（2026-09-18 手机日志实证）：500 响应体与
+    // Chromium 失败页都算「加载完成」，失败后 onPageFinished 照常到达，会把错误态
+    // 洗成 Ready；而回调顺序是 onReceivedHttpError → onPageStarted → onPageFinished
+    // （**错误先于 onPageStarted**，与直觉相反）。因此：
+    // - 不能改在 onPageStarted 里清标记（实测那样等于守卫被下一次回调拆掉，
+    //   错误浮层被洗掉、状态条写成「已登录教务…」）；
+    // - 也不能简单用「非空即拦截」，否则同名 URL 重试成功会被上一轮的失败拦住；
+    // - 按 URL 相等消费，既能顶住重复失败轮次，也不误伤新导航/重试。
+    var lastFailedUrl by remember { mutableStateOf<String?>(null) }
+    // 自动重试只做一次：sso.jsp 的 500 是自愈型（重走预热入口即通过），
+    // 但真故障时不能无限重试打服务端。
+    var autoRetryUsed by remember { mutableStateOf(false) }
 
     // 与顶栏返回箭头同语义：WebView 能后退时先回退网页，否则才退出导入页。
     // 根因：系统返回手势默认直接 popBackStack，会把 WebView 的历史连同登录进度一起丢掉，
     // 和左上角箭头的行为不一致。
     BackHandler(enabled = canGoBack) { webView?.goBack() }
+
+    /**
+     * 统一失败出口：置错误浮层 + 状态条，并记下失败 URL。
+     *
+     * 记 URL 的用途见 [lastFailedUrl]：失败页的 `onPageFinished` 仍会到达，
+     * 需要在那里认出「这次是失败」而不是把错误态洗成 Ready。
+     * VPN 探测放在失败路径上做——正常路径不需要这个信息，也不该有额外开销。
+     *
+     * 认证链上的 500 会先**自动重试一次**：实测该 500 是自愈型（响应同时写下
+     * `bzb_njw`，重新走一遍预热入口即可通过），用户此前要靠「过一会手动刷新」，
+     * 现在由 App 完成。只自动重试一次，避免在真故障时反复打服务端。
+     */
+    fun reportFailure(failedUrl: String?, diag: JwImportDiagnosis.Diagnosis, statusCode: Int? = null) {
+        lastFailedUrl = failedUrl
+        if (statusCode != null && JwImportDiagnosis.shouldAutoRetry(statusCode, failedUrl) && !autoRetryUsed) {
+            autoRetryUsed = true
+            Log.d(TAG, "auto-retry after HTTP $statusCode at $failedUrl")
+            statusNote = "教务返回 $statusCode，正在自动重试…"
+            pageState = PageState.Loading
+            webView?.loadUrl(JwUrls.SSO_WARMUP)
+            return
+        }
+        pageState = PageState.Error(title = diag.title, body = diag.body, retryUrl = diag.retryUrl)
+        statusNote = diag.title
+        Log.d(TAG, "failure: ${diag.title} retry=${diag.retryUrl ?: "reload"} $failedUrl")
+    }
+
+    /**
+     * 教务把「未登录」就地渲染成登录页（URL 不变），必须在任何后续自动导航之前拦下。
+     *
+     * 根因（2026-09-18 实测）：未登录访问 `xsMainV` / `xskb_list` 时教务不跳转，
+     * 而是以 HTTP 200 返回登录页（含 `#loginDiv` 与密码框）。旧逻辑按 URL 把
+     * `xsMainV` 当「已登录主页」并自动跳课表，于是主页登录页 → 课表登录页 →
+     * 又认出 xsMainV… 互跳成环（日志里 18 次导航、约 1 秒一轮）。
+     *
+     * ⚠️ 只在教务域（[JwUrls.isJwHost]）判定。统一认证 CAS（eapp2）的登录页**本来就该**
+     * 有密码框，在那里判定会把「用户正在登录」误报成「会话失效」，直接毁掉登录流程。
+     */
+    fun checkSessionLost(view: WebView?, url: String?, onDone: () -> Unit = {}) {
+        if (!JwUrls.isJwHost(url)) {
+            Log.d(TAG, "session probe skipped (non-jw host) $url")
+            onDone()
+            return
+        }
+        view?.evaluateJavascript(SESSION_PROBE_JS) { raw ->
+            val probe = unwrapJsString(raw)
+            // 无条件记录探针原始值：上一轮排查时无法回答「探测到底跑没跑、看到了什么」，
+            // 这个日志让下次复现能直接读出判定依据，而不是靠猜。
+            Log.d(TAG, "session probe: '$probe' @ $url")
+            if (JwImportDiagnosis.looksLikeLoginPage(probe)) {
+                Log.d(TAG, "session lost detected at $url (probe=$probe)")
+                reportFailure(url, JwImportDiagnosis.sessionLost(JwVpnDetector.isVpnActive(context)))
+                return@evaluateJavascript
+            }
+            onDone()
+        }
+    }
 
     fun runImport(wv: WebView?) {
         val target = wv ?: return
@@ -131,7 +208,7 @@ fun JwImportScreen(
                     } else {
                         "解析到 ${result.courses.size} 条课次，确认后写入"
                     }
-                    showMergeDialog = result.courses
+                    showMergeDialog = result
                 }
             }
         }
@@ -166,9 +243,21 @@ fun JwImportScreen(
                 actions = {
                     IconButton(
                         onClick = {
+                            // 先取出错误态里的重试目标，再改状态（顺序反了就永远读到 Loading）
+                            val retry = (pageState as? PageState.Error)?.retryUrl
                             pageState = PageState.Loading
-                            statusNote = "重新加载中…"
-                            webView?.reload()
+                            autoNavPending = false
+                            // 用户显式重试 = 新的一轮，自动重试闸门重新打开
+                            autoRetryUsed = false
+                            // 错误态下刷新不是无脑 reload：失败 URL 若是 CAS/SSO 页（含一次性 ticket），
+                            // 重放它必然失败，只能回入口重新走认证
+                            if (retry.isNullOrBlank()) {
+                                statusNote = "重新加载中…"
+                                webView?.reload()
+                            } else {
+                                statusNote = "重新打开统一认证…"
+                                webView?.loadUrl(retry)
+                            }
                         },
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = "刷新")
@@ -213,6 +302,11 @@ fun JwImportScreen(
                                         canGoBack = view?.canGoBack() ?: false
                                         currentUrl = url ?: currentUrl
                                         statusNote = "加载中…"
+                                        // 这里**不要**清 lastFailedUrl。实测回调顺序为
+                                        // onReceivedHttpError → onPageStarted → onPageFinished：
+                                        // 失败先到、start 后到，在此清除等于守卫被下一次回调拆掉
+                                        // （曾因此让 500 错误浮层被洗成「已登录教务…」）。
+                                        // 标记由 onPageFinished 在「URL 相同」时一次性消费。
                                         Log.d(TAG, "onPageStarted ${view?.width}x${view?.height} $url")
                                     }
 
@@ -228,13 +322,24 @@ fun JwImportScreen(
                                         pageTitle = view?.title?.takeIf { it.isNotBlank() } ?: pageTitle
                                         Log.d(TAG, "onPageFinished ${view?.width}x${view?.height} $url")
 
+                                        // 本次导航已经失败过（onReceivedError/onReceivedHttpError 先到）：
+                                        // 保持错误浮层，不能再往下走把它洗成 Ready —— 旧实现无条件
+                                        // 置 Ready，实测会把 ERR_CONNECTION_TIMED_OUT 的浮层盖掉，
+                                        // 只剩 Chromium 原生错误页 + 下面探针写的「内容为空」提示。
+                                        //
+                                        // 按 URL 相等消费（而非「非空即拦」）：回调顺序实测为
+                                        // onReceivedHttpError → onPageStarted → onPageFinished，
+                                        // 同一个失败 URL 会重复走这几步；用相等匹配既能顶住重复轮次，
+                                        // 又不会把用户的成功重试拦成错误。
+                                        if (lastFailedUrl != null && lastFailedUrl == url) {
+                                            Log.d(TAG, "onPageFinished after failure, keep error state ($url)")
+                                            lastFailedUrl = null
+                                            return
+                                        }
+
                                         val u = url.orEmpty()
                                         if (u.isBlank() || u == "about:blank") {
-                                            pageState = PageState.Error(
-                                                title = "页面变为空白",
-                                                body = "已加载到空页。可能会话未就绪，请点右上角刷新重试。",
-                                            )
-                                            statusNote = "空白页，可点右上角刷新重试"
+                                            reportFailure(u, JwImportDiagnosis.blankPage(JwVpnDetector.isVpnActive(context)))
                                             return
                                         }
 
@@ -250,49 +355,56 @@ fun JwImportScreen(
                                             }
                                         }
 
-                                        // 注意：两张课表的 URL 都含 "xskb"（理论 xskb_list、实验 toXskb），
-                                        // 不能用子串判断，必须按页面类型区分，否则会互相误判
-                                        val page = JwUrls.schedulePageKind(u)
-                                        statusNote = when {
-                                            "eapp2.juwp.edu.cn" in u ->
-                                                "请使用学校统一身份认证登录"
-                                            "xsMainV" in u ->
-                                                "已登录教务主页，正在打开学期理论课表…"
-                                            page == JwSchedulePage.Lab ->
-                                                "实验课表已打开。点下方「导入实验课表」。"
-                                            page == JwSchedulePage.Theory ->
-                                                "理论课表已打开。点下方「导入理论课表」。"
-                                            else -> "已登录教务，可从下方入口打开课表页"
-                                        }
+                                        // 会话检查必须**先于所有自动导航**：未登录时教务把登录页
+                                        // 就地渲染在 xsMainV / xskb_list 这些 URL 上（HTTP 200、URL 不变），
+                                        // 若先按 URL 自动跳课表，就会与课表页的「登录页」互跳成环。
+                                        // 探针是异步的，故以下所有「就绪/自动跳转」逻辑都挪进它的回调。
+                                        // CAS（eapp2）域内的登录页是正常流程，helper 内部已排除。
+                                        checkSessionLost(view, u) {
+                                            // 注意：两张课表的 URL 都含 "xskb"（理论 xskb_list、实验 toXskb），
+                                            // 不能用子串判断，必须按页面类型区分，否则会互相误判
+                                            val page = JwUrls.schedulePageKind(u)
+                                            statusNote = when {
+                                                "eapp2.juwp.edu.cn" in u ->
+                                                    "请使用学校统一身份认证登录"
+                                                "xsMainV" in u ->
+                                                    "已登录教务主页，正在打开学期理论课表…"
+                                                page == JwSchedulePage.Lab ->
+                                                    "实验课表已打开。点下方「导入实验课表」。"
+                                                page == JwSchedulePage.Theory ->
+                                                    "理论课表已打开。点下方「导入理论课表」。"
+                                                else -> "已登录教务，可从下方入口打开课表页"
+                                            }
 
-                                        if ("xsMainV" in u && !autoNavPending) {
-                                            autoNavPending = true
-                                            pageState = PageState.Loading
-                                            // 500ms 只留一个「已登录」的可见过渡；跳转目标固定，
-                                            // postDelayed 内仍会复核 currentUrl，重定向链乱序也不会跳错
-                                            view?.postDelayed({
-                                                if (currentUrl.contains("xsMainV")) {
-                                                    view.loadUrl(JwUrls.SCHEDULE_LIST)
-                                                } else {
-                                                    autoNavPending = false
-                                                }
-                                            }, 500)
-                                            return
-                                        }
-                                        if (page != JwSchedulePage.None) {
-                                            autoNavPending = false
-                                            pageState = PageState.Ready
+                                            if ("xsMainV" in u && !autoNavPending) {
+                                                autoNavPending = true
+                                                pageState = PageState.Loading
+                                                // 500ms 只留一个「已登录」的可见过渡；跳转目标固定，
+                                                // postDelayed 内仍会复核 currentUrl，重定向链乱序也不会跳错
+                                                view?.postDelayed({
+                                                    if (currentUrl.contains("xsMainV")) {
+                                                        view.loadUrl(JwUrls.SCHEDULE_LIST)
+                                                    } else {
+                                                        autoNavPending = false
+                                                    }
+                                                }, 500)
+                                                return@checkSessionLost
+                                            }
+                                            if (page != JwSchedulePage.None) {
+                                                autoNavPending = false
+                                                pageState = PageState.Ready
+                                                applyPageFit(view, u)
+                                                return@checkSessionLost
+                                            }
                                             applyPageFit(view, u)
-                                            return
-                                        }
-                                        applyPageFit(view, u)
-                                        pageState = PageState.Ready
-                                        // 加载完成 ≠ 渲染出东西：探测一下，白屏时给可操作提示，
-                                        // 而不是让用户对着空页猜发生了什么
-                                        view?.evaluateJavascript(PAGE_CONTENT_PROBE_JS) { raw ->
-                                            val score = raw?.trim()?.removeSurrounding("\"")?.toFloatOrNull()
-                                            if (score != null && score < 20f) {
-                                                statusNote = "页面已加载但内容为空，可点右上角刷新重试"
+                                            pageState = PageState.Ready
+                                            // 加载完成 ≠ 渲染出东西：探测一下，白屏时给可操作提示，
+                                            // 而不是让用户对着空页猜发生了什么
+                                            view?.evaluateJavascript(PAGE_CONTENT_PROBE_JS) { scoreRaw ->
+                                                val score = scoreRaw?.trim()?.removeSurrounding("\"")?.toFloatOrNull()
+                                                if (score != null && score < 20f) {
+                                                    statusNote = "页面已加载但内容为空，可点「重试」重新认证"
+                                                }
                                             }
                                         }
                                     }
@@ -305,15 +417,45 @@ fun JwImportScreen(
                                         if (request?.isForMainFrame != true) return
                                         val code = error?.errorCode ?: -1
                                         val desc = error?.description?.toString().orEmpty()
-                                        pageState = PageState.Error(
-                                            title = "无法连接认证/教务",
-                                            body = buildString {
-                                                append("请确认能访问 eapp2.juwp.edu.cn 与 jiaowu.juwp.edu.cn。")
-                                                if (desc.isNotBlank()) append("\n错误码 $code：$desc")
-                                                append("\n${request?.url}")
-                                            },
+                                        val failedUrl = request?.url?.toString()
+                                        Log.d(TAG, "onReceivedError $code $desc $failedUrl")
+                                        reportFailure(
+                                            failedUrl,
+                                            JwImportDiagnosis.networkFailure(
+                                                errorCode = code,
+                                                description = desc,
+                                                url = failedUrl,
+                                                vpnActive = JwVpnDetector.isVpnActive(context),
+                                            ),
                                         )
-                                        statusNote = "连接失败：$desc（$code）"
+                                    }
+
+                                    /**
+                                     * HTTP 4xx/5xx（**只有它能看到服务端错误页**）：
+                                     * Chromium 把 5xx 的响应体当普通页面渲染，`onPageFinished`
+                                     * 照常回调，而 `onReceivedError` 只管传输层失败、永远不触发。
+                                     * 旧实现缺这个回调，所以「500 error System Error」页会被当成
+                                     * 正常页面，状态条还显示「已登录教务…」。
+                                     */
+                                    override fun onReceivedHttpError(
+                                        view: WebView?,
+                                        request: WebResourceRequest?,
+                                        errorResponse: WebResourceResponse?,
+                                    ) {
+                                        if (request?.isForMainFrame != true) return
+                                        val code = errorResponse?.statusCode ?: -1
+                                        if (code < 400) return
+                                        val failedUrl = request?.url?.toString()
+                                        Log.d(TAG, "onReceivedHttpError $code $failedUrl")
+                                        reportFailure(
+                                            failedUrl,
+                                            JwImportDiagnosis.httpFailure(
+                                                statusCode = code,
+                                                url = failedUrl,
+                                                vpnActive = JwVpnDetector.isVpnActive(context),
+                                            ),
+                                            statusCode = code,
+                                        )
                                     }
 
                                 override fun onReceivedSslError(
@@ -337,7 +479,11 @@ fun JwImportScreen(
                                         if (!title.isNullOrBlank()) pageTitle = title
                                     }
                                 }
-                                loadUrl(JwUrls.ENTRY)
+                                // 从预热入口进（而不是 CAS 直链）：先落教务域写 `bzb_njw`，
+                                // 再由页面自带 JS 跳统一认证——目标与 ENTRY 完全相同，
+                                // 但消除了「第一次 sso.jsp?ticket 必 500」的问题。
+                                // 根因见 JwUrls.SSO_WARMUP 注释与 DESIGN §4.4.1。
+                                loadUrl(JwUrls.SSO_WARMUP)
                             }
                             // 必须在壳里把实例交回 Compose 状态：刷新/切换课表/导入/返回
                             // 全部经由 `webView` 引用调用，丢了就是「按钮全无反应」。
@@ -379,8 +525,19 @@ fun JwImportScreen(
                         error = err,
                         onRetry = {
                             pageState = PageState.Loading
-                            statusNote = "重试中…"
-                            webView?.loadUrl(JwUrls.ENTRY)
+                            autoNavPending = false
+                            // 用户显式重试 = 新的一轮，自动重试闸门重新打开
+                            autoRetryUsed = false
+                            // err.retryUrl 为空 = 失败页可安全重放（如课表页自己 5xx）；
+                            // 非空 = 必须回入口重新认证（CAS ticket 一次性）
+                            val target = err.retryUrl
+                            if (target.isNullOrBlank()) {
+                                statusNote = "重试中…"
+                                webView?.reload()
+                            } else {
+                                statusNote = "重新打开统一认证…"
+                                webView?.loadUrl(target)
+                            }
                         },
                         modifier = Modifier.matchParentSize(),
                     )
@@ -406,6 +563,8 @@ fun JwImportScreen(
                                 pageState = PageState.Loading
                                 statusNote = "打开学期理论课表…"
                                 autoNavPending = false
+                                // 用户显式发起新一轮导航：自动重试闸门重置
+                                autoRetryUsed = false
                                 webView?.loadUrl(JwUrls.SCHEDULE_LIST)
                             },
                             modifier = Modifier.weight(1f),
@@ -418,6 +577,7 @@ fun JwImportScreen(
                                 pageState = PageState.Loading
                                 statusNote = "打开实验课表（实践实验 → 实验课表查询）…"
                                 autoNavPending = false
+                                autoRetryUsed = false
                                 webView?.loadUrl(JwUrls.LAB_SCHEDULE)
                             },
                             modifier = Modifier.weight(1f),
@@ -448,11 +608,13 @@ fun JwImportScreen(
         }
     }
 
-    showMergeDialog?.let { courses ->
+    showMergeDialog?.let { draft ->
+        val courses = draft.courses
         // 目标课表强制选择（DESIGN §4.9）：多课表之后「导到当前课表」不再是唯一合理解释，
         // 每次都让用户明确选目标（可新建）与覆盖/合并方式，避免静默覆盖正在用的数据
         ImportTargetDialogHost(
             courses = courses,
+            term = draft.term,
             title = when {
                 courses.any { it.kind == CourseKind.Lab } && courses.all { it.kind == CourseKind.Lab } ->
                     "解析到 ${courses.size} 条实验课"
@@ -467,13 +629,31 @@ fun JwImportScreen(
                 showMergeDialog = null
                 scope.launch {
                     val targetId = resolveImportTarget(repo, target)
-                    repo.importParsedCourses(courses, merge, targetId)
+                    val imported = repo.importParsedCourses(courses, merge, targetId)
                     // 导入到非当前课表后切过去，返回主界面直接看到结果
                     repo.setCurrentTimetable(targetId)
-                    onBack()
+                    // 终态反馈后再返回（DESIGN §3.3）：此前导入成功直接 onBack，
+                    // 「到底导没导成、导了几门」全靠回主界面猜
+                    importSuccess = imported to merge
                 }
             },
             onDismiss = { showMergeDialog = null },
+        )
+    }
+
+    importSuccess?.let { (count, merge) ->
+        AlertDialog(
+            onDismissRequest = onBack,
+            title = { Text("导入完成") },
+            text = {
+                Text(
+                    if (merge) "已合并导入 $count 门新课到目标课表（重复课程已跳过）。"
+                    else "已覆盖导入 $count 门课到目标课表。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = onBack) { Text("完成") }
+            },
         )
     }
 }
@@ -498,7 +678,12 @@ private fun ScheduleEntryButton(
 private sealed interface PageState {
     data object Loading : PageState
     data object Ready : PageState
-    data class Error(val title: String, val body: String) : PageState
+
+    /**
+     * 失败态。`retryUrl` 非空时必须改走该 URL——CAS ticket 是一次性票，
+     * 对失败页 reload 只会重放已消费的票据（见 [JwImportDiagnosis.retryUrl]）。
+     */
+    data class Error(val title: String, val body: String, val retryUrl: String? = null) : PageState
 }
 
 /**
@@ -699,15 +884,24 @@ private val PAGE_CONTENT_PROBE_JS: String = """
 })()
 """.trimIndent()
 
-private fun unwrapJsString(raw: String?): String {
-    if (raw.isNullOrBlank()) return ""
-    var s = raw.trim()
-    if (s == "null") return ""
-    if (s.startsWith("\"") && s.endsWith("\"")) {
-        s = s.substring(1, s.length - 1)
-    }
-    return s
-        .replace("\\\\", "\\")
-        .replace("\\\"", "\"")
-        .replace("\\n", "\n")
-}
+/**
+ * 判定当前页是不是教务登录页（= 未登录）。
+ *
+ * 特征取自实测（2026-09-18，手机 5G 无代理）：
+ * - 未登录的 `xsMainV` / `xskb_list` / `Logon.do` 都是 HTTP 200 就地渲染登录页，
+ *   含 `id="loginDiv"` 与 `type="password"` 输入框，`<title>登录</title>`；
+ * - 已登录的课表/主页快照里这两者均为 0 处（`scripts/out/xskb_vt0.html`、`syxkb.html`）。
+ *
+ * ⚠️ 不要改回按文案判定。曾用过「用户没有登录」，而实测该页面上此文案出现 **0 次**，
+ * 那种判据永远不会命中（旧实现的「会话失效」提示因此从未生效过）。
+ */
+private val SESSION_PROBE_JS: String = """
+(function(){
+  try{
+    var hasLoginDiv = !!document.getElementById('loginDiv');
+    var hasPwd = !!document.querySelector('input[type=password]');
+    var title = (document.title||'').trim();
+    return (hasLoginDiv?'loginDiv ':'') + (hasPwd?'password ':'') + 'title=' + title;
+  }catch(e){ return ''; }
+})()
+""".trimIndent()

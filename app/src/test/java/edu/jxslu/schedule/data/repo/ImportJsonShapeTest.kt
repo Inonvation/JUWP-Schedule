@@ -164,4 +164,16 @@ class ImportJsonShapeTest {
         val weeks = (course["weeks"] as JsonArray).map { it.jsonPrimitive.content.toInt() }
         assertEquals(listOf(1), weeks)
     }
+
+    /** 顶层 term：教务/脚本导出会带「数据属于哪个学期」，解码要保住；旧文件没有则落 null。 */
+    @Test
+    fun termSurvivesDecodeAndOldFilesFallBackToNull() {
+        val withTerm = """
+            {"term":"2026-2027-1","courses":[
+              {"name":"高数","day":1,"startSection":1,"endSection":2,"weeks":[1]}
+            ]}
+        """.trimIndent()
+        assertEquals("2026-2027-1", decode(withTerm).term)
+        assertNull("旧文件没有 term 键，必须仍能读进来", decode(good).term)
+    }
 }

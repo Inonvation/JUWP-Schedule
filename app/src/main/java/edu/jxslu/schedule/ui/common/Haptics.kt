@@ -36,6 +36,12 @@ class AppHaptics(private val view: View, private val enabled: () -> Boolean) {
         // CONTEXT_CLICK：语义即「上下文点按」，API 23+，MIUI/HyperOS 上有明显但不重的反馈
         view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
     }
+
+    /** 极轻的刻度感（滚轮停稳到新档位）。CLOCK_TICK 语义就是钟表走格，比 tap 弱一档。 */
+    fun tick() {
+        if (!enabled()) return
+        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
 }
 
 /**

@@ -39,6 +39,8 @@ import edu.jxslu.schedule.ui.today.TodayScreen
 import edu.jxslu.schedule.ui.water.WaterViewModel
 import edu.jxslu.schedule.ui.week.WeekScreen
 import edu.jxslu.schedule.domain.ThemeMode
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Settings01
@@ -70,7 +72,8 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
         ThemeMode.Dark -> true
         ThemeMode.System, null -> isSystemInDarkTheme()
     }
-    JuwTheme(darkTheme = darkTheme) {
+    // 动态取色可关（我的 → 通用）：用户想要固定的品牌蓝绿而不是壁纸色
+    JuwTheme(darkTheme = darkTheme, dynamicColor = prefs?.dynamicColor ?: true) {
         content()
     }
 }
@@ -95,6 +98,27 @@ fun JuwApp() {
     val context = LocalContext.current
     val navController = rememberNavController()
     val haptics = rememberAppHaptics()
+
+    // 「我的 → 显示设置」的跨 Tab 触发：显示设置只有一个形态（课表页覆盖弹层），
+    // 从「我的」发起时切到课表 Tab，并把这个事件喂给 WeekScreen 弹出与眼睛图标相同的面板。
+    //
+    // 为什么用 Channel 而不是 SharedFlow：SharedFlow(replay=0) 在**尚无订阅者**时
+    // tryEmit 的值会被直接丢弃——navigate() 是异步的，WeekScreen 下一帧才进组合、
+    // LaunchedEffect 才开始收集，同步 tryEmit 必然抢跑，面板永远弹不出来。
+    // Channel 会把接收者出现前的发送缓冲住，消费后即清空（不会像 replay=1 那样
+    // 每次回到课表 Tab 都重弹一次旧事件）。
+    val displaySettingsRequests = remember { Channel<Unit>(Channel.BUFFERED) }
+    val openDisplaySettings = {
+        haptics.tap()
+        navController.navigate(Routes.WEEK) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+        displaySettingsRequests.trySend(Unit)
+        Unit
+    }
+
     val tabs = listOf(
         BottomTab(Routes.TODAY, R.string.tab_today, HugeIcons.Calendar01),
         BottomTab(Routes.WEEK, R.string.tab_week, HugeIcons.Book01),
@@ -159,6 +183,10 @@ fun JuwApp() {
                     onOpenJwImport = {
                         context.startActivity(Intent(context, JwImportActivity::class.java))
                     },
+                    // 「尚未开学」空态 CTA：跳课表设置子页（独立窗口）
+                    onOpenTimetableSettings = {
+                        SubpageActivity.start(context, SubpageScreen.TIMETABLE_SETTINGS)
+                    },
                     // 一键开水快捷入口（已登录胖乖时显示，DESIGN 3.3）
                     showWaterEntry = waterLoggedIn,
                     onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
@@ -175,6 +203,10 @@ fun JuwApp() {
                     onOpenTimetableManage = {
                         SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)
                     },
+                    // 「我的 → 显示设置」跨 Tab 触发，弹出的面板与眼睛图标相同
+                    // receiveAsFlow：WeekScreen 只需要消费事件；Channel 保证
+                    // 订阅者出现前的事件不丢（SharedFlow replay=0 会直接丢）
+                    openDisplayRequests = displaySettingsRequests.receiveAsFlow(),
                 )
             }
             composable(Routes.ME) {
@@ -189,11 +221,23 @@ fun JuwApp() {
                     onOpenTimetableSettings = {
                         SubpageActivity.start(context, SubpageScreen.TIMETABLE_SETTINGS)
                     },
-                    onOpenDisplaySettings = {
-                        SubpageActivity.start(context, SubpageScreen.DISPLAY_SETTINGS)
-                    },
+                    // 显示设置 = 课表页覆盖弹层：跨 Tab 触发（见 displaySettingsRequests），
+                    // 不再是独立子页
+                    onOpenDisplaySettings = openDisplaySettings,
                     onOpenDataSettings = {
                         SubpageActivity.start(context, SubpageScreen.DATA_SETTINGS)
+                    },
+                    onOpenCourseTweak = {
+                        SubpageActivity.start(context, SubpageScreen.COURSE_TWEAK)
+                    },
+                    onOpenWidgetSettings = {
+                        SubpageActivity.start(context, SubpageScreen.WIDGET_SETTINGS)
+                    },
+                    onOpenCalendarSettings = {
+                        SubpageActivity.start(context, SubpageScreen.CALENDAR_SETTINGS)
+                    },
+                    onOpenReminderSettings = {
+                        SubpageActivity.start(context, SubpageScreen.REMINDER_SETTINGS)
                     },
                     onOpenWater = {
                         SubpageActivity.start(context, SubpageScreen.WATER)

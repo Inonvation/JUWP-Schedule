@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.ui.common
 
 import edu.jxslu.schedule.data.jw.QiangzhiScheduleParser
+import edu.jxslu.schedule.domain.compactPosition
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

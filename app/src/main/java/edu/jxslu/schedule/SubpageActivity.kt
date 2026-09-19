@@ -8,10 +8,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import edu.jxslu.schedule.ui.me.CalendarSettingsScreen
 import edu.jxslu.schedule.ui.me.DataSettingsScreen
-import edu.jxslu.schedule.ui.me.DisplaySettingsScreen
+import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
+import edu.jxslu.schedule.ui.me.WidgetSettingsScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
+import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
 
 /** 二级页种类；通过 extra 传给 [SubpageActivity]，值必须与 enum 名一致。 */
@@ -20,12 +23,18 @@ enum class SubpageScreen {
     TIMETABLE_MANAGE,
     /** 我的 → 课表设置（学期 · 作息） */
     TIMETABLE_SETTINGS,
-    /** 我的 → 显示设置（带迷你预览；课表页眼睛走页内覆盖弹层，不走这里） */
-    DISPLAY_SETTINGS,
     /** 我的 → 课表数据 */
     DATA_SETTINGS,
+    /** 我的 → 调课（快捷操作，DESIGN §4.11） */
+    COURSE_TWEAK,
     /** 我的/今日 → 胖乖开水 */
     WATER,
+    /** 我的 → 桌面小组件（DESIGN §3.6） */
+    WIDGET_SETTINGS,
+    /** 我的 → 日历同步（提醒时长 · 一键删除，DESIGN §4.12） */
+    CALENDAR_SETTINGS,
+    /** 我的 → 上课提醒（DESIGN §3.7） */
+    REMINDER_SETTINGS,
 }
 
 /**
@@ -60,9 +69,12 @@ class SubpageActivity : ComponentActivity() {
         when (screen) {
             SubpageScreen.TIMETABLE_MANAGE -> TimetableManageScreen(onBack = onBack)
             SubpageScreen.TIMETABLE_SETTINGS -> TimetableSettingsScreen(onBack = onBack)
-            SubpageScreen.DISPLAY_SETTINGS -> DisplaySettingsScreen(onBack = onBack)
             SubpageScreen.DATA_SETTINGS -> DataSettingsScreen(onBack = onBack)
+            SubpageScreen.COURSE_TWEAK -> CourseTweakScreen(onBack = onBack)
             SubpageScreen.WATER -> WaterScreen(onBack = onBack)
+            SubpageScreen.WIDGET_SETTINGS -> WidgetSettingsScreen(onBack = onBack)
+            SubpageScreen.CALENDAR_SETTINGS -> CalendarSettingsScreen(onBack = onBack)
+            SubpageScreen.REMINDER_SETTINGS -> ReminderSettingsScreen(onBack = onBack)
         }
     }
 

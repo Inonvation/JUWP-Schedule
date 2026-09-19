@@ -138,7 +138,11 @@ gh api repos/Inonvation/JUWP-Schedule/releases/tags/<版本号> `
 ## Step 7 · 发布后
 
 - 打 tag 用 `gh release create` 已自动完成；本地 tag 与远端一致即可。
-- 提醒用户：新版若换了签名，已装 debug 版**无法覆盖安装**，需先导出课表 JSON → 卸载 → 重装 → 导入。
+- 提醒用户：debug 包与正式包现在是**两个独立应用**（`edu.jxslu.schedule.debug` / `edu.jxslu.schedule`），
+  可共存但**数据不互通**——测试期用 debug 包的用户想在新装正式包里看到自己的课表，
+  需先在 debug 包「我的 → 导出」课表 JSON，装正式包后导入。
+- 若用户装的是**旧 debug 包**（2026-09-18 之前的构建，仍占 `edu.jxslu.schedule`、debug 签名）：
+  正式包无法覆盖安装（签名不符），需先导出课表 JSON → 卸载 → 装正式包 → 导入。
 
 ## 硬性禁止
 

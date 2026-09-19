@@ -20,12 +20,14 @@ import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TimeSlotRules
 import edu.jxslu.schedule.domain.Timetable
 import edu.jxslu.schedule.ui.common.ImportTarget
+import edu.jxslu.schedule.ui.common.readTextFromUri
 import edu.jxslu.schedule.ui.common.resolveImportTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,7 +42,7 @@ data class MeUiState(
     val timeSlots: List<TimeSlot> = emptyList(),
     /** 主题模式，供设置页三选一 */
     val themeMode: ThemeMode = ThemeMode.System,
-    /** 合并后的显示偏好：主题（全局）+ 当前课表视图项，供显示设置子页 */
+    /** 合并后的显示偏好（2026-09-19 起全部为全局项），供显示设置子页 */
     val displayPrefs: DisplayPrefs = DisplayPrefs(),
     /** 当前课表全量课程：显示设置页上半区实时预览用（已按 courseFilter 过滤） */
     val courses: List<Course> = emptyList(),
@@ -52,7 +54,8 @@ data class MeUiState(
 )
 
 sealed interface OneShot {
-    data class Message(val text: String) : OneShot
+    /** [undo] 非 null 时 UI 以「撤销」Snackbar 呈现，用户点撤销后执行。 */
+    data class Message(val text: String, val undo: (suspend () -> Unit)? = null) : OneShot
     data class ConfirmImport(val preview: ImportPreview.Ok, val text: String) : OneShot
 }
 
@@ -130,11 +133,7 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     fun importFromUri(context: Context, uri: Uri) {
         viewModelScope.launch {
-            val text = runCatching {
-                context.contentResolver.openInputStream(uri)?.use {
-                    it.readBytes().toString(Charsets.UTF_8)
-                }
-            }.getOrNull()
+            val text = readTextFromUri(context, uri)
             if (text.isNullOrBlank()) {
                 _oneShot.value = OneShot.Message("读取文件失败")
                 return@launch
@@ -194,8 +193,15 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     fun clearCourses() {
         viewModelScope.launch {
+            // 快照先行：清空后 Snackbar 里给「撤销」，恢复按原 id/颜色逐门写回
+            val snapshot = repo.courses.first()
             repo.clearCourses()
-            _oneShot.value = OneShot.Message("已清空课程")
+            _oneShot.value = OneShot.Message(
+                if (snapshot.isEmpty()) "课表已经是空的" else "已清空 ${snapshot.size} 门课程",
+                undo = snapshot.takeIf { it.isNotEmpty() }?.let { list ->
+                    { repo.restoreCourses(list) }
+                },
+            )
         }
     }
 
@@ -231,12 +237,17 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setHapticsEnabled(value) }
     }
 
+    /** 动态取色开关（全局，Material You）。 */
+    fun setDynamicColor(value: Boolean) {
+        viewModelScope.launch { repo.setDynamicColor(value) }
+    }
+
     /** 开水双击确认（全局；默认双击防误触）。 */
     fun setWaterRequireDoubleClick(value: Boolean) {
         viewModelScope.launch { repo.setWaterRequireDoubleClick(value) }
     }
 
-    // ---- 显示设置子页写入口（课表级项写当前课表，见 DESIGN §4.9 / §3.3） ----
+    // ---- 显示设置子页写入口（2026-09-19 起全部写全局，见 DESIGN §4.9 / §3.3） ----
 
     fun setShowSaturday(value: Boolean) = viewModelScope.launch { repo.setShowSaturday(value) }
 
@@ -265,6 +276,10 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     fun setGridDateDp(value: Float?) = viewModelScope.launch { repo.setGridDateDp(value) }
 
     fun setRowHeightScale(value: Float) = viewModelScope.launch { repo.setRowHeightScale(value) }
+
+    fun setRailWidthDp(value: Float) = viewModelScope.launch { repo.setRailWidthDp(value) }
+
+    fun setDayHeaderHeightDp(value: Float) = viewModelScope.launch { repo.setDayHeaderHeightDp(value) }
 
     fun setCellRadiusDp(value: Float) = viewModelScope.launch { repo.setCellRadiusDp(value) }
 

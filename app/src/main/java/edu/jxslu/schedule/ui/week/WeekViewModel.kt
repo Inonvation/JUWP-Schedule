@@ -1,17 +1,25 @@
 package edu.jxslu.schedule.ui.week
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import edu.jxslu.schedule.data.calendar.CalendarSyncer
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
+import edu.jxslu.schedule.domain.TimetablePrefs
+import edu.jxslu.schedule.ui.common.UndoableMessage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +30,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 data class WeekUiState(
@@ -64,6 +73,10 @@ data class WeekUiState(
     val gridDateDp: Float? = null,
     /** 格子高度倍率（乘在自适应行高上），1.1f = 默认。 */
     val rowHeightScale: Float = 1.1f,
+    /** 左侧时间轴栏宽（dp）。范围与默认值见 TimetablePrefs companion。 */
+    val railWidthDp: Float = TimetablePrefs.DefaultRailWidthDp,
+    /** 顶部表头高度（dp），参与自适应行高计算。 */
+    val dayHeaderHeightDp: Float = TimetablePrefs.DefaultDayHeaderHeightDp,
     /** 格子圆角半径（dp）。 */
     val cellRadiusDp: Float = 6f,
     /** 格子不透明度（0.3–1）。 */
@@ -170,6 +183,8 @@ class WeekViewModel(
                     gridRailDp = prefs.gridRailDp,
                     gridDateDp = prefs.gridDateDp,
                     rowHeightScale = prefs.rowHeightScale,
+                    railWidthDp = prefs.railWidthDp,
+                    dayHeaderHeightDp = prefs.dayHeaderHeightDp,
                     cellRadiusDp = prefs.cellRadiusDp,
                     cellOpacity = prefs.cellOpacity,
                     cellCenterH = prefs.cellCenterH,
@@ -240,6 +255,14 @@ class WeekViewModel(
         viewModelScope.launch { repo.setRowHeightScale(value) }
     }
 
+    fun setRailWidthDp(value: Float) {
+        viewModelScope.launch { repo.setRailWidthDp(value) }
+    }
+
+    fun setDayHeaderHeightDp(value: Float) {
+        viewModelScope.launch { repo.setDayHeaderHeightDp(value) }
+    }
+
     fun setCellRadiusDp(value: Float) {
         viewModelScope.launch { repo.setCellRadiusDp(value) }
     }
@@ -294,7 +317,99 @@ class WeekViewModel(
     }
 
     fun delete(course: Course) {
-        viewModelScope.launch { repo.deleteCourse(course) }
+        viewModelScope.launch {
+            repo.deleteCourse(course)
+            _undoableMessage.value = UndoableMessage("已删除「${course.name}」") {
+                // 原课程对象带着原 id/颜色，upsertCourse 对 id>0 原样落库
+                repo.upsertCourse(course)
+            }
+        }
+    }
+
+    // ---- 撤销（DESIGN §3.3）：破坏性动作执行后给可撤销的 Snackbar ----
+
+    private val _undoableMessage = MutableStateFlow<UndoableMessage?>(null)
+
+    /** 带撤销动作的反馈；UI 侧消费后调 [consumeUndoableMessage] 置空。 */
+    val undoableMessage: StateFlow<UndoableMessage?> = _undoableMessage
+
+    fun consumeUndoableMessage() {
+        _undoableMessage.value = null
+    }
+
+    // ---- 分享（DESIGN §4.12）：日历同步 / CSV / JSON ----
+
+    private val _shareMessage = MutableStateFlow<String?>(null)
+
+    /** 分享动作结果，UI 侧消费后置空（Snackbar 一次性展示）。 */
+    val shareMessage: StateFlow<String?> = _shareMessage
+
+    fun consumeShareMessage() {
+        _shareMessage.value = null
+    }
+
+    private suspend fun expandedEvents(): List<ScheduleExporter.CourseEvent>? =
+        repo.expandedCalendarEvents()
+
+    fun exportCsv(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val events = expandedEvents() ?: error("请先在「我的 → 课表设置」配置学期，并确认课表不为空")
+                val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+                val bytes = bom + ScheduleExporter.toGoogleCalendarCsv(events).toByteArray(Charsets.UTF_8)
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                        out.write(bytes)
+                    } ?: error("无法打开输出流")
+                }
+                "已导出 ${events.size} 条课程（CSV）"
+            }
+            _shareMessage.value = result.fold(
+                onSuccess = { it },
+                onFailure = { "导出失败：${it.message}" },
+            )
+        }
+    }
+
+    fun exportJson(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val json = repo.exportJson()
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                        out.write(json.toByteArray(Charsets.UTF_8))
+                    } ?: error("无法打开输出流")
+                }
+                "已导出课表 JSON"
+            }
+            _shareMessage.value = result.fold(
+                onSuccess = { it },
+                onFailure = { "导出失败：${it.message}" },
+            )
+        }
+    }
+
+    fun syncToCalendar(context: Context) {
+        viewModelScope.launch {
+            val events = expandedEvents()
+            if (events == null) {
+                _shareMessage.value = "请先在「我的 → 课表设置」配置学期，并确认课表不为空"
+                return@launch
+            }
+            val reminder = repo.calendarReminderMinutes.first()
+            _shareMessage.value = when (val r = CalendarSyncer.sync(context, events, reminder)) {
+                is CalendarSyncer.CalendarSyncResult.Success ->
+                    "已同步 ${r.count} 条课程到手机日历（${CalendarSyncDefaults.reminderLabel(reminder)}）"
+                is CalendarSyncer.CalendarSyncResult.Deleted ->
+                    "已删除 ${r.count} 条课程日历"
+                is CalendarSyncer.CalendarSyncResult.NoCalendarAccount ->
+                    "手机上没有可用日历账户，请先在系统日历中登录或添加账户"
+                is CalendarSyncer.CalendarSyncResult.NoPermission ->
+                    "日历权限未授予，无法同步"
+                is CalendarSyncer.CalendarSyncResult.Error ->
+                    "同步失败：${r.message}"
+            }
+        }
     }
 
     class Factory(private val repo: ScheduleRepository) : ViewModelProvider.Factory {

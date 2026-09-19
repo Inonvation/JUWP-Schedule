@@ -1,6 +1,6 @@
 # 教务爬虫脚本说明
 
-江西水利电力大学教务（强智科技）的**课表抓取脚本**说明。一套文档覆盖**学期理论课表**与**实验课表**两条链路。
+江西水利电力大学教务（强智科技）的**课表 / 考试 / 成绩抓取脚本**说明。文档覆盖理论课表、实验课表、考试安排、课程成绩四条链路。
 
 爬虫只在本机调试用，**App 端不跑 Python**——App 走 WebView + 注入 JS（见 [§5.3](#53-app-端-webview-注入实现要点)）。
 
@@ -17,18 +17,23 @@ python -m venv .venv-scraper
 copy scripts\credentials.local.json.example scripts\credentials.local.json
 #    编辑填入学号 / 密码（该文件已 gitignore，禁止提交）
 
-# 3) 抓取
-.\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py       # 理论课表
-.\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py   # 实验课表
+# 3) 抓取（--term 均可省略；所有脚本顶层 term = 实际爬到的学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py       # 理论课表（缺省当前学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py   # 实验课表（缺省当前学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py         # 考试安排（缺省当前学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py        # 课程成绩（缺省全部学期）
+# 指定学期：加 --term 2025-2026-2（脚本会校验请求学期 = 教务返回学期，不一致即报错）
 ```
 
 | 产出 | 内容 |
 |------|------|
 | `scripts/out/courses.json` | 理论课表，字段对齐 `DESIGN.md` 4.3 |
 | `scripts/out/lab_courses.json` | 实验课表，同上 + `kind: "lab"` |
+| `scripts/out/exams.json` | 考试安排（考试时间已拆成 date/startTime/endTime） |
+| `scripts/out/scores.json` | 课程成绩（`term` + `terms` 双口径；`pendingReview` 标记评教锁定） |
 | `scripts/out/xskb_vt0.html` | 理论课表页快照 |
 | `scripts/out/syxkb.html` | 实验课表页快照 |
-| `scripts/out/courses_raw.json` / `lab_courses_raw.json` | 解析中间产物（含原始文本，排错用） |
+| `scripts/out/*_raw.json` / `exams_raw.json` / `scores_raw.json` | 解析中间产物（含原始文本，排错用） |
 
 ---
 
@@ -36,12 +41,14 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 
 | 文件 | 职责 | 备注 |
 |------|------|------|
-| `jw_session.py` | 共享登录：CAS → 教务 SSO → 会话校验 | 两个抓取脚本都依赖它 |
+| `jw_session.py` | 共享登录：CAS → 教务 SSO → 会话校验 | 其余抓取脚本都依赖它 |
 | `fetch_courses.py` | 学期理论课表 → JSON | 纯解析，不做登录 |
 | `fetch_lab_courses.py` | 实验课表 → JSON（含周次聚合） | 纯解析，不做登录 |
+| `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
+| `fetch_scores.py` | 课程成绩 → JSON | 同上；`--term` 缺省查全部学期 |
 | `gen_week_layout_preview.py` | 生成课表排版提案 HTML | 与爬取无关 |
 | `out/` | 抓取产物与页面快照 | 快照可当解析器回归 fixture |
-| `_archive/` | 历史一次性探测脚本（22 个） | **勿依赖**，仅留档溯源 |
+| `_archive/` | 历史一次性探测脚本 | **勿依赖**，仅留档溯源 |
 
 ---
 
@@ -69,8 +76,10 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | 门户 | `http://portal.juwp.edu.cn`（HTTP；443 不通） |
 | 教务登录页 | `https://jiaowu.juwp.edu.cn:81/` |
 | 教务学生端 | `http://jiaowu.juwp.edu.cn:8080/jsxsd/` |
-| 理论课表 | `/jsxsd/xskb/xskb_list.do?viweType=0` |
-| 实验课表 | `/jsxsd/syjx/toXskb.do` |
+| 理论课表 | `/jsxsd/xskb/xskb_list.do?viweType=0`（学期参数 `xnxq01id`） |
+| 实验课表 | `/jsxsd/syjx/toXskb.do`（学期参数 `xnxq01id`） |
+| 考试安排查询 | 壳页 `/jsxsd/xsks/xsksap_query`；数据 `/jsxsd/xsks/xsksap_list`（学期参数 `xnxqid`） |
+| 课程成绩查询 | 表单页 `/jsxsd/kscj/cjcx_frm`；数据 `/jsxsd/kscj/cjcx_list`（学期参数 `kksj`，空 = 全部） |
 
 > `:81` 与 `:8080` 是**两套部署**，行为不一致（`:81/jsxsd/` 返回 404，`:8080/jsxsd/` 返回登录页）。不要混用。
 
@@ -196,6 +205,42 @@ App 不跑 Python，改为在用户在 WebView 里自行登录后注入 JS 抽�
 
 拿到 `items` 后在 Kotlin 侧聚合（同键合并 `weeks`），再转 `Course(kind = CourseKind.Lab)`。设计见 `DESIGN.md` §4.8。
 
+### 5.4 考试安排与课程成绩（2026-09-19 实测）
+
+两者都是 **layui 表格的 JSON 接口**，GET 即可，不需要解析 HTML；入口壳页：
+
+- 考试安排：壳页 `/jsxsd/xsks/xsksap_query`（表单 `xnxqid` + `xqlb`），数据接口写在壳页 `<table data-url>` 属性里
+- 课程成绩：表单页 `/jsxsd/kscj/cjcx_frm`（`kksj` + `kcxz`/`kcsx`/`kcmc`/`xsfs`）
+
+```
+GET /jsxsd/xsks/xsksap_list?xnxqid=2025-2026-2&xqlb=&pageNum=1&pageSize=200
+GET /jsxsd/kscj/cjcx_list?kksj=&kcxz=&kcsx=&kcmc=&xsfs=&pageNum=1&pageSize=200
+```
+
+三个必须注意的点：
+
+1. **分页参数名是 `pageNum` / `pageSize`**（强智 `window.initQzTable` 自定义），用 layui 默认的
+   `page/limit` 拿不到数据。响应 `{code:0, count, data:[…]}`，`count` 是总数，超出单页按 count 翻页。
+2. **不带 `.do`**。`cjcx_list.do` 这类带 .do 的同名地址返回「系统功能暂未开放」no-open 页
+   （校方的功能开关），与「接口正常但 count=0」是两回事，脚本里必须区分。
+3. 考试时间 `kssj` 是单一字符串 `"2026-05-18 08:30~09:55"`，拆解后使用。
+
+关键字段（强智原名 → 含义）：
+
+| 考试安排 | 说明 | 课程成绩 | 说明 |
+|----------|------|----------|------|
+| `kskcmc` / `kch` | 课程名 / 编号 | `kc_mc` / `kch` | 课程名 / 编号 |
+| `kssj` | 考试时间（含起止） | `zcj` / `zcjstr` | 数值成绩 / 字符串成绩（等级制以 str 为准） |
+| `js_mc` | 考场 | `jd` | 绩点 |
+| `ksxq` / `xqmc` | 考试校区 / 校区 | `xf` / `zxs` | 学分 / 总学时 |
+| `jsxm` | 授课教师 | `ksxz` / `ksfs` | 考试性质（正常/补考）/ 考试方式（考试/考查） |
+| `zwh` / `ksccmc` | 座位号 / 场次编号 | `kz` | 0=已认定；1=请评教（成绩被锁定） |
+| `kw0410id` | 备注详情 id（`xsksap_bz.do?kw0410id=`） | `xnxqid` | 数据所属学期 |
+
+数据发布节奏：考试安排由教务**考前数周才录入**，平时 `count=0` 属正常；成绩考后按批次录入，
+`kz=1` 的课程在评教完成前不显示分数。App 端（WebView 同源 `fetch` 即可拿到 JSON）与导入确认弹窗
+的学期口径：两页壳页的 `select#xnxq01id`/`select#xnxqid` 选中项 = 该数据的实际学期。
+
 ---
 
 ## 6. 故障排查
@@ -206,6 +251,8 @@ App 不跑 Python，改为在用户在 WebView 里自行登录后注入 JS 抽�
 | SSO 后「用户没有登录」（860B） | **走了代理** | 确认 `trust_env = False`；或剥离代理变量复现对照 |
 | SSO 未进入教务 / 重定向过多 | service 参数带端口 | `service` 必须是 `http://jiaowu.juwp.edu.cn/sso.jsp`（不带 `:81` / `:8080`） |
 | 课表页无「个人课表」标记 | 页面结构变更 | 重新抓快照，对比 §5 的类名与列序 |
+| 考试/成绩接口返回「系统功能暂未开放」 | 用了带 `.do` 的地址，或校方关闭了功能 | 改用不带 `.do` 的接口地址；仍 no-open 则是校方侧开关，等开放 |
+| 考试/成绩接口返回空但 len 也异常小 | 分页参数用了 `page/limit` | 改成 `pageNum` / `pageSize`（§5.4） |
 | 课程全部堆在周一 | 用了 `qz-hasCourse-N` 当星期 | 改回按 `<td>` 列序 + carry |
 | 周次解析为空 | 详情文本格式变化 | 看 `out/*_raw.json` 里的 `detail_raw` / `weeks_raw` |
 

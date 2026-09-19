@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,6 +60,8 @@ fun ImportTargetDialogHost(
     onConfirm: (target: ImportTarget, merge: Boolean) -> Unit,
     onDismiss: () -> Unit,
     repo: ScheduleRepository,
+    /** 数据声明的学年学期（如 2026-2027-1），来自教务页面或 JSON 顶层；空则不展示。 */
+    term: String? = null,
 ) {
     val timetables by repo.timetables.collectAsStateWithLifecycle(emptyList())
     val currentId by repo.currentTimetableId.collectAsStateWithLifecycle(0L)
@@ -82,6 +85,13 @@ fun ImportTargetDialogHost(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!term.isNullOrBlank()) {
+                    Text(
+                        "数据学期：$term",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
                 Text(
                     "共 ${courses.size} 门课。示例：${courses.take(3).joinToString { it.name }}",
                     style = MaterialTheme.typography.bodySmall,
@@ -184,7 +194,8 @@ fun ImportTargetDialogHost(
                     val target = if (createNew) {
                         ImportTarget.New(newName.trim())
                     } else {
-                        ImportTarget.Existing(selectedId!!)
+                        // enabled 已守卫非空；这里再防一手，不靠 selectedId!! 赌时序
+                        ImportTarget.Existing(selectedId ?: return@TextButton)
                     }
                     onConfirm(target, merge)
                 },

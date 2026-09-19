@@ -58,8 +58,12 @@ fun WheelPicker(
     val density = LocalDensity.current
     val itemHeightPx = with(density) { itemHeight.roundToPx() }
     val half = visibleCount / 2
+    val haptics = rememberAppHaptics()
+    // 空列表防御：coerceIn(0, -1) 会抛 IllegalArgumentException。现有调用点都传固定
+    // 非空列表，但这是个通用组件，误用不该以崩溃收场——空列表渲染为空即可。
+    val maxIndex = (values.size - 1).coerceAtLeast(0)
     val state = rememberLazyListState(
-        initialFirstVisibleItemIndex = initialIndex.coerceIn(0, values.lastIndex),
+        initialFirstVisibleItemIndex = initialIndex.coerceIn(0, maxIndex),
     )
 
     // 中心当前停在哪个下标：第一可见项 + 视偏移过半则 +1（滚动中只是过渡值，停稳后必为整数项）
@@ -67,19 +71,25 @@ fun WheelPicker(
         derivedStateOf {
             val overHalf = state.firstVisibleItemScrollOffset * 2 >= itemHeightPx
             (state.firstVisibleItemIndex + if (overHalf) 1 else 0)
-                .coerceIn(0, values.lastIndex)
+                .coerceIn(0, maxIndex)
         }
     }
 
-    // 停稳后：回调选中值，并把半格状态吸附回整项（animateScrollToItem 对齐到 offset=0）
+    // 停稳后：回调选中值，并把半格状态吸附回整项（animateScrollToItem 对齐到 offset=0）。
+    // snapshotFlow 会先发一个初始值（组合时并未滚动），首帧不算「停稳」、不给触感。
     LaunchedEffect(state) {
+        var firstEmission = true
         snapshotFlow { state.isScrollInProgress }
             .distinctUntilChanged()
             .filter { !it }
             .collect {
-                onSelected(centered)
-                if (state.firstVisibleItemScrollOffset != 0) {
-                    state.animateScrollToItem(centered)
+                if (!firstEmission && values.isNotEmpty()) haptics.tick()
+                firstEmission = false
+                if (values.isNotEmpty()) {
+                    onSelected(centered)
+                    if (state.firstVisibleItemScrollOffset != 0) {
+                        state.animateScrollToItem(centered)
+                    }
                 }
             }
     }
@@ -197,7 +207,7 @@ fun WheelValueDialog(
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var selected by remember { mutableIntStateOf(initialIndex.coerceIn(0, values.lastIndex)) }
+    var selected by remember { mutableIntStateOf(initialIndex.coerceIn(0, (values.size - 1).coerceAtLeast(0))) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },

@@ -32,6 +32,10 @@ interface CourseDao {
     @Delete
     suspend fun delete(course: CourseEntity)
 
+    /** 批量删除（调课摘空周次后的整行清除，DESIGN §4.11）。 */
+    @Query("DELETE FROM courses WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Query("DELETE FROM courses WHERE timetableId = :timetableId")
     suspend fun clearForTimetable(timetableId: Long)
 
@@ -92,4 +96,29 @@ interface SemesterConfigDao {
 
     @Query("DELETE FROM semester_config WHERE timetableId = :timetableId")
     suspend fun deleteForTimetable(timetableId: Long)
+}
+
+@Dao
+interface ScoreDao {
+    /** 有成绩的学期列表，倒序（字典序倒序即时间倒序：2026-2027-1 > 2025-2026-2）。 */
+    @Query("SELECT DISTINCT term FROM scores ORDER BY term DESC")
+    fun observeTerms(): Flow<List<String>>
+
+    @Query("SELECT * FROM scores WHERE term = :term ORDER BY name")
+    fun observeForTerm(term: String): Flow<List<ScoreEntity>>
+
+    @Query("SELECT * FROM scores ORDER BY term DESC")
+    fun observeAll(): Flow<List<ScoreEntity>>
+
+    @Query("SELECT * FROM scores WHERE term = :term")
+    suspend fun getForTerm(term: String): List<ScoreEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(scores: List<ScoreEntity>)
+
+    @Query("DELETE FROM scores WHERE term = :term")
+    suspend fun deleteForTerm(term: String)
+
+    @Query("DELETE FROM scores")
+    suspend fun deleteAll()
 }

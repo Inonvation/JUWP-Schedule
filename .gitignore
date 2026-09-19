@@ -14,6 +14,7 @@ keystore.properties
 # 含真实学号/姓名/CAS 会话/token 载荷，仅本地留存，不入公开仓库
 scripts/out/
 scripts/_archive/
+__pycache__/
 # 排版提案：内嵌真实课程名与教师名，仅本地留存
 docs/
 scripts/gen_week_layout_preview.py

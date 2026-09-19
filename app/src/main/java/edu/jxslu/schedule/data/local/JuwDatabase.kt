@@ -15,8 +15,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         CourseEntity::class,
         TimeSlotEntity::class,
         SemesterConfigEntity::class,
+        ScoreEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -25,6 +26,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun courseDao(): CourseDao
     abstract fun timeSlotDao(): TimeSlotDao
     abstract fun semesterConfigDao(): SemesterConfigDao
+    abstract fun scoreDao(): ScoreDao
 
     companion object {
 
@@ -111,6 +113,35 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 → v4：成绩按学期存储（DESIGN §4.15）。
+         * 新表 `scores`，全局归属学生（不挂 timetableId）；CREATE TABLE 非 destructive。
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS scores (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "term TEXT NOT NULL, " +
+                        "courseNo TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "unit TEXT NOT NULL, " +
+                        "credit REAL NOT NULL, " +
+                        "hours REAL NOT NULL, " +
+                        "examForm TEXT NOT NULL, " +
+                        "courseAttr TEXT NOT NULL, " +
+                        "category TEXT NOT NULL, " +
+                        "score REAL, " +
+                        "scoreStr TEXT NOT NULL, " +
+                        "gradePoint REAL, " +
+                        "status TEXT NOT NULL, " +
+                        "pendingReview INTEGER NOT NULL, " +
+                        "importedAt INTEGER NOT NULL)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_scores_term ON scores(term)")
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -121,7 +152,7 @@ abstract class JuwDatabase : RoomDatabase() {
                     JuwDatabase::class.java,
                     "juw_schedule.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }

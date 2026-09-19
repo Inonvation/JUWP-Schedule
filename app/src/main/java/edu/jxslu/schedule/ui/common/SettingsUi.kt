@@ -18,11 +18,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +87,8 @@ fun SettingItem(
     /** 右侧值文本（当前选中值 / 跳转前状态），显示在箭头之前。 */
     value: String? = null,
     trailing: (@Composable () -> Unit)? = null,
+    /** false 时整行置灰且不响应点击（如前置条件未满足 / 动作进行中）。 */
+    enabled: Boolean = true,
 ) {
     val haptics = rememberAppHaptics()
     Row(
@@ -90,7 +96,7 @@ fun SettingItem(
             .fillMaxWidth()
             .heightIn(min = 52.dp)
             .then(
-                if (onClick != null) {
+                if (onClick != null && enabled) {
                     Modifier.clickable {
                         haptics.tap()
                         onClick()
@@ -99,7 +105,8 @@ fun SettingItem(
                     Modifier
                 }
             )
-            .padding(vertical = 10.dp),
+            .padding(vertical = 10.dp)
+            .then(if (enabled) Modifier else Modifier.alpha(0.45f)),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -159,23 +166,24 @@ fun SettingsIconBadge(icon: ImageVector) {
 }
 
 /**
- * 开关行：标题 + 说明 + Switch。切换时附带触感（toggle 语义）。
+ * 开关行：标题 + Switch（说明文字可选，显示设置等紧凑面板传 null 收成单行）。
+ * 切换时附带触感（toggle 语义）。
  * 供「我的 → 通用」与显示设置共用，保证开关行的交互一致。
  */
 @Composable
 fun SettingSwitchRow(
     title: String,
-    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    subtitle: String? = null,
 ) {
     val haptics = rememberAppHaptics()
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .heightIn(min = if (subtitle == null) 44.dp else 52.dp)
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -185,12 +193,14 @@ fun SettingSwitchRow(
         }
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
         Switch(
             checked = checked,
@@ -199,6 +209,57 @@ fun SettingSwitchRow(
                 onCheckedChange(it)
             },
         )
+    }
+}
+
+/**
+ * 选择行：标题（+可选说明）在上，分段按钮整行在下。
+ * 分段按钮不塞进标题行尾部——三段选项（如「跟随系统」）在窄屏必然溢出，
+ * 整行呈现也统一了「外观主题」「开水点击方式」两处选择交互。
+ */
+@Composable
+fun SettingChoiceRow(
+    title: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    subtitle: String? = null,
+) {
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (icon != null) {
+                SettingsIconBadge(icon)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            options.forEachIndexed { index, label ->
+                SegmentedButton(
+                    selected = index == selectedIndex,
+                    onClick = { onSelect(index) },
+                    // 不显示选中对勾：选中段自带填充色，图标徒增视觉噪音
+                    icon = {},
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                    modifier = Modifier.height(36.dp),
+                )
+            }
+        }
     }
 }
 

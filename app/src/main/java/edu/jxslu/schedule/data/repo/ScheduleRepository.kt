@@ -11,13 +11,19 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
+import edu.jxslu.schedule.domain.CourseTweaker
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.ScheduleExporter
+import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
 import edu.jxslu.schedule.domain.TimetablePrefs
 import edu.jxslu.schedule.domain.TimeSlotRules
+import edu.jxslu.schedule.domain.TweakMode
+import edu.jxslu.schedule.domain.TweakPlan
+import androidx.room.withTransaction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -65,6 +71,8 @@ data class CourseJson(
 @Serializable
 data class CourseExport(
     val courses: List<CourseJson> = emptyList(),
+    /** 数据所属学年学期（如 2026-2027-1），来自教务/脚本导出；旧文件或手工编辑没有则缺省。 */
+    val term: String? = null,
 )
 
 /**
@@ -115,6 +123,14 @@ class ScheduleRepository(
 
     private val json = CourseJsonFormat
 
+    /** displayPrefs 合并用的全局偏好切片（combine 参数上限的收拢容器）。 */
+    private data class GlobalPrefs(
+        val theme: ThemeMode,
+        val dynamicColor: Boolean,
+        val haptics: Boolean,
+        val waterDouble: Boolean,
+    )
+
     // ------------------------------------------------------------------
     // 课表清单与当前课表
     // ------------------------------------------------------------------
@@ -154,22 +170,28 @@ class ScheduleRepository(
     }
 
     /**
-     * 显示偏好 = 全局项（主题、触感）+ 当前课表的视图偏好（DESIGN §4.9）。
-     * 对 UI 仍暴露合并后的 [DisplayPrefs]，调用点签名与多课表之前一致。
+     * 显示偏好 = 全局项（主题、动态取色、触感、开水双击）+ 全局视图偏好（DESIGN §4.9）。
+     * 2026-09-19 起全部字段全局，不再依赖当前课表——换课表不换观感。
+     * 对 UI 仍暴露合并后的 [DisplayPrefs]，调用点签名与分层时期一致。
      */
     val displayPrefs: Flow<DisplayPrefs> = combine(
-        currentTimetableId,
-        timetables,
-        prefs.themeMode,
-        prefs.hapticsEnabled,
-        prefs.waterRequireDoubleClick,
-    ) { id, list, theme, haptics, waterDouble ->
-        val p = list.firstOrNull { it.id == id }?.prefs ?: TimetablePrefs()
+        // 全局项先合成一层：combine 的类型安全重载最多 5 参，全局项再加就得收拢
+        combine(
+            prefs.themeMode,
+            prefs.dynamicColor,
+            prefs.hapticsEnabled,
+            prefs.waterRequireDoubleClick,
+        ) { theme, dynamicColor, haptics, waterDouble ->
+            GlobalPrefs(theme, dynamicColor, haptics, waterDouble)
+        },
+        prefs.viewPrefs,
+    ) { global, p ->
         // 夹取沿用旧 DataStore 读路径的防线：旧数据/手改数据超出收紧后的滑块范围会让 Slider 抛异常
         DisplayPrefs(
-            themeMode = theme,
-            hapticsEnabled = haptics,
-            waterRequireDoubleClick = waterDouble,
+            themeMode = global.theme,
+            dynamicColor = global.dynamicColor,
+            hapticsEnabled = global.haptics,
+            waterRequireDoubleClick = global.waterDouble,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
             showSaturday = p.showSaturday,
@@ -182,6 +204,14 @@ class ScheduleRepository(
             gridRailDp = p.gridRailDp,
             gridDateDp = p.gridDateDp,
             rowHeightScale = p.rowHeightScale.coerceIn(0.5f, 1.5f),
+            railWidthDp = p.railWidthDp.coerceIn(
+                TimetablePrefs.MinRailWidthDp,
+                TimetablePrefs.MaxRailWidthDp,
+            ),
+            dayHeaderHeightDp = p.dayHeaderHeightDp.coerceIn(
+                TimetablePrefs.MinDayHeaderHeightDp,
+                TimetablePrefs.MaxDayHeaderHeightDp,
+            ),
             cellRadiusDp = p.cellRadiusDp.coerceIn(0f, 12f),
             cellOpacity = p.cellOpacity.coerceIn(0.5f, 1f),
             cellCenterH = p.cellCenterH,
@@ -193,78 +223,112 @@ class ScheduleRepository(
             showAtSign = p.showAtSign,
             tapBlankToAdd = p.tapBlankToAdd,
         )
-    }
+        // 去重：combine 每次发射都 new 一个 DisplayPrefs，值实际没变（如写库后回读同值）
+        // 时下游两个 VM 不必整体重算
+    }.distinctUntilChanged()
 
     // ------------------------------------------------------------------
-    // 偏好写入：视图偏好写当前课表行，主题写全局
+    // 偏好写入：视图偏好写全局 DataStore 键，主题等全局项同层
     // ------------------------------------------------------------------
 
-    private suspend fun updateTimetablePrefs(id: Long, transform: (TimetablePrefs) -> TimetablePrefs) {
-        val entity = db.timetableDao().getById(id) ?: return
-        db.timetableDao()
-            .upsert(entity.copy(prefsJson = transform(TimetablePrefs.decode(entity.prefsJson)).encode()))
-    }
-
-    private suspend fun updateCurrentPrefs(transform: (TimetablePrefs) -> TimetablePrefs) =
-        updateTimetablePrefs(currentTimetableId.first(), transform)
+    /** 视图偏好统一写全局键（2026-09-19 起不再按课表分，DESIGN §4.9）。 */
+    private suspend fun updateViewPrefs(transform: (TimetablePrefs) -> TimetablePrefs) =
+        prefs.updateViewPrefs(transform)
 
     suspend fun setShowSaturday(value: Boolean) =
-        updateCurrentPrefs { it.copy(showSaturday = value, showWeekend = value && it.showSunday) }
+        updateViewPrefs { it.copy(showSaturday = value, showWeekend = value && it.showSunday) }
 
     suspend fun setShowSunday(value: Boolean) =
-        updateCurrentPrefs { it.copy(showSunday = value, showWeekend = it.showSaturday && value) }
+        updateViewPrefs { it.copy(showSunday = value, showWeekend = it.showSaturday && value) }
 
     /** 兼容入口：老调用点一次改两天。新代码请用两个独立 setter。 */
     suspend fun setShowWeekend(value: Boolean) =
-        updateCurrentPrefs { it.copy(showSaturday = value, showSunday = value, showWeekend = value) }
+        updateViewPrefs { it.copy(showSaturday = value, showSunday = value, showWeekend = value) }
 
-    suspend fun setShowAtSign(value: Boolean) = updateCurrentPrefs { it.copy(showAtSign = value) }
+    suspend fun setShowAtSign(value: Boolean) = updateViewPrefs { it.copy(showAtSign = value) }
 
-    suspend fun setTapBlankToAdd(value: Boolean) = updateCurrentPrefs { it.copy(tapBlankToAdd = value) }
+    suspend fun setTapBlankToAdd(value: Boolean) = updateViewPrefs { it.copy(tapBlankToAdd = value) }
 
-    suspend fun setShowNonCurrentWeek(value: Boolean) = updateCurrentPrefs { it.copy(showNonCurrentWeek = value) }
+    suspend fun setShowNonCurrentWeek(value: Boolean) = updateViewPrefs { it.copy(showNonCurrentWeek = value) }
 
     suspend fun setCourseFilter(value: CourseFilter) =
-        updateCurrentPrefs { it.copy(courseFilter = value) }
+        updateViewPrefs { it.copy(courseFilter = value) }
 
     /** null = 清掉覆盖，回到跟随系统。 */
-    suspend fun setGridFontDp(value: Float?) = updateCurrentPrefs { it.copy(gridFontDp = value) }
+    suspend fun setGridFontDp(value: Float?) = updateViewPrefs { it.copy(gridFontDp = value) }
 
-    suspend fun setGridRoomDp(value: Float?) = updateCurrentPrefs { it.copy(gridRoomDp = value) }
+    suspend fun setGridRoomDp(value: Float?) = updateViewPrefs { it.copy(gridRoomDp = value) }
 
-    suspend fun setGridTeacherDp(value: Float?) = updateCurrentPrefs { it.copy(gridTeacherDp = value) }
+    suspend fun setGridTeacherDp(value: Float?) = updateViewPrefs { it.copy(gridTeacherDp = value) }
 
     /** 时间轴字号；null = 跟随系统（独立于课名）。 */
-    suspend fun setGridRailDp(value: Float?) = updateCurrentPrefs { it.copy(gridRailDp = value) }
+    suspend fun setGridRailDp(value: Float?) = updateViewPrefs { it.copy(gridRailDp = value) }
 
     /** 月份 / 日期表头字号；null = 跟随系统（独立于课名）。 */
-    suspend fun setGridDateDp(value: Float?) = updateCurrentPrefs { it.copy(gridDateDp = value) }
+    suspend fun setGridDateDp(value: Float?) = updateViewPrefs { it.copy(gridDateDp = value) }
 
-    suspend fun setRowHeightScale(value: Float) = updateCurrentPrefs { it.copy(rowHeightScale = value) }
+    suspend fun setRowHeightScale(value: Float) = updateViewPrefs { it.copy(rowHeightScale = value) }
 
-    suspend fun setCellRadiusDp(value: Float) = updateCurrentPrefs { it.copy(cellRadiusDp = value) }
+    /** 左侧时间轴栏宽（dp）；写入前夹进滑块范围，防脏数据撑爆布局。 */
+    suspend fun setRailWidthDp(value: Float) = updateViewPrefs {
+        it.copy(railWidthDp = value.coerceIn(TimetablePrefs.MinRailWidthDp, TimetablePrefs.MaxRailWidthDp))
+    }
 
-    suspend fun setCellOpacity(value: Float) = updateCurrentPrefs { it.copy(cellOpacity = value) }
+    /** 顶部表头高度（dp）；写入前夹进滑块范围。 */
+    suspend fun setDayHeaderHeightDp(value: Float) = updateViewPrefs {
+        it.copy(
+            dayHeaderHeightDp = value.coerceIn(
+                TimetablePrefs.MinDayHeaderHeightDp,
+                TimetablePrefs.MaxDayHeaderHeightDp,
+            ),
+        )
+    }
 
-    suspend fun setCellCenterH(value: Boolean) = updateCurrentPrefs { it.copy(cellCenterH = value) }
+    suspend fun setCellRadiusDp(value: Float) = updateViewPrefs { it.copy(cellRadiusDp = value) }
 
-    suspend fun setCellCenterV(value: Boolean) = updateCurrentPrefs { it.copy(cellCenterV = value) }
+    suspend fun setCellOpacity(value: Float) = updateViewPrefs { it.copy(cellOpacity = value) }
 
-    suspend fun setShowTeacher(value: Boolean) = updateCurrentPrefs { it.copy(showTeacher = value) }
+    suspend fun setCellCenterH(value: Boolean) = updateViewPrefs { it.copy(cellCenterH = value) }
 
-    suspend fun setShowNowLine(value: Boolean) = updateCurrentPrefs { it.copy(showNowLine = value) }
+    suspend fun setCellCenterV(value: Boolean) = updateViewPrefs { it.copy(cellCenterV = value) }
 
-    suspend fun setShowCellBorder(value: Boolean) = updateCurrentPrefs { it.copy(showCellBorder = value) }
+    suspend fun setShowTeacher(value: Boolean) = updateViewPrefs { it.copy(showTeacher = value) }
 
-    suspend fun setShowGridLines(value: Boolean) = updateCurrentPrefs { it.copy(showGridLines = value) }
+    suspend fun setShowNowLine(value: Boolean) = updateViewPrefs { it.copy(showNowLine = value) }
+
+    suspend fun setShowCellBorder(value: Boolean) = updateViewPrefs { it.copy(showCellBorder = value) }
+
+    suspend fun setShowGridLines(value: Boolean) = updateViewPrefs { it.copy(showGridLines = value) }
 
     suspend fun setThemeMode(value: ThemeMode) = prefs.setThemeMode(value)
+
+    /** 动态取色开关（全局，默认开）。 */
+    suspend fun setDynamicColor(value: Boolean) = prefs.setDynamicColor(value)
 
     /** 触感反馈开关（全局）。 */
     suspend fun setHapticsEnabled(value: Boolean) = prefs.setHapticsEnabled(value)
 
     /** 开水双击确认（全局，默认开）。 */
     suspend fun setWaterRequireDoubleClick(value: Boolean) = prefs.setWaterRequireDoubleClick(value)
+
+    /** 日历同步提前提醒分钟数（全局，0 = 不提醒），供设置页与同步动作共用（DESIGN §4.12）。 */
+    val calendarReminderMinutes: Flow<Int> = prefs.calendarReminderMinutes
+
+    suspend fun setCalendarReminderMinutes(value: Int) = prefs.setCalendarReminderMinutes(value)
+
+    // ---- 上课提醒（全局，DESIGN §3.7；调度在 ui/reminder，数据口径在这里） ----
+
+    val reminderEnabled: Flow<Boolean> = prefs.reminderEnabled
+
+    val reminderLeadMinutes: Flow<Int> = prefs.reminderLeadMinutes
+
+    suspend fun setReminderEnabled(value: Boolean) = prefs.setReminderEnabled(value)
+
+    suspend fun setReminderLeadMinutes(value: Int) = prefs.setReminderLeadMinutes(value)
+
+    suspend fun reminderLastKey(): String? = prefs.reminderLastKey()
+
+    suspend fun setReminderLastKey(key: String) = prefs.setReminderLastKey(key)
 
     suspend fun setCurrentTimetable(id: Long) = prefs.setCurrentTimetable(id)
 
@@ -278,8 +342,9 @@ class ScheduleRepository(
     // ------------------------------------------------------------------
 
     /**
-     * 新建课表。配置（学期/作息/显示偏好/作息自定义标记）按用户拍板用**引用型**默认：
+     * 新建课表。配置（学期/作息/作息自定义标记）按用户拍板用**引用型**默认：
      * 实时拷贝 [copyFromId]（缺省取全局默认配置源，再缺省用内置默认）当时的值。
+     * 显示偏好 2026-09-19 起全局，不再随配置拷贝。
      */
     suspend fun createTimetable(name: String, copyFromId: Long? = null): Long {
         val sourceId = copyFromId ?: prefs.defaultConfigSourceId.first()
@@ -318,7 +383,8 @@ class ScheduleRepository(
                 createdAt = System.currentTimeMillis(),
                 sortOrder = sortOrder,
                 slotsCustomized = source?.slotsCustomized ?: false,
-                prefsJson = source?.prefsJson ?: TimetablePrefs().encode(),
+                // prefs_json 列已退役（显示偏好全局化）：只写内置默认占位，读写都走 DataStore
+                prefsJson = TimetablePrefs().encode(),
             ),
         )
         if (source != null) {
@@ -373,25 +439,39 @@ class ScheduleRepository(
         if (db.timetableDao().count() == 0) {
             createTimetableInternal(name = "我的课表", source = null, sortOrder = 0)
         }
-        migrateLegacyGlobalPrefs()
+        globalizeViewPrefs()
         migrateTimeSlotSchema()
         rebalanceCourseColorsIfColliding()
     }
 
     /**
-     * v3 一次性迁移（DESIGN §4.9）：Room migration 是同步的、读不了 DataStore，
-     * 所以旧全局显示偏好与旧「改过作息」标记在这里（可挂起点）搬进课表 1。
-     * 幂等标记防重放：搬过一次后旧键永远不再读。
+     * 显示偏好全局化一次性迁移（DESIGN §4.9，2026-09-19）：把显示偏好搬进 DataStore
+     * `view_prefs_json`，此后所有课表共用一份。
+     *
+     * 数据源优先级：
+     * - v2 直升用户：旧全局键还在（`prefs_migrated` 未落）→ 以 `legacyViewPrefs()` 为准
+     *   （此时课表行的 prefs_json 是 MIGRATION_2_3 写的内置默认，不能代表用户设置）；
+     * - v3 时期用户：旧全局键已清（`legacyViewPrefs()` 返回 null）→ 取**当前课表行**的
+     *   `prefs_json`（保留用户正在使用的观感）；
+     * - 全新安装：两者皆默认值，写入等价默认。
+     *
+     * 幂等靠 `view_prefs_globalized` 标记；旧「改过作息」标记仍映射到课表 1（作息仍课表级）。
      */
-    private suspend fun migrateLegacyGlobalPrefs() {
-        if (prefs.prefsMigrated()) return
-        prefs.legacyViewPrefs()?.let { legacy -> updateTimetablePrefs(1) { legacy } }
+    private suspend fun globalizeViewPrefs() {
+        if (prefs.viewPrefsGlobalized()) return
+        val source = prefs.legacyViewPrefs()
+            ?: currentTimetableId.first()
+                .let { db.timetableDao().getById(it) }
+                ?.let { TimetablePrefs.decode(it.prefsJson) }
+            ?: TimetablePrefs()
+        prefs.setInitialViewPrefs(source)
         if (prefs.legacySlotCustomized()) {
             db.timetableDao().getById(1)?.let {
                 db.timetableDao().upsert(it.copy(slotsCustomized = true))
             }
         }
         prefs.setPrefsMigrated(true)
+        prefs.setViewPrefsGlobalized()
     }
 
     /**
@@ -400,7 +480,7 @@ class ScheduleRepository(
      * 用 DataStore 记版本而不是改 Room 版本号：节次表结构没变，只是数据语义变了。
      *
      * v3 起作息表按课表各一份：迁移对**未自定义**的每张课表逐张覆盖；
-     * 旧全局 slotCustomized 标记已在 migrateLegacyGlobalPrefs 映射到课表 1。
+     * 旧全局 slotCustomized 标记已在 globalizeViewPrefs 映射到课表 1。
      */
     private suspend fun migrateTimeSlotSchema() {
         if (prefs.slotSchemaVersion() >= DefaultData.SLOT_SCHEMA_VERSION) return
@@ -487,6 +567,17 @@ class ScheduleRepository(
         )
     }
 
+    /**
+     * 撤销回滚专用：按**原 id 与原颜色**逐门恢复。不能用 [replaceAllCourses] 兜——
+     * 那会重排序取色，撤销后整屏颜色就变了。
+     */
+    suspend fun restoreCourses(courses: List<Course>, timetableId: Long? = null) {
+        val ttId = timetableId ?: currentTimetableId.first()
+        db.courseDao().insertAll(
+            courses.map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
+        )
+    }
+
     suspend fun mergeCourses(courses: List<Course>, timetableId: Long? = null): Int {
         val ttId = timetableId ?: currentTimetableId.first()
         val existing = getTimetableCourses(ttId)
@@ -521,6 +612,43 @@ class ScheduleRepository(
         if (merge) return mergeCourses(courses, timetableId)
         replaceAllCourses(courses, timetableId)
         return courses.size
+    }
+
+    /**
+     * 调课（DESIGN §4.11）：把 [fromWeek] 周 [fromDay] 的课按 [mode] 调整到 [toWeek] 周 [toDay]。
+     *
+     * 规划与写库分离：[CourseTweaker.plan] 是纯函数（JVM 可测），这里只负责
+     * 「按目标课表 scope 读全量 → 规划 → 在一个事务里删/改/插」。
+     * 事务是必需的：规划基于读到的快照，中间若混进别的写入（导入、编辑），
+     * 会按陈旧快照把课程改回旧值。
+     *
+     * 返回实际执行的动作，供 UI 汇报（不依赖再查一次库）。
+     */
+    suspend fun tweakCourses(
+        mode: TweakMode,
+        fromWeek: Int,
+        fromDay: Int,
+        toWeek: Int,
+        toDay: Int,
+        timetableId: Long? = null,
+    ): TweakPlan {
+        val ttId = timetableId ?: currentTimetableId.first()
+        return db.withTransaction {
+            val courses = getTimetableCourses(ttId)
+            val plan = CourseTweaker.plan(courses, mode, fromWeek, fromDay, toWeek, toDay)
+            if (plan.deleteIds.isNotEmpty()) db.courseDao().deleteByIds(plan.deleteIds)
+            if (plan.updates.isNotEmpty()) {
+                db.courseDao().insertAll(
+                    plan.updates.map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
+                )
+            }
+            if (plan.inserts.isNotEmpty()) {
+                db.courseDao().insertAll(
+                    plan.inserts.map { CourseEntity.fromDomain(it.copy(id = 0)).copy(timetableId = ttId) },
+                )
+            }
+            plan
+        }
     }
 
     suspend fun updateSemester(config: SemesterConfig) {
@@ -588,6 +716,21 @@ class ScheduleRepository(
     }
 
     /**
+     * 当前课表展开成具体日期的日历事件（DESIGN §4.12）。
+     *
+     * 分享弹层的「同步到日历 / 导出 CSV」与「我的 → 日历同步」共用这一条口径。
+     * 学期未配置或课表为空返回 null，由调用方决定提示文案；时刻口径与跳过规则
+     * 见 [ScheduleExporter.expandEvents]。
+     */
+    suspend fun expandedCalendarEvents(): List<CourseEvent>? {
+        val semester = semester.first() ?: return null
+        val slots = timeSlots.first()
+        val courses = courses.first()
+        if (courses.isEmpty()) return null
+        return ScheduleExporter.expandEvents(courses, slots, semester).ok
+    }
+
+    /**
      * 导入 JSON 到指定课表（null = 当前课表）。
      * 目标选择与覆盖/合并由 UI 弹窗强制确定（DESIGN §4.9），本方法只负责校验与写库。
      */
@@ -632,6 +775,7 @@ class ScheduleRepository(
         return ImportPreview.Ok(
             courses = domain,
             sample = domain.take(5).joinToString { it.name },
+            term = export.term?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -668,6 +812,11 @@ sealed interface ImportResult {
 
 sealed interface ImportPreview {
     /** [courses] 已通过校验，可直接作为写库入参与目标统计的输入。 */
-    data class Ok(val courses: List<Course>, val sample: String) : ImportPreview
+    data class Ok(
+        val courses: List<Course>,
+        val sample: String,
+        /** 文件声明的学年学期，仅用于导入确认弹窗展示；不影响写库。 */
+        val term: String? = null,
+    ) : ImportPreview
     data class Error(val message: String) : ImportPreview
 }

@@ -2,6 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 教务导入失败时探测是否经由 VPN/代理出网（学校对代理出口区别对待，见 JwVpnDetector） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 课表一键同步到系统日历（DESIGN §4.12）：删写本 App 标记事件 + 20 分钟提醒。
+         只在用户点「同步到日历」时运行时申请，不预取 -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <!-- 桌面小组件（DESIGN §3.6）：请求忽略电池优化，让后台刷新更及时。
+         **可选权限**——用户拒绝后小组件仍可用，只是刷新可能延迟几分钟。
+         只在设置页里由用户主动点击申请，不预取、不进首页流程。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 上课提醒（DESIGN §3.7）：API 33+ 运行时权限，只在用户开启提醒开关那一刻申请 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".JuwApplication"
@@ -35,6 +49,61 @@
             android:name=".SubpageActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- 桌面小组件三条目（DESIGN §3.6）：2×2 / 2×4 / 4×4 各一个 receiver，
+             共用同一个 TodayWidget 实现；差别只有元数据 XML 的默认格位与 label。
+             exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
+        <receiver
+            android:name=".ui.widget.TodayWidgetReceiverSmall"
+            android:exported="false"
+            android:label="@string/widget_label_small">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_2x2" />
+        </receiver>
+        <receiver
+            android:name=".ui.widget.TodayWidgetReceiverTall"
+            android:exported="false"
+            android:label="@string/widget_label_tall">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_2x4" />
+        </receiver>
+        <receiver
+            android:name=".ui.widget.TodayWidgetReceiverLarge"
+            android:exported="false"
+            android:label="@string/widget_label_large">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_4x4" />
+        </receiver>
+
+        <!-- 小组件边界闹钟落点（上下课时刻刷新），仅内部广播 -->
+        <receiver
+            android:name=".ui.widget.WidgetBoundaryReceiver"
+            android:exported="false" />
+
+        <!-- 上课提醒（DESIGN §3.7）：边界闹钟落点（显式 PendingIntent，无需 intent-filter）
+             与开机补排。两者都只把核对排进 WorkManager，不阻塞主线程。 -->
+        <receiver
+            android:name=".ui.reminder.ReminderAlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".ui.reminder.ReminderBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

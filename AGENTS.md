@@ -6,7 +6,7 @@
 
 - 名称：JUWP Schedule / 显示名「水贝贝」
 - 学校：江西水利电力大学（**非官方**；对外文案必须免责声明）
-- 包名：`edu.jxslu.schedule`
+- 包名：`edu.jxslu.schedule`（debug 变体加 `.debug` 后缀，详见「工程实况」）
 - 形态：单模块 `:app` · Kotlin · Compose + Material3 · minSdk 26 / compileSdk 35
 
 ## 必读顺序
@@ -33,8 +33,10 @@
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN 3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**） |
+| Glance | `androidx.glance:glance-appwidget:1.2.0`（桌面小组件）；传递抬 compose runtime 至 1.7.8，`androidx.core` 仍 1.15.0 |
 | 图标用法 | `import me.rerere.hugeicons.stroke.*` + `HugeIcons.Calendar01` 等 |
 | 样例课 | **已移除**；课表默认空，从教务 WebView 导入 |
+| 包名 | release = `edu.jxslu.schedule`；debug 加后缀 = `edu.jxslu.schedule.debug`（两者签名不同，**必须**靠后缀区分，否则互相覆盖安装） |
 
 HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不存在）。不要打开其传递依赖（会拉 `androidx.core` 1.17，AGP 8.7/compileSdk 35 编不过）。
 
@@ -54,7 +56,9 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 
 单测覆盖：`ScheduleCalculatorTest`、`TimeSlotRulesTest`、`TimeSlotScheduleTest`（作息不变量）、
 `WeekGridLayoutTest`（网格几何）、`QiangzhiScheduleParserTest`、`SyjxScheduleParserTest`、
-`ImportJsonShapeTest`、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest` 等 13 个测试类。
+`ImportJsonShapeTest`、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest`、
+`CourseTweakTest`（调课规划：拆分/覆盖/交换/同格去重）、`TodayBoundaryTest`（小组件边界闹钟时刻）、
+`WidgetModelTest`（小组件快照口径与尺寸裁剪）等 24 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` 恒为 1，不能当星期来源。
@@ -74,6 +78,17 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 # MIUI 可能弹「USB 安装」需在手机上允许
 ```
 
+debug 与 release 是**两个独立应用**（包名分别 `edu.jxslu.schedule.debug` / `edu.jxslu.schedule`，
+桌面名「水贝贝 Debug」/「水贝贝」），可同时安装、数据各一份。改动冲突时改 `app/src/debug/res/values/strings.xml`（仅覆盖 `app_name`）。
+
+启动 debug 包**必须写全限定名**——短式 `am start -n <applicationId>/.MainActivity` 会按 applicationId
+补前缀、解析成 `edu.jxslu.schedule.debug.MainActivity` 并报 `Error type 3 ... does not exist`
+（manifest 里声明的是源码包名，不含后缀）：
+
+```powershell
+adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
+```
+
 **设备列表看不到手机时**：先确认是不是根本没连。重跑 `adb connect` 无效、排除僵尸 adb /
 小米妙享抢接口后，直接提醒用户插线或确认无线调试已开，不要在环境侧反复排查空转。
 
@@ -82,17 +97,24 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 
 ## 教务爬虫（scripts/）
 
-正式脚本 3 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 5 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
 | `jw_session.py` | 共享登录（CAS → 教务 SSO → 会话校验） | — |
-| `fetch_courses.py` | 学期理论课表 | `scripts/out/courses.json` |
-| `fetch_lab_courses.py` | 实验课表（实践实验 → 实验课表查询） | `scripts/out/lab_courses.json` |
+| `fetch_courses.py` | 学期理论课表（`--term` 可选） | `scripts/out/courses.json` |
+| `fetch_lab_courses.py` | 实验课表（实践实验 → 实验课表查询，`--term` 可选） | `scripts/out/lab_courses.json` |
+| `fetch_exams.py` | 考试安排（`--term` 可选，缺省取教务当前学期；JSON 接口） | `scripts/out/exams.json` |
+| `fetch_scores.py` | 课程成绩（`--term` 可选，缺省全部学期；JSON 接口） | `scripts/out/scores.json` |
+
+所有脚本输出 JSON 顶层 `term` = **实际爬到的学期**（如 `2026-2027-1`），App 导入确认弹窗据此展示；
+带 `--term` 时脚本会校验「请求学期 = 教务返回学期」，不一致直接报错而不是静默爬错学期。
 
 ```powershell
-.\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py
+.\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py     # 可加 --term 2025-2026-2
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py
+.\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py
+.\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py
 ```
 
 - **Session 必须 `trust_env = False`**：本机 shell 注入了 `HTTP_PROXY/HTTPS_PROXY`（IDE 本地代理），
@@ -101,6 +123,9 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 - 凭证在 `scripts/credentials.local.json`（已 gitignore），禁止提交、禁止写进 App。
 - 两个课表页结构**完全不同**：理论课表按课程所在 `<td>` 列序推星期；实验课表是「周次 × 节次」两级纵轴，
   周次挂在**行分组**上、且同门课按周拆成多块需聚合。解析逻辑**不可互相复用**。
+- 考试安排/成绩走**不带 .do 的 layui JSON 接口**（`xsks/xsksap_list`、`kscj/cjcx_list`，参数
+  `xnxqid`/`kksj` + 分页 `pageNum/pageSize`）；带 .do 的同名地址返回「系统功能暂未开放」no-open 页，
+  不要把「功能被校方关闭」误判成「暂无数据」。学期参数：课表页 `xnxq01id`，考试 `xnxqid`，成绩 `kksj`。
 - 登录链路、DOM 规则、排错表、WebView 注入 JS：**`scripts/README.md`**（比 DESIGN 更细）。
 
 ## 架构（改代码前对齐）
@@ -113,9 +138,9 @@ data/repo/       ScheduleRepository + JSON 导入校验（ImportPreview/ImportRe
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
-ui/today|week|me|water|jwvw|timetable|common|theme
+ui/today|week|me|water|jwvw|timetable|common|theme|widget
 Graph.kt         单例 Repository
-JuwApplication   ensureDefaults（节次/学期；课表不预置）
+JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
 
 - 课表 JSON 字段对齐 DESIGN 4.3 / 拾光互通；解析层见 `scripts/fetch_courses.py` 与 `data/jw/`
