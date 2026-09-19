@@ -13,6 +13,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.ReminderDefaults
+import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.Shortcuts
@@ -20,6 +21,7 @@ import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimetablePrefs
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -101,6 +103,8 @@ data class DisplayPrefs(
     val showAtSign: Boolean = true,
     /** 点击课表空白格是否新建课程。默认关：横滑切周易误触，加课走导入弹层/课程编辑。 */
     val tapBlankToAdd: Boolean = false,
+    /** 今日页开水卡片显示开关（DESIGN §3.3 底部固定区）。默认开；关 = 不展示（含未登录态）。 */
+    val waterCardEnabled: Boolean = true,
 )
 
 // preferencesDataStore 是属性委托，必须用 by；一个文件只能声明一份，重复实例化同一文件会崩溃。
@@ -193,16 +197,49 @@ class DisplayPrefsStore(private val context: Context) {
     /** 今日页快捷方式开关（DESIGN §3.8）。全局项，默认开：这是展示型入口，不打扰人。 */
     val shortcutsEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_SHORTCUTS_ENABLED] ?: true
-    }
+    }.distinctUntilChanged()
 
-    /** 快捷方式条目列表。键缺失或脏 JSON 都回退内置预设（口径见 [Shortcuts.decode]）。 */
+    /**
+     * 今日页开水卡片开关（DESIGN §3.3 底部固定区）。全局项，默认开：
+     * 卡片含未登录态（登录引导入口），关掉 = 用户明确不要这个常驻位。
+     */
+    val waterCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_WATER_CARD_ENABLED] ?: true
+    }.distinctUntilChanged()
+
+    /**
+     * 快捷方式条目列表。键缺失或脏 JSON 回退内置预设（口径见 [Shortcuts.decode]）；
+     * 读路径顺带做预设目标迁移（DESIGN §4.16：历史原值 → 当前预设，自定义不动）。
+     * distinctUntilChanged：DataStore 任何键的写入都会重发这里，值没变就不该打扰下游。
+     */
     val shortcuts: Flow<List<ShortcutItem>> = context.displayDataStore.data.map { p ->
-        p[KEY_SHORTCUTS_JSON]?.let { Shortcuts.decode(it) } ?: Shortcuts.PRESET_SHORTCUTS
-    }
+        Shortcuts.migratePresets(
+            p[KEY_SHORTCUTS_JSON]?.let { Shortcuts.decode(it) } ?: Shortcuts.PRESET_SHORTCUTS,
+        )
+    }.distinctUntilChanged()
 
     /** 开关 + 条目二合一快照：今日页与设置页各订阅一次即可。 */
     val shortcutSettings: Flow<ShortcutSettings> =
         combine(shortcutsEnabled, shortcuts, ::ShortcutSettings)
+
+    /**
+     * 成绩页统计口径：任选课是否计入加权平均分/平均绩点（DESIGN §4.15）。
+     * 默认关 = 排除（作者学校综测同样不计任选课）；公开仓库用户可自行打开。
+     */
+    val scoreIncludeFreeElectives: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_SCORE_INCLUDE_FREE_ELECTIVES] ?: false
+    }
+
+    /** 成绩页分组模式：true = 按学年。全局项，重进页面不重置。 */
+    val scoreGroupByYear: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_SCORE_GROUP_BY_YEAR] ?: false
+    }
+
+    /** 成绩页排序档。脏值一律回退默认顺序：宁可回到入库顺序，也不要因脏数据排错。 */
+    val scoreSortMode: Flow<ScoreSortMode> = context.displayDataStore.data.map { p ->
+        ScoreSortMode.entries.firstOrNull { it.name.equals(p[KEY_SCORE_SORT_MODE], ignoreCase = true) }
+            ?: ScoreSortMode.Default
+    }
 
     /** 当前课表。null = 未设置（用默认课表 1）。 */
     val currentTimetableId: Flow<Long?> = context.displayDataStore.data.map { p ->
@@ -251,14 +288,34 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_SHORTCUTS_ENABLED] = value }
     }
 
+    /** 今日页开水卡片开关（DESIGN §3.3）。 */
+    suspend fun setWaterCardEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_WATER_CARD_ENABLED] = value }
+    }
+
+    /** 成绩页统计口径开关（DESIGN §4.15）。 */
+    suspend fun setScoreIncludeFreeElectives(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_SCORE_INCLUDE_FREE_ELECTIVES] = value }
+    }
+
+    suspend fun setScoreGroupByYear(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_SCORE_GROUP_BY_YEAR] = value }
+    }
+
+    suspend fun setScoreSortMode(value: ScoreSortMode) {
+        context.displayDataStore.edit { it[KEY_SCORE_SORT_MODE] = value.name }
+    }
+
     /**
      * 快捷方式统一写入口：读-改-写整个 JSON，同值跳写（口径同 [updateViewPrefs]）。
      * 编辑表单的保存/重置/调序都汇到这一个口，存储格式不外泄。
+     * 基底走同一套预设迁移：第一次写入就把未升级的预设槽落成当前值。
      */
     suspend fun updateShortcuts(transform: (List<ShortcutItem>) -> List<ShortcutItem>) {
         context.displayDataStore.edit { p ->
-            val current =
-                p[KEY_SHORTCUTS_JSON]?.let { Shortcuts.decode(it) } ?: Shortcuts.PRESET_SHORTCUTS
+            val current = Shortcuts.migratePresets(
+                p[KEY_SHORTCUTS_JSON]?.let { Shortcuts.decode(it) } ?: Shortcuts.PRESET_SHORTCUTS,
+            )
             val next = transform(current)
             if (next != current) p[KEY_SHORTCUTS_JSON] = Shortcuts.encode(next)
         }
@@ -376,7 +433,11 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_PREFS_MIGRATED = booleanPreferencesKey("timetable_prefs_migrated")
         val KEY_WIDGET_SETUP_SEEN = booleanPreferencesKey("widget_setup_seen")
         val KEY_SHORTCUTS_ENABLED = booleanPreferencesKey("shortcuts_enabled")
+        val KEY_WATER_CARD_ENABLED = booleanPreferencesKey("water_card_enabled")
         val KEY_SHORTCUTS_JSON = stringPreferencesKey("shortcuts_json")
+        val KEY_SCORE_INCLUDE_FREE_ELECTIVES = booleanPreferencesKey("score_include_free_electives")
+        val KEY_SCORE_GROUP_BY_YEAR = booleanPreferencesKey("score_group_by_year")
+        val KEY_SCORE_SORT_MODE = stringPreferencesKey("score_sort_mode")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")
