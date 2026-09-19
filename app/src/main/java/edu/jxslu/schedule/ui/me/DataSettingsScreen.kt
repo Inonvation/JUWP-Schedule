@@ -116,7 +116,7 @@ fun DataSettingsScreen(
         ) {
             SettingsSection(
                 title = "导入 / 导出",
-                subtitle = "JSON 字段对齐拾光互通课表模型，可与兼容工具互导；导出的是当前课表「${state.timetableName.ifBlank { "—" }}」。",
+                subtitle = "JSON 字段对齐拾光互通课表模型，可与兼容工具互导；导出的是当前课表「${state.timetableName.ifBlank { "—" }}」，成绩随文件一起备份（导入时整体替换）。",
             ) {
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
@@ -173,6 +173,23 @@ fun DataSettingsScreen(
             courses = confirm.preview.courses,
             title = "导入 JSON 课表",
             term = confirm.preview.term,
+            // 文件带成绩段/学期作息段时必须让用户知情：整体替换、不可撤销（DESIGN §4.3）
+            note = buildString {
+                confirm.preview.scores.takeIf { it.isNotEmpty() }?.let { scores ->
+                    append(
+                        "${scores.map { it.term }.distinct().size} 个学期共 ${scores.size} 条成绩，" +
+                            "导入时会整体替换现有成绩。",
+                    )
+                }
+                val configParts = buildList {
+                    if (confirm.preview.semester != null) add("学期配置")
+                    if (confirm.preview.slotCount > 0) add("作息 ${confirm.preview.slotCount} 节")
+                }
+                if (configParts.isNotEmpty()) {
+                    if (isNotEmpty()) append(" ")
+                    append("并将恢复目标课表的${configParts.joinToString("与")}。")
+                }
+            },
             defaultMerge = false,
             repo = Graph.repository(context),
             onConfirm = { target, merge -> viewModel.confirmImport(target, merge) },

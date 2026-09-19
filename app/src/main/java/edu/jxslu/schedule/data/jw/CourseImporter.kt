@@ -17,8 +17,13 @@ sealed interface ImportParseResult {
     /**
      * [term] 是课表页学期下拉的当前选中项（如 2026-2027-1），即本次解析数据的实际学期；
      * 用于导入确认弹窗展示。页面异常没有下拉时为 null，不阻塞导入。
+     * [note] 是需要用户在确认前知情的补充说明（如历史学期考试的估算周次口径），null = 无。
      */
-    data class Success(val courses: List<Course>, val term: String? = null) : ImportParseResult
+    data class Success(
+        val courses: List<Course>,
+        val term: String? = null,
+        val note: String? = null,
+    ) : ImportParseResult
     data class Failure(val message: String) : ImportParseResult
 }
 

@@ -62,6 +62,8 @@ fun ImportTargetDialogHost(
     repo: ScheduleRepository,
     /** 数据声明的学年学期（如 2026-2027-1），来自教务页面或 JSON 顶层；空则不展示。 */
     term: String? = null,
+    /** 需要确认前知情的补充说明（如估算周次口径）；空则不展示。 */
+    note: String? = null,
 ) {
     val timetables by repo.timetables.collectAsStateWithLifecycle(emptyList())
     val currentId by repo.currentTimetableId.collectAsStateWithLifecycle(0L)
@@ -90,6 +92,13 @@ fun ImportTargetDialogHost(
                         "数据学期：$term",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
+                    )
+                }
+                if (!note.isNullOrBlank()) {
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
                 Text(

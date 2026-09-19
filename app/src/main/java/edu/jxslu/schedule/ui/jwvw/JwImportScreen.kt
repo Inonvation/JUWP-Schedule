@@ -112,6 +112,8 @@ fun JwImportScreen(
     var canGoBack by remember { mutableStateOf(false) }
     // 弹窗直接持有解析结果：courses 之外还要带上页面学期（term）供确认弹窗展示
     var showMergeDialog by remember { mutableStateOf<ImportParseResult.Success?>(null) }
+    /** 考试导入的原始行 + 学期：确认弹窗选定目标课后按**目标课表**的开学日重映射（DESIGN §4.14）。 */
+    var pendingExamImport by remember { mutableStateOf<Pair<List<ExamEntry>, String>?>(null) }
     /** 导入终态反馈（门数 to 是否合并）；非 null 时弹「导入完成」，确认后返回主界面。 */
     var importSuccess by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
     /** 成绩模式：待确认的导入（学期 → 条数），确认后按学期替换入库。 */
@@ -266,7 +268,8 @@ fun JwImportScreen(
 
     /**
      * 考试导入（DESIGN §4.14）：壳页读学期 → 分页 fetch `xsksap_list` → 转
-     * `Course(kind = Exam)`（日期按学期配置定位到周/星期，无法定位的跳过并计数）。
+     * `Course(kind = Exam)`。定位两级：先按学期配置，失败且学期号可识别时按估算开学日
+     * 兜底（历史/未来学期）；仍无法定位的跳过并计数。
      */
     suspend fun runExamImport(wv: WebView?) {
         if (wv == null) return
@@ -318,28 +321,44 @@ fun JwImportScreen(
 
             val slots = repo.timeSlots.first()
             val semester = repo.semester.first()
-            val (courses, skipped) = ExamMapper.toExamCourses(rows, slots, semester)
+            val mapping = ExamMapper.toExamCourses(rows, slots, semester, term)
             if (rows.isEmpty()) {
                 statusNote = "$term 暂无考试安排（教务通常考前数周才录入）"
                 snackbar.showSnackbar(statusNote)
                 return
             }
-            if (courses.isEmpty()) {
+            if (mapping.courses.isEmpty()) {
                 val msg = buildString {
                     append("$term 的 ${rows.size} 场考试都无法定位")
-                    if (semester == null) append("：请先在「我的 → 课表设置」配置开学日")
-                    else append("：考试日期超出学期范围")
+                    // 学期号无法识别时估算口径不可用，只剩「配置开学日」一条出路；
+                    // 估算可用还定位失败，只能是日期本身异常
+                    if (ExamMapper.estimatedTermStart(term) == null && semester == null) {
+                        append("：请先在「我的 → 课表设置」配置开学日")
+                    } else {
+                        append("：日期无法映射到学期周次")
+                    }
                 }
                 statusNote = msg
                 snackbar.showSnackbar(msg)
                 return
             }
+            // 历史/未来学期靠估算开学日定位（DESIGN §4.14）：估算可能与实际相差一两周，
+            // 必须让用户在确认弹窗里知情，而不是静默落表
+            val estimateNote = if (mapping.estimated > 0) {
+                val start = ExamMapper.estimatedTermStart(term)
+                "${mapping.estimated} 场考试不属于当前学期配置，已按「$term」的估算开学日" +
+                    "（$start）定位周次，可能与实际相差一两周。"
+            } else {
+                null
+            }
             statusNote = buildString {
-                append("解析到 ${courses.size} 场考试")
-                if (skipped > 0) append("（跳过无法定位的 $skipped 场）")
+                append("解析到 ${mapping.courses.size} 场考试")
+                if (mapping.skipped > 0) append("（跳过无法定位的 ${mapping.skipped} 场）")
+                if (mapping.estimated > 0) append("，其中 ${mapping.estimated} 场按估算周次定位")
                 append("，确认后写入")
             }
-            showMergeDialog = ImportParseResult.Success(courses, term = term)
+            pendingExamImport = rows to term
+            showMergeDialog = ImportParseResult.Success(mapping.courses, term = term, note = estimateNote)
         } finally {
             busy = false
         }
@@ -546,11 +565,21 @@ fun JwImportScreen(
                                             // 注意：两张课表的 URL 都含 "xskb"（理论 xskb_list、实验 toXskb），
                                             // 不能用子串判断，必须按页面类型区分，否则会互相误判
                                             val page = JwUrls.schedulePageKind(u)
+                                            // 成绩模式登录后直达成绩查询页；固定跳理论课表
+                                            // 会让成绩导入每次都落到课表页、再手动点一次入口
+                                            val autoNavTarget = when (mode) {
+                                                JwImportMode.Scores -> JwUrls.SCORE_FRM
+                                                JwImportMode.Schedule -> JwUrls.SCHEDULE_LIST
+                                            }
                                             statusNote = when {
                                                 "eapp2.juwp.edu.cn" in u ->
                                                     "请使用学校统一身份认证登录"
                                                 "xsMainV" in u ->
-                                                    "已登录教务主页，正在打开学期理论课表…"
+                                                    if (mode == JwImportMode.Scores) {
+                                                        "已登录教务主页，正在打开成绩查询页…"
+                                                    } else {
+                                                        "已登录教务主页，正在打开学期理论课表…"
+                                                    }
                                                 page == JwSchedulePage.Exam ->
                                                     "考试安排查询已打开。点下方「导入考试安排」。"
                                                 page == JwSchedulePage.Lab ->
@@ -565,11 +594,11 @@ fun JwImportScreen(
                                             if ("xsMainV" in u && !autoNavPending) {
                                                 autoNavPending = true
                                                 pageState = PageState.Loading
-                                                // 500ms 只留一个「已登录」的可见过渡；跳转目标固定，
+                                                // 500ms 只留一个「已登录」的可见过渡；跳转目标按模式固定，
                                                 // postDelayed 内仍会复核 currentUrl，重定向链乱序也不会跳错
                                                 view?.postDelayed({
                                                     if (currentUrl.contains("xsMainV")) {
-                                                        view.loadUrl(JwUrls.SCHEDULE_LIST)
+                                                        view.loadUrl(autoNavTarget)
                                                     } else {
                                                         autoNavPending = false
                                                     }
@@ -839,6 +868,7 @@ fun JwImportScreen(
         ImportTargetDialogHost(
             courses = courses,
             term = draft.term,
+            note = draft.note,
             title = when {
                 courses.all { it.kind == CourseKind.Exam } ->
                     "解析到 ${courses.size} 场考试"
@@ -853,9 +883,24 @@ fun JwImportScreen(
             repo = repo,
             onConfirm = { target, merge ->
                 showMergeDialog = null
+                val examDraft = pendingExamImport
+                pendingExamImport = null
                 scope.launch {
                     val targetId = resolveImportTarget(repo, target)
-                    val imported = repo.importParsedCourses(courses, merge, targetId)
+                    // 考试导入按目标课表的开学日重算周次（DESIGN §4.14）：
+                    // 解析时用当前课表配置出的映射只作预览，落表前必须换成目标课表的口径
+                    val toImport = if (examDraft != null) {
+                        val (rows, examTerm) = examDraft
+                        ExamMapper.toExamCourses(
+                            rows,
+                            repo.timeSlots.first(),
+                            repo.semesterFor(targetId),
+                            examTerm,
+                        ).courses
+                    } else {
+                        courses
+                    }
+                    val imported = repo.importParsedCourses(toImport, merge, targetId)
                     // 导入到非当前课表后切过去，返回主界面直接看到结果
                     repo.setCurrentTimetable(targetId)
                     // 终态反馈后再返回（DESIGN §3.3）：此前导入成功直接 onBack，
@@ -863,7 +908,10 @@ fun JwImportScreen(
                     importSuccess = imported to merge
                 }
             },
-            onDismiss = { showMergeDialog = null },
+            onDismiss = {
+                showMergeDialog = null
+                pendingExamImport = null
+            },
         )
     }
 
