@@ -1,8 +1,11 @@
 # 开发者文档：复刻一个你自己学校的课表 App
 
 本文档面向想把这套方案搬到**自己学校**的开发者：讲清楚本项目的整体架构、
-「从教务系统拿到课表/考试/成绩」两条完整数据链路的实现细节，以及换校适配的动手步骤。
+「从教务系统拿到课表/考试/成绩」完整数据链路的实现细节，以及换校适配的动手步骤。
 应用功能与界面规格见 [DESIGN.md](DESIGN.md)，爬虫脚本速查见 [scripts/README.md](scripts/README.md)。
+
+> 快照：v1.1.0（2026-09-21，Room v8）。工程实况（依赖版本、数据库版本、口径清单）
+> 以 [AGENTS.md](AGENTS.md) 为准，本文只讲「为什么这么设计、换校要动哪里」。
 
 > 本项目是**江西水利电力大学的非官方学生项目**，仅供学习交流。
 > 换校适配时请同样遵守：模拟正常客户端操作、凭证不入代码仓库、不刷积分、不伪造官方身份。
@@ -28,7 +31,7 @@
 ## 1. 全景：两条数据链路
 
 本项目要解决的核心问题只有一个：**把教务系统里的课表，变成手机上可交互的数据**。
-围绕它有两条互补的链路：
+围绕它有两条互补的链路（外加一条生产侧复刻，见本节末尾）：
 
 ```
 链路 A（Python 爬虫，本机调试用 —— 逆向参考实现）
@@ -54,6 +57,16 @@
 两条链路共用同一套**页面规则**（DOM 结构、接口参数、字段语义），因此排错文档
 `scripts/README.md` 同时覆盖 App 行为——脚本里趟过的坑，App 端实现已经一并规避。
 
+2026-09-19 起，链路 A 的登录与抓取又多了**第二份实现**：`data/jw/JwHttpSession.kt`
+用 OkHttp 把 `scripts/jw_session.py` 的 CAS → SSO 链路原样复刻进 App，服务「调课自动检测」
+（DESIGN §4.17，默认关闭；凭证 EncryptedSharedPreferences 加密存储、排除云备份）。
+同一套页面规则自此有 Python 与 Kotlin 两份独立实现，**换校时两边要同步改**（见 §5.6）。
+
+除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、一卡通付款码与账单、快趣出行码），
+它们是彼此独立的 API 客户端（`data/qiekj/`、`data/ykt/`、`domain/EbikeQr.kt`），与课表核心
+零耦合——换校适配时整块删掉不影响课表功能（入口在 `ui/` 对应包与今日页底部固定区）。
+各自的实现细节见 DESIGN §3.9 / §3.10 / §4.5 / §4.10 / §4.18 / §4.19。
+
 ---
 
 ## 2. 工程形态与架构分层
@@ -62,26 +75,31 @@
 |----|-----|
 | 模块 | 单模块 `:app` |
 | 语言/UI | Kotlin 2.1.21 + Jetpack Compose + Material3 |
-| 持久化 | Room 2.7.1（课表/成绩）+ DataStore（显示偏好） |
-| 网络 | App 端仅 WebView + 胖乖 Retrofit；课表数据零自建后端 |
+| 持久化 | Room 2.7.1（v8：课表/成绩/笔记/作业/检测/一卡通流水）+ DataStore（显示偏好与开关） |
+| 网络 | App 端 WebView + Retrofit（胖乖）+ OkHttp（教务检测、一卡通）；课表数据零自建后端 |
 | SDK | minSdk 26 / compileSdk 35 |
-| 测试 | 纯 JVM 单测约 30 个类（domain 层可全量测，见 §9） |
+| 测试 | 纯 JVM 单测 45 个类（domain 层可全量测，见 §9） |
 
 分层与依赖方向（`app/src/main/java/edu/jxslu/schedule/`）：
 
 ```
 MainActivity.kt        底栏三 Tab：今日 / 课表 / 我的
-SubpageActivity.kt     二级页容器（成绩查询、各类设置）
+SubpageActivity.kt     二级页容器（成绩查询、笔记/作业 7 个二级页、各类设置）
 JwImportActivity.kt    教务导入独立窗口（独立 Activity，见 §5）
 Graph.kt               手写单例装配：Repository / 数据库 / 偏好
-domain/                纯 Kotlin：Course、ScheduleCalculator、ExamMapper、
-                       ScheduleExporter、Shortcuts …… 不依赖 Android，可 JVM 测
-data/local/            Room：Entities / Daos / JuwDatabase（含逐级迁移）
-data/repo/             ScheduleRepository（课表读写 + 导入校验）、ScoreRepository
-data/prefs/            DataStore 显示偏好（全局一份，不挂课表）
-data/jw/               教务导入：JwUrls、两个课表解析器、考试/成绩解析器
+domain/                纯 Kotlin：Course、ScheduleCalculator、ExamMapper、ScheduleExporter、
+                       ScheduleDetect、CourseTweak、ReminderPlanner、Markdown/MathTex、
+                       Shortcuts …… 不依赖 Android，可 JVM 测
+data/local/            Room v8：Entities / Daos / JuwDatabase（含 v1→v8 逐级迁移）
+data/repo/             ScheduleRepository（课表读写 + 导入校验）、ScoreRepository、
+                       NoteRepository / HomeworkRepository、AttachmentStore（笔记图片）
+data/prefs/            DataStore 显示偏好与全局开关（含 slotSchemaVersion）
+data/jw/               教务：JwUrls、两个课表解析器、考试/成绩解析器、JwHttpSession（检测）
 data/qiekj/            胖乖生活 API（登录/开水/余额/订单）
-ui/                    Compose Screen + ViewModel（today/week/me/water/score/...）
+data/ykt/              一卡通（新中新慧新e校）登录、付款码与流水同步
+data/calendar/         系统日历同步（CalendarSyncer）
+ui/                    Compose Screen + ViewModel（today/week/me/water/campus/score/
+                       notes/homework/timetable/detect/reminder/ebike/...）
 ui/widget/             Glance 桌面小组件
 ```
 
@@ -110,6 +128,7 @@ data class Course(
     val customEndTime: String? = null,
     val colorIndex: Int = 0,
     val kind: CourseKind = CourseKind.Theory, // Theory / Lab / Exam
+    val remark: String = "",                  // 课程备注（用户自写，属课程行）
 )
 
 data class TimeSlot(val number: Int, val startTime: String, val endTime: String) // 小节 1–11
@@ -121,7 +140,7 @@ data class SemesterConfig(
 )
 ```
 
-两个关键设计决策：
+三个关键设计决策：
 
 1. **`kind` 扩展而非新表**。实验课、考试都复用 `Course`：
    考试日期落 `weeks`（单元素）+ `day`，起止时刻落 `customStart/EndTime`
@@ -130,37 +149,69 @@ data class SemesterConfig(
 2. **行号 = 小节号**。本校作息是 11 小节、每节 40 分钟（大节内歇 5 分钟、
    大节之间 20 分钟换教室）。网格第 N 行就是第 N 小节，与教务返回的
    `startSection/endSection` 直接对齐，不做任何折算。详见 DESIGN §3.5。
+3. **课程行的身份不靠 `id`**——行 id 在覆盖导入（清表重建）与调课检测应用（整组重建）
+   里会被换掉，稳定键只有两个：
+   - 课程之间的同一性用 `Course.mergeKey()`（名称+星期+节次+教师+kind）：
+     导入去重、导入统计与**备注搬运**共用这一把钥匙，唯一实现在 `domain/Models.kt`，
+     不要再写第二份；
+   - 笔记·课件与作业按**课程名原样字符串**归属，不带 courseId、不带 timetableId
+     （DESIGN §4.20）：换课表/换学期后旧内容仍可查，代价是同名课程跨学期共用一个抽屉。
+   加字段可以，任何新功能绑行 id 必丢数据。
 
-### 3.2 Room schema（`data/local/JuwDatabase.kt`，当前 v4）
+### 3.2 Room schema（`data/local/JuwDatabase.kt`，当前 v8）
 
 | 表 | 主键 | 说明 |
 |----|------|------|
 | `timetables` | `id` | 课表身份；`slotsCustomized` 标记用户改过作息 |
-| `courses` | `id` | `timetableId` 外挂归属；`weeksCsv` 存逗号分隔周次；`kind` 列区分课型 |
-| `time_slots` | `(timetableId, number)` | 每张课表一份作息表 |
+| `courses` | `id`（+ `timetableId` 索引） | 课程行：`timetableId` 归属；`weeksCsv` 逗号分隔周次；`kind` 课型；`remark` 备注 |
+| `time_slots` | `(timetableId, number)` | 每张课表一份作息表（小节号 1–11） |
 | `semester_config` | `timetableId` | 每张课表一份开学日/总周数 |
-| `scores` | `id` + `term` 索引 | 成绩全局归属学生、不挂课表；按学期整体替换 |
+| `scores` | `id`（+ `term` 索引） | 成绩全局归属学生、不挂课表；按学期整体替换 |
+| `detect_baselines` | `timetableId` | 调课检测的教务基线快照（每课表一份） |
+| `detect_reports` | `timetableId` | 最新差异报告 + `unread` 未读标记（每课表一份） |
+| `ykt_turnovers` | `orderId`（+ `jndatetime` 索引） | 一卡通流水；按服务端订单号去重 |
+| `notes` | `id`（+ `courseName` / `updatedAt` 索引） | 笔记·课件，按课程名归属（§3.1 决策 3） |
+| `homework` | `id`（+ `courseName` / `done` / `dueDate` 索引） | 作业，按课程名归属；`dueDate` 存 `yyyy-MM-dd` 文本（字典序即时间序） |
 
-迁移纪律：**逐级 `ALTER TABLE` / `CREATE TABLE`，禁用 destructive migration**。
-用户设备上是真实课表，重建表式的迁移等于删库。主键变更（v2→v3 把作息表从全局单份
-改为每课表一份）只能「建新表 → 搬数据 → 改名」。
+版本史（v1→v8 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
+（`timetables` + `courses.timetableId`）→ v4 成绩表 → v5 调课检测两表 →
+v6 一卡通流水 → v7 笔记/作业 → v8 `courses.remark`。
+
+迁移纪律两条：
+
+1. **逐级 `ALTER TABLE` / `CREATE TABLE`，禁用 destructive migration**。
+   用户设备上是真实课表，重建表式的迁移等于删库。主键变更（v2→v3 把作息表从全局单份
+   改为每课表一份）只能「建新表 → 搬数据 → 改名」。
+2. **实体 `@Index` 必须与迁移里的 `CREATE INDEX` 逐字对齐**（Room 生成名
+   `index_<表>_<列>`），漏一个就迁移校验崩溃。2026-09-20 实测：`ykt_turnovers.jndatetime`
+   漏声明，**只影响从 v5 升级的设备，全新安装不崩**——这类缺陷只在特定升级路径上暴露，
+   改 schema 后必须逐级真机验证（旧版升上来 + 全新安装各一次）。
 
 ### 3.3 JSON 导入导出（与拾光课程表互通）
 
-`ScheduleRepository.exportJson()/importJson()` 产出/读取的顶层结构：
+`ScheduleRepository.exportJson()/importJson()` 产出/读取的顶层结构（导出 = 当前课表）：
 
 ```json
 {
   "courses": [ { "name": "...", "teacher": "...", "position": "...",
-                 "day": 1, "startSection": 1, "endSection": 2,
-                 "weeks": [1,2], "colorIndex": 0, "kind": "theory" } ],
-  "scores":  [ { "term": "2025-2026-2", "name": "...", "scoreStr": "92", ... } ]
+                 "day": 1, "startSection": 1, "endSection": 2, "weeks": [1,2],
+                 "colorIndex": 0, "kind": "theory", "remark": "" } ],
+  "term": "2026-2027-1",
+  "scores":  [ { "term": "2025-2026-2", "name": "...", "scoreStr": "92", ... } ],
+  "semester": { "startDate": "2026-09-01", "totalWeeks": 20, "firstDayOfWeek": 1 },
+  "timeSlots": [ { "number": 1, "startTime": "08:30", "endTime": "09:10" } ]
 }
 ```
 
-- 字段名与领域模型一致，第三方课表 App（拾光）的用户可以互导；
-- `scores` 段可选：旧版 App 用 `ignoreUnknownKeys` 忽略，新版读旧文件缺省为空，双向兼容；
-- 课程导入支持「合并（按 mergeKey 去重）/覆盖」，成绩导入是**按学期整体替换**（先清后插）。
+- 课程字段名与领域模型一致，第三方课表 App（拾光）的用户可以互导；
+- 所有段都是**可选键、只增不减**：读取侧 `ignoreUnknownKeys`，旧版 App 忽略新段、
+  新版读旧文件缺省为空，双向兼容——`remark`、`semester`/`timeSlots` 都是这么加进来的，
+  加字段时保持这条纪律；
+- 课程导入支持「合并（按 mergeKey 去重）/覆盖」，成绩导入是**按学期整体替换**（先清后插），
+  `semester`/`timeSlots` 应用到**目标课表**；
+- 任一已存在的段校验不过（开学日期格式 / `TimeSlotRules` 不变量 / 成绩缺 term）→
+  **整个导入拒绝**，不留「课程对了时间错」的半套；
+- `term` 是来源学期标记（脚本/教务导出带的），只用于导入弹窗展示，不落库。
 
 ---
 
@@ -200,7 +251,8 @@ data class SemesterConfig(
 **星期必须从课程所在 `<td>` 的列序推**——这是本项目踩过最深的坑，规则值得抄走：
 
 - 表格第 0 列是节次标签，第 1–7 列才是周一到周日；
-- `li` 上的 `qz-hasCourse-N` class **恒为 1**（模板拿它当「有课」样式），不能当星期来源；
+- `li` 上的 `qz-hasCourse-N` class **几乎恒为 1**（模板拿它当「有课」样式，实测 33 处
+  `-1`、2 处 `-3`），不能当星期来源；
 - 列号要**累加 `colspan`**，并用一张 carry 表记录 `rowspan` 的跨行占用：
   强智在「同一天连续两大节上同一门课」时会合并单元格，不补偏移的话，
   该行之后所有课程的星期会整体前移一格。
@@ -370,6 +422,25 @@ suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
   真故障时不无限重试打服务端；
 - 诊断文案集中在 `data/jw/JwImportDiagnosis.kt`，含 VPN/代理场景识别（`JwVpnDetector`）。
 
+### 5.6 调课自动检测：脚本链路的 App 内复刻（2026-09-19）
+
+默认关闭的后台链路（DESIGN §4.17）：OkHttp 直接登录教务，拉理论+实验课表，与本地做
+**三方合并**（基线快照 / 教务现状 / 本地现状），差异经气泡与通知提示、用户确认才写库。
+对本文而言重点是它**复用了同一套页面规则**——换校时这是除 WebView 之外要同步改的第二处：
+
+- `data/jw/JwHttpSession.kt` 复刻 `scripts/jw_session.py`：CAS 表单 → 预热 `:81`
+  拿 `bzb_njw` → SSO ticket → `sso.jsp` 302 链 → 会话校验（`xsMainV` 字节数阈值）；
+  独立 `CookieJar`（与 WebView 的 `CookieManager` 互不干扰），每次检测全量重登。
+- 两个曾让开启流程 100% 失败的坑，换校时大概率原样复现：
+  1. **重定向基准写反**：`current.resolve(location)` 误写成 `location.resolve(current)`，
+     每轮回到原 URL，误报「重定向次数过多、链路可能已变」；
+  2. **校园 IPv6 黑洞**：校园域同时有 A/AAAA 记录而 v6 在移动网络不可达，OkHttp 默认
+     v6 优先建连，每步白等约 31 秒超时。修法 `Ipv4FirstDns`（v4 排前、AAAA 不丢弃）。
+- 凭证 EncryptedSharedPreferences 加密存储、排除云备份；**连续 3 次凭证错自动停用**
+  （防触发验证码锁号）；代理出口命中时检测前直接跳过，不消耗失败计数。
+- 基线/报告的刷新时机只有两个：教务导入确认落库后、应用检测报告后——用户手动调课
+  **不**刷新基线，这是三方合并能区分「教务改课」与「用户自己调课」的全部前提。
+
 ---
 
 ## 6. 核心算法与口径（改代码前必读）
@@ -393,6 +464,15 @@ suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
 5. **作息表结构版本**存 DataStore（`DisplayPrefsStore.slotSchemaVersion`）：
    改默认作息时要同时升版本号并写一次性迁移，老安装才能拿到新表；
    用户自定义过（`slotsCustomized`）则永不覆盖。
+6. **课程行的稳定身份与搬运纪律**（细节见 §3.1 决策 3）：`Course.mergeKey()` 唯一实现在
+   `domain/Models.kt`（导入去重、导入统计、备注搬运共用同一把钥匙）；覆盖导入
+   （`replaceAllCourses`）与调课检测应用（`applyDetectGroups`）**必须**经
+   `domain/courseRemarksCarriedOver` 把课程备注搬回来，少了这一步的表现是
+   「导入一次备注全没了」。
+7. **提示只有一条通道**：页面级提示统一走 Scaffold 的 `AppSnackbarHost`
+   （`ui/common/AppNotice.kt`），语气四档 `NoticeTone`；不要新引入 `android.widget.Toast`。
+   `ModalBottomSheet` / `AlertDialog` 是更高一层的独立窗口，Snackbar 会被它盖住——
+   弹层内的提示用 `InlineNoticeRow`（或先关弹层再提示）。
 
 ---
 
@@ -441,10 +521,15 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 | `data/jw/CourseImporter.kt` 的 `JwUrls` | CAS/SSO/课表/考试/成绩全部 URL 与 `schedulePageKind` 的判型规则 |
 | `QiangzhiScheduleParser.EXTRACT_JS` 等注入脚本 | 换成你学校页面的 DOM 选择器与字段抽取 |
 | `ExamScheduleParser` / `ScoreParser` | JSON 接口地址、参数名、字段名 |
+| `data/jw/JwHttpSession.kt` | 只有要做「调课自动检测」才需要：同一条登录链路的 OkHttp 复刻（§5.6），与上面几行同步改 |
 | `data/DefaultData.kt` | 作息表（从教务页行标签逐节核对，不要拍脑袋）与默认开学日 |
 
 解析器契约保持不变：注入 JS 返回 `{ok, items, term}`，Kotlin 侧把每条数据转成
 `Course`。下游（确认弹窗、入库、网格渲染）完全不用动。
+
+**不做校园生活模块**（胖乖/一卡通/快趣）时：删掉 `data/qiekj/`、`data/ykt/` 与
+`ui/water|campus|ebike/`、今日页底部固定区的对应入口即可，课表链路零牵动；
+若要改 Room 实体，务必遵守 §3.2 的迁移两条纪律。
 
 ### 第 4 步：换品牌信息与包名
 
@@ -469,16 +554,26 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
 ```
 
-覆盖面（约 30 个测试类，`app/src/test/`）：
+覆盖面（45 个测试类，`app/src/test/`）：
 
-- **解析器**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
+- **解析与数据链路**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
   `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 样例）、
-  `ImportJsonShapeTest`（互通 JSON 形状）、`QiekjSignTest`；
-- **领域算法**：`ScheduleCalculatorTest`（周次/时刻/配色）、
-  `TimeSlotRulesTest` / `TimeSlotScheduleTest`（作息不变量）、
-  `WeekGridLayoutTest`（网格几何）、`TodayStateTest` / `TodayBoundaryTest`、
-  `ExamMapperTest`（考试映射含历史学期估算）、`ScoreCalculatorTest` / `ScoreGroupsTest`；
-- **规划与边界**：`CourseTweakTest`（调课规划）、`ShortcutsTest`、`WidgetModelTest`。
+  `JsStringDecodeTest`、`JwHttpSessionTest`（检测登录链路：重定向解析 / IPv4 优先 DNS）、
+  `JwImportDiagnosisTest`、`ImportJsonShapeTest`（互通 JSON 形状）；
+- **课表领域算法**：`ScheduleCalculatorTest`（周次/时刻/配色）、
+  `TimeSlotRulesTest` / `TimeSlotScheduleTest`（作息不变量）、`WeekGridLayoutTest`（网格几何）、
+  `TodayStateTest` / `TodayBoundaryTest`、`ExamMapperTest`（含历史学期开学日估算）、
+  `ScoreCalculatorTest` / `ScoreGroupsTest`、`CourseTweakTest`（调课规划）、
+  `ScheduleDetectTest`（三方合并：归因/冲突/不误报）、`ScheduleExporterTest`（日历/CSV 展开）、
+  `ReminderPlannerTest`（提醒时刻与窗口）、`CalendarSyncDefaultsTest`、
+  `TimetablePrefsDefaultsTest`、`ShortcutsTest`、`GridFontDecouplingTest`；
+- **笔记·作业**：`NoteExcerptTest`、`MarkdownParserTest` / `MarkdownEditTest`（自研子集
+  与编辑器补全全分支）、`MathTexTest`、`HomeworkCenterTest` / `HomeworkReminderTest`、
+  `CourseRemarkTest`（备注搬运：mergeKey 匹配 / kid 区分 / 不覆盖新行）；
+- **校园生活**：`QiekjSignTest` / `QiekjModelsTest`、`YktKeyboardTest` / `YktModelsTest` /
+  `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest`、`EbikeQrTest`；
+- **UI 边界**：`WidgetModelTest`（小组件分档/行数/明日接棒）、`ParseWeeksInputTest`、
+  `CompactPositionTest`、`PanelSnapTest`、`GridFontScaleTest`。
 
 结论从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总
 （Gradle 成功时不打印用例数；读 XML 记得 `-Encoding UTF8`）。
@@ -494,17 +589,42 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 | Room | **2.7.1**——2.6 配 Kotlin 2.1 会 KSP `unexpected jvm signature V` |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（JitPack，**必须 `isTransitive = false`**，否则拉 androidx.core 1.17 编不过）；查名用 `.agents/skills/find-hugeicons/SKILL.md` 的本地 JAR 方法 |
 | Glance | 1.2.0（传递抬 compose runtime 到 1.7.8，`androidx.core` 保持 1.15.0） |
-| debug/release | 两个 applicationId（`.debug` 后缀），可共存；启动 debug 包必须写全限定 Activity 名 |
+| debug/release | 两个 applicationId（`.debug` 后缀），可共存；启动 debug 包必须写全限定 Activity 名（`am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity`） |
 | WebView | MIUI 白屏 → 软件渲染兜底；教务页无 viewport meta → `useWideViewPort` 方案 |
+| 离线构建 | 依赖齐备后加 `--offline` 秒级完成：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline` |
+| 系统权限 | 「快趣出行直达」的 `WRITE_SECURE_SETTINGS` 按**包名**一次性 adb 授权（`pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`），debug 与 release 各授一次；未授权时该按钮走兜底，是预期行为不是 bug |
+| release 体积 | 自 2026-09-21 开 R8 + 资源压缩：17.9MB → 3.6MB（见 §10.1） |
+
+### 10.1 R8（release 自 2026-09-21 开启）
+
+改 `proguard-rules.pro` 后**必须装 release 包冒烟，且要冒到真实网络路径**——R8 的问题不在
+编译期暴露。已经踩过的坑，换校加自己的 API 模型时会原样找上来：
+
+1. Tink 引用的 errorprone 注解、KeysDownloader 的可选依赖缺失 → `-dontwarn` 收口即可；
+   不要写成 `-keep class com.google.crypto.tink.**`，那会把缺口一起保住。
+2. **只被泛型签名引用的模型类会被整类删除**（2026-09-21 的真实根因）：R8 静态分析看不到
+   使用者（Retrofit / 序列化都走运行期反射），删掉 `data/qiekj` 的模型类后
+   `ApiEnvelope<EmptyData>` 的签名实参退化成 `Object`，调用时抛
+   `Unable to create converter for ApiEnvelope<java.lang.Object> for method …`——
+   **只有用到被删类型的接口会炸**，看起来像「某个功能坏了」而不是「混淆炸了」。
+   修法 = 整包 keep（`-keep class edu.jxslu.schedule.data.qiekj.**`）。
+   定位手法：release 临时加 `-printusage`，报告里**没有冒号的行**就是被整类删除的类
+   （用完删掉，它会把路径写进仓库文件）。
+3. 冒烟要覆盖「开了混淆才走到的分支」；DataStore / 课表那条 JSON 链是**编译期** serializer，
+   不受影响——别只测它们就以为序列化没事。
 
 ---
 
 ## 11. 安全与合规红线
 
 - 凭证只进 gitignore 的 `scripts/credentials.local.json`；**App 端代码里永远不出现
-  学号/密码/token**，登录由用户在 WebView 里亲手完成；
+  学号/密码/token**，登录默认由用户在 WebView 里亲手完成（自动检测是显式开启的例外，
+  凭证经 EncryptedSharedPreferences 加密存本机、排除云备份）；
 - 公开仓库的文档、注释、示例里不得出现真实学号、姓名、手机号；抓取产物
   （`scripts/out/`，含真实数据）不入库；
+- 校园卡凭证单独加密存储（`ykt_credentials.xml`，同样排除备份）；付款码等同现金——
+  不进日志、不进剪贴板/相册，token 只存内存；验证码类响应（8002/8003）**绝不重试**，
+  开启类交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）；
 - 模拟登录/抓取以「正常客户端」为限：不刷积分、不绕过付费、不伪造官方身份、
   不对教务接口做高频请求；
 - 对外发布你的改编版时，同样写明非官方声明，使用风险自负。
@@ -514,6 +634,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 ## 参考
 
 - [scripts/README.md](scripts/README.md) —— 爬虫速查：登录链路、DOM 规则、排错表（比本文更细）
-- [DESIGN.md](DESIGN.md) —— 产品与界面规格（§3 UI、§4 技术架构逐模块决策记录）
+- [DESIGN.md](DESIGN.md) —— 产品与界面规格（§3 UI、§4 技术架构逐模块决策记录；
+  与本文互补：§4.17 调课检测、§3.11/§4.20 笔记·作业与作业提醒）
 - [AGENTS.md](AGENTS.md) —— 给 AI 结对工具的工程约定（版本实况、口径清单）
 - [拾光课程表](https://github.com/XingHeYuZhuan/shiguangschedule) —— JSON 互通格式参照

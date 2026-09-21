@@ -97,11 +97,18 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `NoteExcerptTest`（笔记摘要提取 + 正文 img 引用收集与移除）、
 `HomeworkCenterTest`（作业排序：逾期→今天→未来→无截止 / 汇总 / 截止文案）、
 `HomeworkReminderTest`（作业提醒点与有效期窗口 / 越窗跳过 / 去重键）、
-`CourseRemarkTest`（课程备注搬运：mergeKey 匹配/kid 区分/新行不覆盖/多行同 key）
-等 42 个测试类。
+`CourseRemarkTest`（课程备注搬运：mergeKey 匹配/kid 区分/新行不覆盖/多行同 key）、
+`ScheduleExporterTest`（日历/CSV 事件展开）、`ReminderPlannerTest`（提醒时刻与有效期窗口）、
+`CalendarSyncDefaultsTest`（日历提醒档位表）、`TimetablePrefsDefaultsTest`（显示偏好默认值契约）、
+`GridFontDecouplingTest` / `GridFontScaleTest`（课表字号解耦与收敛）、
+`PanelSnapTest`（面板高度吸附）、`CompactPositionTest`（地点压缩）、
+`JsStringDecodeTest`（evaluateJavascript 返回值解码）、`JwImportDiagnosisTest`（导入失败诊断契约）、
+`QiekjModelsTest`（胖乖响应包脏数据容错）、`YktPayCodeTest`（付款码矩阵参数）、
+`YktRechargeSignTest`（充值下单签名）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
+等 45 个测试类。
 
 行为约定（改之前先读）：
-- 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` 恒为 1，不能当星期来源。
+- 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
 - 课程配色不按课程名哈希取（12 桶内必然撞色），走 `ScheduleCalculator.colorIndexesBySortedName` / `nextColorIndex`。
 - 作息表结构版本存在 DataStore（`DisplayPrefsStore.slotSchemaVersion`）；改作息要同时调 `DefaultData.SLOT_SCHEMA_VERSION` 并给迁移。
 - 课程时间**只有一条口径**：`ScheduleCalculator.courseStartMinutes` / `courseEndMinutes`（自定义时间课以 custom 字段为准）。
@@ -208,7 +215,7 @@ MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score（纯逻辑，可 JVM 测）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
-data/local/      Room v7：courses / time_slots / semester_config / timetables / scores
+data/local/      Room v8：courses / time_slots / semester_config / timetables / scores
                  / detect_baselines / detect_reports / ykt_turnovers / notes / homework
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
