@@ -64,9 +64,10 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AlarmClock
 import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.Notification01
+import me.rerere.hugeicons.stroke.Task01
 
 /**
- * 上课提醒子页（DESIGN §3.7）：开关 + 提前量 + 通知权限状态 + 说明。
+ * 提醒子页（DESIGN §3.7 上课提醒 + §3.11 作业截止提醒）：开关 + 提前量 + 通知权限状态 + 说明。
  *
  * 默认关：通知是打扰型能力。开启那一刻才请求 `POST_NOTIFICATIONS`（API 33+），
  * 拒绝不阻塞开关——功能在系统设置里授权后自动生效。
@@ -84,6 +85,7 @@ fun ReminderSettingsScreen(
     val context = LocalContext.current
     val enabled by viewModel.enabled.collectAsStateWithLifecycle()
     val lead by viewModel.leadMinutes.collectAsStateWithLifecycle()
+    val homeworkEnabled by viewModel.homeworkEnabled.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var showLeadPicker by remember { mutableStateOf(false) }
@@ -100,10 +102,27 @@ fun ReminderSettingsScreen(
         ClassReminder.scheduleNext(context)
     }
 
+    // 作业提醒开关变化 → 立即核对一次（enqueueCheck 先补发窗口内的、再重排闹钟；
+    // 关到位后作业侧不再排闹钟）。首次进入也会跑一次——与 15 分钟周期核对等价、很廉价。
+    LaunchedEffect(homeworkEnabled) {
+        ClassReminder.enqueueCheck(context)
+    }
+
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (!granted) viewModel.onPermissionDenied()
+    }
+
+    // 两个提醒开关共用：开启那一刻请求 POST_NOTIFICATIONS（API 33+），拒绝不阻塞开关本身
+    val requestNotifPermission = {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     // 通知权限状态：进页与从系统设置返回（ON_RESUME）时各读一次
@@ -152,13 +171,7 @@ fun ReminderSettingsScreen(
                     checked = enabled,
                     onCheckedChange = { value ->
                         viewModel.setEnabled(value)
-                        if (value && Build.VERSION.SDK_INT >= 33 &&
-                            ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS,
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
+                        if (value) requestNotifPermission()
                     },
                     icon = HugeIcons.BellRing,
                 )
@@ -168,6 +181,23 @@ fun ReminderSettingsScreen(
                     value = ReminderDefaults.leadLabel(lead),
                     onClick = { showLeadPicker = true },
                     icon = HugeIcons.AlarmClock,
+                )
+            }
+
+            // 作业截止提醒（DESIGN §3.11）：独立于上课提醒的开关，调度共用同一闹钟
+            SettingsSection(
+                title = "作业截止提醒",
+                subtitle = "只提醒未完成、未过期的作业；与上课提醒共用闹钟。",
+            ) {
+                SettingSwitchRow(
+                    title = "开启作业截止提醒",
+                    subtitle = "截止前一天 20:00 与当天 20:00 提醒未完成的作业",
+                    checked = homeworkEnabled,
+                    onCheckedChange = { value ->
+                        viewModel.setHomeworkEnabled(value)
+                        if (value) requestNotifPermission()
+                    },
+                    icon = HugeIcons.Task01,
                 )
             }
 
@@ -192,6 +222,11 @@ fun ReminderSettingsScreen(
                 )
                 Text(
                     "· 与桌面小组件相同，提醒可能被系统省电策略推迟几分钟；在桌面小组件设置里允许「忽略电池优化」可改善；",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                )
+                Text(
+                    "· 作业截止提醒在截止前一天与当天 20:00 各提醒一次，只提醒未完成的作业；越过次日 00:00 不再补发；",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 )
@@ -244,6 +279,10 @@ class ReminderSettingsViewModel(
     val leadMinutes: StateFlow<Int> = repo.reminderLeadMinutes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReminderDefaults.DEFAULT_LEAD_MINUTES)
 
+    /** 作业截止提醒开关（DESIGN §3.11）。与上课提醒开关互相独立，默认关。 */
+    val homeworkEnabled: StateFlow<Boolean> = repo.homeworkReminderEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
@@ -253,6 +292,10 @@ class ReminderSettingsViewModel(
 
     fun setEnabled(value: Boolean) {
         viewModelScope.launch { repo.setReminderEnabled(value) }
+    }
+
+    fun setHomeworkEnabled(value: Boolean) {
+        viewModelScope.launch { repo.setHomeworkReminderEnabled(value) }
     }
 
     fun setLeadMinutes(minutes: Int) {

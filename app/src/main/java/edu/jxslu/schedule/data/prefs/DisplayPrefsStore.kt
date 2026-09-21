@@ -241,6 +241,14 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 作业截止提醒开关（DESIGN §3.11 / §3.7 设置表）。全局项，**默认关**：
+     * 与 [reminderEnabled] 同口径——通知是打扰型能力，用户显式开启；两个开关互相独立。
+     */
+    val homeworkReminderEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_HOMEWORK_REMINDER_ENABLED] ?: false
+    }
+
+    /**
      * 日历同步的提前提醒分钟数（DESIGN §4.12）。全局项，默认 20，0 = 不提醒。
      * 值域 0–120 / 步长 5 的口径单一来源是 [CalendarSyncDefaults]，读路径先夹取防线。
      */
@@ -390,6 +398,11 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setReminderEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_REMINDER_ENABLED] = value }
+    }
+
+    /** 作业截止提醒开关（DESIGN §3.11）。 */
+    suspend fun setHomeworkReminderEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_HOMEWORK_REMINDER_ENABLED] = value }
     }
 
     suspend fun setReminderLeadMinutes(value: Int) {
@@ -559,6 +572,40 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_REMINDER_LAST] = key }
     }
 
+    /**
+     * 作业截止提醒的「已发键」集合（DESIGN §3.11）。键 = `作业id|提醒点日期`（如 `12|2026-09-21`），
+     * 闹钟与 15 分钟周期核对共用去重；与上课提醒的单一「已发键」不同，这里是集合
+     * （多条作业各有一个提醒点，且两个提醒点日期不同）。键缺失/脏值回空集：
+     * 最坏结果是重发一条通知，不该让核对链路抛异常。
+     */
+    suspend fun homeworkRemindedKeys(): Set<String> =
+        context.displayDataStore.data.first()[KEY_HOMEWORK_REMINDED_KEYS] ?: emptySet()
+
+    /**
+     * 记下一个已发键（DESIGN §3.11），并把集合裁剪到最近 [HOMEWORK_REMINDED_LIMIT] 条。
+     *
+     * 裁剪策略：键里带着 ISO 日期（`yyyy-MM-dd`），同一时区下**字典序 = 时间序**，
+     * 故按「提醒点日期」降序、同日期再按整键降序排，保留前 50 条——
+     * 淘汰的只会是最久以前的提醒点，而它们的窗口早已关闭（越过 00:00 不补发），
+     * 即使被淘汰也不会重复发。
+     */
+    suspend fun addHomeworkRemindedKey(key: String) {
+        context.displayDataStore.edit { p ->
+            val current = p[KEY_HOMEWORK_REMINDED_KEYS] ?: emptySet()
+            val next = trimHomeworkRemindedKeys(current + key)
+            if (next != current) p[KEY_HOMEWORK_REMINDED_KEYS] = next
+        }
+    }
+
+    /**
+     * 只保留最新的 [HOMEWORK_REMINDED_LIMIT] 条键（写路径唯一裁剪点，口径见 [addHomeworkRemindedKey]）。
+     * 键结构异常（无 `|`）时按整键参与排序——不崩、不吞，最多排位不准。
+     */
+    private fun trimHomeworkRemindedKeys(keys: Set<String>): Set<String> =
+        keys.sortedWith(
+            compareByDescending<String> { it.substringAfterLast('|') }.thenByDescending { it },
+        ).take(HOMEWORK_REMINDED_LIMIT).toSet()
+
     /** 小组件设置页的「首次进入引导」是否已弹过（DESIGN §3.6）。全局键。 */
     suspend fun widgetSetupSeen(): Boolean =
         context.displayDataStore.data.first()[KEY_WIDGET_SETUP_SEEN] ?: false
@@ -645,6 +692,9 @@ class DisplayPrefsStore(private val context: Context) {
             ?: CourseFilter.All
 
     private companion object {
+        /** 作业截止提醒「已发键」保留条数（DESIGN §3.11：保留最近 50 条）。 */
+        const val HOMEWORK_REMINDED_LIMIT = 50
+
         // ---- 全局项（现行有效） ----
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
@@ -654,6 +704,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")
         val KEY_REMINDER_LEAD = intPreferencesKey("reminder_lead_minutes")
         val KEY_REMINDER_LAST = stringPreferencesKey("reminder_last_key")
+        val KEY_HOMEWORK_REMINDER_ENABLED = booleanPreferencesKey("homework_reminder_enabled")
+        val KEY_HOMEWORK_REMINDED_KEYS = stringSetPreferencesKey("homework_reminded_keys")
         val KEY_CURRENT_TIMETABLE = longPreferencesKey("current_timetable_id")
         val KEY_DEFAULT_CONFIG_SOURCE = longPreferencesKey("default_config_source_id")
         val KEY_SLOT_SCHEMA = intPreferencesKey("slot_schema_version")

@@ -476,6 +476,16 @@ class ScheduleRepository(
 
     suspend fun setReminderLastKey(key: String) = prefs.setReminderLastKey(key)
 
+    // ---- 作业截止提醒（全局，DESIGN §3.11；与上课提醒共用闹钟与核对 Worker） ----
+
+    val homeworkReminderEnabled: Flow<Boolean> = prefs.homeworkReminderEnabled
+
+    suspend fun setHomeworkReminderEnabled(value: Boolean) = prefs.setHomeworkReminderEnabled(value)
+
+    suspend fun homeworkRemindedKeys(): Set<String> = prefs.homeworkRemindedKeys()
+
+    suspend fun addHomeworkRemindedKey(key: String) = prefs.addHomeworkRemindedKey(key)
+
     suspend fun setCurrentTimetable(id: Long) = prefs.setCurrentTimetable(id)
 
     /** null = 清掉默认配置源，回退内置默认。 */
