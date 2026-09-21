@@ -216,8 +216,30 @@ data class Course(
     val customEndTime: String? = null,
     val colorIndex: Int = 0,
     val kind: CourseKind = CourseKind.Theory,
+    /**
+     * 课程备注（DESIGN §4.3，2026-09-21）：用户自写的自由文本（「带计算器」「考试范围：第 3 章」），
+     * 在课程编辑弹层里填、课程详情弹层里看。它属于**课程行**而非「课程档案」——
+     * 同一门课的不同时段各写各的；覆盖导入与调课检测应用会重建课程行，
+     * 靠 [courseRemarksCarriedOver] 按 [mergeKey] 把备注搬回来。
+     */
+    val remark: String = "",
 )
 
+
+/**
+ * 合并去重键（DESIGN §4.3）：导入合并、导入统计与备注搬运共用同一把钥匙（唯一口径）。
+ *
+ * 含 kind：理论课与实验课可能同名、同星期、同节次、同教师（例如「机械制造基础A」两处都有），
+ * 不含类型就会互相吞并，先导入的那份把另一份挤掉。
+ */
+fun Course.mergeKey(): String = listOf(
+    name,
+    day.toString(),
+    startSection.toString(),
+    endSection.toString(),
+    teacher,
+    kind.name,
+).joinToString("|")
 data class TimeSlot(
     val number: Int,
     val startTime: String,

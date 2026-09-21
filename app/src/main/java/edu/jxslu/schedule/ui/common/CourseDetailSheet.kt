@@ -94,6 +94,10 @@ fun CourseDetailSheet(
                     }
                 },
             )
+            // 课程备注（DESIGN §4.3）：用户自己的内容，空备注不占行
+            if (course.remark.isNotBlank()) {
+                DetailRow("备注", course.remark)
+            }
             // 类型单列一行：实验课的来源是另一张课表（教务不提供教师），
             // 考试的时刻与普通课不同（具体日期+起止时间），都需要向用户交代口径
             when (course.kind) {

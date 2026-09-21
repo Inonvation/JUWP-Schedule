@@ -73,6 +73,26 @@ class ImportJsonShapeTest {
         assertNull(validateCourseJson(0, c))
     }
 
+    @Test
+    fun remark_roundTripsAndDefaultsToBlank() {
+        // 新格式：备注随课程导出、导入读回（DESIGN §4.3 的可选键纪律）
+        val withRemark = CourseJson(
+            name = "高数",
+            day = 1,
+            startSection = 1,
+            endSection = 2,
+            weeks = listOf(1),
+            remark = "带计算器",
+        )
+        assertEquals("带计算器", withRemark.toDomain().remark)
+        // 序列化再读回：remark 是普通可选键，不参与校验也不丢失
+        val text = CourseJsonFormat.encodeToString(CourseJson.serializer(), withRemark)
+        assertEquals("带计算器", CourseJsonFormat.decodeFromString(CourseJson.serializer(), text).remark)
+        // 旧文件没有 remark 键 → 缺省空串，不报错
+        val legacy = CourseJsonFormat.decodeFromString(CourseJson.serializer(), OLD_JSON_WITHOUT_REMARK)
+        assertEquals("", legacy.remark)
+    }
+
     /** 缺 weeks 会落成空集合，并且必须被校验挡下——否则课会导入却哪一周都不显示 */
     @Test
     fun missingWeeksIsRejected() {
@@ -258,4 +278,9 @@ class ImportJsonShapeTest {
         assertNull(export.semester)
         assertTrue(export.timeSlots.isEmpty())
     }
+private val OLD_JSON_WITHOUT_REMARK = """
+{"id":0,"name":"高数","teacher":"张","position":"A101","day":1,"startSection":1,"endSection":2,
+ "weeks":[1,2,3],"isCustomTime":false,"colorIndex":0,"kind":"theory"}
+""".trimIndent()
+
 }

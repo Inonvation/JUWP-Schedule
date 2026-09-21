@@ -61,6 +61,8 @@ data class CourseEntity(
     val colorIndex: Int = 0,
     /** [CourseKind] 的小写名；DB 默认 'theory'，老数据迁移后自动落为理论课 */
     val kind: String = "theory",
+    /** 课程备注（DESIGN §4.3，Room v8）；DEFAULT '' 让历史数据自动落成空备注 */
+    val remark: String = "",
 ) {
     fun toDomain(): Course = Course(
         id = id,
@@ -78,6 +80,7 @@ data class CourseEntity(
         customEndTime = customEndTime,
         colorIndex = colorIndex,
         kind = courseKindFromName(kind),
+        remark = remark,
     )
 
     companion object {
@@ -95,6 +98,7 @@ data class CourseEntity(
             customEndTime = course.customEndTime,
             colorIndex = course.colorIndex,
             kind = course.kind.name.lowercase(),
+            remark = course.remark,
         )
     }
 }

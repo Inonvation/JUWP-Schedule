@@ -13,6 +13,8 @@ import edu.jxslu.schedule.data.local.courseKindFromName
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.courseRemarksCarriedOver
+import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
@@ -60,6 +62,8 @@ data class CourseJson(
     val colorIndex: Int = 0,
     /** [CourseKind] 的小写名。带默认值，保证加字段前导出的旧 JSON 仍能读进来。 */
     val kind: String = "theory",
+    /** 课程备注（DESIGN §4.3，2026-09-21，可选键）：旧文件缺省为空串，新版多写的键拾光侧忽略。 */
+    val remark: String = "",
 ) {
     fun toDomain(): Course = Course(
         id = id,
@@ -75,6 +79,7 @@ data class CourseJson(
         customEndTime = customEndTime,
         colorIndex = colorIndex,
         kind = courseKindFromName(kind),
+        remark = remark,
     )
 }
 
@@ -702,9 +707,13 @@ class ScheduleRepository(
 
     suspend fun replaceAllCourses(courses: List<Course>, timetableId: Long? = null) {
         val ttId = timetableId ?: currentTimetableId.first()
+        // 覆盖导入会清表重建：先把旧行的备注按 mergeKey 搬回新行，
+        // 否则用户写过的课程备注会在一次"覆盖导入"后凭空消失（DESIGN §4.3「备注的存活口径」）
+        val existing = getTimetableCourses(ttId)
+        val withRemarks = courseRemarksCarriedOver(existing, courses)
         db.courseDao().clearForTimetable(ttId)
         db.courseDao().insertAll(
-            withSortedNameColors(courses).map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
+            withSortedNameColors(withRemarks).map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
         )
     }
 
@@ -836,7 +845,9 @@ class ScheduleRepository(
                 val color = replaced.firstOrNull()?.colorIndex
                     ?: ScheduleCalculator.nextColorIndex(used)
                 used += color
-                inserts += group.remoteCourses.map {
+                // 整组重建同样会把备注带走：按 mergeKey 搬回来（DESIGN §4.3「备注的存活口径」）
+                val remote = courseRemarksCarriedOver(replaced, group.remoteCourses)
+                inserts += remote.map {
                     CourseEntity.fromDomain(it.copy(id = 0, colorIndex = color)).copy(timetableId = ttId)
                 }
             }
@@ -961,6 +972,7 @@ class ScheduleRepository(
                 customEndTime = it.customEndTime,
                 colorIndex = it.colorIndex,
                 kind = it.kind.name.lowercase(),
+                remark = it.remark,
             )
         }
         // 成绩全局归属学生（DESIGN §4.15），随备份一起带走；timetableId 不影响它
@@ -1136,20 +1148,6 @@ class ScheduleRepository(
         )
     }
 
-    /**
-     * 合并去重键。
-     * 含 kind：理论课与实验课可能同名、同星期、同节次、同教师（例如「机械制造基础A」两处都有），
-     * 不含类型就会互相吞并，先导入的那份把另一份挤掉。
-     */
-    private fun Course.mergeKey(): String =
-        listOf(
-            name,
-            day.toString(),
-            startSection.toString(),
-            endSection.toString(),
-            teacher,
-            kind.name,
-        ).joinToString("|")
 }
 
 sealed interface ImportResult {

@@ -407,6 +407,9 @@ fun CourseEditorFields(
     onEnd: (Int) -> Unit,
     weeksText: String,
     onWeeks: (String) -> Unit,
+    /** 课程备注（DESIGN §4.3，2026-09-21）：可空，纯用户内容 */
+    remark: String,
+    onRemark: (String) -> Unit,
     maxSection: Int = 11,
     nameError: String? = null,
 ) {
@@ -483,6 +486,17 @@ fun CourseEditorFields(
         TextButton(onClick = { onWeeks(oddWeeks()) }) { Text("单周") }
         TextButton(onClick = { onWeeks(evenWeeks()) }) { Text("双周") }
     }
+    Spacer(modifier = Modifier.height(8.dp))
+    OutlinedTextField(
+        value = remark,
+        onValueChange = onRemark,
+        label = { Text("备注（可选）") },
+        placeholder = { Text("带计算器 / 考试范围 / 分组安排…") },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 2,
+        maxLines = 3,
+        supportingText = { Text("只存在本机，可随时改；覆盖导入课表时会跟着课程保留") },
+    )
 
     if (dayPickerOpen) {
         WheelValueDialog(

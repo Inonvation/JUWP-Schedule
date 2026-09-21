@@ -11,6 +11,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +42,7 @@ fun CourseEditSheet(
     var weeks by remember(course) {
         mutableStateOf(course?.let { weeksToInput(it.weeks) } ?: "1-16")
     }
+    var remark by remember(course) { mutableStateOf(course?.remark ?: "") }
     var nameError by remember(course) { mutableStateOf<String?>(null) }
     val haptics = rememberAppHaptics()
 
@@ -47,6 +50,8 @@ fun CourseEditSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // 字段变多（2026-09-21 加备注）后必须能滚：小屏上「保存」不能被挤出屏幕
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp),
         ) {
             Text(
@@ -77,6 +82,8 @@ fun CourseEditSheet(
                 onEnd = { end = it.toString() },
                 weeksText = weeks,
                 onWeeks = { weeks = it },
+                remark = remark,
+                onRemark = { remark = it },
                 nameError = nameError,
             )
             Row(
@@ -123,6 +130,7 @@ fun CourseEditSheet(
                                 // 用课程名哈希取色在 12 个桶里必然撞色，顺序占位才不会。
                                 colorIndex = course?.colorIndex ?: 0,
                                 kind = course?.kind ?: CourseKind.Theory,
+                                remark = remark.trim(),
                             ),
                         )
                     },
