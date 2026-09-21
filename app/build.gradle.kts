@@ -58,7 +58,12 @@ android {
                 logger.warn("keystore.properties 缺失，release 回退 debug 签名（仅限本地调试，勿对外分发）")
                 signingConfigs.getByName("debug")
             }
-            isMinifyEnabled = false
+            // 2026-09-21 起开启 R8 + 资源压缩：§5 的体积目标 < 15MB（1.0.0 实测 17.9MB），
+            // 且笔记/作业的渲染内核又添了二十来个类。debug 构建不受影响（便于断点排查）。
+            // 反射面已由 androidx 各组件的 consumer rules + proguard-rules.pro 覆盖；
+            // 改这里之后必须装一次 release 包做冒烟（R8 的问题不会在编译期暴露）。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
