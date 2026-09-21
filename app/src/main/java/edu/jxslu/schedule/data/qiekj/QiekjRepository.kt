@@ -177,7 +177,9 @@ class QiekjRepository(
             .filter { it.promotionType != 4 && it.promotionType != 8 }
             .map { PromotionLine(promotionType = it.promotionType, discountAmount = it.discountAmount) }
 
-        // 实付走服务端账单口径（DESIGN §4.10）：tradeOrderItem.realPrice → payPrice → null（回退公式）
+        // 现金实付走服务端账单口径（DESIGN §4.10）：tradeOrderItem.realPrice → payPrice → null（回退公式）。
+        // 小票支付（promotionList type=4，回退 tokenCoinDiscount）不在这里合并——
+        // 「本次花费 = 小票支付 + 现金实付」由 domain.calculateActualCost 统一计算。
         val realPrice = tradeItem?.realPrice ?: detail.payPrice
 
         val result = UnlockResult(

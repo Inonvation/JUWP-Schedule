@@ -1249,26 +1249,32 @@ goods/latestUsed(categoryCode=5) 取设备
 → 写本地订单快照 OrderHistoryStore
 ```
 
-**账单口径（2026-09-20 真机实测回填，修复「实付显示 0 看似 bug」）**
+**账单口径（2026-09-21 修订，真机数据 + 参考实现交叉验证）**
 
 `order/detail` 真实响应关键字段（单位均为元；单号/设备号等隐私字段略）：
 
 ```
 markPrice          计量计费金额（本次用水的原价口径）
-payPrice           实付金额（服务端口径，本口径为展示实付的唯一权威来源）
-payTypeName        支付方式名（如「支付宝-代扣」，后付单 payType=15 对应 method=15 渠道）
-tokenCoinDiscount  平台侧自动优惠金额（如 0.09；用户未主动用券也会出现，感知不到，
-                   这是「实付 0 但用户以为没抵扣」困惑的根源）
-tradeOrderItem[].originPrice / realPrice   原价 / 实付（与 payPrice 一致）
+payPrice           现金实付（在线支付口径）；小票/积分全额支付时为 0.00
+payTypeName        支付渠道名（如「支付宝-代扣」，后付单 payType=15 对应 method=15 渠道）
+tokenCoinDiscount  小票（tokenCoin 余额）抵扣金额，与 promotionList type=4 同源
+tradeOrderItem[].originPrice / realPrice   原价 / 现金实付（与 payPrice 一致）
 promotionList[].promotionType / discountAmount / subsidyAmount
-                   4=券类抵扣（含平台自动优惠）、8=积分抵扣；subsidyAmount=平台补贴
+                   4=小票支付、8=积分抵扣；subsidyAmount=平台补贴
 ```
 
-- **实付展示口径**：优先取服务端 `realPrice`（回退 `payPrice`，都缺失才回退本地
-  `origin - Σdiscount` 公式）。公式保留作兜底，不再作为主口径——服务端账单是唯一权威。
-- **订单详情弹窗必须展示账单明细**（原价 / 券与平台优惠 / 支付方式 / 实付），
-  实付为 0.00 时用户能看出钱被什么抵掉；只展示一个孤零零的「实付 ¥0.00」视同信息缺失。
-- 本地快照同步存 `realPrice` / `payTypeName`（可空，默认 null 兼容旧快照）。
+- **小票（tokenCoin）是账户余额，不是平台优惠**。2026-09-20 曾把 `tokenCoinDiscount`
+  读成「平台自动优惠」，于是把「实付 0.00」当正常账单解释——方向错了。2026-09-21 复核两单
+  真实数据（0.09、0.16 两单的 `ticketCost` 均等于原价、也等于 `tokenCoinDiscount`），并对照
+  light-life 实现（其主数字即 `ticketCost`，兜底文案「小票支付」），确认：每次开水默认先扣
+  小票余额，扣完剩余部分才走现金（后付代扣），所以「实付 0.00」只是现金口径为零。
+- **花费展示口径**：本次花费 = 小票支付 + 现金实付。小票支付取 `promotionList[type=4]`
+  （缺失时回退 `tokenCoinDiscount`）；现金实付取服务端 `realPrice`（回退 `payPrice`，
+  都缺失回退 `origin - 小票 - 积分 - 其他优惠` 公式）。积分抵扣、其他优惠是省钱项，
+  不计入花费。
+- **订单详情弹窗必须展示账单构成**（原价 / 小票支付 / 积分抵扣 / 其他优惠 / 现金支付 /
+  本次花费）；只展示一个孤零零的「实付 ¥0.00」视同信息缺失，且方向错误。
+- 本地快照同步存 `realPrice` / `payTypeName` / `tokenCoinDiscount`（可空，默认 null 兼容旧快照）。
 
 **UI 接入**
 

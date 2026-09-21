@@ -155,7 +155,7 @@ class QiekjModelsTest {
 
     @Test
     fun orderDetail_真实响应形态解析() {
-        // 脱敏后的 order/detail 真实结构：后付单实付 0.00，平台自动优惠 0.09
+        // 脱敏后的 order/detail 真实结构：后付单现金实付 0.00，小票（余额）抵扣 0.09
         val data = QiekjJson.json.decodeFromString<ApiEnvelope<OrderDetailData>>(
             """
             {"code":0,"msg":"成功","data":{
@@ -176,14 +176,46 @@ class QiekjModelsTest {
         assertEquals(4, detail.promotionList.first().promotionType)
     }
 
+    // ── 账单口径（DESIGN §4.10，2026-09-21 修订：小票是余额支付，不是平台优惠） ──
+
     @Test
-    fun actualCost_服务端realPrice优先于本地公式() {
-        // 真实场景：原价 0.09、券抵 0.09、实付 0.00 —— 服务端口径就是 0.00
-        val r = result("0.09", "-").copy(realPrice = "0.00", payTypeName = "支付宝-代扣")
-        assertEquals("0.00", calculateActualCost(r))
-        // 服务端 realPrice 与本地公式结果不同时，以服务端为准
-        val r2 = result("0.30", "-").copy(realPrice = "0.10")
-        assertEquals("0.10", calculateActualCost(r2))
+    fun actualCost_小票支付计入花费_真机形态() {
+        // 2026-09-21 真机：原价 0.16、小票抵 0.16、现金实付 0.00（支付宝-代扣）
+        // —— 用户实际花了 0.16（小票余额），不能显示成「实付 ¥0.00」
+        val r = result("0.16", "-", ticket = "0.16")
+            .copy(realPrice = "0.00", payTypeName = "支付宝-代扣", tokenCoinDiscount = "0.16")
+        assertEquals("0.16", calculateActualCost(r))
+    }
+
+    @Test
+    fun actualCost_小票与现金混合支付() {
+        val r = result("0.16", "-", ticket = "0.06").copy(realPrice = "0.10")
+        assertEquals("0.16", calculateActualCost(r))
+    }
+
+    @Test
+    fun actualCost_纯现金支付() {
+        val r = result("0.16", "-").copy(realPrice = "0.16")
+        assertEquals("0.16", calculateActualCost(r))
+    }
+
+    @Test
+    fun actualCost_积分抵扣不计入花费() {
+        // 原价 0.16、积分抵 0.10、现金实付 0.06 —— 积分是省下的钱，花费 = 0.06
+        val r = result("0.16", "0.10").copy(realPrice = "0.06")
+        assertEquals("0.06", calculateActualCost(r))
+    }
+
+    @Test
+    fun actualCost_小票明细缺失时回退tokenCoinDiscount() {
+        val r = result("0.16", "-").copy(realPrice = "0.00", tokenCoinDiscount = "0.16")
+        assertEquals("0.16", calculateActualCost(r))
+    }
+
+    @Test
+    fun actualCost_旧快照无服务端字段时小票照常计入() {
+        // 2026-09-19 旧快照：原价 0.09、小票 0.09、无 realPrice/tokenCoinDiscount
+        assertEquals("0.09", calculateActualCost(result("0.09", "-", ticket = "0.09")))
     }
 
     @Test

@@ -54,7 +54,10 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.domain.UnlockFlowState
+import edu.jxslu.schedule.domain.UnlockResult
 import edu.jxslu.schedule.domain.calculateActualCost
+import edu.jxslu.schedule.domain.cashPaidAmount
+import edu.jxslu.schedule.domain.ticketPaidAmount
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
@@ -63,6 +66,8 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.me.MeViewModel
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -512,15 +517,9 @@ private fun UnlockStatusArea(
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    // 账单明细一行：让「实付 0.00」有出处（平台优惠/券/积分 + 支付方式）
-                    listOf(
-                        flow.result.tokenCoinDiscount?.toBigDecimalOrNull()
-                            ?.takeIf { it > java.math.BigDecimal.ZERO }
-                            ?.let { "平台优惠 ¥$it" },
-                        "小票 ${flow.result.ticketCost}".takeIf { flow.result.ticketCost != "-" },
-                        "积分 ${flow.result.integralCost}".takeIf { flow.result.integralCost != "-" },
-                        flow.result.payTypeName,
-                    ).filterNotNull().joinToString(" · ").ifBlank { "开水成功" },
+                    // 支付构成副行（DESIGN §4.10 账单口径）：小票是账户余额支付，
+                    // 现金实付 0.00 只代表没走在线支付，不能当作「本次花费 0」
+                    costBreakdownText(flow.result),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
@@ -658,7 +657,7 @@ private fun OrderSection(orders: List<OrderHistoryItem>, onClick: (OrderHistoryI
     }
 }
 
-private fun toResult(item: OrderHistoryItem) = edu.jxslu.schedule.domain.UnlockResult(
+private fun toResult(item: OrderHistoryItem) = UnlockResult(
     orderNo = item.orderNo,
     orderId = item.orderId,
     originPrice = item.originPrice,
@@ -702,7 +701,7 @@ private fun ErrorDetailDialog(item: UnlockFlowState.Failed, onDismiss: () -> Uni
 }
 
 @Composable
-private fun OrderDetailDialog(item: edu.jxslu.schedule.domain.UnlockResult, onDismiss: () -> Unit) {
+private fun OrderDetailDialog(item: UnlockResult, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("订单详情") },
@@ -710,23 +709,44 @@ private fun OrderDetailDialog(item: edu.jxslu.schedule.domain.UnlockResult, onDi
             Column {
                 DetailRow("订单号", item.orderNo)
                 DetailRow("原价", "¥${item.originPrice}")
-                // 真实账单明细（DESIGN §4.10 账单口径）：实付 0.00 时让用户看出钱被什么抵掉
-                val platform = item.tokenCoinDiscount?.toBigDecimalOrNull()
-                if (platform != null && platform > java.math.BigDecimal.ZERO) {
-                    DetailRow("平台优惠", "-¥${item.tokenCoinDiscount}")
-                }
-                DetailRow("小票", item.ticketCost)
-                if (item.integralCost != "-") DetailRow("积分", item.integralCost)
+                // 账单构成（DESIGN §4.10 账单口径）：小票是账户余额，扣了就是花了；
+                // 「现金支付 ¥0.00」只代表没走在线支付，不叫「实付 0」
+                ticketPaidAmount(item)?.takeIf { it > BigDecimal.ZERO }
+                    ?.let { DetailRow("小票支付", "¥${money(it)}") }
+                if (item.integralCost != "-") DetailRow("积分抵扣", item.integralCost)
                 item.otherPromotions.forEach { p ->
                     DetailRow("其他优惠", p.discountAmount ?: "-")
                 }
-                item.payTypeName?.let { DetailRow("支付方式", it) }
+                cashPaidAmount(item)?.let { cash ->
+                    val channel = item.payTypeName?.let { "（$it）" } ?: ""
+                    DetailRow("现金支付", "¥${money(cash)}$channel")
+                }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                DetailRow("实付", "¥${calculateActualCost(item)}")
+                DetailRow("本次花费", "¥${calculateActualCost(item)}")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
+}
+
+/** 金额统一显示两位小数（服务端金额字符串可能缺位）。 */
+private fun money(value: BigDecimal): String =
+    value.setScale(2, RoundingMode.HALF_UP).toPlainString()
+
+/**
+ * 成功卡的支付构成副行（DESIGN §4.10 账单口径）：
+ * 「小票支付 ¥0.16 · 积分抵扣 0.10 · 支付宝-代扣 ¥0.06」，全空兜底「开水成功」。
+ */
+private fun costBreakdownText(result: UnlockResult): String {
+    val parts = buildList {
+        ticketPaidAmount(result)?.takeIf { it > BigDecimal.ZERO }
+            ?.let { add("小票支付 ¥${money(it)}") }
+        result.integralCost.takeIf { it != "-" }?.let { add("积分抵扣 $it") }
+        cashPaidAmount(result)?.takeIf { it > BigDecimal.ZERO }?.let { cash ->
+            add("${result.payTypeName ?: "现金"} ¥${money(cash)}")
+        }
+    }
+    return parts.joinToString(" · ").ifBlank { "开水成功" }
 }
 
 @Composable
