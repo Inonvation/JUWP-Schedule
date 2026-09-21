@@ -1,6 +1,11 @@
 package edu.jxslu.schedule.ui.ebike
 
+import android.app.SearchManager
 import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -161,6 +166,24 @@ fun EbikeQrScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("生成二维码")
+            }
+
+            // 打开「快趣出行」App（DESIGN §3.9）：与「生成二维码」同型的常显入口；
+            // 装了才有效，失败走页内 Snackbar
+            Button(
+                onClick = {
+                    haptics.tap()
+                    openKvcooApp(context) { message ->
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                AppNoticeVisuals(message, tone = NoticeTone.Warning),
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("打开快趣出行")
             }
 
             // 自动保存开关（DESIGN §3.9：默认关，相册只留用户真的要的码）
@@ -394,4 +417,100 @@ private fun openWechatScan(context: android.content.Context, onError: (String) -
     } catch (e2: Exception) {
         onError("无法自动打开微信，请手动打开「扫一扫」扫码")
     }
+}
+
+/** 「快趣出行」App 包名（DESIGN §3.9）。首页未导出，普通直启会被系统拒绝。 */
+private const val KVCOO_PACKAGE = "com.kvcoo.go"
+
+/** 快趣首页组件（assistant 设置用的扁平字符串）；「助手通道」的目标。 */
+private const val KVCOO_HOME_ASSISTANT = "com.kvcoo.go/com.kvcoo.go.sections.home.HomeActivity"
+
+/** 系统「助手」设置键（`Settings.Secure.ASSISTANT`）。 */
+private const val KEY_SECURE_ASSISTANT = "assistant"
+
+/** 写入「助手」后等待 SystemUI 取用的时间（含启动耗时），随后恢复原值。 */
+private const val ASSISTANT_RESTORE_DELAY_MS = 1500L
+
+/**
+ * 打开「快趣出行」App（需已安装）。
+ * 1. 「助手通道」（2026-09-21 真机实测，同级「快捷方式」工具同款路径）：临时把系统「助手」
+ *    设置指到快趣首页 → 反射 `SearchManager.launchAssist` → 由 SystemUI（uid 1000）以
+ *    `ACTION_ASSIST` 代启未导出的首页，直达、跳过启动页。需要**一次性** adb 授权：
+ *    `adb shell pm grant edu.jxslu.schedule.debug android.permission.WRITE_SECURE_SETTINGS`
+ *    （release 包名去掉 .debug）；未授权/反射被拦时静默走下一级；
+ * 2. 桌面启动意图（启动页）兜底——启动页必然导出、无权限门槛；
+ * 3. 全失败按「未安装 / 打不开」提示，走页面 Snackbar。
+ */
+private fun openKvcooApp(context: android.content.Context, onError: (String) -> Unit) {
+    val installed = try {
+        context.packageManager.getApplicationInfo(KVCOO_PACKAGE, 0)
+        true
+    } catch (_: Exception) {
+        false
+    }
+    if (!installed) {
+        onError("未安装快趣出行 App")
+        return
+    }
+    if (launchViaAssistant(context)) return
+    fallbackOpenKvcoo(context, onError)
+}
+
+/** 「助手通道」：写设置 → 反射 launchAssist → 延迟恢复。任一步失败恢复原值并返回 false。 */
+private fun launchViaAssistant(context: android.content.Context): Boolean {
+    val resolver = context.contentResolver
+    val previous = try {
+        Settings.Secure.getString(resolver, KEY_SECURE_ASSISTANT)
+    } catch (_: Exception) {
+        null
+    }
+    try {
+        Settings.Secure.putString(resolver, KEY_SECURE_ASSISTANT, KVCOO_HOME_ASSISTANT)
+    } catch (_: Exception) {
+        return false // 无 WRITE_SECURE_SETTINGS（一次性 adb 授权）→ 走兜底
+    }
+    return try {
+        val searchManager = context.getSystemService(SearchManager::class.java)
+        if (searchManager == null) {
+            restoreAssistant(resolver, previous)
+            false
+        } else {
+            SearchManager::class.java
+                .getMethod("launchAssist", Bundle::class.java)
+                .invoke(searchManager, Bundle())
+            Handler(Looper.getMainLooper()).postDelayed(
+                { restoreAssistant(resolver, previous) },
+                ASSISTANT_RESTORE_DELAY_MS,
+            )
+            true
+        }
+    } catch (_: Exception) {
+        restoreAssistant(resolver, previous)
+        false
+    }
+}
+
+private fun restoreAssistant(
+    resolver: android.content.ContentResolver,
+    previous: String?,
+) {
+    try {
+        Settings.Secure.putString(resolver, KEY_SECURE_ASSISTANT, previous)
+    } catch (_: Exception) {
+        // 恢复失败：下次触发会重写；助手设置本身可被用户手动改回
+    }
+}
+
+/** 启动页兜底：拉快趣桌面启动意图（导出，无权限门槛）。 */
+private fun fallbackOpenKvcoo(context: android.content.Context, onError: (String) -> Unit) {
+    try {
+        val launch = context.packageManager.getLaunchIntentForPackage(KVCOO_PACKAGE)
+        if (launch != null) {
+            context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+    } catch (_: Exception) {
+        // 落到失败提示
+    }
+    onError("打开快趣出行失败，请手动打开")
 }

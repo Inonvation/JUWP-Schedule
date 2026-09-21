@@ -21,6 +21,12 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- 「打开快趣出行」直达首页（DESIGN §3.9）：需要临时改写系统「助手」设置
+         （Settings.Secure.assistant → 快趣首页 + 反射 launchAssist，启动后恢复原值）。
+         该权限为 signature|privileged|development，需 **一次性** adb 授权：
+         `adb shell pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`；
+         未授权时功能自动降级为「启动页」路径，属预期。 -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
     <!-- 今日页快捷方式（DESIGN §4.16）：API 30+ 包可见性声明。
          三个 package 让预设包可见（getLaunchIntentForPackage 不再对已安装的 App
@@ -34,6 +40,9 @@
         <!-- 共享单车页（DESIGN §3.9）：「打开微信扫一扫」按钮 best-effort 拉起微信，
              需包可见性做 resolve 探测（不可见时按钮直接给手动扫码引导） -->
         <package android:name="com.tencent.mm" />
+        <!-- 共享单车页（DESIGN §3.9）：「打开快趣出行 App」按钮需要包可见性，
+             否则 getLaunchIntentForPackage 对已安装的 App 也会返回 null（误报未安装） -->
+        <package android:name="com.kvcoo.go" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="pinduoduo" />
