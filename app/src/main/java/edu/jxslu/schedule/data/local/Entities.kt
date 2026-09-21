@@ -6,10 +6,13 @@ import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.Homework
+import edu.jxslu.schedule.domain.Note
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
+import java.time.LocalDate
 
 /**
  * 单个课表的元信息与课表级设置（DESIGN §4.9）。
@@ -201,8 +204,7 @@ class Converters {
 @Entity(
     tableName = "scores",
     indices = [Index("term")],
-)
-data class ScoreEntity(
+)data class ScoreEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     /** 学年学期，如 2025-2026-2 */
     val term: String,
@@ -258,6 +260,100 @@ data class ScoreEntity(
             status = record.status,
             pendingReview = record.pendingReview,
             importedAt = importedAt,
+        )
+    }
+}
+
+/**
+ * 课程笔记·课件（DESIGN §4.20，Room v6 → v7）。
+ *
+ * 归属键 [courseName] 是**原样字符串**：课程行 id 在覆盖导入（清表重建）、调课（删行重建）、
+ * 撤销（原 id 回滚）里都会被换掉，绑 id 必丢数据（取舍段见 DESIGN §4.20「归属」）。
+ * 也**不带 timetableId**：多课表 = 多学期，换课表后旧笔记仍应可查，这是有意为之，
+ * 不要按「课表数据按 timetableId 过滤」的旧纪律给它补一列。
+ *
+ * 索引名由 Room 生成（`index_notes_courseName` / `index_notes_updatedAt`），
+ * 迁移里的 CREATE INDEX 必须逐字对齐，否则迁移校验崩溃。
+ */
+@Entity(
+    tableName = "notes",
+    indices = [Index("courseName"), Index("updatedAt")],
+)
+data class NoteEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val courseName: String,
+    val title: String,
+    /** Markdown 源码；图片以 `![](img:文件名)` 内联引用。 */
+    val body: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+) {
+    fun toDomain(): Note = Note(
+        id = id,
+        courseName = courseName,
+        title = title,
+        body = body,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+    )
+
+    companion object {
+        fun fromDomain(note: Note): NoteEntity = NoteEntity(
+            id = note.id.takeIf { it > 0 } ?: 0,
+            courseName = note.courseName,
+            title = note.title,
+            body = note.body,
+            createdAt = note.createdAt,
+            updatedAt = note.updatedAt,
+        )
+    }
+}
+
+/**
+ * 作业（DESIGN §4.20，Room v6 → v7）。归属口径同 [NoteEntity]：挂课程名、不带 timetableId。
+ *
+ * [dueDate] 存 `yyyy-MM-dd` 文本：ISO 文本的字典序 = 时间序（同 `semester_config.startDate`
+ * 的既有惯例），可在 SQL 里直接排序/比较；解析失败的脏值退回 null 而不崩在读库路径上。
+ */
+@Entity(
+    tableName = "homework",
+    indices = [Index("courseName"), Index("done"), Index("dueDate")],
+)
+data class HomeworkEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val courseName: String,
+    val title: String,
+    val detail: String,
+    /** yyyy-MM-dd；null = 未设截止日期。 */
+    val dueDate: String?,
+    val done: Boolean,
+    val doneAt: Long?,
+    val createdAt: Long,
+    val updatedAt: Long,
+) {
+    fun toDomain(): Homework = Homework(
+        id = id,
+        courseName = courseName,
+        title = title,
+        detail = detail,
+        dueDate = dueDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+        done = done,
+        doneAt = doneAt,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+    )
+
+    companion object {
+        fun fromDomain(homework: Homework): HomeworkEntity = HomeworkEntity(
+            id = homework.id.takeIf { it > 0 } ?: 0,
+            courseName = homework.courseName,
+            title = homework.title,
+            detail = homework.detail,
+            dueDate = homework.dueDate?.toString(),
+            done = homework.done,
+            doneAt = homework.doneAt,
+            createdAt = homework.createdAt,
+            updatedAt = homework.updatedAt,
         )
     }
 }

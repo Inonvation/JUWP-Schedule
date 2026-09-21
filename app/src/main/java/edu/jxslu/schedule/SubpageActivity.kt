@@ -20,6 +20,13 @@ import edu.jxslu.schedule.ui.campus.StatementScreen
 import edu.jxslu.schedule.ui.detect.ScheduleUpdateScreen
 import edu.jxslu.schedule.ui.detect.TweakDetectScreen
 import edu.jxslu.schedule.ui.ebike.EbikeQrScreen
+import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
+import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
+import edu.jxslu.schedule.ui.homework.HomeworkLibraryScreen
+import edu.jxslu.schedule.ui.homework.HomeworkTodoScreen
+import edu.jxslu.schedule.ui.notes.NoteCourseScreen
+import edu.jxslu.schedule.ui.notes.NoteDetailScreen
+import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
 import edu.jxslu.schedule.ui.score.ScoreScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
@@ -59,6 +66,20 @@ enum class SubpageScreen {
     PAY_CODE,
     /** 付款码/设置 → 消费流水（月汇总 + 分页列表，DESIGN §4.19 B4） */
     CAMPUS_STATEMENT,
+    /** 我的 → 笔记·课件库（按课程分组，DESIGN §3.11） */
+    NOTES,
+    /** 某课程的笔记列表（需 `courseName`，DESIGN §3.11） */
+    NOTES_COURSE,
+    /** 笔记详情/编辑（需 `courseName` + `itemId`，itemId=0 表示新建，DESIGN §3.11） */
+    NOTE_DETAIL,
+    /** 我的 → 作业库（按课程分组） */
+    HOMEWORK,
+    /** 某课程的作业列表（需 `courseName`） */
+    HOMEWORK_COURSE,
+    /** 作业详情/编辑（需 `courseName` + `itemId`，itemId=0 表示新建） */
+    HOMEWORK_DETAIL,
+    /** 今日页作业卡/截止提醒 → 作业中心（未完成汇总，DESIGN §3.11） */
+    HOMEWORK_TODO,
 }
 
 /**
@@ -85,15 +106,30 @@ class SubpageActivity : ComponentActivity() {
             ?: SubpageScreen.TIMETABLE_MANAGE
         // 快捷方式 Snackbar「去设置」带的定位 id（只对 SHORTCUTS 有意义，其他页忽略）
         val focusItemId = intent.getStringExtra(EXTRA_FOCUS_ITEM)
+        // 笔记/作业的定位参数（DESIGN §3.11）：课程名 + 条目 id（0 = 新建）
+        val courseName = intent.getStringExtra(EXTRA_COURSE_NAME)
+        val itemId = intent.getLongExtra(EXTRA_ITEM_ID, 0L)
         setContent {
             JuwRoot {
-                SubpageContent(screen, onBack = { finish() }, focusItemId = focusItemId)
+                SubpageContent(
+                    screen = screen,
+                    onBack = { finish() },
+                    focusItemId = focusItemId,
+                    courseName = courseName,
+                    itemId = itemId,
+                )
             }
         }
     }
 
     @Composable
-    private fun SubpageContent(screen: SubpageScreen, onBack: () -> Unit, focusItemId: String? = null) {
+    private fun SubpageContent(
+        screen: SubpageScreen,
+        onBack: () -> Unit,
+        focusItemId: String? = null,
+        courseName: String? = null,
+        itemId: Long = 0L,
+    ) {
         when (screen) {
             SubpageScreen.TIMETABLE_MANAGE -> TimetableManageScreen(onBack = onBack)
             SubpageScreen.TIMETABLE_SETTINGS -> TimetableSettingsScreen(onBack = onBack)
@@ -125,6 +161,66 @@ class SubpageActivity : ComponentActivity() {
                 onBack = onBack,
                 onOpenSettings = { SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS) },
             )
+            // 笔记·课件（DESIGN §3.11）：课程库 → 课程列表 → 详情/编辑
+            SubpageScreen.NOTES -> NoteLibraryScreen(
+                onBack = onBack,
+                onOpenCourse = { name ->
+                    SubpageActivity.start(this, SubpageScreen.NOTES_COURSE, courseName = name)
+                },
+            )
+            SubpageScreen.NOTES_COURSE -> NoteCourseScreen(
+                courseName = courseName.orEmpty(),
+                onBack = onBack,
+                onOpenNote = { id ->
+                    SubpageActivity.start(
+                        this,
+                        SubpageScreen.NOTE_DETAIL,
+                        courseName = courseName,
+                        itemId = id,
+                    )
+                },
+            )
+            SubpageScreen.NOTE_DETAIL -> NoteDetailScreen(
+                courseName = courseName.orEmpty(),
+                noteId = itemId,
+                onBack = onBack,
+            )
+            // 作业：课程库 → 课程列表 → 详情/编辑 + 作业中心
+            SubpageScreen.HOMEWORK -> HomeworkLibraryScreen(
+                onBack = onBack,
+                onOpenCourse = { name ->
+                    SubpageActivity.start(this, SubpageScreen.HOMEWORK_COURSE, courseName = name)
+                },
+            )
+            SubpageScreen.HOMEWORK_COURSE -> HomeworkCourseScreen(
+                courseName = courseName.orEmpty(),
+                onBack = onBack,
+                onOpenHomework = { id ->
+                    SubpageActivity.start(
+                        this,
+                        SubpageScreen.HOMEWORK_DETAIL,
+                        courseName = courseName,
+                        itemId = id,
+                    )
+                },
+            )
+            SubpageScreen.HOMEWORK_DETAIL -> HomeworkDetailScreen(
+                courseName = courseName.orEmpty(),
+                homeworkId = itemId,
+                onBack = onBack,
+            )
+            SubpageScreen.HOMEWORK_TODO -> HomeworkTodoScreen(
+                onBack = onBack,
+                onOpenHomework = { name, id ->
+                    SubpageActivity.start(
+                        this,
+                        SubpageScreen.HOMEWORK_DETAIL,
+                        courseName = name,
+                        itemId = id,
+                    )
+                },
+                onOpenLibrary = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
+            )
         }
     }
 
@@ -138,17 +234,40 @@ class SubpageActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_SCREEN = "screen"
         private const val EXTRA_FOCUS_ITEM = "focus_item"
+        private const val EXTRA_COURSE_NAME = "course_name"
+        private const val EXTRA_ITEM_ID = "item_id"
 
-        /** 通知 PendingIntent 用：只构造意图，不启动（start 里的窗口动画对非 Activity 无意义）。 */
-        fun intent(context: Context, screen: SubpageScreen): Intent =
-            Intent(context, SubpageActivity::class.java).putExtra(EXTRA_SCREEN, screen.name)
+        /**
+         * 通知 PendingIntent 用：只构造意图，不启动（start 里的窗口动画对非 Activity 无意义）。
+         * 带参与 [start] 同口径——通知点击直达某条笔记/作业就靠它（DESIGN §3.11）。
+         */
+        fun intent(
+            context: Context,
+            screen: SubpageScreen,
+            courseName: String? = null,
+            itemId: Long = 0L,
+        ): Intent = Intent(context, SubpageActivity::class.java)
+            .putExtra(EXTRA_SCREEN, screen.name)
+            .apply {
+                if (courseName != null) putExtra(EXTRA_COURSE_NAME, courseName)
+                if (itemId != 0L) putExtra(EXTRA_ITEM_ID, itemId)
+            }
 
         /**
          * [focusItemId] 只对 [SubpageScreen.SHORTCUTS] 生效：非空时设置页打开后
          * 直接展开该条目的编辑弹层（Snackbar「去设置」的就近修正闭环）。
+         *
+         * [courseName] / [itemId] 只对笔记·作业的二级页生效（DESIGN §3.11）：
+         * 前者是归属课程名（课程库 → 课程列表的必带参数），后者是条目 id（0 = 新建）。
          */
-        fun start(context: Context, screen: SubpageScreen, focusItemId: String? = null) {
-            val intent = intent(context, screen)
+        fun start(
+            context: Context,
+            screen: SubpageScreen,
+            focusItemId: String? = null,
+            courseName: String? = null,
+            itemId: Long = 0L,
+        ) {
+            val intent = intent(context, screen, courseName, itemId)
             if (focusItemId != null) intent.putExtra(EXTRA_FOCUS_ITEM, focusItemId)
             context.startActivity(intent)
             // 新窗口从右缘推入；退场传 0 = 主窗口原地不动，被覆盖而非被推走。

@@ -6,6 +6,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
+import edu.jxslu.schedule.domain.HomeworkCourseGroup
+import edu.jxslu.schedule.domain.NoteCourseGroup
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -165,4 +167,76 @@ interface DetectReportDao {
 
     @Query("DELETE FROM detect_reports WHERE timetableId = :timetableId")
     suspend fun delete(timetableId: Long)
+}
+
+/**
+ * 课程笔记·课件（DESIGN §4.20）。
+ *
+ * **不加 timetableId 过滤是有意为之**：归属键是课程名（课程行 id 在覆盖导入/调课/撤销里
+ * 会被重建，绑 id 必丢数据；换课表后旧笔记也应可查）。不要照抄其他 DAO 的过滤纪律。
+ */
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes WHERE courseName = :courseName ORDER BY updatedAt DESC, id DESC")
+    fun observeForCourse(courseName: String): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes ORDER BY updatedAt DESC, id DESC")
+    fun observeAll(): Flow<List<NoteEntity>>
+
+    /** 笔记库的课程分组（DESIGN §3.11）：分组与计数在 SQL 里做，不把正文全读进内存。 */
+    @Query(
+        "SELECT courseName, COUNT(*) AS count, MAX(updatedAt) AS latestAt " +
+            "FROM notes GROUP BY courseName ORDER BY latestAt DESC",
+    )
+    fun observeGroups(): Flow<List<NoteCourseGroup>>
+
+    @Query("SELECT * FROM notes WHERE id = :id")
+    suspend fun getById(id: Long): NoteEntity?
+
+    /** 附件清扫的引用来源：全部笔记正文（`AttachmentStore.sweep`）。 */
+    @Query("SELECT body FROM notes")
+    suspend fun allBodies(): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(note: NoteEntity): Long
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+/** 作业（DESIGN §4.20）。归属与过滤口径同 [NoteDao]。 */
+@Dao
+interface HomeworkDao {
+    @Query("SELECT * FROM homework WHERE courseName = :courseName")
+    fun observeForCourse(courseName: String): Flow<List<HomeworkEntity>>
+
+    /** 未完成作业（今日页作业卡 / 作业中心）。排序在 domain 的 `HomeworkCenter`，DAO 不做业务排序。 */
+    @Query("SELECT * FROM homework WHERE done = 0")
+    fun observePending(): Flow<List<HomeworkEntity>>
+
+    /** 作业库的课程分组：总条数 + 未完成数 + 最近更新（DESIGN §3.11）。 */
+    @Query(
+        "SELECT courseName, COUNT(*) AS total, " +
+            "COALESCE(SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END), 0) AS pending, " +
+            "MAX(updatedAt) AS latestAt " +
+            "FROM homework GROUP BY courseName ORDER BY latestAt DESC",
+    )
+    fun observeGroups(): Flow<List<HomeworkCourseGroup>>
+
+    @Query("SELECT * FROM homework WHERE id = :id")
+    suspend fun getById(id: Long): HomeworkEntity?
+
+    /** 附件清扫的引用来源：全部作业详情。 */
+    @Query("SELECT detail FROM homework")
+    suspend fun allDetails(): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(homework: HomeworkEntity): Long
+
+    /** 勾选/取消完成：只动三列，不整行回写（防并发编辑互相覆盖）。 */
+    @Query("UPDATE homework SET done = :done, doneAt = :doneAt, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setDone(id: Long, done: Boolean, doneAt: Long?, updatedAt: Long)
+
+    @Query("DELETE FROM homework WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }

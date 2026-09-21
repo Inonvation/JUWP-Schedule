@@ -42,6 +42,8 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Note01
+import me.rerere.hugeicons.stroke.Task01
 import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.CalendarSync
@@ -107,6 +109,10 @@ fun SettingsScreen(
     onOpenTweakDetect: () -> Unit = {},
     /** 我的 → 水宝宝一卡通（原「校园卡付款码」，DESIGN §3.10） */
     onOpenCampusCard: () -> Unit = {},
+    /** 我的 → 笔记·课件库（DESIGN §3.11） */
+    onOpenNotes: () -> Unit = {},
+    /** 我的 → 作业库（DESIGN §3.11） */
+    onOpenHomework: () -> Unit = {},
     /** 胖乖登录态（由外层传入，仅决定开水行文案）；登录/退出在开水页内完成 */
     waterLoggedIn: Boolean = false,
     viewModel: MeViewModel = viewModel(
@@ -116,6 +122,11 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val haptics = rememberAppHaptics()
     val context = LocalContext.current
+    // 「学习」分区的计数（副标题）：仓库直订冷 Flow（与成绩页同范式，不新开 ViewModel）
+    val noteGroups by remember { Graph.noteRepository(context) }.observeGroups()
+        .collectAsStateWithLifecycle(initialValue = null)
+    val homeworkGroups by remember { Graph.homeworkRepository(context) }.observeGroups()
+        .collectAsStateWithLifecycle(initialValue = null)
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -236,6 +247,33 @@ fun SettingsScreen(
                     subtitle = "JSON 导出 / 导入 · 清空课程",
                     icon = HugeIcons.Database,
                     onClick = onOpenDataSettings,
+                )
+            }
+
+            // ---- 学习（用户内容：笔记·课件与作业，按课程名归属、不随课表，DESIGN §3.11/§4.20）----
+            SettingsSection(title = "学习") {
+                val noteCount = noteGroups?.sumOf { it.count } ?: 0
+                val courseCount = noteGroups?.size ?: 0
+                SettingItem(
+                    title = "笔记·课件",
+                    subtitle = if (noteCount > 0) {
+                        "$noteCount 篇 · $courseCount 门课"
+                    } else {
+                        "暂无内容 · 记下课件与公式"
+                    },
+                    icon = HugeIcons.Note01,
+                    onClick = onOpenNotes,
+                )
+                val pendingCount = homeworkGroups?.sumOf { it.pending } ?: 0
+                SettingItem(
+                    title = "作业",
+                    subtitle = if (pendingCount > 0) {
+                        "$pendingCount 项未完成"
+                    } else {
+                        "暂无作业 · 可设截止提醒"
+                    },
+                    icon = HugeIcons.Task01,
+                    onClick = onOpenHomework,
                 )
             }
 

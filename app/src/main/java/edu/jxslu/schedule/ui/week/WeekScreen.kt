@@ -136,6 +136,10 @@ fun WeekScreen(
     onOpenTimetableManage: () -> Unit = {},
     /** 有未处理调课提醒时点导入图标直达「更新课表」（DESIGN §4.17） */
     onOpenScheduleUpdate: () -> Unit = {},
+    /** 某课程的笔记·课件（课程详情弹窗入口，DESIGN §3.11） */
+    onOpenCourseNotes: (Course) -> Unit = {},
+    /** 某课程的作业（课程详情弹窗入口，DESIGN §3.11） */
+    onOpenCourseHomework: (Course) -> Unit = {},
     viewModel: WeekViewModel = viewModel(
         factory = WeekViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -708,6 +712,14 @@ fun WeekScreen(
             onDelete = {
                 detailCourse = null
                 pendingDelete = course
+            },
+            onOpenNotes = {
+                detailCourse = null
+                onOpenCourseNotes(course)
+            },
+            onOpenHomework = {
+                detailCourse = null
+                onOpenCourseHomework(course)
             },
             onDismiss = { detailCourse = null },
         )

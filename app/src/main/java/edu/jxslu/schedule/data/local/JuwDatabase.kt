@@ -19,8 +19,10 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         DetectBaselineEntity::class,
         DetectReportEntity::class,
         YktTurnoverEntity::class,
+        NoteEntity::class,
+        HomeworkEntity::class,
     ],
-    version = 6,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -33,6 +35,8 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun detectBaselineDao(): DetectBaselineDao
     abstract fun detectReportDao(): DetectReportDao
     abstract fun yktTurnoverDao(): YktTurnoverDao
+    abstract fun noteDao(): NoteDao
+    abstract fun homeworkDao(): HomeworkDao
 
     companion object {
 
@@ -201,6 +205,55 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 → v7：课程笔记·课件与作业（DESIGN §4.20）。
+         * 新表 `notes` / `homework`，都**按课程名归属、不带 timetableId**（理由见
+         * NoteEntity 的 KDoc 与 DESIGN §4.20「归属」）；CREATE TABLE / CREATE INDEX 非 destructive。
+         * 索引名必须与实体 @Index 生成的（`index_<表>_<列>`）逐字对齐，否则迁移校验崩溃。
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS notes (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "courseName TEXT NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        "body TEXT NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_courseName ON notes(courseName)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_updatedAt ON notes(updatedAt)")
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS homework (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "courseName TEXT NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        "detail TEXT NOT NULL, " +
+                        "dueDate TEXT, " +
+                        "done INTEGER NOT NULL, " +
+                        "doneAt INTEGER, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_homework_courseName ON homework(courseName)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_homework_done ON homework(done)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_homework_dueDate ON homework(dueDate)")
+            }
+        }
+
+        /**
+         * v7 → v8：课程备注（DESIGN §4.3，2026-09-21）。
+         * `courses` 加 `remark` 列——DEFAULT '' 让历史课程自动落成空备注，语义正确且无需回填；
+         * 走 ALTER TABLE 而不是重建表（表里有用户的课表数据）。
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE courses ADD COLUMN remark TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -211,7 +264,15 @@ abstract class JuwDatabase : RoomDatabase() {
                     JuwDatabase::class.java,
                     "juw_schedule.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                        MIGRATION_7_8,
+                    )
                     .build()
                     .also { instance = it }
             }

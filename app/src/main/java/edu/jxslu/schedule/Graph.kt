@@ -7,6 +7,9 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.QiekjTokenStore
+import edu.jxslu.schedule.data.repo.AttachmentStore
+import edu.jxslu.schedule.data.repo.HomeworkRepository
+import edu.jxslu.schedule.data.repo.NoteRepository
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.ykt.YktClient
@@ -25,6 +28,15 @@ object Graph {
 
     @Volatile
     private var scoreRepository: ScoreRepository? = null
+
+    @Volatile
+    private var noteRepository: NoteRepository? = null
+
+    @Volatile
+    private var homeworkRepository: HomeworkRepository? = null
+
+    @Volatile
+    private var attachmentStore: AttachmentStore? = null
 
     @Volatile
     private var jwCredentialStore: JwCredentialStore? = null
@@ -65,6 +77,24 @@ object Graph {
     fun scoreRepository(context: Context): ScoreRepository =
         scoreRepository ?: synchronized(this) {
             scoreRepository ?: ScoreRepository(JuwDatabase.get(context)).also { scoreRepository = it }
+        }
+
+    /** 笔记·课件仓库单例（DESIGN §4.20）：归属键是课程名，与课表无关。 */
+    fun noteRepository(context: Context): NoteRepository =
+        noteRepository ?: synchronized(this) {
+            noteRepository ?: NoteRepository(JuwDatabase.get(context)).also { noteRepository = it }
+        }
+
+    /** 作业仓库单例（DESIGN §4.20）：与笔记共用一套附件与渲染口径。 */
+    fun homeworkRepository(context: Context): HomeworkRepository =
+        homeworkRepository ?: synchronized(this) {
+            homeworkRepository ?: HomeworkRepository(JuwDatabase.get(context)).also { homeworkRepository = it }
+        }
+
+    /** 图片附件存储单例（DESIGN §4.20）：应用私有目录 notes_img，无网络出口。 */
+    fun attachmentStore(context: Context): AttachmentStore =
+        attachmentStore ?: synchronized(this) {
+            attachmentStore ?: AttachmentStore(context.applicationContext).also { attachmentStore = it }
         }
 
     /** 胖乖仓库单例（DESIGN §4.10）：Retrofit client 只建一次，token 存加密 prefs。 */

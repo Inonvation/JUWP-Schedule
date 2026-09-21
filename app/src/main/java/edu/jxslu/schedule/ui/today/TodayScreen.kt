@@ -102,6 +102,8 @@ import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.ScooterElectric
 import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
+import edu.jxslu.schedule.domain.PendingHomework
+import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
 
 /**
  * 今日课表。
@@ -138,13 +140,23 @@ fun TodayScreen(
     onOpenStatement: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
+    /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
+    onOpenHomeworkTodo: () -> Unit = {},
+    /** 某课程的笔记·课件（课程详情弹窗入口，DESIGN §3.11） */
+    onOpenCourseNotes: (Course) -> Unit = {},
+    /** 某课程的作业（课程详情弹窗入口，DESIGN §3.11） */
+    onOpenCourseHomework: (Course) -> Unit = {},
     /** 与开水页共享的 Activity 作用域实例；开水卡的解锁进度与登录态两页一致 */
     waterViewModel: WaterViewModel? = null,
     viewModel: TodayViewModel = viewModel(
-        factory = TodayViewModel.Factory(Graph.repository(LocalContext.current)),
+        factory = TodayViewModel.Factory(
+            Graph.repository(LocalContext.current),
+            Graph.homeworkRepository(LocalContext.current),
+        ),
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val homework by viewModel.homeworkPending.collectAsStateWithLifecycle()
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
     val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
@@ -307,13 +319,16 @@ fun TodayScreen(
             else -> TodayContent(
                 state = state,
                 padding = padding,
+                homework = homework,
                 onOpenCourse = { detailCourse = it },
+                onOpenHomeworkTodo = onOpenHomeworkTodo,
                 bottomDock = bottomDock,
             )
         }
     }
 
-    // 只读详情（与课表页同口径）：编辑/删除是详情里的二级动作
+    // 只读详情（与课表页同口径）：编辑/删除是详情里的二级动作；
+    // 2026-09-21 起弹窗内还有「笔记·课件 / 作业」两个入口（DESIGN §3.11）
     detailCourse?.let { course ->
         CourseDetailSheet(
             course = course,
@@ -327,6 +342,14 @@ fun TodayScreen(
             onDelete = {
                 detailCourse = null
                 pendingDelete = course
+            },
+            onOpenNotes = {
+                detailCourse = null
+                onOpenCourseNotes(course)
+            },
+            onOpenHomework = {
+                detailCourse = null
+                onOpenCourseHomework(course)
             },
             onDismiss = { detailCourse = null },
         )
@@ -553,7 +576,9 @@ private fun TodayEmptyContent(
 private fun TodayContent(
     state: TodayState,
     padding: PaddingValues,
+    homework: PendingHomework,
     onOpenCourse: (Course) -> Unit,
+    onOpenHomeworkTodo: () -> Unit,
     bottomDock: @Composable () -> Unit,
 ) {
     Column(
@@ -610,6 +635,20 @@ private fun TodayContent(
             // 明天只在今天没有待上课程（上完 / 没课）时上桌，今天的信息优先
             if (state.tomorrowVisible) {
                 item(key = "tomorrow") { TomorrowBlock(state, onOpenCourse) }
+            }
+
+            // 作业卡（DESIGN §3.3/§3.11）：有未完成作业才占位，位置 = **滚动区最后一项**
+            // （「今天还有 N 节」与「明天」块之后）、贴底固定区（快捷方式网格）之上——
+            // 2026-09-21 用户拍板两次：放焦点卡之下会把当天课程整段下推；定在明天课表之下，
+            // 作业是"顺带看一眼"的信息，不抢课表的位置。
+            if (!homework.isEmpty) {
+                item(key = "homework") {
+                    HomeworkTodayCard(
+                        pending = homework,
+                        today = state.date,
+                        onClick = onOpenHomeworkTodo,
+                    )
+                }
             }
         }
 

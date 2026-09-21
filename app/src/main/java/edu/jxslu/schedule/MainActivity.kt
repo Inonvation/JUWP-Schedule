@@ -228,6 +228,16 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
                     onOpenShortcuts = { focusItemId ->
                         SubpageActivity.start(context, SubpageScreen.SHORTCUTS, focusItemId)
                     },
+                    // 作业卡 → 作业中心；课程详情弹窗 → 该课程的笔记·课件 / 作业（DESIGN §3.11）
+                    onOpenHomeworkTodo = {
+                        SubpageActivity.start(context, SubpageScreen.HOMEWORK_TODO)
+                    },
+                    onOpenCourseNotes = { course ->
+                        SubpageActivity.start(context, SubpageScreen.NOTES_COURSE, courseName = course.name)
+                    },
+                    onOpenCourseHomework = { course ->
+                        SubpageActivity.start(context, SubpageScreen.HOMEWORK_COURSE, courseName = course.name)
+                    },
                     waterViewModel = waterViewModel,
                 )
             }
@@ -244,6 +254,13 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
                     // 导入图标有调课提醒气泡时（DESIGN §4.17），点击直达「更新课表」
                     onOpenScheduleUpdate = {
                         SubpageActivity.start(context, SubpageScreen.SCHEDULE_UPDATE)
+                    },
+                    // 课程详情弹窗的「笔记·课件 / 作业」（DESIGN §3.11）
+                    onOpenCourseNotes = { course ->
+                        SubpageActivity.start(context, SubpageScreen.NOTES_COURSE, courseName = course.name)
+                    },
+                    onOpenCourseHomework = { course ->
+                        SubpageActivity.start(context, SubpageScreen.HOMEWORK_COURSE, courseName = course.name)
                     },
                 )
             }
@@ -288,6 +305,13 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
                     },
                     onOpenWater = {
                         SubpageActivity.start(context, SubpageScreen.WATER)
+                    },
+                    // 学习分区（DESIGN §3.11）：笔记·课件库 / 作业库
+                    onOpenNotes = {
+                        SubpageActivity.start(context, SubpageScreen.NOTES)
+                    },
+                    onOpenHomework = {
+                        SubpageActivity.start(context, SubpageScreen.HOMEWORK)
                     },
                     waterLoggedIn = waterLoggedIn,
                 )

@@ -3,12 +3,16 @@ package edu.jxslu.schedule.ui.today
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.LocalTimeLike
+import edu.jxslu.schedule.domain.PendingHomework
+import edu.jxslu.schedule.domain.PendingHomework.Companion.EMPTY
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.buildTodayState
+import edu.jxslu.schedule.domain.pendingHomework
 import edu.jxslu.schedule.ui.common.UndoableMessage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +36,7 @@ import java.time.LocalDate
  */
 class TodayViewModel(
     private val repo: ScheduleRepository,
+    private val homeworkRepo: HomeworkRepository,
     private val todayProvider: () -> LocalDate = { LocalDate.now() },
 ) : ViewModel() {
 
@@ -74,6 +79,18 @@ class TodayViewModel(
             ready.value = true
         }
     }
+
+    /**
+     * 今日页作业卡（DESIGN §3.3/§3.11）：未完成作业的排序与计数，口径全在
+     * `domain/HomeworkCenter`（逾期 → 今天 → 未来 → 无截止）。
+     *
+     * 单独订阅、不并进 [uiState]：作业与课表是两套数据，混在一起会让改一条作业
+     * 重算整页课表状态；随 [tick] 重算是为了跨天时文案（今天/明天/已过期）跟着走。
+     */
+    val homeworkPending: StateFlow<PendingHomework> =
+        combine(homeworkRepo.observePending(), tick) { list, _ ->
+            pendingHomework(list, todayProvider())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EMPTY)
 
     /**
      * 今日页快捷方式（DESIGN §3.8）。不并进 [uiState]：那是课表数据的派生状态，
@@ -135,9 +152,12 @@ class TodayViewModel(
         _undoable.value = null
     }
 
-    class Factory(private val repo: ScheduleRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repo: ScheduleRepository,
+        private val homeworkRepo: HomeworkRepository,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            TodayViewModel(repo) as T
+            TodayViewModel(repo, homeworkRepo) as T
     }
 }

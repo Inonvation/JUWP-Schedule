@@ -14,8 +14,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,6 +30,9 @@ import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.compactPosition
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Note01
+import me.rerere.hugeicons.stroke.Task01
 
 /**
  * 课程详情（只读）。
@@ -35,6 +40,9 @@ import edu.jxslu.schedule.domain.compactPosition
  *
  * 2026-09-19 自 WeekSheets 迁入 common：今日页点击课程（焦点卡/时间轴行/明天行）改为
  * 弹本面板而非直跳编辑器（DESIGN §3.3），与课表页口径一致。
+ *
+ * 2026-09-21：加「笔记·课件 / 作业」两个入口（等宽描边按钮，在「删除/编辑」之上，
+ * DESIGN §3.11）——今日页与课表页同源共用，改一处两边同时生效。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +53,8 @@ fun CourseDetailSheet(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
+    onOpenNotes: (() -> Unit)? = null,
+    onOpenHomework: (() -> Unit)? = null,
 ) {
     val accent = courseColor(course.colorIndex)
     val start = slots.firstOrNull { it.number == course.startSection }
@@ -106,6 +116,48 @@ fun CourseDetailSheet(
                 else -> Unit
             }
             Spacer(Modifier.height(18.dp))
+            // 笔记·课件 / 作业（DESIGN §3.11）：等宽描边按钮，与下方「删除/编辑」同规格但
+            // 视觉更低一级（描边 vs 实心），避免和编辑/删除抢注意力
+            if (onOpenNotes != null || onOpenHomework != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (onOpenNotes != null) {
+                        OutlinedButton(
+                            onClick = onOpenNotes,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                        ) {
+                            Icon(
+                                imageVector = HugeIcons.Note01,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text("笔记·课件")
+                        }
+                    }
+                    if (onOpenHomework != null) {
+                        OutlinedButton(
+                            onClick = onOpenHomework,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                        ) {
+                            Icon(
+                                imageVector = HugeIcons.Task01,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text("作业")
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),

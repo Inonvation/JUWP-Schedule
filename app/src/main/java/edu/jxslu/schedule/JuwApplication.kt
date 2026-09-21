@@ -57,5 +57,17 @@ class JuwApplication : Application() {
                 ClassReminder.scheduleNext(this@JuwApplication)
             }
         }
+        // 附件孤儿清扫（DESIGN §4.20）：正文里已无引用的图片文件删掉。
+        // 保存路径已做增量清理，这里兜住「直接改正文删掉引用」「异常中断」这类残留；
+        // 条目量小（全量正文一次读），IO 协程里跑，冷启动不阻塞界面。
+        appScope.launch {
+            runCatching {
+                val noteRepo = Graph.noteRepository(this@JuwApplication)
+                val homeworkRepo = Graph.homeworkRepository(this@JuwApplication)
+                val store = Graph.attachmentStore(this@JuwApplication)
+                val referenced = store.referencedNames(noteRepo.allBodies() + homeworkRepo.allDetails())
+                store.sweep(referenced)
+            }.onFailure { android.util.Log.w("JuwApplication", "attachment sweep failed", it) }
+        }
     }
 }
