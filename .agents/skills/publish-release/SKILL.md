@@ -7,7 +7,7 @@ description: Use this skill when the user asks to publish a release, cut a versi
 
 基于 git log 生成更新日志，构建正式签名 APK，然后用 GitHub CLI 创建 Release。
 
-**每次发版都必须走完 Step 1–6；Step 4 的日志必须等用户确认后才能继续。**
+**每次发版都必须走完 Step 1–7；Step 4 的日志必须等用户确认后才能继续。**
 
 ## Step 1 · 前置检查（不通过就停下报告）
 
@@ -103,16 +103,31 @@ Copy-Item app\build\outputs\apk\release\app-release.apk "JUWP-Schedule-<版本�
 
 > **文件名必须用纯 ASCII**（2026-09-18 实测）：GitHub 上传资产时会**静默剥离非 ASCII 字符**，
 > 上传 `水贝贝-0.1.0.apk` 会变成 `-0.1.0.apk`（即便 URL 已正确 percent-encode 也一样）。
-> 用 `JUWP-Schedule-0.1.0.apk`；"水贝贝" 是应用**显示名**，只需出现在 Release 标题和日志里。
+> 用 `JUWP-Schedule-0.1.0.apk`；"水贝贝" 是应用**显示名**，只出现在 Release 日志里，不出现在标题和文件名中。
 
-## Step 6 · 创建 Release
+## Step 6 · 推送本地提交到远端
 
-标签与标题都用版本号（不带 `v`），正文用双语日志 + 免责声明：
+创建 Release 之前，本地提交必须先推送到远端；`gh release create` 创建的 tag 指向的提交必须在远端存在。
+
+```powershell
+git push origin main
+```
+
+若遇到 `unable to access 'https://github.com/...': Failed to connect to 127.0.0.1 port <端口>`：
+- 说明 git 配置的 `http.proxy` / `https.proxy` 指向了已关闭的本地代理
+- 先确认代理进程是否在运行；若代理已关闭，等代理恢复后重试推送
+- `gh` 的网络走自身认证链路，不受 git `http.proxy` 配置影响，不要用 `gh` 代替 git 推送提交
+
+推送成功后再进入 Step 7。
+
+## Step 7 · 创建 Release
+
+标签与标题都用版本号（不带 `v`，不带应用名），正文用中文日志 + 免责声明：
 
 ```powershell
 gh release create <版本号> "JUWP-Schedule-<版本号>.apk" `
-  --title "<版本号> · 水贝贝" `
-  --notes "<双语更新日志>
+  --title "<版本号>" `
+  --notes "<中文更新日志>
 
 ---
 
@@ -135,7 +150,7 @@ gh api repos/Inonvation/JUWP-Schedule/releases/tags/<版本号> `
   Where-Object { $_.LastWriteTime -gt (Get-Item app\build\outputs\apk\release\app-release.apk).LastWriteTime }`
   —— 有输出就说明 APK 过期，必须重新 `assembleRelease`。
 
-## Step 7 · 发布后
+## Step 8 · 发布后
 
 - 打 tag 用 `gh release create` 已自动完成；本地 tag 与远端一致即可。
 - 提醒用户：debug 包与正式包现在是**两个独立应用**（`edu.jxslu.schedule.debug` / `edu.jxslu.schedule`），

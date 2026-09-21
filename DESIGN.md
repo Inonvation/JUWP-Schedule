@@ -87,15 +87,22 @@
 │     │                 有未处理调课提醒时显示气泡，点击直接进「更新课表」
 │     ├── 分享图标   → 分享弹层（日历同步 / CSV / JSON，见 4.12）
 │     └── 课表名 ▾   → 切换课表弹层 → 管理课表
-└── 我的      SettingsScreen（入口列表，2026-09-20 重排为 5 分区）
+└── 我的      SettingsScreen（入口列表，2026-09-21 起 6 分区）
       ├── 通用：外观主题 · 动态取色 · 触感反馈（全局观感）
       ├── 课表（副标题「当前：课表名」）：课表管理 / 课表设置（学期·作息）/ 教务导入 /
       │     上课提醒（§3.7）/ 调课 / 调课自动检测（§4.17）/ 成绩查询（§4.15）/ 课表数据
+      ├── 学习（§3.11）：笔记·课件 / 作业 —— 按课程名归属，跨课表可见
       ├── 小组件与日历：桌面小组件（§3.6）/ 日历同步（§4.12）—— 全局
       ├── 扩展服务（副标题「第三方 · 非学校官方功能」）：快捷方式（§3.8）/ 快趣出行码（§3.9）/
       │     水宝宝一卡通（§3.10）/ 胖乖生活一键开水（§3.4，开水页内含开水卡显示与点击方式）
       └── 关于：版本与免责声明 / 开源仓库
 ```
+
+二级页（`SubpageActivity`，§3.11 新增 7 个）：笔记·课件库 / 某课程笔记列表 / 笔记详情
+（`NOTES`·`NOTES_COURSE`·`NOTE_DETAIL`）、作业库 / 某课程作业列表 / 作业详情 /
+作业中心（`HOMEWORK`·`HOMEWORK_COURSE`·`HOMEWORK_DETAIL`·`HOMEWORK_TODO`，最后一个由
+今日页作业卡与截止提醒进）。带参跳转沿用 `SubpageActivity.start(...)` 的可选参数
+（`courseName` / `itemId`），与 `SHORTCUTS` 的 `focusItemId` 同一就近定位思路。
 
 弹层：课程编辑 Sheet、教务 WebView 全屏、订单列表 Sheet、登录 Sheet。
 
@@ -161,8 +168,18 @@
   - 已结束的课不显示；列表头计数 = **列表里的课数**（不含焦点卡那节）——
     2026-09-21 改口径：旧版用 remaining.size（含焦点卡拿走的那节），
     「今天还有 2 节」下面只列 1 节，数字对不上页面课块数
+  - 课程备注（§4.3 `Course.remark`）：编辑弹层的「备注（可选）」输入框写，详情面板在「周次」下方以
+    「备注」行展示（空备注不占行）——备注是用户内容，不是排课字段，放详情面板而不是卡片上
   - 点击课程（焦点卡 / 时间轴行 / 明天行）：**只读详情面板**（与课表页同一 `CourseDetailSheet`，
-    编辑/删除为二级动作）——此前直跳编辑器易误触，2026-09-19 对齐课表页口径
+    编辑/删除为二级动作）——此前直跳编辑器易误触，2026-09-19 对齐课表页口径；
+    2026-09-21 面板内新增 `[笔记·课件] [作业]` 两个入口（等宽描边按钮，位于「删除/编辑」行
+    之上，见 §3.11），今日页与课表页同源同享
+  - **作业卡**（2026-09-21 新增，§3.11）：有未完成作业才占位，位置 = **滚动区最后一项**
+    （「今天还有 N 节」课程列表与「明天」课表块**之后**）、贴底固定区（快捷方式网格）之上
+    （2026-09-21 用户拍板两次：先自焦点卡之下移出——放那儿会把当天课程整段下推；
+    再定在明天课表之下，作业是「顺带看一眼」的信息，不抢课表的位置）；形态 = 1dp 描边卡
+    （surface 底，与底部固定区卡片同款），左图标 + 「作业 · N 项未完成」+ 副行
+    「最近截止 10月12日」，有过期追加 error 色「M 项已过期」；点击进「作业中心」二级页
 - 明天：只在今天没有待上课程（上完 / 没课）时上桌，复用同一行组件；明天也没课给一句休息提示
 - 空态：无课 +「从教务导入」CTA；「尚未开学/未配置学期」给「去设置学期」CTA（跳课表设置）；
   加载中给进度指示，不留白屏；空态同样显示底部固定区（快捷方式网格 + 骑行卡 + 开水卡）
@@ -236,18 +253,24 @@
 - 手动加课表单：星期/节次走滚轮选择；课程名必填（空名行内提示，不再静默无反应）；
   节次夹取 1–11，越界不落库
 
-**我的**（入口列表，2026-09-20 重排为 5 分区）
+**我的**（入口列表，2026-09-21 起 6 分区）
 
 - 通用（全局观感）：外观主题、动态取色（Material You，默认开可关）、触感反馈
 - 课表（副标题「当前：课表名」，组内按「配置 → 使用 → 数据」流排）：课表管理 /
   课表设置（学期+作息）/ 教务导入 / 上课提醒（§3.7）/ 调课 / 调课自动检测（§4.17）/
   成绩查询（§4.15）/ 课表数据（导出·导入·清空）—— 课表级，随当前课表（导出与清空也是当前课表口径）
+- **学习**（2026-09-21 新增，§3.11）：笔记·课件（副标题「N 篇 · K 门课」/「暂无内容」）/
+  作业（副标题「N 项未完成」/「暂无作业」）—— 按课程名归属，**不随课表**（换课表后仍可查）
 - 小组件与日历：桌面小组件（§3.6）/ 日历同步（§4.12）—— 全局
 - 扩展服务（副标题标注「第三方 · 非学校官方功能」）：快捷方式（§3.8）/ 快趣出行码（§3.9，
   2026-09-20 改名，原「共享单车卡」）/ 水宝宝一卡通（§3.10，2026-09-20 改名，
   原「校园卡付款码」，副标题「攻破水宝宝，一键启动！」）/ 胖乖生活一键开水（§3.4，
   2026-09-20 改名并合并，原「开水」+「开水设置」两条——设置并入开水页后只留一条）
 - 关于：版本与免责声明 / 开源仓库
+
+2026-09-21 增「学习」分区理由：笔记与作业是**用户内容**（不是课表配置），既不属于「课表」
+组的内聚（配置/使用/数据流），也不属于「小组件与日历」的全局设置；单开一卡同时满足
+「每卡至少 2 条」的既有约束（两条入口），位置紧跟「课表」——内容是课表的自然延伸。
 
 2026-09-20 重排理由：校园卡原单条目独占一卡（粒度不统一），并入「扩展服务」与胖乖同卡——
 两者同为第三方/非官方服务；成绩查询原插在「教务导入」与「调课」之间，打断课表配置流，移至组尾；
@@ -463,8 +486,11 @@
 |----|------|------|
 | 上课提醒 | 开/关 | 关 |
 | 提前量 | 5 / 10 / 15 / 20 / 30 分钟 | 10 分钟 |
+| 作业截止提醒 | 开/关（2026-09-21 追加，规则见 §3.11） | 关 |
 
 全局项不随课表；提醒内容始终按**当前课表**计算——切到哪张表就提醒哪张表的课，无逐课表配置。
+作业提醒与上课提醒共用同一闹钟与核对 Worker（取两者中更早的下一个触发点），只有开关、通道、
+去重键各自独立——见 §3.11 与 §4.20。
 
 #### 通知口径
 
@@ -549,7 +575,9 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 | 自动保存 | 生成即存系统相册（`Pictures/水贝贝`，JPEG 90），**开关 `ebikeAutoSave` 默认关**（用户拍板）——相册里只留用户真的要的码。开关放码下方一行；保存成功/失败走页内 `InlineNoticeRow`（弹层窗口纪律，Snackbar 不穿透二级页窗口） |
 | 扫完即焚 | 保存到相册的码在**回到 App 后自动删除**，**开关 `ebikeBurnAfterScan` 默认开**（保存码是扫码一次性耗材，不留痕）。机制：保存成功记录待焚毁 key（`ebikePendingDelete` stringSet，持久化——进程被杀恢复后仍能删）；页面 ON_RESUME 时 `EbikeViewModel.burnPending()` 按 key 分流删除（29+ 自己 insert 的 MediaStore uri，owner 免权限；26–28 自己写的公共目录文件），删成功的移出记录、失败的保留重试。开关关 = 完全回到旧语义（不新增记录也不删残留）。出码页生成按钮点击同时收起键盘 |
 | 最近车号 | 最近 8 个生成过的车号 chips（DataStore 列表，倒序去重），点击回填；仅本地，不入 git |
-| 提示 | 「打开微信扫一扫」按钮 best-effort 发 `weixin://dl/scan`（**非官方 scheme**，可能被拒），失败走 `InlineNoticeRow` 引导手动扫；manifest `queries` 声明微信包可见性仅用于该探测 |
+| 提示 | 「打开微信扫一扫」按钮 best-effort 三级兜底：`ShortCutDispatchAction`（微信桌面长按快捷方式真身，直达扫一扫）→ `BIZSHORTCUT` 旧式入口 → 微信首页手动引导；失败走页内 Snackbar；manifest `queries` 声明微信包可见性仅用于该探测 |
+| 打开快趣出行（2026-09-21） | 页内按钮（与「生成二维码」同型、常显）：临时改写系统「助手」设置（`Settings.Secure.assistant` → 快趣首页）+ 反射 `SearchManager.launchAssist`，由 SystemUI 以 `ACTION_ASSIST` 代启未导出的首页（**直达、跳过启动页**；同级「快捷方式」工具同款路径，真机实测）；需一次性 `pm grant WRITE_SECURE_SETTINGS`（见下），未授权/失败自动降级为桌面启动意图（启动页）；未安装/全失败走页内 Snackbar；manifest `queries` 声明包可见性 |
+| 直达前置 | 一次性 adb 授权：`adb shell pm grant edu.jxslu.schedule[.debug] android.permission.WRITE_SECURE_SETTINGS`（权限为 development 级，可 `pm grant`；未授权 = 自动降级启动页，不再提示） |
 | 提亮 | **不做**自动屏幕提亮（用户拍板） |
 
 #### 实现落位与红线
@@ -558,7 +586,8 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
   Bitmap 渲染与 MediaStore 落盘属 UI/data 层不进单测。
 - 依赖只加 `com.google.zxing:core`（纯 Java 单 jar，无传递依赖）。
 - **不做**：不绕过运营方任何校验（id 非法由小程序自行报错）；不缓存他人车号；无网络请求。
-- 页面文案不出现运营方品牌名（非官方功能，与开水模块同免责口径）。
+- 运营方品牌名仅用于标识（标题「快趣出行码」、按钮「打开快趣出行」），不出现官方口吻/官方标识；
+  非官方功能免责口径与开水模块一致。
 
 ### 3.10 校园卡付款码（2026-09-20，P6；默认关闭）
 
@@ -622,6 +651,77 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 - 合规口径：模拟客户端操作、非官方功能、风险自负（与开水模块同款免责）；不做充值/挂失/
   转账等任何资金变动接口，只调只读查询与取码。
 
+### 3.11 课程笔记·课件与作业（2026-09-21，P6）
+
+给每门课配两本本地账：**笔记·课件**（Markdown + 图片，可带公式）与**作业**（同上 + 截止
+日期 + 完成勾选）。两者都挂在**课程名**上（口径与理由见 §4.20「归属」），入口三处：
+课程详情弹窗（今日页/课表页共用）、「我的 → 学习」、今日页作业卡。
+
+#### 入口与层级
+
+- **课程详情弹窗**（`CourseDetailSheet`）：在「删除/编辑」行之上加一行等宽描边按钮
+  `[笔记·课件] [作业]`（高 44dp、图标 + 文字、两个 weight(1f)），点击进对应课程的
+  管理页。今日页与课表页同源共用，改一处两边同时生效
+- **「我的 → 学习」**（§3.3 第 3 分区）：笔记·课件 / 作业两条，副标题给计数
+  （笔记「N 篇 · K 门课」、作业「N 项未完成」；无内容时「暂无内容」/「暂无作业」）
+- 层级统一为三级：**课程库 → 某课程列表 → 条目详情**（详情内可编辑）
+
+#### 笔记·课件
+
+| 界面 | 内容 |
+|------|------|
+| 课程库（`NOTES`） | 按课程分组行 = 课程色点 + 课程名 + 「3 篇 · 最近 8月30日」；颜色取当前课表同名课程的 `colorIndex`，无匹配用中性色。空态引导「在今日页/课表页点课程卡片即可记笔记」 |
+| 课程笔记列表（`NOTES_COURSE`） | 列表项 = 标题（空标题显示「未命名笔记」）+ `M月d日`（**创建日期自动记录**，编辑不改）+ 正文摘要 1 行（纯函数去标记/去公式/去图片，见 `domain/Markdown` 的 `plainExcerpt`）+ 有图时的图片角标；右上角「新建笔记」 |
+| 笔记详情（`NOTE_DETAIL`） | **单页双态**：查看（渲染 Markdown/公式/图片，图片点开全屏）↔ 编辑（标题 + 正文编辑器）；删除只在详情页（确认弹窗）——列表不放开删除入口，防误触 |
+
+- 多篇笔记自然并存；标题可空、空标题不阻塞保存（列表显示占位名）
+- 保存为**显式动作**（顶栏「保存」，脏时才可点），返回时若有未保存修改给确认弹窗——
+  与 `CourseEditSheet` 同口径
+
+#### 作业
+
+| 界面 | 内容 |
+|------|------|
+| 课程库（`HOMEWORK`） | 分组行 = 课程色点 + 课程名 + 「2 项未完成 / 共 5 项」+ 最近更新 |
+| 课程作业列表（`HOMEWORK_COURSE`） | 行 = 勾选框（**勾选即完成，像待办**）+ 标题 + 截止 chip；完成后置灰 + 删除线，不隐藏（可反悔）；点行（非勾选框）进详情 |
+| 作业详情（`HOMEWORK_DETAIL`） | 字段 = 标题 / 详情（同一个 Markdown 编辑器）/ 截止日期（M3 日期选择器，可清除）/ 完成开关；删除在详情页 |
+| 今日页作业卡 | 见 §3.3：有未完成作业才占位（**滚动区最后一项：明天课表之下、贴底固定区之上**），显示计数 + 最近截止 + 过期数，点击进作业中心 |
+| 作业中心（`HOMEWORK_TODO`） | 未完成作业汇总（今日卡与截止提醒的落点）。排序 = 逾期（截止升序）→ 今天 → 未来（升序）→ 无截止（创建倒序）；行 = 勾选框（勾上即完成，Snackbar 带「撤销」）+ 标题 + 课程名 + 截止 chip（`今天` / `明天` / `10月12日` / `已过期 3 天`，逾期 error 色）；点行 → 该作业详情。空态给「去作业管理」CTA |
+
+- 截止日期可空（布置了但没给期限的作业）；只到**日**粒度，不含时刻
+- 过期语义：`dueDate < 今天` 即过期（当天不算过期，chip 显示「今天」）
+
+#### 编辑器（笔记与作业共用）
+
+- **双态**：`编辑`（源码 TextField + 格式工具条）/ `预览`（渲染态），分段按钮切换；
+  新建默认进编辑态，已有内容默认进预览态
+- 工具条（横向可滚，按钮 36dp）：`H2` / **B** / *I* / ~~S~~ / `•` / `1.` / `☑` / `❝` /
+  行内码 / `$` / 图片；有选区时包裹选区，无选区时插入标记并把光标放中间
+- **自动补全（Obsidian 式）**：列表项回车自动续行——无序续 `- `、有序递增（`1.`→`2.`）、
+  任务续 `- [ ] `、引用续 `> `，保留前导缩进；**空列表项回车清掉标记**（结束列表）；
+  围栏代码块内回车不续行；输入 `$` 自动补成 `$$` 且光标居中
+- 图片：Photo Picker（系统选择器，**不需要任何权限**）→ 复制进应用私有目录 → 在光标处
+  插入 `![](img:文件名)`（前后补空行）；长边 >1920 或 >1.5MB 自动下采样压缩
+- 公式：行内 `$…$`、块级 `$$…$$`；支持范围见 §4.20，**超范围语法原样显示源码**——
+  宁可露出 TeX 源码，也不做"半截渲染"误导
+
+#### 作业截止提醒（扩展 §3.7 调度层，不另起炉灶）
+
+| 项 | 值域 | 默认 |
+|----|------|------|
+| 作业截止提醒 | 开/关（在「我的 → 上课提醒」页，独立于上课提醒开关） | 关 |
+
+- 提醒点两个：**截止日前一天 20:00「明天截止」**、**截止日 20:00「今天截止」**；
+  各点有效期至下一个自然日 00:00（越过即跳过，**不补噪音**——与 §3.7「迟到不补」同口径）
+- 不发的情形：已勾选完成 / 已删除 / 已逾期
+- 通知（2026-09-21 定稿）：通道「作业截止提醒」（importance HIGH），一次核对**只发一条**——
+  - 该时刻只有一条作业到点 → 单条通知（`明天截止 · 课名` + 作业标题），**点击直达该作业**；
+  - 多条同时到点 → 汇总通知（`3 项作业明天截止`，正文列前 3 条标题、其余「等 N 项」），
+    点击进「作业中心」逐条处理——比连发 N 条更少打扰、信息量也更大；
+  - 两组都有（有人今天截止、有人明天截止）→ 发「今天截止」组（更紧急），另一组下轮再说
+- 去重键 = 作业 id + 提醒点日期，DataStore 保留最近 50 条；**整组一起记**（发出即记全组，
+  免得下一轮把同一组再发一遍）
+
 ---
 
 ## 4. 技术架构
@@ -671,6 +771,7 @@ data class Course(
   val customStartTime: String? = null,
   val customEndTime: String? = null,
   val colorIndex: Int = 0,
+  val remark: String = "",   // 课程备注（2026-09-21 新增，见下方说明）
 )
 
 data class TimeSlot(val number: Int, val startTime: String, val endTime: String)
@@ -700,6 +801,18 @@ JSON 导入导出字段名与上述一致，便于与拾光用户互导。
 > **`Course.kind` 扩展（DESIGN §4.14）**：`CourseKind{Theory, Lab, Exam}`。
 > 考试用既有字段承载：日期落 `weeks`(单元素)+`day`、起止时刻落 `customStart/EndTime`
 > (`isCustomTime=true`)、节次按作息表映射、考场落 `position`；无独立表，无 schema 迁移。
+
+> **`Course.remark` 扩展（2026-09-21，课程备注）**：给课程行加一条**用户自写备注**
+> （如「带计算器」「考试范围：第 3 章」），在课程编辑弹层里填写、课程详情弹层里展示
+> （§3.3）。存储落在 `courses.remark`（Room v8，`ALTER TABLE ... DEFAULT ''`）；
+> JSON 侧同为可选键 `remark`，缺省空串——旧文件照读、新版文件对拾光侧是未知键（对方忽略），
+> 与 `scores`/`semester` 段同一套「只增不减、缺省兼容」的互导纪律。
+>
+> **备注的存活口径（与笔记/作业同一条纪律）**：课程行 id 不稳定——覆盖导入
+> （`replaceAllCourses` 清表重建）与调课检测应用（`applyDetectGroups` 整组重建）都会换掉行，
+> 所以这两条路径**按 `mergeKey` 把旧备注搬回来**（`domain/courseRemarksCarriedOver`，
+> 与导入去重同一把钥匙）。语义上的取舍：备注属于**课程行**（同一门课的不同时段各写各的），
+> 不是"课程档案"；跨表/换学期后旧备注随旧行存在，不主动迁移。
 
 ### 4.4 教务导入（WebView + JS）
 
@@ -837,7 +950,8 @@ Channel：`android_app`
 | 图片 | Coil（若需要） |
 | 异步 | Kotlin Coroutines + Flow |
 
-不引入：RxJava、过度组件化、自研路由框架。
+不引入：RxJava、过度组件化、自研路由框架。Markdown／LaTeX 渲染也自研子集
+（§4.20），不引第三方渲染或公式库——`--offline` 构建与体积预算是硬约束。
 
 ### 4.7 图标
 
@@ -1601,8 +1715,16 @@ D3 编排调度 + 通知 → D4 设置页 + 更新课表流程 + 气泡 → D5 �
   **直接读写 store**，不进 DisplayPrefs 合并链（待删集合是高频翻搅的过程态，
   不该进 UI 向快照；未来若其它页面要读焚毁开关再接线）。
 - `ui/ebike/`：`EbikeViewModel`（生成/保存/历史/焚毁）、`EbikeQrScreen`（输入 + 大码 +
-  自动保存开关 + 扫完即焚开关 + 最近 chips + 微信扫一扫 best-effort）。落相册走 MediaStore
-  `Pictures/水贝贝`（API 29+ 免权限；26–28 需 `WRITE_EXTERNAL_STORAGE` 运行时申请）。
+  自动保存开关 + 扫完即焚开关 + 最近 chips + 微信扫一扫 best-effort + 页内「打开快趣出行」）。
+  落相册走 MediaStore `Pictures/水贝贝`（API 29+ 免权限；26–28 需 `WRITE_EXTERNAL_STORAGE` 运行时申请）。
+- 打开快趣出行（2026-09-21）：`EbikeQrScreen.openKvcooApp` 三级——
+  ①「助手通道」：`Settings.Secure.assistant` 临时指向 `com.kvcoo.go/com.kvcoo.go.sections.home.HomeActivity`
+  → 反射 `SearchManager#launchAssist(Bundle)`（@SystemApi/@hide）→ `SearchManagerService` →
+  `StatusBarManagerInternal.startAssist` → SystemUI（uid 1000）按「助手」以 `ACTION_ASSIST` 代启
+  （真机实测全程链路；延时 1.5s 恢复 assistant 原值）。需要一次性
+  `pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS`（development 级权限）；
+  ② 未授权/反射被拦/失败 → 桌面启动意图（启动页，导出无门槛）；③ 全失败 → Snackbar。
+  不做 Shizuku/root；非小米 ROM 行为未验证（降级兜底）。
 - 扫完即焚（2026-09-20）：`EbikeQrBitmaps.saveToGallery` 成功返回 `SaveResult.Saved`
   （附待焚毁 key：`m:` 前缀 MediaStore uri / `f:` 前缀文件路径，编码在 `EbikeQr` 纯 JVM 可测）；
   保存方（手动或自动）按 `ebikeBurnAfterScan` 把 key 并入 `ebikePendingDelete`；
@@ -1834,16 +1956,133 @@ L3 增量同步器 + VM 接本地库 → L4 统计视图（月卡片 + 年柱状
   不自动充值；`weixin://` 拉起链接含一次性 prepay_id（约 5 分钟有效），不落盘不进日志；
   SIGN 密钥是前端公开常量（非逆向所得），平台改版即失效，报错兜底文案给「平台可能已改版」。
 
+### 4.20 课程笔记·课件与作业（2026-09-21，P6；UI 规格见 §3.11）
+
+两门功能共用一套「本地内容 + 自研渲染」骨架：笔记与作业都是挂在课程名上的 Markdown 文本
+（图片以正文内联引用），差异只在作业多了截止日期与完成勾选。渲染**零新依赖**——自研
+Markdown 子集解析与 LaTeX 子集排版，理由：项目至今零渲染/图片依赖，`--offline` 构建是
+日常纪律（§4.6），且 APK 已 17.9MB 超 §5 的 15MB 目标；自研解析与排版是纯 JVM 逻辑，
+能落进既有单测体系（对齐 `WeekGridLayout`／`YktKeyboard` 的既有做法）。
+
+```
+domain/Note.kt             # 笔记模型（纯）
+domain/Homework.kt         # 作业模型（纯）
+domain/Markdown.kt         # 块级/行内 AST + 解析器 + 摘要提取（纯 JVM，MarkdownParserTest）
+domain/MarkdownEdit.kt     # 编辑器纯函数：回车续行 / 片段插入 / 选区包裹（MarkdownEditTest）
+domain/MarkdownImages.kt   # 正文里 img: 引用的收集/插入/移除（纯）
+domain/MathTex.kt          # TeX 子集 → 盒子树 + 布局（度量器接口注入，MathTexTest）
+domain/HomeworkCenter.kt   # 未完成排序 / 汇总 / 截止文案（HomeworkCenterTest）
+domain/ReminderPlanner.kt  # 既有文件扩展：作业提醒点与有效期（HomeworkReminderTest）
+data/local/Entities/Daos   # Room v7：notes / homework 两表
+data/repo/NoteRepository.kt / HomeworkRepository.kt / AttachmentStore.kt
+ui/common/MarkdownView.kt / MathText.kt / MarkdownEditor.kt / ImageViewerDialog.kt
+ui/notes/{NoteLibraryScreen, NoteCourseScreen, NoteDetailScreen}.kt
+ui/homework/{HomeworkLibraryScreen, HomeworkCourseScreen, HomeworkDetailScreen,
+             HomeworkTodoScreen, HomeworkTodayCard}.kt
+```
+
+#### 归属：为什么挂课程名，不挂 course.id / timetableId
+
+课程行 id 不稳定：覆盖导入走 `replaceAllCourses`（清表重建）、调课会删行重建、
+`restoreCourses` 用原 id 回滚——任何以 id 为外键的用户内容都会在这些路径上变孤儿。
+课表切换（多课表 = 多学期）也不该让旧笔记"消失"。故归属键 = **课程名原样字符串**：
+覆盖导入/调课/换课表/删课都不影响，笔记库按课程名分组天然成立。
+**代价（明写）**：跨课表同名课程共享内容；课程改名后旧内容留在旧名下（仍可见可编辑，
+不自动重绑）。这两条是有意取舍，不是漏项。
+
+#### 存储（Room v6 → v7，非 destructive，照既有 ALTER/CREATE 纪律）
+
+```sql
+CREATE TABLE notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  courseName TEXT NOT NULL,   -- 归属键
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,         -- Markdown 源码，图片以 img: 引用内联
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL);
+CREATE INDEX index_notes_courseName ON notes(courseName);
+CREATE INDEX index_notes_updatedAt  ON notes(updatedAt);
+CREATE TABLE homework (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  courseName TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  dueDate TEXT,               -- yyyy-MM-dd 可空；ISO 文本字典序 = 时间序（同 semester.startDate 惯例）
+  done INTEGER NOT NULL DEFAULT 0,
+  doneAt INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL);
+CREATE INDEX index_homework_courseName / _done / _dueDate
+```
+
+- 两表都**不带 timetableId**（归属口径见上），所以既有「按 timetableId 过滤」的课表数据
+  纪律不适用于它们；`@Index` 声明必须与迁移里的 `CREATE INDEX` 逐字对齐（漏声明 = 迁移校验崩溃，AGENTS 已记）
+- 两个仓库都是薄封装（仿 `ScoreRepository`）：`observeAll / observeForCourse / observeGroups`
+  （投影：courseName + 计数 + 最近更新）/ `observePending` / `upsert` / `delete`；
+  排序与文案全在 `domain/HomeworkCenter`，仓库不写业务判断
+
+#### 附件（图片）：文件 + 正文引用，不建附件表
+
+- 目录 `filesDir/notes_img/`，文件名 `时间戳_随机.jpg`；正文引用形如 `![](img:20260921_a1b2.jpg)`
+- 选图走 `PickVisualMedia`（系统 Photo Picker / 退化为 SAF，**零新增权限**，项目已有 SAF 先例）；
+  入库前压缩：长边 >1920 或 >1.5MB → 下采样 + JPEG 重编码，其余原样复制
+- 清理：保存/删除时对比旧正文引用差集，删掉不再被引用的文件；冷启动 `sweep` 兜底扫两表
+  全量正文引用（条目量小，IO 协程里做）
+- 图片不进云备份排除名单：笔记是用户内容，随 Room 数据一并备份（凭证类排除规则不动）
+
+#### 渲染子集（明写支持边界，超范围**原样显示源码**）
+
+| 层 | 支持 | 明确不支持（原样展示为文本） |
+|----|------|------|
+| Markdown 块级 | `#`~`######`、段落、`-`/`*`/`+` 与 `1.` 列表（2 级嵌套）、`- [ ]`/`- [x]` 任务项、`>` 引用、``` 围栏代码块、`---` 分隔线、`$$…$$` 公式块 | 表格、HTML、脚注、引用式链接、定义列表 |
+| Markdown 行内 | `**粗**` / `*斜*` / `~~删除~~` / `` `码` `` / `[文本](http…)` / `![alt](img:…)` / `$…$` / `\*` 转义 | 自动链接、内嵌 HTML、脚注引用 |
+| LaTeX | `\frac \dfrac \tfrac`、`\sqrt[n]{}`、`^ _` 可嵌套、`\left…\right`、`\sum \prod \int \iint \oint \lim \max \min`（display 上下限 / inline 右侧）、希腊字母大小写、常用关系与算子符（`\pm \times \leq \geq \neq \approx \in \subset \cup \cap \to \Rightarrow \infty \partial \nabla \cdots` 等）、函数名正体（`\sin \ln \log \exp \det`…）、`\vec \bar \hat \tilde \dot`、`\text{中文}`、`\mathrm`、间距命令 | 矩阵/`cases`/`align` 环境、宏定义、TikZ |
+
+- **失败回退**：任何未知命令或括号不配 → 该条公式整体以等宽源码显示（不吞内容、不崩、不半截渲染）
+- 排版比例单一来源：分子分母 0.85×、上下标 0.7×（三级起不再缩）、inline 0.95×、display 1.15×；
+  公式按 (源码, 字号) 做内存 LRU 缓存；行内公式走 `AnnotatedString` inlineContent（垂直居中，
+  与 MathJax 的基线对齐有已知偏差）
+
+#### 提醒（`domain/ReminderPlanner` 扩展，规则见 §3.11）
+
+- 纯函数新增：`homeworkReminderPlan(homework, now)` 求当前**有效**（触发时刻已到、未越次日 00:00）
+  的提醒点、`nextHomeworkReminder(items, now)` 求下一个触发点（向后看 30 天）；
+  与上课提醒共用「取更早者排同一个闹钟」的语义
+- `ui/reminder/ClassReminder`：`scheduleNext` 取上课与作业两者**更早**的触发点排同一个闹钟
+  （requestCode 不变）；核对 Worker 里课后补一段作业核对；开关与去重键各自独立
+  （DataStore：`homework_reminder_enabled` 默认关、`homework_reminded_keys` 字符串集合留 50 条）
+- 通知通道独立（`homework_deadline`，id 1002），点击进 `HOMEWORK_TODO`；作业写库后由 UI 触发重排
+
+#### 测试清单（JVM）
+
+| 测试类 | 覆盖 |
+|--------|------|
+| `MarkdownParserTest` | 块级/行内全分支、2 级嵌套列表、任务项、未闭合围栏、转义、中文与数字混排、摘要提取 |
+| `MarkdownEditTest` | 回车续行全分支（无序/有序递增/任务/引用/空项结束/代码块内/缩进保留）、片段包裹（有选区/无选区）、图片插入位置、`$` 自动配对 |
+| `MathTexTest` | 解析（嵌套分数/根号/上下标/`\left…\right`/希腊/算子/函数/`\text`）、失败回退标记、布局尺寸（注入固定度量器） |
+| `HomeworkCenterTest` | 未完成排序（逾期→今天→未来→无截止）、汇总计数与最近截止、截止文案（今天/明天/N 天后/已过期 N 天） |
+| `HomeworkReminderTest` | 提醒点与有效期窗口、越过即跳过、去重键、已完成/已删除/已逾期不发 |
+
+#### 阶段拆解
+
+X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room v7 + 仓库 + `HomeworkCenterTest`）
+→ X2 渲染内核（Markdown 解析/渲染 + TeX 排版 + 编辑器纯函数与三个测试类）→ X3 笔记链路
+（三屏 + 两个入口 + 图片链路）→ X4 作业链路（三屏 + 今日卡 + 作业中心）→ X5 提醒
+（调度扩展 + 设置行 + 通道）→ X6 打磨验证（真机覆盖安装验迁移 + 观感）。
+
+不做（v1 明写）：笔记/作业导进课表 JSON、桌面小组件展示、多端同步、富文本所见即所得、
+笔记/课件分类标签（保持"源码 + 预览"双态与单一列表）。
+
 ---
 
 ## 5. 非功能
 
 | 项 | 要求 |
 |----|------|
-| 隐私 | 账号/Token 不进 Log；不上传第三方分析 |
-| 权限 | 网络 + 可选 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`（小组件后台及时性，见 §3.6）；震动按 M2 再要 |
-| 性能 | 首页可交互 < 2s（中端机冷启动参考） |
-| 体积 | APK 目标 < 15MB（无大资源时应远小于此） |
+| 隐私 | 账号/Token 不进 Log；不上传第三方分析；笔记·课件与作业（含图片）只存本机私有目录，无任何网络出口（§4.20） |
+| 权限 | 网络 + 可选 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`（小组件后台及时性，见 §3.6）；震动按 M2 再要；笔记/作业的选图走系统 Photo Picker，**零新增权限**（§4.20） |
+| 性能 | 首页可交互 < 2s（中端机冷启动参考）；公式按 (源码, 字号) 内存缓存，图片按下采样尺寸解码（§4.20） |
+| 体积 | APK 目标 < 15MB。**2026-09-21 起 release 开启 R8 + 资源压缩**（此前 `isMinifyEnabled=false`，1.0.0 实测 17.9MB 超标）；开启后 release 实测 **3.6MB**。改混淆规则后必须装 release 包冒烟——R8 的问题只在运行时暴露 |
 | 稳定 | 胖乖接口失败不崩溃；教务 WebView 与原生状态分离 |
 | 合规 | README/设置含免责；不内置破解/刷分 |
 

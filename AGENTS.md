@@ -29,7 +29,7 @@
 | AGP | **8.7.3** |
 | Kotlin | **2.1.21**（+ compose / serialization / KSP 同版本） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
-| Room DB | **v6**：v2 加 `courses.kind`（理论/实验），v3 加多课表（`timetables` 表 + `courses.timetableId`），v4 加成绩表 `scores`，v5 加调课检测（`detect_baselines`/`detect_reports`），v6 加一卡通流水（`ykt_turnovers`，orderId 主键 + jndatetime 索引——实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃）。逐级 `ALTER TABLE`/`CREATE TABLE`，**禁止**改 destructive |
+| Room DB | **v8**：v2 加 `courses.kind`（理论/实验），v3 加多课表（`timetables` 表 + `courses.timetableId`），v4 加成绩表 `scores`，v5 加调课检测（`detect_baselines`/`detect_reports`），v6 加一卡通流水（`ykt_turnovers`，orderId 主键 + jndatetime 索引），v7 加笔记·课件与作业（`notes`/`homework`，**按课程名归属、不带 timetableId**，DESIGN §4.20），v8 加 `courses.remark`（课程备注，DEFAULT ''，DESIGN §4.3）。实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；逐级 `ALTER TABLE`/`CREATE TABLE`，**禁止**改 destructive |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN 3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**） |
@@ -46,8 +46,31 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 # 构建 + 测试（本机依赖已齐备，加 --offline 后秒级完成）
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
 # APK: app\build\outputs\apk\debug\app-debug.apk
+# release（R8 压缩 + 签名，约 1.5 分钟）：app\build\outputs\apk\release\app-release.apk
+.\gradlew.bat :app:assembleRelease --offline
 ```
 
+
+- **release 自 2026-09-21 起开启 R8（`isMinifyEnabled` + `isShrinkResources`）**：体积 17.9MB → 3.6MB。
+  混淆规则改动（`proguard-rules.pro`）后**必须装 release 包冒烟**，且要冒到真实网络路径
+  （胖乖开水这类 Retrofit 接口）——R8 的问题不在编译期暴露。已踩的三个坑：
+  1. Tink 引用的 errorprone 注解、KeysDownloader 的可选依赖缺失 → `-dontwarn` 收口；
+     **不要**写成 `-keep class com.google.crypto.tink.**`，那会把缺口一起保住；
+  2. **只被泛型签名引用的模型类被整类删除**（2026-09-21 开水接口的真实根因，别再按"签名被剥"查）：
+     R8 静态分析看不到使用者（Retrofit/序列化都走运行期反射），把 `data/qiekj` 的模型类
+     （如占位类 `EmptyData`）与 `EmptyData$Companion`、`EmptyDataSerializer.INSTANCE` 删掉，
+     于是 `ApiEnvelope<EmptyData>` 的签名实参退化成 `Object`，调用时抛
+     `Unable to create converter for ApiEnvelope<java.lang.Object> for method …`；
+     **只有用到被删类型的接口会炸**，其余接口正常——所以它看起来像"某个功能坏了"而不是"混淆炸了"。
+     修法 = 整包 keep（`proguard-rules.pro` 里 `-keep class edu.jxslu.schedule.data.qiekj.**`）。
+     定位手法：release 临时加 `-printusage`，报告里**没有冒号的行**就是被整类删除的类；
+     DataStore/课表那几条 JSON 链是编译期 serializer，不受影响——**别只测它们就以为序列化没事**；
+  3. 冒烟要覆盖「开了混淆才走到的分支」：`-printusage/-printmapping` 只在本地临时加（用完删），
+     它们会把路径写进仓库文件。
+- **`WRITE_SECURE_SETTINGS`（快趣出行直达）是按包名一次性 adb 授权的**：
+  `adb shell pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`——
+  debug 与 release 是两个包，**各授一次**；没授权时该按钮走兜底（打开对方启动页而非首页），
+  这是预期行为不是 bug（见 `ui/ebike/EbikeQrScreen.kt` 的助手通道 KDoc）。
 - 测试结论从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总（Gradle 成功时不打印用例数）；
   读 XML 用 `-Encoding UTF8`，否则中文断言消息乱码。
 - 换机/重装后若 wrapper 重复下载：把 Gradle 8.10.2 解压版拷进
@@ -67,8 +90,15 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `JwHttpSessionTest`（检测登录链路：重定向解析参数顺序、IPv4 优先 DNS）、
 `EbikeQrTest`（共享单车出码：URL 拼装/车号校验/BitMatrix 参数/最近车号序列化）、
 `YktKeyboardTest`（校园卡键盘：字形 MD5 表/双射硬校验/密文构造/协议自检）、
-`YktModelsTest`（一卡通响应解析：BOM 剥离/错误码/CARD 账户提取）
-等 35 个测试类。
+`YktModelsTest`（一卡通响应解析：BOM 剥离/错误码/CARD 账户提取）、
+`MarkdownParserTest`（Markdown 子集：块/行内/嵌套/未闭合按字面回退/中文数字混排）、
+`MarkdownEditTest`（编辑器：列表续行全分支/选区包裹/`$` 自动配对/图片插入）、
+`MathTexTest`（LaTeX 子集：支持清单逐条解析/排版几何/超范围回退 null）、
+`NoteExcerptTest`（笔记摘要提取 + 正文 img 引用收集与移除）、
+`HomeworkCenterTest`（作业排序：逾期→今天→未来→无截止 / 汇总 / 截止文案）、
+`HomeworkReminderTest`（作业提醒点与有效期窗口 / 越窗跳过 / 去重键）、
+`CourseRemarkTest`（课程备注搬运：mergeKey 匹配/kid 区分/新行不覆盖/多行同 key）
+等 42 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` 恒为 1，不能当星期来源。
@@ -97,6 +127,21 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   高亮列规则是「今天还有课 → 今天，否则明天」，改这条前先读 DESIGN §3.6 的「明日接棒」。
 - 澎湃OS / MIUI 的负一屏只收录「小米小部件」（需开放平台审核），**原生小组件进不去**；
   设置页已给出替代路径（负一屏搜索 / 日历同步），不要把它当 bug 修（DESIGN §3.6「负一屏」）。
+- 课程备注（DESIGN §4.3）属于**课程行**（同一门课的不同时段各写各的），存储在 `courses.remark`；
+  覆盖导入（`replaceAllCourses`）与调课检测应用（`applyDetectGroups`）会重建课程行，
+  **必须**经 `domain/courseRemarksCarriedOver` 按 `Course.mergeKey()` 把备注搬回来——
+  少了这一步的表现是「导入一次备注全没了」。`mergeKey` 的唯一实现在 `domain/Models.kt`，
+  不要再往仓库里加第二份（导入去重、导入统计与备注搬运共用它）。
+- 笔记·课件与作业（DESIGN §3.11/§4.20）归属键 = **课程名原样字符串**，不带 courseId、不带
+  timetableId：课程行 id 在覆盖导入/调课/撤销里会被重建，绑 id 必丢数据；换课表后旧内容仍应可查。
+  改归属口径先读 §4.20「归属」的取舍段。
+- Markdown 渲染是**自研子集**（`domain/Markdown.kt` + `ui/common/MarkdownView.kt`）、公式是
+  **自研 TeX 子集**（`domain/MathTex.kt` + `ui/common/MathTex` 绘制）：超范围语法**原样显示源码**，
+  **不许**为了"好看"引入第三方渲染/公式库（体积与 `--offline` 构建是硬约束）。支持清单见 DESIGN §4.20。
+- 编辑器自动补全（列表续行 / `$` 补全 / 选区包裹）**只有一条口径**：`domain/MarkdownEdit.kt`
+  纯函数，UI 只负责把结果应用回 `TextFieldValue`；不要在 Composable 里另写续行判断。
+- 笔记/作业的图片只走系统 Photo Picker（`PickVisualMedia`）+ 应用私有目录，**不申请相册权限**；
+  正文引用形如 `![](img:文件名)`，删引用要同时清理文件（`data/repo/AttachmentStore.kt`）。
 
 ## 装真机
 
@@ -158,18 +203,22 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 ## 架构（改代码前对齐）
 
 ```
-MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity 承载二级页（含成绩查询 SCORES）
+MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity 承载二级页（含成绩查询 SCORES、
+               笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
+               HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score（纯逻辑，可 JVM 测）
-data/local/      Room v5：courses / time_slots / semester_config / timetables / scores
-                 / detect_baselines / detect_reports（调课检测，DESIGN §4.17）
+                 + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
+data/local/      Room v7：courses / time_slots / semester_config / timetables / scores
+                 / detect_baselines / detect_reports / ykt_turnovers / notes / homework
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
+                 NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
-ui/today|week|me|water|campus|jwvw|score|timetable|common|theme|widget|ebike
+ui/today|week|me|water|campus|jwvw|score|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -206,7 +255,9 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
 
 P1 脚手架 · P2 Room+UI · P3 我的页导入导出/学期 · P4 胖乖（已实现，待真机验证）·
 P5 教务 WebView · P5b 实验课表导入 — **已完成**  
-P6 打磨 — **进行中**
+P6 打磨 — **进行中**（2026-09-21：笔记·课件与作业落地，含自研 Markdown/LaTeX 渲染与
+作业截止提醒，见 DESIGN §3.11/§4.20；真机已验证 Room v6→v7 迁移与各新页面不崩，
+图片编辑与提醒弹出需人工点验）
 
 ## 仓库与发版
 
