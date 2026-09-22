@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.DetectFailurePolicy
@@ -40,6 +41,11 @@ data class DisplayPrefs(
     val themeMode: ThemeMode = ThemeMode.System,
     /** 动态取色（Material You）。全局项；false = 用回内置蓝绿方案。 */
     val dynamicColor: Boolean = true,
+    /**
+     * 悬浮导航栏（DESIGN §4.22）。全局项，**默认关**：底栏半透明磨砂，
+     * 课表页背景图透到屏幕底部。关 = 保持原样（不透明底栏）。
+     */
+    val floatingNavBar: Boolean = false,
     /**
      * 触感反馈开关。全局项（交互手感不随课表变）。
      * 默认开：点击类操作给轻触感是系统应用的普遍预期，嫌吵的人再关。
@@ -106,6 +112,16 @@ data class DisplayPrefs(
     val showAtSign: Boolean = true,
     /** 点击课表空白格是否新建课程。默认关：横滑切周易误触，加课走导入弹层/课程编辑。 */
     val tapBlankToAdd: Boolean = false,
+    /** 课表页背景图文件名（DESIGN §4.21）；null = 无背景。文件在 `filesDir/schedule_bg/`。 */
+    val bgImageName: String? = null,
+    /** 背景图自身不透明度。下限见 [TimetablePrefs.MinBgImageOpacity]。 */
+    val bgImageOpacity: Float = 1f,
+    /** 背景图压暗遮罩强度；上限见 [TimetablePrefs.MaxBgImageDim]。 */
+    val bgImageDim: Float = 0f,
+    /** 背景图模糊强度（0–1），映射到解码降采样档位。 */
+    val bgImageBlur: Float = 0f,
+    /** 背景图缩放方式（填充 / 适应 / 平铺）。 */
+    val bgImageScale: BgScale = BgScale.Fill,
     /** 今日页开水卡片显示开关（DESIGN §3.3 底部固定区）。默认开；关 = 不展示（含未登录态）。 */
     val waterCardEnabled: Boolean = true,
     /** 今日页共享单车卡显示开关（DESIGN §3.9）。默认开（用户要求入口常驻）。 */
@@ -232,6 +248,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 动态取色（Material You）。全局项，默认开；关 = 用回内置蓝绿方案。 */
     val dynamicColor: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_DYNAMIC_COLOR] ?: true
+    }
+
+    /** 悬浮导航栏（DESIGN §4.22）。默认关：不透明底栏是既有观感，用户显式开启才改。 */
+    val floatingNavBar: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_FLOATING_NAV_BAR] ?: false
     }
 
     /** 开水双击确认。全局项，默认双击防误触。 */
@@ -397,6 +418,10 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setDynamicColor(value: Boolean) {
         context.displayDataStore.edit { it[KEY_DYNAMIC_COLOR] = value }
+    }
+
+    suspend fun setFloatingNavBar(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_FLOATING_NAV_BAR] = value }
     }
 
     suspend fun setWaterRequireDoubleClick(value: Boolean) {
@@ -718,6 +743,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
+        val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")
         val KEY_WATER_REQUIRE_DOUBLE_CLICK = booleanPreferencesKey("water_require_double_click")
         val KEY_CALENDAR_REMINDER_MINUTES = intPreferencesKey("calendar_reminder_minutes")
         val KEY_REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")

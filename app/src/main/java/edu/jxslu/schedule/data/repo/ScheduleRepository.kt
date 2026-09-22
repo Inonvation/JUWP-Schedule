@@ -22,6 +22,8 @@ import edu.jxslu.schedule.domain.DetectGroup
 import edu.jxslu.schedule.domain.DetectReportPayload
 import edu.jxslu.schedule.domain.DetectSnapshotPayload
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.BgScale
+import edu.jxslu.schedule.domain.ScheduleBackground
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
 import edu.jxslu.schedule.domain.ScoreRecord
@@ -243,6 +245,12 @@ class ScheduleRepository(
         val recentIds: List<String>,
     )
 
+    /** 页面外壳类偏好的收拢切片：底栏形态（DESIGN §4.22）与今日页抽屉（§3.3）。 */
+    private data class ShellPrefs(
+        val floatingNavBar: Boolean,
+        val todayDockExpanded: Boolean,
+    )
+
     // ------------------------------------------------------------------
     // 课表清单与当前课表
     // ------------------------------------------------------------------
@@ -306,9 +314,13 @@ class ScheduleRepository(
         ),
         prefs.campusCardEnabled,
         prefs.viewPrefs,
-        // 今日页底部抽屉展开态（DESIGN §3.3）：dock 私有偏好，最外层 combine 的第 5 个参数
-        prefs.todayDockExpanded,
-    ) { global, ebike, campusCard, p, todayDockExpanded ->
+        // 外壳类偏好（DESIGN §3.3 今日页抽屉 / §4.22 悬浮导航栏）：最外层 combine 的第 5 个参数
+        combine(
+            prefs.floatingNavBar,
+            prefs.todayDockExpanded,
+            ::ShellPrefs,
+        ),
+    ) { global, ebike, campusCard, p, shell ->
         // 夹取沿用旧 DataStore 读路径的防线：旧数据/手改数据超出收紧后的滑块范围会让 Slider 抛异常
         DisplayPrefs(
             themeMode = global.theme,
@@ -320,7 +332,8 @@ class ScheduleRepository(
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
             campusCardEnabled = campusCard,
-            todayDockExpanded = todayDockExpanded,
+            floatingNavBar = shell.floatingNavBar,
+            todayDockExpanded = shell.todayDockExpanded,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
             showSaturday = p.showSaturday,
@@ -351,6 +364,14 @@ class ScheduleRepository(
             showGridLines = p.showGridLines,
             showAtSign = p.showAtSign,
             tapBlankToAdd = p.tapBlankToAdd,
+            bgImageName = p.bgImageName?.takeIf { ScheduleBackground.isValidFileName(it) },
+            bgImageOpacity = p.bgImageOpacity.coerceIn(
+                TimetablePrefs.MinBgImageOpacity,
+                1f,
+            ),
+            bgImageDim = p.bgImageDim.coerceIn(0f, TimetablePrefs.MaxBgImageDim),
+            bgImageBlur = p.bgImageBlur.coerceIn(0f, 1f),
+            bgImageScale = p.bgImageScale,
         )
         // 去重：combine 每次发射都 new 一个 DisplayPrefs，值实际没变（如写库后回读同值）
         // 时下游两个 VM 不必整体重算
@@ -452,10 +473,48 @@ class ScheduleRepository(
 
     suspend fun setShowGridLines(value: Boolean) = updateViewPrefs { it.copy(showGridLines = value) }
 
+    // ---- 课表页背景图（DESIGN §4.21）：文件名之外的三个数值写入前夹取，防脏数据撑爆绘制 ---
+
+    /**
+     * 设置背景图文件名；同时把三个数值参数重置回默认（不透明度 1、无遮罩、无模糊）。
+     *
+     * 根因：换一张图后旧图的参数不该沿用——上一条是「压暗 80% 的深色图」，
+     * 换成亮色图后整页糊成一片，用户还得自己一项项调回去。每次选图从干净状态起步。
+     */
+    suspend fun setBackgroundImage(fileName: String?) = updateViewPrefs {
+        if (fileName == null) {
+            it.copy(bgImageName = null)
+        } else {
+            it.copy(
+                bgImageName = fileName,
+                bgImageOpacity = 1f,
+                bgImageDim = 0f,
+                bgImageBlur = 0f,
+            )
+        }
+    }
+
+    suspend fun setBgImageOpacity(value: Float) = updateViewPrefs {
+        it.copy(bgImageOpacity = value.coerceIn(TimetablePrefs.MinBgImageOpacity, 1f))
+    }
+
+    suspend fun setBgImageDim(value: Float) = updateViewPrefs {
+        it.copy(bgImageDim = value.coerceIn(0f, TimetablePrefs.MaxBgImageDim))
+    }
+
+    suspend fun setBgImageBlur(value: Float) = updateViewPrefs {
+        it.copy(bgImageBlur = value.coerceIn(0f, 1f))
+    }
+
+    suspend fun setBgImageScale(value: BgScale) = updateViewPrefs { it.copy(bgImageScale = value) }
+
     suspend fun setThemeMode(value: ThemeMode) = prefs.setThemeMode(value)
 
     /** 动态取色开关（全局，默认开）。 */
     suspend fun setDynamicColor(value: Boolean) = prefs.setDynamicColor(value)
+
+    /** 悬浮导航栏（DESIGN §4.22）：底栏半透明磨砂，课表背景图透到屏幕底部。默认关。 */
+    suspend fun setFloatingNavBar(value: Boolean) = prefs.setFloatingNavBar(value)
 
     /** 触感反馈开关（全局）。 */
     suspend fun setHapticsEnabled(value: Boolean) = prefs.setHapticsEnabled(value)

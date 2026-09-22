@@ -1,17 +1,13 @@
 package edu.jxslu.schedule.data.repo
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import edu.jxslu.schedule.domain.imageRefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.util.Locale
-import kotlin.math.max
 import kotlin.random.Random
 
 /**
@@ -21,8 +17,7 @@ import kotlin.random.Random
  * 选图走系统 Photo Picker（`PickVisualMedia`，**零权限**），这里只负责把 Uri **复制**进来——
  * 不复制的话媒体库/SAF 授权随时可能失效，笔记里的图就白了。
  *
- * 压缩口径（唯一来源，别在 UI 里另写）：长边 > [MAX_SIDE] 或原始字节 > [MAX_BYTES] 时
- * 下采样 + 长边钳到 [MAX_SIDE]、JPEG 质量 [JPEG_QUALITY]；否则原样复制（保留 PNG 透明）。
+ * 压缩口径见 [ImageImport]（与课表背景图 §4.21 共用同一实现，别在 UI 里另写）。
  *
  * 清理：正文引用差集（移除即删）由调用方触发 [delete]，冷启动 [sweep] 兜底扫孤儿文件。
  */
@@ -41,53 +36,15 @@ class AttachmentStore(context: Context) {
     suspend fun importUri(uri: Uri): String? = withContext(Dispatchers.IO) {
         runCatching {
             dir.mkdirs()
-            val mime = resolver.getType(uri).orEmpty()
-            val isPng = mime.contains("png", ignoreCase = true)
-
-            // 第一遍：只读尺寸边界——不分配像素内存（48MP 照片整图 decode 要十几 MB 峰值）
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            val longSide = max(bounds.outWidth, bounds.outHeight)
-            if (bounds.outWidth <= 0 || longSide <= 0) return@runCatching null
-
-            // 文件字节数拿不到（部分 provider 返回 -1）时以尺寸为准，够用
-            val declaredBytes = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-            val needResize = longSide > MAX_SIDE || declaredBytes > MAX_BYTES
-
-            if (!needResize) {
-                // 小图：流式复制（不整图进内存），保留原格式与 PNG 透明
-                val fileName = newFileName(if (isPng) "png" else "jpg")
-                resolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(File(dir, fileName)).use { output -> input.copyTo(output) }
-                } ?: return@runCatching null
-                fileName
-            } else {
-                // 大图：第二遍带 inSampleSize 流式解码，长边钳到 MAX_SIDE 后 JPEG 重编码
-                val options = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSizeFor(longSide, MAX_SIDE)
-                }
-                val decoded = resolver.openInputStream(uri)
-                    ?.use { BitmapFactory.decodeStream(it, null, options) }
-                    ?: return@runCatching null
-                val scaled = if (max(decoded.width, decoded.height) > MAX_SIDE) {
-                    val ratio = MAX_SIDE.toFloat() / max(decoded.width, decoded.height)
-                    Bitmap.createScaledBitmap(
-                        decoded,
-                        (decoded.width * ratio).toInt().coerceAtLeast(1),
-                        (decoded.height * ratio).toInt().coerceAtLeast(1),
-                        true,
-                    )
-                } else {
-                    decoded
-                }
-                val out = java.io.ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-                if (scaled !== decoded) scaled.recycle()
-                decoded.recycle()
-                val fileName = newFileName("jpg")
-                FileOutputStream(File(dir, fileName)).use { it.write(out.toByteArray()) }
-                fileName
-            }
+            ImageImport.copyInto(
+                dir = dir,
+                uri = uri,
+                resolver = resolver,
+                maxSide = MAX_SIDE,
+                maxBytes = MAX_BYTES,
+                jpegQuality = JPEG_QUALITY,
+                fileNameFor = ::newFileName,
+            )
         }.getOrElse {
             Log.w(TAG, "import attachment failed", it)
             null
@@ -138,13 +95,6 @@ class AttachmentStore(context: Context) {
         return "${stamp}_$salt.$ext"
     }
 
-    /** 下采样倍数：2 的幂，保证解码后长边不小于目标（再精确缩放一次）。 */
-    private fun sampleSizeFor(longSide: Int, target: Int): Int {
-        var sample = 1
-        while (longSide / (sample * 2) >= target) sample *= 2
-        return sample
-    }
-
     companion object {
         private const val TAG = "AttachmentStore"
         private const val DIR_NAME = "notes_img"
@@ -153,7 +103,7 @@ class AttachmentStore(context: Context) {
         const val MAX_SIDE = 1920
 
         /** 原始字节上限：超过就重编码（1.5MB）。 */
-        const val MAX_BYTES = 1_500_000
+        const val MAX_BYTES = 1_500_000L
 
         const val JPEG_QUALITY = 88
     }

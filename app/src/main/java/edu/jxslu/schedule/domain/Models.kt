@@ -96,6 +96,25 @@ data class TimetablePrefs(
      */
     val tapBlankToAdd: Boolean = false,
     /**
+     * 课表页背景图的文件名（DESIGN §4.21）；null = 无背景。文件在
+     * `filesDir/schedule_bg/`，这里只存名字——路径与生命周期归
+     * `data/repo/ScheduleBackgroundStore`。
+     *
+     * 全局项：与其余显示偏好一样存 DataStore `view_prefs_json`，换课表不换背景。
+     */
+    val bgImageName: String? = null,
+    /** 背景图自身不透明度。与 [cellOpacity] 各自独立：那是格子色块的，这是页面底色的。 */
+    val bgImageOpacity: Float = 1f,
+    /**
+     * 背景图上的压暗遮罩强度。亮图上白字的课名与时间轴读不出来，
+     * 靠这一项压暗而不是去改课表配色。
+     */
+    val bgImageDim: Float = 0f,
+    /** 背景图模糊强度（0–1），映射到解码降采样档位，见 [ScheduleBackground.decodeLongSide]。 */
+    val bgImageBlur: Float = 0f,
+    /** 背景图缩放方式。 */
+    val bgImageScale: BgScale = BgScale.Fill,
+    /**
      * 周末拆分的迁移标记。
      *
      * 根因：[showWeekend] 与 [showSaturday]/[showSunday] 无法互推——
@@ -117,6 +136,12 @@ data class TimetablePrefs(
         const val MinDayHeaderHeightDp = 32f
         const val MaxDayHeaderHeightDp = 64f
         const val DefaultDayHeaderHeightDp = 44f
+
+        /** 背景图不透明度下限：再低就只剩一层脏色，不如直接移除。 */
+        const val MinBgImageOpacity = 0.15f
+
+        /** 压暗遮罩上限：全黑背景图等于把课表糊掉。 */
+        const val MaxBgImageDim = 0.85f
 
         private val format = kotlinx.serialization.json.Json {
             ignoreUnknownKeys = true
@@ -144,6 +169,30 @@ data class TimetablePrefs(
     }
 
     fun encode(): String = Companion.format.encodeToString(serializer(), this)
+}
+
+/**
+ * 课表页背景图的缩放方式（DESIGN §4.21）。
+ *
+ * 三档覆盖真实使用场景：竖屏手机配竖图用 [Fill] 铺满，横图不想被裁用 [Fit]，
+ * 小图或纹理图想重复铺用 [Tile]。
+ */
+enum class BgScale {
+    /** 裁切铺满整页（`ContentScale.Crop`）。 */
+    Fill,
+
+    /** 完整显示，留白露主题底色（`ContentScale.Fit`）。 */
+    Fit,
+
+    /** 按原始像素尺寸平铺，右/下不足一块时裁掉。 */
+    Tile;
+
+    val label: String
+        get() = when (this) {
+            Fill -> "填充"
+            Fit -> "适应"
+            Tile -> "平铺"
+        }
 }
 
 /**

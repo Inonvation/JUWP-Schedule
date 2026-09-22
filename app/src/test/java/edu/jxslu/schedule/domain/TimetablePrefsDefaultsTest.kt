@@ -2,6 +2,7 @@ package edu.jxslu.schedule.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,6 +25,12 @@ class TimetablePrefsDefaultsTest {
         assertTrue("文字竖直居中默认开", prefs.cellCenterV)
         assertFalse("虚线描边默认关", prefs.showCellBorder)
         assertFalse("点空白格新建课程默认关", prefs.tapBlankToAdd)
+        // 背景图（DESIGN §4.21）：默认没有背景，且三个数值参数不改变图片原样
+        assertNull("背景图默认未设置", prefs.bgImageName)
+        assertEquals(1f, prefs.bgImageOpacity, 0f)
+        assertEquals(0f, prefs.bgImageDim, 0f)
+        assertEquals(0f, prefs.bgImageBlur, 0f)
+        assertEquals(BgScale.Fill, prefs.bgImageScale)
     }
 
     @Test
@@ -48,6 +55,9 @@ class TimetablePrefsDefaultsTest {
         assertFalse(decoded.tapBlankToAdd)
         assertEquals(48f, decoded.railWidthDp, 0f)
         assertEquals(44f, decoded.dayHeaderHeightDp, 0f)
+        // 升级用户不该「凭空多出一张背景图」
+        assertNull(decoded.bgImageName)
+        assertEquals(BgScale.Fill, decoded.bgImageScale)
     }
 
     /** 用户已写入的设置不能被新默认值覆盖。 */
