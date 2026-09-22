@@ -123,6 +123,25 @@ class TodayViewModel(
         .map { it.campusCardEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /**
+     * 今日页底部抽屉展开态（DESIGN §3.3，2026-09-22）：快捷方式网格、快趣出行码、
+     * 水宝宝一卡通、胖乖生活开水整块折进一行把手之下，展开态持久化。
+     * 同 [waterCardEnabled] 口径：纯设置值，单独订阅不掺课表状态。
+     *
+     * **可空**：null = DataStore 还没读出。UI 拿 null 时不渲染 dock，就绪后一次按终态渲染。
+     * 早先写成「Boolean 初值 true + 另一条 ready 门闸」两件套，两条流不同帧到达，
+     * 于是仍会闪一次「先展开、再收起」（2026-09-22 用户反馈）。一个可空值把
+     * 「就绪」与「值」绑在一起，没有中间态。
+     */
+    val todayDockExpanded: StateFlow<Boolean?> = repo.displayPrefs
+        .map { it.todayDockExpanded }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** 折叠 / 展开底部抽屉；写库后由 [todayDockExpanded] 回流。 */
+    fun setTodayDockExpanded(expanded: Boolean) {
+        viewModelScope.launch { repo.setTodayDockExpanded(expanded) }
+    }
+
     /** 界面每 30 秒调一次：让「还剩 X 分钟」和课的状态跟着时间走。 */
     fun refreshTick() {
         tick.value = System.currentTimeMillis()

@@ -425,12 +425,27 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     private val _balance = MutableStateFlow<PayCodeViewModel.BalanceSnapshot?>(null)
     val balance: StateFlow<PayCodeViewModel.BalanceSnapshot?> = _balance
 
+    private val _balanceLoaded = MutableStateFlow(false)
+
+    /**
+     * 余额状态是否**已确定**（2026-09-22 加）：尝试过加载（成功或失败）、
+     * 或压根没得加载（无凭证 / 开关关）都算。
+     *
+     * 今日页卡片副行据此区分两种 null：还没确定 → 「余额读取中…」；
+     * 确定但没有 → 「点击出示付款码」。少了这个标志，首帧只能先显示后者、
+     * 数据到了再换成数字，看着就是一次突变（用户反馈）。
+     */
+    val balanceLoaded: StateFlow<Boolean> = _balanceLoaded
+
     init {
         // 今日页也挂本 VM（卡片余额+弹窗充值）；开关关时绝不发起任何一卡通网络动作
         if (credentialStore.read() != null) {
             viewModelScope.launch {
                 val enabledNow = prefs.campusCardEnabled.first()
-                if (!enabledNow) return@launch
+                if (!enabledNow) {
+                    _balanceLoaded.value = true
+                    return@launch
+                }
                 try {
                     val saved = credentialStore.read() ?: return@launch
                     val cards = repo.cards(saved.username, saved.password)
@@ -446,6 +461,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 } catch (e: Exception) {
                     // 静默：余额取不到不影响设置页其余功能
                 }
+                _balanceLoaded.value = true
                 // 恢复未确认充值（进程被杀场景，DESIGN §4.19「充值」）：窗口内重启轮询，超窗清除
                 val pending = runCatching { prefs.pendingRecharge.first() }.getOrNull()
                 if (pending != null) {
@@ -459,6 +475,9 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                     }
                 }
             }
+        } else {
+            // 没有凭证 = 没有余额可等，直接算「已确定」：卡片副行落「点击出示付款码」
+            _balanceLoaded.value = true
         }
     }
 

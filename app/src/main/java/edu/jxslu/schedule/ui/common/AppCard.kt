@@ -86,6 +86,10 @@ fun AppCard(
  *
  * 行内容自己 `weight`/`fillMaxWidth`；本组件已给足宽度（`fillMaxWidth`）。
  * 两行以上的复合内容用 [AppCard] + 自组 Row，或用本组件 + 内部 Column（见作业卡）。
+ *
+ * 内容用 `Arrangement.Center` 而非默认 Top：调用方常配 `heightIn(min = …)` 让一排卡片等高
+ * （今日页服务格/开水卡 58dp），而 Column 的默认 Top 会把"卡片比内容高出来的那几 dp"
+ * 全留在底部——观感就是文字偏上（2026-09-22 用户反馈）。
  */
 @Composable
 fun AppCardRow(
@@ -103,6 +107,7 @@ fun AppCardRow(
         onClickLabel = onClickLabel,
         enabled = enabled,
         contentPadding = contentPadding,
+        verticalArrangement = Arrangement.Center,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),

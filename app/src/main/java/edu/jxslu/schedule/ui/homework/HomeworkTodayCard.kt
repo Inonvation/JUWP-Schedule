@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.domain.dueLabel
@@ -60,20 +61,13 @@ fun HomeworkTodayCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "作业 · ${pending.total} 项未完成",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = onSurface,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    imageVector = HugeIcons.ChevronRight,
-                    contentDescription = null,
-                    tint = onSurface.copy(alpha = 0.35f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
+            Text(
+                text = "作业 · ${pending.total} 项未完成",
+                style = MaterialTheme.typography.titleSmall,
+                color = onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val parts = buildList {
                     pending.nextDue?.let { due -> dueLabel(due, today)?.let { add("最近截止 $it") } }
@@ -100,5 +94,14 @@ fun HomeworkTodayCard(
                 }
             }
         }
+        // 右箭头放卡片层级，跟左图标一样在**整张卡**上竖直居中；
+        // 挂在标题行里只会跟标题居中，两行结构下看着就偏上（2026-09-22 用户反馈）
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            imageVector = HugeIcons.ChevronRight,
+            contentDescription = null,
+            tint = onSurface.copy(alpha = 0.35f),
+            modifier = Modifier.size(18.dp),
+        )
     }
 }

@@ -119,7 +119,10 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   不要用 `day - 1` 当列号（隐藏周六但显示周日时会错位）。
 - 今日页底部固定区（快捷方式网格 → **服务格一行两列** → 开水卡）是 `TodayBottomDock`，
   **钉在滚动区下方**、不进 `LazyColumn`；三态（加载/空/有课）共用同一份，别只改一处。
-  开水卡不并进服务格（卡内要放解锁按钮与出水进度）。改版前先读 DESIGN §3.3。
+  开水卡不并进服务格（卡内要放解锁按钮与出水进度）。整块内容可折叠（把手「常用功能」，
+  展开态存 `DisplayPrefs.todayDockExpanded`，默认展开），**折叠动画只做高度、锚点必须选 Top**
+  ——锚 Bottom 或再叠一层 slide 都会变形，两个失败版本记在 DESIGN §3.3，别重复试。
+  改版前先读 DESIGN §3.3。
 - 卡片观感**只有一处定义**：`ui/common/AppCard.kt` 的 `AppCard` / `AppCardRow`
   （14dp 圆角 + 1dp `outlineVariant` 描边 + surface 底）。新卡片一律走它，
   **不要**再私写 `RoundedCornerShape` + `border`（2026-09-22 之前 12dp/14dp 两套并存）；

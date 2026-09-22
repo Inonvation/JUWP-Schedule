@@ -306,7 +306,9 @@ class ScheduleRepository(
         ),
         prefs.campusCardEnabled,
         prefs.viewPrefs,
-    ) { global, ebike, campusCard, p ->
+        // 今日页底部抽屉展开态（DESIGN §3.3）：dock 私有偏好，最外层 combine 的第 5 个参数
+        prefs.todayDockExpanded,
+    ) { global, ebike, campusCard, p, todayDockExpanded ->
         // 夹取沿用旧 DataStore 读路径的防线：旧数据/手改数据超出收紧后的滑块范围会让 Slider 抛异常
         DisplayPrefs(
             themeMode = global.theme,
@@ -318,6 +320,7 @@ class ScheduleRepository(
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
             campusCardEnabled = campusCard,
+            todayDockExpanded = todayDockExpanded,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
             showSaturday = p.showSaturday,
@@ -373,6 +376,9 @@ class ScheduleRepository(
 
     /** 今日页校园卡付款码卡开关（DESIGN §3.10）。凭证的写/清走 YktCredentialStore，不在这里。 */
     suspend fun setCampusCardEnabled(value: Boolean) = prefs.setCampusCardEnabled(value)
+
+    /** 今日页底部抽屉展开态（DESIGN §3.3）。 */
+    suspend fun setTodayDockExpanded(value: Boolean) = prefs.setTodayDockExpanded(value)
 
     suspend fun updateShortcuts(transform: (List<ShortcutItem>) -> List<ShortcutItem>) =
         prefs.updateShortcuts(transform)

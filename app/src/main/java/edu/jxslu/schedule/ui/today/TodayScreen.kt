@@ -1,6 +1,11 @@
 package edu.jxslu.schedule.ui.today
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -94,12 +99,15 @@ import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberWaterRequireDoubleClick
 import edu.jxslu.schedule.ui.water.WaterEvent
+import edu.jxslu.schedule.ui.water.WaterUiState
 import edu.jxslu.schedule.ui.water.WaterViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.CalendarOff
 import me.rerere.hugeicons.stroke.CheckmarkCircle02
+import me.rerere.hugeicons.stroke.ChevronDown
+import me.rerere.hugeicons.stroke.ChevronUp
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Edit02
@@ -166,6 +174,7 @@ fun TodayScreen(
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
     val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
     val campusCardEnabled by viewModel.campusCardEnabled.collectAsStateWithLifecycle()
+    val dockExpanded by viewModel.todayDockExpanded.collectAsStateWithLifecycle()
     // 校园卡余额与充值/到账（DESIGN §3.10/§4.19）：与设置页共享同一 VM 类，
     // 依赖全是 Graph 单例；init 内部自检开关，关时零网络动作
     val campusViewModel: edu.jxslu.schedule.ui.campus.CampusCardViewModel = viewModel(
@@ -174,6 +183,7 @@ fun TodayScreen(
         ),
     )
     val campusBalance by campusViewModel.balance.collectAsStateWithLifecycle()
+    val campusBalanceLoaded by campusViewModel.balanceLoaded.collectAsStateWithLifecycle()
     val campusArrival by campusViewModel.arrivalState.collectAsStateWithLifecycle()
     var showCampusEntrySheet by remember { mutableStateOf(false) }
     var showCampusRechargeSheet by remember { mutableStateOf(false) }
@@ -240,7 +250,9 @@ fun TodayScreen(
     // 「快捷方式在上、开水卡最底」的顺序与贴底位置只有一处定义
     val bottomDock: @Composable () -> Unit = {
         TodayBottomDock(
+            dockExpanded = dockExpanded,
             shortcuts = shortcuts,
+            onToggleDock = { viewModel.setTodayDockExpanded(dockExpanded != true) },
             onOpenShortcuts = onOpenShortcuts,
             onShortcutError = showShortcutError,
             onNotice = showNotice,
@@ -266,7 +278,10 @@ fun TodayScreen(
                     ServiceCard(
                         icon = HugeIcons.CreditCard,
                         title = "水宝宝一卡通",
-                        subtitle = balance?.let { "$it ›" } ?: "点击出示付款码",
+                        // 余额是网络取的：没拉过先说「读取中」，拉过但没有（未登录/凭证失效）
+                        // 才说「点击出示付款码」——否则首帧的占位文案会被真值顶掉，看着是一次突变
+                        subtitle = balance?.let { "$it ›" }
+                            ?: if (campusBalanceLoaded) "点击出示付款码" else "余额读取中…",
                         onClickLabel = "打开校园卡付款码",
                         onClick = onOpenPayCode,
                         onSubtitleClick = balance?.let { { showCampusEntrySheet = true } },
@@ -498,6 +513,13 @@ fun TodayScreen(
 @Composable
 private fun TodayBottomDock(
     shortcuts: ShortcutSettings,
+    /**
+     * 底部抽屉展开态（DESIGN §3.3）；持久化，进页面时按上次的来。
+     * **null = DataStore 还没读出**，整块不渲染——先按默认值画一帧再纠回来
+     * 会看到「抽屉先展开、再收起」的一闪（2026-09-22 用户反馈）。
+     */
+    dockExpanded: Boolean?,
+    onToggleDock: () -> Unit,
     onOpenShortcuts: (String?) -> Unit,
     onShortcutError: (String, String?) -> Unit,
     onNotice: (String, NoticeTone) -> Unit = { _, _ -> },
@@ -508,6 +530,7 @@ private fun TodayBottomDock(
     /** 开水卡（含未登录态，显示设置可关）；恒为 dock 最后一项 */
     waterCard: (@Composable () -> Unit)? = null,
 ) {
+    val expanded = dockExpanded ?: return
     val hasShortcuts = shortcuts.enabled && shortcuts.items.isNotEmpty()
     if (!hasShortcuts && ebikeCard == null && campusCard == null && waterCard == null) return
 
@@ -519,34 +542,61 @@ private fun TodayBottomDock(
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .heightIn(max = maxHeight)
             .verticalScroll(rememberScrollState())
-            .padding(top = 12.dp, bottom = 16.dp),
+            .padding(bottom = 16.dp),
     ) {
-        if (hasShortcuts) {
-            ShortcutQuickGrid(shortcuts.items, { onOpenShortcuts(null) }, onShortcutError, onNotice)
-        }
-        // 服务格一行两列：两个开关各自独立，只开一个时它独占整行（不补空位，
-        // 免得单张卡留半屏空白）
-        val serviceCards: List<@Composable () -> Unit> = listOfNotNull(ebikeCard, campusCard)
-        if (serviceCards.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = if (hasShortcuts) 16.dp else 0.dp,
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                serviceCards.forEach { card ->
-                    Box(Modifier.weight(1f)) { card() }
+        // 把手恒在：整块内容（快捷方式网格 + 服务格 + 开水卡）都在它下面折叠
+        DockHandle(expanded = expanded, onToggle = onToggleDock)
+        // 只做高度动画，锚点选 **Top**：dock 贴底，高度收缩时它的顶边向下走，内容锚在顶边
+        // 于是整块跟着下移、底部滑出屏幕——这就是「抽屉整体下降」。
+        // 试过的两个版本都栽在这一点上：锚 Bottom（默认）时内容底边固定、只被削掉顶部；
+        // 再叠一层 slide 则是位移叠加（顶边下移 H + 内容自身再移 H = 2H），看上去像瞬间消失。
+        // 缓动统一 tween + FastOutSlowIn（缓入缓出），不用默认 spring——整屏宽的面板弹一下很晃。
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(
+                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.Top,
+            ),
+            exit = shrinkVertically(
+                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.Top,
+            ),
+        ) {
+            Column {
+                if (hasShortcuts) {
+                    ShortcutQuickGrid(
+                        shortcuts.items,
+                        { onOpenShortcuts(null) },
+                        onShortcutError,
+                        onNotice,
+                    )
+                }
+                // 服务格一行两列：两个开关各自独立，只开一个时它独占整行
+                // （不补空位，免得单张卡留半屏空白）
+                val serviceCards: List<@Composable () -> Unit> =
+                    listOfNotNull(ebikeCard, campusCard)
+                if (serviceCards.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = if (hasShortcuts) 16.dp else 0.dp,
+                            ),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        serviceCards.forEach { card ->
+                            Box(Modifier.weight(1f)) { card() }
+                        }
+                    }
+                }
+                if (waterCard != null) {
+                    // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
+                    val hasAbove = hasShortcuts || serviceCards.isNotEmpty()
+                    Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { waterCard() }
                 }
             }
-        }
-        if (waterCard != null) {
-            // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
-            val hasAbove = hasShortcuts || serviceCards.isNotEmpty()
-            Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { waterCard() }
         }
     }
 }
@@ -1021,6 +1071,54 @@ private fun WaterCard(vm: WaterViewModel, onOpen: () -> Unit) {
 }
 
 /**
+ * 底部抽屉的把手（DESIGN §3.3，2026-09-22 加）。快捷方式网格、快趣出行码、水宝宝一卡通、
+ * 胖乖生活开水**整块**收在它下面，展开态持久化（`DisplayPrefs.todayDockExpanded`，默认展开）。
+ *
+ * 收起后 dock 只剩这一行（约 40dp）——大字体小屏上四张卡 + 三行图标最容易吃掉半屏，
+ * 而这一整块并非每屏都要看。把手恒在：收起态它是「下面还有东西」的提示，也是唯一的
+ * 展开入口，不能跟着一起藏。文案「常用功能」固定，右侧「展开 / 收起 + 方向箭头」表达状态。
+ */
+@Composable
+private fun DockHandle(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val haptics = rememberAppHaptics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClickLabel = if (expanded) "收起常用功能" else "展开常用功能") {
+                haptics.tap()
+                onToggle()
+            }
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "常用功能",
+            style = MaterialTheme.typography.labelLarge,
+            color = onSurface.copy(alpha = 0.75f),
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = if (expanded) "收起" else "展开",
+            style = MaterialTheme.typography.bodySmall,
+            color = onSurface.copy(alpha = 0.5f),
+        )
+        Spacer(Modifier.width(2.dp))
+        Icon(
+            imageVector = if (expanded) HugeIcons.ChevronUp else HugeIcons.ChevronDown,
+            contentDescription = null,
+            tint = onSurface.copy(alpha = 0.5f),
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+/**
  * 底部固定区的服务格（DESIGN §3.3/§3.9/§3.10，2026-09-22 由整行卡改两列并排）。
  *
  * 一行两格，每格 = 图标 + 标题 + 副行（可空）。格宽约 158dp（360dp 屏），
@@ -1065,12 +1163,14 @@ private fun ServiceCard(
                 overflow = TextOverflow.Ellipsis,
             )
             if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = onSurface.copy(alpha = 0.55f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                // 副行文案会从占位换成真值（「余额读取中…」→「余额 ¥8.63 ›」），
+                // 硬切像一次突变，淡入淡出更稳（2026-09-22 用户反馈）
+                Crossfade(
+                    targetState = subtitle,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "serviceSubtitle",
+                    // 只给竖直内边距：横向 padding 会把副行整体右移 2dp，与标题左缘错开
+                    // （2026-09-22 用户反馈「两张卡的文字没对齐」的根因）
                     modifier = if (onSubtitleClick == null) {
                         Modifier
                     } else {
@@ -1080,9 +1180,17 @@ private fun ServiceCard(
                                 haptics.tap()
                                 onSubtitleClick()
                             }
-                            .padding(horizontal = 2.dp, vertical = 2.dp)
+                            .padding(vertical = 2.dp)
                     },
-                )
+                ) { text ->
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = onSurface.copy(alpha = 0.55f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -1162,20 +1270,24 @@ private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit) {
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                text = when (flow) {
-                    is UnlockFlowState.Idle -> "胖乖生活 · " +
-                        (state.selectedDevice?.goodsName?.ifBlank { "未命名设备" } ?: "未选择设备")
-                    is UnlockFlowState.PreChecking -> flow.step
-                    is UnlockFlowState.Working -> "正在出水 ${waterClock(flow.elapsedSeconds)}"
-                    is UnlockFlowState.Success -> "开水成功 · 花费 ¥${calculateActualCost(flow.result)}"
-                    is UnlockFlowState.Failed -> "开水失败 · ${flow.message}"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            val title = when (flow) {
+                is UnlockFlowState.Idle -> "胖乖生活 · " + waterDeviceLabel(state)
+                is UnlockFlowState.PreChecking -> flow.step
+                is UnlockFlowState.Working -> "正在出水 ${waterClock(flow.elapsedSeconds)}"
+                is UnlockFlowState.Success -> "开水成功 · 花费 ¥${calculateActualCost(flow.result)}"
+                is UnlockFlowState.Failed -> "开水失败 · ${flow.message}"
+            }
+            if (flow is UnlockFlowState.Idle) {
+                // 设备名是异步取的（占位 → 真值），硬切像一次突变，淡入淡出更稳。
+                // 只给 Idle 这一支：出水计时那种每秒都变的文案淡入淡出会一直闪
+                Crossfade(
+                    targetState = title,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "waterCardTitle",
+                ) { text -> WaterCardTitle(text) }
+            } else {
+                WaterCardTitle(title)
+            }
             if (flow is UnlockFlowState.Idle) {
                 Text(
                     text = if (rememberWaterRequireDoubleClick()) {
@@ -1216,6 +1328,32 @@ private fun waterClock(totalSeconds: Int): String {
     val m = totalSeconds / 60
     val s = totalSeconds % 60
     return "%02d:%02d".format(m, s)
+}
+
+/**
+ * 开水卡 Idle 态的设备名（2026-09-22）：设备列表是异步取的，
+ * 没拉过先说「读取设备…」，拉过但没有才说「未选择设备」——首帧的占位文案
+ * 不该用一个可能被立刻顶掉的结论。
+ *
+ * `devices.isEmpty()` 也算未就绪：[WaterUiState] 的 `loadingDevices` 初值是 false，
+ * 而 `refreshDevices` 要等协程跑起来才置 true，中间那一帧会落到「未选择设备」。
+ * 这张卡只在已登录时出现（未登录走 `WaterLoggedOutCard`），已登录却没有设备列表，
+ * 只能是还没拉到。
+ */
+private fun waterDeviceLabel(state: WaterUiState): String =
+    state.selectedDevice?.goodsName?.ifBlank { "未命名设备" }
+        ?: if (state.loadingDevices || state.devices.isEmpty()) "读取设备…" else "未选择设备"
+
+/** 开水卡主行文本（Idle 与流程态共用同一套字重与截断口径）。 */
+@Composable
+private fun WaterCardTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 /**

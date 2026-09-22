@@ -129,6 +129,15 @@ data class DisplayPrefs(
      * 存 `ykt_credentials.xml`（EncryptedSharedPreferences），有没有凭证读 store 即知。
      */
     val campusCardEnabled: Boolean = false,
+    /**
+     * 今日页底部抽屉是否展开（DESIGN §3.3，2026-09-22 加）：快捷方式网格、快趣出行码、
+     * 水宝宝一卡通、胖乖生活开水**整块**折进一行把手之下。
+     *
+     * **默认展开**：与加抽屉之前的表现一致（这些入口常驻可见）——用户开着某个开关
+     * 本就是要用它，默认收起等于把入口藏起来。
+     * 用户点一次收起即记忆，之后进今日页都是收起态。
+     */
+    val todayDockExpanded: Boolean = true,
 )
 
 /**
@@ -304,6 +313,11 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_CAMPUS_CARD_ENABLED] ?: false
     }.distinctUntilChanged()
 
+    /** 今日页底部抽屉展开态（DESIGN §3.3）。全局项，默认展开。 */
+    val todayDockExpanded: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_TODAY_DOCK_EXPANDED] ?: true
+    }.distinctUntilChanged()
+
     /**
      * 未确认充值（DESIGN §4.19「充值」）：下单成功的金额（分）+ 下单时刻（epoch 毫秒）。
      * **持久化**——到账检测轮询在内存，微信支付期间进程可能被系统回收（MIUI 激进省电），
@@ -428,6 +442,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 今日页校园卡付款码卡开关（DESIGN §3.10）。 */
     suspend fun setCampusCardEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_CAMPUS_CARD_ENABLED] = value }
+    }
+
+    /** 今日页底部抽屉展开态（DESIGN §3.3）。 */
+    suspend fun setTodayDockExpanded(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_TODAY_DOCK_EXPANDED] = value }
     }
 
     /** 共享单车出码自动存相册开关（DESIGN §3.9）。 */
@@ -719,6 +738,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_PENDING_DELETE = stringSetPreferencesKey("ebike_pending_delete")
         val KEY_EBIKE_RECENT_IDS = stringPreferencesKey("ebike_recent_ids")
         val KEY_CAMPUS_CARD_ENABLED = booleanPreferencesKey("campus_card_enabled")
+        val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
         val KEY_PENDING_RECHARGE_FEN = longPreferencesKey("pending_recharge_fen")
         val KEY_PENDING_RECHARGE_AT = longPreferencesKey("pending_recharge_at")
         val KEY_SHORTCUTS_JSON = stringPreferencesKey("shortcuts_json")
