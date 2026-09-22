@@ -49,8 +49,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.prefs.PendingRecharge
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.domain.YktArrival
+import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktException
@@ -388,6 +391,20 @@ fun CampusCardSettingsScreen(
             onOpenPayCode = onOpenPayCode,
         )
     }
+
+    // 「支付成功」：付款码页检测到扣款会自己退出，弹窗落在退回来的这一页
+    // （今日页也有同一份，DESIGN §3.10）。取值即消费，避免被压在后头的页面再弹一次
+    val payResult by PayCodeResultBus.result.collectAsStateWithLifecycle()
+    var paidPayment by remember { mutableStateOf<YktPayment?>(null) }
+    androidx.compose.runtime.LaunchedEffect(payResult) {
+        payResult?.let {
+            paidPayment = it
+            PayCodeResultBus.consume()
+        }
+    }
+    paidPayment?.let { paid ->
+        CampusPaymentDialog(payment = paid, onDismiss = { paidPayment = null })
+    }
 }
 
 
@@ -462,16 +479,20 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                     // 静默：余额取不到不影响设置页其余功能
                 }
                 _balanceLoaded.value = true
-                // 恢复未确认充值（进程被杀场景，DESIGN §4.19「充值」）：窗口内重启轮询，超窗清除
+                // 恢复未确认充值（进程被杀场景，DESIGN §4.19「充值」）：窗口内重启轮询，超窗清除。
+                // 基线一并从记录里恢复，重启后余额口径照常可用（只靠流水口径会漏判到账）
                 val pending = runCatching { prefs.pendingRecharge.first() }.getOrNull()
                 if (pending != null) {
-                    val (orderFen, startedAt) = pending
                     val saved = credentialStore.read()
-                    if (saved == null || System.currentTimeMillis() - startedAt >= ARRIVAL_WATCH_MS) {
+                    if (saved == null || System.currentTimeMillis() - pending.startedAt >= ARRIVAL_WATCH_MS) {
                         prefs.clearPendingRecharge()
                     } else {
-                        _arrivalState.value = ArrivalState.Watching(orderFen = orderFen, startedAt = startedAt)
-                        startArrivalWatch(saved.username, saved.password, orderFen, startedAt)
+                        restoreArrivalBaseline(pending)
+                        _arrivalState.value = ArrivalState.Watching(
+                            orderFen = pending.orderFen,
+                            startedAt = pending.startedAt,
+                        )
+                        startArrivalWatch(saved.username, saved.password, pending.orderFen, pending.startedAt)
                     }
                 }
             }
@@ -571,7 +592,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 onResult(NoticeFeedback("凭证已失效，请重新填写学号密码", NoticeTone.Warning))
                 return@launch
             }
-            val order = try {
+            val placed = try {
                 withTimeoutOrNull(RECHARGE_TIMEOUT_MS) {
                     repo.rechargeCreate(saved.username, saved.password, yuan)
                 }
@@ -589,15 +610,23 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 )
                 return@launch
             }
-            if (order == null) {
+            if (placed == null) {
                 onResult(NoticeFeedback("下单超时，请检查网络后重试", NoticeTone.Error))
                 return@launch
             }
-            // 到账检测基线 + 持久化未确认充值（进程被杀后可恢复，DESIGN §4.19「充值」）
+            val order = placed.order
+            // 到账检测基线（付款前的该卡余额 + 卡号，随下单一起拿到）+
+            // 持久化未确认充值（进程被杀后可恢复，DESIGN §4.19「充值」）
             val orderFen = parsedFenOf(yuan)
             val startedAt = System.currentTimeMillis()
-            _arrivalBaseFen = _balance.value?.totalFen
-            prefs.setPendingRecharge(orderFen, startedAt)
+            _arrivalBaseFen = placed.cardBalanceBeforeFen
+            _arrivalAccount = placed.cardAccount
+            prefs.setPendingRecharge(
+                fen = orderFen,
+                at = startedAt,
+                balanceBeforeFen = placed.cardBalanceBeforeFen,
+                cardAccount = placed.cardAccount,
+            )
             when (order) {
                 is YktRechargeOrder.WechatPay -> {
                     // 直拉微信（跳过浏览器与收银台页；weixin://wap/pay 由微信客户端接手）
@@ -658,7 +687,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             while (isActive && System.currentTimeMillis() < deadline) {
                 kotlinx.coroutines.delay(ARRIVAL_POLL_MS)
                 round++
-                if (checkArrivalOnce(username, password, orderFen, startedAt)) return@launch
+                if (checkArrivalOnce(username, password, orderFen)) return@launch
                 // 流水同步降频：每 3 轮（15s）一次，减轻服务端压力
                 if (round % 3 == 0) {
                     if (checkTurnoverArrival(username, password, orderFen, startedAt)) return@launch
@@ -671,29 +700,31 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     }
 
     /**
-     * 单轮到账检测。**余额口径有基线才判**（startFen 未知时不能用"余额 > 基线"——
-     * 会把未到账误报成到账），未知基线时依赖流水口径。
+     * 单轮到账检测（余额口径）。**有基线才判**（基线未知时不能用"余额 > 基线"——会把
+     * 未到账误报成到账），且只认**付款那张卡**的增长：判定口径在 [YktArrival.balanceArrival]。
+     * 基线/卡号缺失（升级前的旧记录）时本口径直接放弃，交给流水口径。
      */
     private suspend fun checkArrivalOnce(
         username: String,
         password: String,
         orderFen: Long,
-        startedAt: Long,
     ): Boolean {
         try {
             val cards = repo.cards(username, password)
             if (cards.isNotEmpty()) {
-                val snapshot = PayCodeViewModel.BalanceSnapshot(
+                _balance.value = PayCodeViewModel.BalanceSnapshot(
                     cards = cards,
                     totalFen = cards.sumOf { it.cardBalanceFen },
                     elecFen = cards.sumOf { it.elecBalanceFen },
                 )
-                _balance.value = snapshot
-                val base = _arrivalBaseFen
-                if (base != null && snapshot.totalFen >= base + orderFen) {
-                    _arrivalState.value = ArrivalState.Arrived(orderFen = orderFen, newBalanceFen = snapshot.totalFen)
-                    _pendingConfirmVisible.value = false
-                    prefs.clearPendingRecharge()
+                val arrivedFen = YktArrival.balanceArrival(
+                    account = _arrivalAccount,
+                    balanceBeforeFen = _arrivalBaseFen,
+                    orderFen = orderFen,
+                    cardBalances = cards.associate { it.account to it.cardBalanceFen },
+                )
+                if (arrivedFen != null) {
+                    markArrived(orderFen = orderFen, newBalanceFen = arrivedFen)
                     return true
                 }
             }
@@ -703,6 +734,13 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             // 余额失败不中断，流水口径再试
         }
         return false
+    }
+
+    /** 判定到账的三处动作只有这一份：置 Arrived、撤「正在确认」弹窗、清持久化等待记录。 */
+    private suspend fun markArrived(orderFen: Long, newBalanceFen: Long?) {
+        _arrivalState.value = ArrivalState.Arrived(orderFen = orderFen, newBalanceFen = newBalanceFen)
+        _pendingConfirmVisible.value = false
+        prefs.clearPendingRecharge()
     }
 
     private suspend fun checkTurnoverArrival(
@@ -715,9 +753,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             syncer.sync(username, password, maxPages = 1)
             val count = db.yktTurnoverDao().countIncomeSince(startedAt)
             if (count > 0) {
-                _arrivalState.value = ArrivalState.Arrived(orderFen = orderFen, newBalanceFen = _balance.value?.totalFen)
-                _pendingConfirmVisible.value = false
-                prefs.clearPendingRecharge()
+                markArrived(orderFen = orderFen, newBalanceFen = _balance.value?.totalFen)
                 return true
             }
         } catch (e: CancellationException) {
@@ -731,7 +767,10 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     /**
      * 页面回到前台（从微信返回等）：立即补检一轮——不等下一个 5 秒周期，
      * 这是「支付完回来马上看到结果」的关键；进程被杀重启时同时恢复等待态。
-     * 恢复/等待中弹出「正在确认到账」提示弹窗（用户关掉不影响轮询）。
+     *
+     * 本回调在**每次**进页/回前台都会触发（生命周期观察者补齐时会补发 ON_RESUME），
+     * 所以「正在确认到账」弹窗按**每笔充值一次**弹：弹过就落库标记，之后同一笔充值
+     * 不再弹，等待态改由余额卡的「正在等待到账」行承载。用户关掉弹窗不影响轮询。
      */
     fun onHostResume() {
         val st = _arrivalState.value
@@ -739,26 +778,47 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         viewModelScope.launch {
             val saved = credentialStore.read() ?: return@launch
             val pending = prefs.pendingRecharge.first()
-            val (orderFen, startedAt) = when {
-                st is ArrivalState.Watching -> st.orderFen to st.startedAt
-                pending != null -> pending.first to pending.second
+            val orderFen: Long
+            val startedAt: Long
+            when {
+                st is ArrivalState.Watching -> {
+                    orderFen = st.orderFen
+                    startedAt = st.startedAt
+                }
+                pending != null -> {
+                    orderFen = pending.orderFen
+                    startedAt = pending.startedAt
+                    restoreArrivalBaseline(pending)
+                }
                 else -> return@launch
             }
-            if (_arrivalBaseFen == null) _arrivalBaseFen = _balance.value?.totalFen
             if (_arrivalState.value !is ArrivalState.Watching) {
                 _arrivalState.value = ArrivalState.Watching(orderFen = orderFen, startedAt = startedAt)
             }
-            val arrived = checkArrivalOnce(saved.username, saved.password, orderFen, startedAt)
-            if (arrived) return@launch // 成功弹窗已就位
+            if (checkArrivalOnce(saved.username, saved.password, orderFen)) return@launch // 成功弹窗已就位
             // 未立即到账：给出「正在确认」反馈弹窗——延迟一拍（等返回动画/窗口稳定），
             // 避免回到前台瞬间弹窗引发顶栏 insets 重算跳动（2026-09-21 实测）
-            kotlinx.coroutines.delay(PENDING_CONFIRM_DELAY_MS)
-            if (_arrivalState.value is ArrivalState.Arrived) return@launch
-            _pendingConfirmVisible.value = true
+            if (pending != null && !pending.confirmShown) {
+                kotlinx.coroutines.delay(PENDING_CONFIRM_DELAY_MS)
+                if (_arrivalState.value is ArrivalState.Arrived) return@launch
+                _pendingConfirmVisible.value = true
+                prefs.markPendingRechargeConfirmShown()
+            }
             if (!checkTurnoverArrival(saved.username, saved.password, orderFen, startedAt)) {
                 startArrivalWatch(saved.username, saved.password, orderFen, startedAt)
             }
         }
+    }
+
+    /**
+     * 从持久化记录恢复余额口径的基线（付款前卡余额 + 付款卡号）。
+     *
+     * 两者缺一就无法判定，只能退到流水口径；**不拿「现在的余额」当基线**——
+     * 钱已经到账时那等于把判定门槛抬到自己头上，「确认到账」永远不成立。
+     */
+    private fun restoreArrivalBaseline(pending: PendingRecharge) {
+        if (_arrivalBaseFen == null) _arrivalBaseFen = pending.balanceBeforeFen
+        if (_arrivalAccount == null) _arrivalAccount = pending.cardAccount
     }
 
     /** 「正在确认到账」提示弹窗可见性（回到前台且未到账时显示；到账/超时/用户关闭即撤）。 */
@@ -769,9 +829,16 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         _pendingConfirmVisible.value = false
     }
 
-    /** 到账判定的余额基线（下单时刻快照；进程重启后为 null → 只用流水口径）。 */
+    /**
+     * 到账判定的余额基线：付款前该卡余额（分）+ 付款卡号。
+     * 下单时从 [edu.jxslu.schedule.data.ykt.YktRechargeStart] 拿到，并随未确认充值落库；
+     * 进程重启后由 [restoreArrivalBaseline] 从记录里恢复。取不到就是 null → 只用流水口径。
+     */
     @Volatile
     private var _arrivalBaseFen: Long? = null
+
+    @Volatile
+    private var _arrivalAccount: String? = null
 
     private var watchJob: kotlinx.coroutines.Job? = null
 

@@ -83,6 +83,7 @@ fun PayCodeScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val bitmaps by viewModel.bitmaps.collectAsStateWithLifecycle()
     val balance by viewModel.balance.collectAsStateWithLifecycle()
+    val payment by viewModel.detectedPayment.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -90,6 +91,12 @@ fun PayCodeScreen(
 
     // 进页自动取码
     LaunchedEffect(Unit) { viewModel.load() }
+
+    // 检测到扣款：这一页的使命结束——自动退出，由退出后的页面弹「支付成功」
+    // （结果经 PayCodeResultBus 转交，本页不弹：弹在这里会随窗口一起消失）
+    LaunchedEffect(payment) {
+        if (payment != null) onBack()
+    }
 
     // 事件出口（换批失败等）
     LaunchedEffect(Unit) {

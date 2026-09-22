@@ -97,6 +97,9 @@ class YktRepository(private val client: YktClient) {
      * [edu.jxslu.schedule.domain.YktRechargeSign.signed] 签名 →
      * `POST /charge/order/thirdOrder` → 302 Location 即收银台 URL。
      *
+     * 返回值额外带**付款前基线**（该卡余额与卡号），到账判定要用；取值口径与调用点的
+     * 余额展示一致（同一次 queryCard 的 `cardBalanceFen`），见 [YktRechargeStart]。
+     *
      * thirdOrder 成功分支的响应形态已实测（302 Location，见下）；同时保留
      * JSON/HTML 兜底。签名密钥/字段是前端公开常量，平台改版会失效——失败统一
      * 给「平台可能已改版」口径。
@@ -106,7 +109,7 @@ class YktRepository(private val client: YktClient) {
         password: String,
         /** 金额（元），两位小数内；服务端口径即元，不乘 100。 */
         yuan: String,
-    ): YktRechargeOrder {
+    ): YktRechargeStart {
         val token = cachedToken ?: doLogin(username, password)
 
         // [1] 充值场景的卡（scene=recharge）：取第一张非挂失卡；account = 6 位卡号
@@ -121,6 +124,12 @@ class YktRepository(private val client: YktClient) {
         val card = YktModels.cardsFrom(cardsEnv.data).firstOrNull { it.lostflag == null || it.lostflag == "0" }
             ?: throw YktException.Protocol("没有可充值的卡账户（可能已挂失或冻结）")
         val account = card.account
+        // 付款前基线随下单结果一起交给上层持久化（到账判定用，见 YktRechargeStart）
+        fun started(order: YktRechargeOrder) = YktRechargeStart(
+            order = order,
+            cardBalanceBeforeFen = card.cardBalanceFen,
+            cardAccount = account,
+        )
 
         // [2] 组表单 + 签名（字段与前端 confirm() 一致；appid/密钥是前端公开常量。
         //     appid 业务字段必须带——缺了服务端会 302 到无 orderid 的错误页，2026-09-21 真机实测）
@@ -151,8 +160,8 @@ class YktRepository(private val client: YktClient) {
                 )
             // [4] 直拉微信：收银台的「立即付款」一步等效于 blade-pay/pay → checkmweb，
             //     该校微信充值渠道免密（实测），App 内三跳直达 weixin:// 拉起微信支付。
-            payDirect(orderId, token)?.let { return it }
-            return YktRechargeOrder.Cashier(orderId = orderId, cashierUrl = location)
+            payDirect(orderId, token)?.let { return started(it) }
+            return started(YktRechargeOrder.Cashier(orderId = orderId, cashierUrl = location))
         }
         // 兜底：非 302（平台可能改成 JSON/HTML 应答），从响应体提取
         val orderId = extractOrderId(raw.text, raw.httpCode)
@@ -160,9 +169,11 @@ class YktRepository(private val client: YktClient) {
                 if (raw.httpCode in 200..299) "下单未返回订单号（平台可能已改版）"
                 else "下单失败（HTTP ${raw.httpCode}，平台可能已改版）",
             )
-        return YktRechargeOrder.Cashier(
-            orderId = orderId,
-            cashierUrl = buildCashierUrl(orderId, token),
+        return started(
+            YktRechargeOrder.Cashier(
+                orderId = orderId,
+                cashierUrl = buildCashierUrl(orderId, token),
+            ),
         )
     }
 

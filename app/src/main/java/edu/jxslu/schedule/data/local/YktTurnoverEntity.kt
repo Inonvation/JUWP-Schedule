@@ -97,6 +97,13 @@ interface YktTurnoverDao {
     @Query("SELECT COUNT(*) FROM ykt_turnovers WHERE income = 1 AND jndatetime > :epochMs")
     suspend fun countIncomeSince(epochMs: Long): Int
 
+    /**
+     * 某时刻之后入库的全部流水（付款码消费判定：扫码扣款后自动退出并提示，DESIGN §3.10）。
+     * 判定方向与时间过滤在 `domain/YktPayWatch`，这里只做时间过滤，收入/支出的区分交给它。
+     */
+    @Query("SELECT * FROM ykt_turnovers WHERE jndatetime > :epochMs")
+    suspend fun recordsAfter(epochMs: Long): List<YktTurnoverEntity>
+
     /** upsert（orderId 冲突即覆盖——余额快照等字段可能随服务端重算更新）。 */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<YktTurnoverEntity>)

@@ -472,6 +472,22 @@ fun TodayScreen(
             onOpenPayCode = onOpenPayCode,
         )
     }
+    // 「支付成功」：付款码页检测到扣款会自己退出，弹窗落在这里（DESIGN §3.10）。
+    // 取值即消费：取到就清空通道，免得压在后头的「我的 → 校园卡」再弹一次
+    val payResult by edu.jxslu.schedule.ui.campus.PayCodeResultBus.result.collectAsStateWithLifecycle()
+    var paidPayment by remember { mutableStateOf<edu.jxslu.schedule.domain.YktPayment?>(null) }
+    LaunchedEffect(payResult) {
+        payResult?.let {
+            paidPayment = it
+            edu.jxslu.schedule.ui.campus.PayCodeResultBus.consume()
+        }
+    }
+    paidPayment?.let { paid ->
+        edu.jxslu.schedule.ui.campus.CampusPaymentDialog(
+            payment = paid,
+            onDismiss = { paidPayment = null },
+        )
+    }
     // 「正在确认到账」弹窗（微信返回且未立即到账时；关闭不影响轮询）
     val campusPendingConfirm by campusViewModel.pendingConfirmVisible.collectAsStateWithLifecycle()
     val campusWatching = campusArrival as? edu.jxslu.schedule.ui.campus.CampusCardViewModel.ArrivalState.Watching

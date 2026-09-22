@@ -193,6 +193,27 @@ private val Context.displayDataStore: DataStore<Preferences> by
     preferencesDataStore(name = "juw_display")
 
 /**
+ * 未确认充值记录（DESIGN §4.19「充值」）。
+ *
+ * 持久化的理由是到账轮询只在内存：微信支付期间进程大概率被系统回收
+ * （MIUI 激进省电），重启后要靠这条记录恢复等待态并立即补检。
+ * [balanceBeforeFen]/[cardAccount] 一并落库，重启后余额口径仍然可用；
+ * 旧版本只存金额与时刻，这两项读出来是 null，退化为流水口径。
+ */
+data class PendingRecharge(
+    /** 下单金额（分）。 */
+    val orderFen: Long,
+    /** 下单时刻（epoch 毫秒）。 */
+    val startedAt: Long,
+    /** 付款前该卡余额（分）；缺失为 null。 */
+    val balanceBeforeFen: Long?,
+    /** 付款卡账户（6 位卡号）；缺失为 null。 */
+    val cardAccount: String?,
+    /** 「正在确认到账」弹窗是否已提示过（每次充值只弹一次）。 */
+    val confirmShown: Boolean,
+)
+
+/**
  * 全局偏好存储（DESIGN §4.9）。
  *
  * 2026-09-19 起显示偏好（原课表级视图偏好）也在这里：整体以 [TimetablePrefs] 的 JSON
@@ -340,27 +361,65 @@ class DisplayPrefsStore(private val context: Context) {
     }.distinctUntilChanged()
 
     /**
-     * 未确认充值（DESIGN §4.19「充值」）：下单成功的金额（分）+ 下单时刻（epoch 毫秒）。
-     * **持久化**——到账检测轮询在内存，微信支付期间进程可能被系统回收（MIUI 激进省电），
-     * 重启后凭此恢复等待态并立即补检；到账/超时/取消时清除。金额本身非敏感数据。
+     * 未确认充值（DESIGN §4.19「充值」）：见 [PendingRecharge]。
+     * 到账/超时/取消时清除；金额与卡号后四位之外的信息都非敏感数据。
      */
-    val pendingRecharge: Flow<Pair<Long, Long>?> = context.displayDataStore.data.map { p ->
+    val pendingRecharge: Flow<PendingRecharge?> = context.displayDataStore.data.map { p ->
         val fen = p[KEY_PENDING_RECHARGE_FEN]
         val at = p[KEY_PENDING_RECHARGE_AT]
-        if (fen != null && at != null) fen to at else null
+        if (fen == null || at == null) {
+            null
+        } else {
+            PendingRecharge(
+                orderFen = fen,
+                startedAt = at,
+                balanceBeforeFen = p[KEY_PENDING_RECHARGE_BASE_FEN],
+                cardAccount = p[KEY_PENDING_RECHARGE_ACCOUNT],
+                confirmShown = p[KEY_PENDING_RECHARGE_CONFIRM_SHOWN] ?: false,
+            )
+        }
     }.distinctUntilChanged()
 
-    suspend fun setPendingRecharge(fen: Long, at: Long) {
+    suspend fun setPendingRecharge(
+        fen: Long,
+        at: Long,
+        /** 付款前该卡余额（分）；取不到传 null（只走流水口径判定到账）。 */
+        balanceBeforeFen: Long?,
+        /** 付款卡账户（6 位卡号）。 */
+        cardAccount: String?,
+    ) {
         context.displayDataStore.edit {
             it[KEY_PENDING_RECHARGE_FEN] = fen
             it[KEY_PENDING_RECHARGE_AT] = at
+            if (balanceBeforeFen != null) {
+                it[KEY_PENDING_RECHARGE_BASE_FEN] = balanceBeforeFen
+            } else {
+                it.remove(KEY_PENDING_RECHARGE_BASE_FEN)
+            }
+            if (cardAccount != null) {
+                it[KEY_PENDING_RECHARGE_ACCOUNT] = cardAccount
+            } else {
+                it.remove(KEY_PENDING_RECHARGE_ACCOUNT)
+            }
+            it[KEY_PENDING_RECHARGE_CONFIRM_SHOWN] = false
         }
+    }
+
+    /**
+     * 标记「正在确认到账」弹窗已提示过。每次充值只弹一次：用户关掉之后再进出
+     * 校园卡页面不该反复被同一个弹窗拦住（2026-09-22 用户反馈）。
+     */
+    suspend fun markPendingRechargeConfirmShown() {
+        context.displayDataStore.edit { it[KEY_PENDING_RECHARGE_CONFIRM_SHOWN] = true }
     }
 
     suspend fun clearPendingRecharge() {
         context.displayDataStore.edit {
             it.remove(KEY_PENDING_RECHARGE_FEN)
             it.remove(KEY_PENDING_RECHARGE_AT)
+            it.remove(KEY_PENDING_RECHARGE_BASE_FEN)
+            it.remove(KEY_PENDING_RECHARGE_ACCOUNT)
+            it.remove(KEY_PENDING_RECHARGE_CONFIRM_SHOWN)
         }
     }
 
@@ -767,6 +826,9 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
         val KEY_PENDING_RECHARGE_FEN = longPreferencesKey("pending_recharge_fen")
         val KEY_PENDING_RECHARGE_AT = longPreferencesKey("pending_recharge_at")
+        val KEY_PENDING_RECHARGE_BASE_FEN = longPreferencesKey("pending_recharge_base_fen")
+        val KEY_PENDING_RECHARGE_ACCOUNT = stringPreferencesKey("pending_recharge_account")
+        val KEY_PENDING_RECHARGE_CONFIRM_SHOWN = booleanPreferencesKey("pending_recharge_confirm_shown")
         val KEY_SHORTCUTS_JSON = stringPreferencesKey("shortcuts_json")
         val KEY_SCORE_INCLUDE_FREE_ELECTIVES = booleanPreferencesKey("score_include_free_electives")
         val KEY_SCORE_GROUP_BY_YEAR = booleanPreferencesKey("score_group_by_year")

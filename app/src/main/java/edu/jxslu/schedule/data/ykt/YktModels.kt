@@ -98,6 +98,22 @@ sealed interface YktRechargeOrder {
     ) : YktRechargeOrder
 }
 
+/**
+ * 下单结果 + 付款前基线（DESIGN §4.19「充值」）。
+ *
+ * 基线取自下单链路同一次 `queryCard?scene=recharge` 的卡余额——它是**付款前**的快照，
+ * 到账判定拿它与该卡当前余额比对。以前基线只存在内存里（`_balance` 那个快照），
+ * 进程重启即丢；且重启后代码会拿「现在的余额」重新当基线，钱已经到账时判定永远不成立，
+ * 界面就卡在「正在确认到账」（2026-09-22 修）。
+ */
+data class YktRechargeStart(
+    val order: YktRechargeOrder,
+    /** 付款前该卡余额（分）。 */
+    val cardBalanceBeforeFen: Long,
+    /** 付款卡账户（6 位卡号）：到账判定按账户取该卡当前余额。 */
+    val cardAccount: String,
+)
+
 /** 单条消费流水（`personal/turnover` 的 records 元素，只建模展示所需子集）。 */
 data class YktTurnover(
     /** 交易时间原文（`2026-09-20 18:50:xx`）。 */

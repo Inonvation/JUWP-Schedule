@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
+import edu.jxslu.schedule.domain.YktPayment
 
 /**
  * 校园卡充值/到账共享 UI（DESIGN §4.19「充值」、§3.10）。
@@ -182,6 +183,41 @@ fun CampusPendingConfirmDialog(
                 "已收到 ¥%.2f 的充值支付，校园卡系统余额更新有延迟（常见数分钟）。\n\n".format(orderFen / 100.0) +
                     "App 正在每 5 秒自动检测，确认到账后会立即提示；您可以先做别的，" +
                     "关闭本提示不影响检测。",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("知道了") }
+        },
+    )
+}
+
+/**
+ * 「支付成功」弹窗（DESIGN §3.10）：付款码页检测到扣款后自动退出，由退出后的页面弹这一张，
+ * 金额取流水里的扣款额，另附商户、时间、交易后余额。
+ *
+ * 依据是消费流水，所以文案不写「实时」「立即」——服务端落账有延迟，
+ * 这笔消费的确切时间以流水为准（[payment] 的 timeText 就是服务端原文）。
+ */
+@Composable
+fun CampusPaymentDialog(
+    payment: YktPayment,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("支付成功") },
+        text = {
+            Text(
+                buildString {
+                    append("扣款 ¥%.2f".format(payment.amountFen / 100.0))
+                    payment.merchant?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                    append("\n")
+                    append(payment.timeText.ifBlank { payment.typeText })
+                    payment.balanceAfterFen?.let {
+                        append("\n卡余额 ¥%.2f".format(it / 100.0))
+                    }
+                    append("\n\n本次交易已同步至「消费流水」。")
+                },
             )
         },
         confirmButton = {

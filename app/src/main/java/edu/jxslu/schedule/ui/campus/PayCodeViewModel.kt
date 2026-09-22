@@ -6,19 +6,25 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.local.YktTurnoverEntity
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
 import edu.jxslu.schedule.data.ykt.YktBarcodeData
 import edu.jxslu.schedule.data.ykt.YktCard
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktException
 import edu.jxslu.schedule.data.ykt.YktRepository
 import edu.jxslu.schedule.domain.ThemeMode
+import edu.jxslu.schedule.domain.YktPayWatch
 import edu.jxslu.schedule.domain.YktPayCode
+import edu.jxslu.schedule.domain.YktPayment
+import edu.jxslu.schedule.domain.YktTurnoverRow
 import edu.jxslu.schedule.ui.common.CodeBitmaps
 import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +33,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -75,7 +82,10 @@ class PayCodeViewModel(
     private val repo: YktRepository,
     private val credentialStore: YktCredentialStore,
     private val prefs: DisplayPrefsStore,
+    private val db: edu.jxslu.schedule.data.local.JuwDatabase,
 ) : ViewModel() {
+
+    private val syncer = YktTurnoverSyncer(repo, db)
 
     private val _uiState = MutableStateFlow<PayCodeUiState>(PayCodeUiState.Loading)
     val uiState: StateFlow<PayCodeUiState> = _uiState.asStateFlow()
@@ -137,6 +147,8 @@ class PayCodeViewModel(
                 )
                 renderBitmaps(data.barcode.first())
                 loadBalance(credentials.username, credentials.password)
+                // 码已经拿在手上，开始盯这笔消费（DESIGN §3.10「扫码后自动退出」）
+                startPayWatch(credentials.username, credentials.password)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: YktException.NeedCaptcha) {
@@ -179,6 +191,76 @@ class PayCodeViewModel(
         val credentials = credentialStore.read() ?: return
         loadBalance(credentials.username, credentials.password)
     }
+
+    // ------------------------------------------------------------------
+    // 扫码消费检测（DESIGN §3.10「扫码后自动退出」）
+    // ------------------------------------------------------------------
+
+    /** 检测到的那笔消费；非空即由页面收尾（退出付款码页，交棒给上一页弹窗）。 */
+    private val _payment = MutableStateFlow<YktPayment?>(null)
+    val detectedPayment: StateFlow<YktPayment?> = _payment.asStateFlow()
+
+    private var payWatchJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * 扫码消费检测：取码成功后启动，每 5 秒同步一页流水，出现晚于「进页水位」的**扣款**
+     * 即判定为一笔消费，页面据此自动退出并提示（DESIGN §3.10）。
+     *
+     * 判定口径在 [YktPayWatch]：水位取服务端交易时间，不掺设备时钟。
+     *
+     * 窗口 15 分钟封顶：码本身有效数小时，但没人会在付款码页停留那么久，无上限轮询只是
+     * 白耗电与白打服务端。命中即停（一次停留只认第一笔），超窗也停。
+     *
+     * 轮询挂在 ViewModel 上，不跟页面可见性开关：扫码那一秒正好锁屏（ON_PAUSE）是常有的事，
+     * 挂生命周期会把这笔漏掉。
+     */
+    private fun startPayWatch(username: String, password: String) {
+        if (payWatchJob?.isActive == true) return
+        payWatchJob = viewModelScope.launch {
+            val dao = db.yktTurnoverDao()
+            val watch = YktPayWatch()
+            val deadline = System.currentTimeMillis() + PAY_WATCH_MS
+            while (isActive && System.currentTimeMillis() < deadline) {
+                if (syncTurnovers(username, password)) {
+                    if (!watch.established) {
+                        // 第一轮只建立水位：这一轮入库的记录全算「进页前就有」，不判定
+                        watch.establish(dao.latestJndatetime())
+                    } else {
+                        val rows = dao.recordsAfter(watch.watermark ?: 0L).map { it.toWatchRow() }
+                        val payment = watch.inspect(rows)
+                        if (payment != null) {
+                            _payment.value = payment
+                            PayCodeResultBus.publish(payment)
+                            return@launch
+                        }
+                    }
+                }
+                delay(PAY_POLL_MS)
+            }
+        }
+    }
+
+    /** 同步一页流水；失败下一轮再试（返回是否成功，不阻断循环）。 */
+    private suspend fun syncTurnovers(username: String, password: String): Boolean = try {
+        syncer.sync(username, password, maxPages = 1)
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
+    }
+
+    /** 本地流水实体 → 判定模型（字段足够判定与展示即可）。 */
+    private fun YktTurnoverEntity.toWatchRow() = YktTurnoverRow(
+        orderId = orderId,
+        epochMs = jndatetime,
+        timeText = jndatetimeStr,
+        amountFen = tranamtFen,
+        income = income,
+        typeText = turnoverType,
+        locationName = locationName,
+        balanceAfterFen = balanceAfterFen,
+    )
 
     /** 展示下一个备用码（批内递增 + 本地渲染）；批内耗尽时重新取一批。 */
     fun next() {
@@ -242,6 +324,12 @@ class PayCodeViewModel(
     companion object {
         /** 取码整链总超时（键盘+登录+账户+取码 4 跳；口径同 §4.17 的总超时兜底）。 */
         private const val LOGIN_TOTAL_TIMEOUT_MS = 30_000L
+
+        /** 扫码消费检测的轮询间隔。 */
+        private const val PAY_POLL_MS = 5_000L
+
+        /** 扫码消费检测的窗口上限（15 分钟；付款码页不会停留更久）。 */
+        private const val PAY_WATCH_MS = 15 * 60_000L
     }
 
     class Factory(private val context: Context) : ViewModelProvider.Factory {
@@ -251,6 +339,7 @@ class PayCodeViewModel(
             Graph.yktRepository(context.applicationContext),
             Graph.yktCredentialStore(context.applicationContext),
             Graph.displayPrefs(context.applicationContext),
+            edu.jxslu.schedule.data.local.JuwDatabase.get(context.applicationContext),
         ) as T
     }
 }
