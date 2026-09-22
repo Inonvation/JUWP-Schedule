@@ -12,6 +12,7 @@ import edu.jxslu.schedule.data.local.TimetableEntity
 import edu.jxslu.schedule.data.local.courseKindFromName
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.prefs.ReminderKeyKind
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.courseRemarksCarriedOver
 import edu.jxslu.schedule.domain.mergeKey
@@ -537,9 +538,10 @@ class ScheduleRepository(
 
     suspend fun setReminderLeadMinutes(value: Int) = prefs.setReminderLeadMinutes(value)
 
-    suspend fun reminderLastKey(): String? = prefs.reminderLastKey()
+    suspend fun reminderLastKey(kind: ReminderKeyKind): String? = prefs.reminderLastKey(kind)
 
-    suspend fun setReminderLastKey(key: String) = prefs.setReminderLastKey(key)
+    suspend fun setReminderLastKey(kind: ReminderKeyKind, key: String) =
+        prefs.setReminderLastKey(kind, key)
 
     // ---- 作业截止提醒（全局，DESIGN §3.11；与上课提醒共用闹钟与核对 Worker） ----
 

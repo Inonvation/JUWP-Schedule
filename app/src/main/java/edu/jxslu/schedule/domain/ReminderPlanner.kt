@@ -51,6 +51,8 @@ private fun upcomingPlans(
     now: LocalDateTime,
     leadMinutes: Int,
     maxDaysAhead: Int,
+    /** 允许「已开始但未超过该分钟数」的课进入结果（0 = 维持只看未来的口径）。 */
+    gracePastMinutes: Long = 0L,
 ): List<ReminderPlan> {
     if (semester == null) return emptyList()
     val result = mutableListOf<ReminderPlan>()
@@ -61,7 +63,10 @@ private fun upcomingPlans(
             for (course in ScheduleCalculator.coursesOnDay(courses, week, date.dayOfWeek.value)) {
                 val start = ScheduleCalculator.courseStartMinutes(slots, course) ?: continue
                 val startAt = date.atStartOfDay().plusMinutes(start.toLong())
-                if (!startAt.isAfter(now)) continue
+                val withinGrace = gracePastMinutes > 0L && !startAt.isBefore(
+                    now.minusMinutes(gracePastMinutes),
+                )
+                if (!startAt.isAfter(now) && !withinGrace) continue
                 result += ReminderPlan(
                     course = course,
                     date = date,
@@ -90,6 +95,28 @@ fun dueReminderPlan(
     .firstOrNull { it.startAt <= now.plusMinutes(leadMinutes.toLong()) }
 
 /**
+ * 「现在就该提醒上课开始了」的课：上课时刻已到（含整点）、还没越过上课后
+ * [CLASS_START_WINDOW_MINUTES] 分钟——迟到的「开始上课」没有提醒价值，越过即不发。
+ * 不带提前量参数：该触发点与提前量设置无关。
+ */
+fun dueClassStartPlan(
+    semester: SemesterConfig?,
+    slots: List<TimeSlot>,
+    courses: List<Course>,
+    now: LocalDateTime,
+): ReminderPlan? = upcomingPlans(
+    semester = semester,
+    slots = slots,
+    courses = courses,
+    now = now,
+    leadMinutes = 0,
+    maxDaysAhead = 1,
+    gracePastMinutes = CLASS_START_WINDOW_MINUTES,
+).firstOrNull {
+    it.startAt <= now && now < it.startAt.plusMinutes(CLASS_START_WINDOW_MINUTES)
+}
+
+/**
  * 下一个还没错过的提醒（触发时刻严格在 now 之后），供排闹钟；没有则返回 null
  * （提醒关、课表空、不在学期内的兜底判断由调用方读偏好完成）。
  * 最多向后找 14 天：一个学期不会连着两周没课还没到头。
@@ -103,6 +130,22 @@ fun nextReminderPlan(
     maxDaysAhead: Int = 14,
 ): ReminderPlan? = upcomingPlans(semester, slots, courses, now, leadMinutes, maxDaysAhead)
     .firstOrNull { it.triggerAt.isAfter(now) }
+
+/** 「开始上课」提醒的有效期窗口（上课后多少分钟内仍发），越过即跳过不补。 */
+private const val CLASS_START_WINDOW_MINUTES = 15L
+
+/**
+ * 下一个还没错过的「上课开始」触发点（= 上课时刻，严格在 now 之后），供排闹钟；
+ * 没有则返回 null。最多向后找 14 天，与 [nextReminderPlan] 同口径。
+ */
+fun nextClassStartPlan(
+    semester: SemesterConfig?,
+    slots: List<TimeSlot>,
+    courses: List<Course>,
+    now: LocalDateTime,
+    maxDaysAhead: Int = 14,
+): ReminderPlan? = upcomingPlans(semester, slots, courses, now, leadMinutes = 0, maxDaysAhead)
+    .firstOrNull { it.startAt.isAfter(now) }
 
 /** 作业提醒的固定触发时刻（时）：两个提醒点都在 20:00（DESIGN §3.11）。 */
 private const val HOMEWORK_REMIND_HOUR = 20

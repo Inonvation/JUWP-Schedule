@@ -24,13 +24,16 @@ import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.data.prefs.ReminderKeyKind
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.dueReminderPlan
 import edu.jxslu.schedule.domain.homeworkReminderPlan
+import edu.jxslu.schedule.domain.dueClassStartPlan
 import edu.jxslu.schedule.domain.metaLine
 import edu.jxslu.schedule.domain.nextHomeworkReminder
 import edu.jxslu.schedule.domain.HomeworkReminderPlan
 import edu.jxslu.schedule.domain.homeworkReminderGroup
+import edu.jxslu.schedule.domain.nextClassStartPlan
 import edu.jxslu.schedule.domain.nextReminderPlan
 import kotlinx.coroutines.flow.first
 import java.time.LocalDateTime
@@ -41,7 +44,7 @@ import java.util.concurrent.TimeUnit
  * 提醒调度（DESIGN §3.7 上课提醒 + §3.11 作业截止提醒，两者共用一个闹钟）。
  *
  * 与桌面小组件（`ui/widget/TodayWidgetRefresh`）同构的三层兜底：
- * 边界闹钟（上课「上课时刻 − 提前量」/ 作业「提醒点 20:00」，取两者更早的）为主，
+ * 边界闹钟（上课「提前量点 / 上课时刻」取更早的 / 作业「提醒点 20:00」，三者再取更早）为主，
  * WorkManager 15 分钟周期核对补发/补排，冷启动 / 数据变化 / 开机广播立即重排。
  * 同样用 `setAndAllowWhileIdle` 而不是精确闹钟：推迟几分钟可接受，
  * 不申请 `SCHEDULE_EXACT_ALARM` 敏感权限。
@@ -66,13 +69,26 @@ object ClassReminder {
             val pending = alarmPendingIntent(context)
             val now = LocalDateTime.now()
             val classTriggerAt = if (repo.reminderEnabled.first()) {
-                nextReminderPlan(
-                    semester = repo.semester.first(),
-                    slots = repo.timeSlots.first(),
-                    courses = repo.courses.first(),
-                    now = now,
-                    leadMinutes = repo.reminderLeadMinutes.first(),
-                )?.triggerAt
+                val semester = repo.semester.first()
+                val slots = repo.timeSlots.first()
+                val courses = repo.courses.first()
+                // 上课提醒现在有两个触发点（DESIGN §3.7）：提前量与上课时刻，
+                // 都开着时取更早的排闹钟；核对 Worker 会先补发窗口内的、再重排
+                listOfNotNull(
+                    nextReminderPlan(
+                        semester = semester,
+                        slots = slots,
+                        courses = courses,
+                        now = now,
+                        leadMinutes = repo.reminderLeadMinutes.first(),
+                    )?.triggerAt,
+                    nextClassStartPlan(
+                        semester = semester,
+                        slots = slots,
+                        courses = courses,
+                        now = now,
+                    )?.startAt,
+                ).minOrNull()
             } else null
             // 作业开关关 → 连库都不读（未完成列表要查 Room）；开着才求下一个作业提醒点
             val homeworkTriggerAt = if (repo.homeworkReminderEnabled.first()) {
@@ -131,6 +147,10 @@ internal object ReminderNotifications {
     private const val NOTIFICATION_TAG = "class_reminder"
     /** 固定 id：新提醒覆盖上一条，不堆叠。 */
     private const val NOTIFICATION_ID = 1001
+
+    /** 「上课」通知（上课时刻触发，2026-09-22 新增）：固定 id 1004，与提前量（1001）、
+     *  作业（1002/1003）互不覆盖。 */
+    private const val CLASS_START_NOTIFICATION_ID = 1004
 
     /** 作业截止提醒通道（DESIGN §3.11）。与上课提醒同档 importance，用户可在系统设置降级。 */
     private const val HOMEWORK_CHANNEL_ID = "homework_deadline"
@@ -194,22 +214,51 @@ internal object ReminderNotifications {
         // 通知被系统/用户整体关闭时静默跳过：写不出去也不该在核对里报错
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
         val slots = repo.timeSlots.first()
-        val due = dueReminderPlan(
-            semester = repo.semester.first(),
-            slots = slots,
-            courses = repo.courses.first(),
-            now = LocalDateTime.now(),
-            leadMinutes = repo.reminderLeadMinutes.first(),
-        ) ?: return
-        val key = due.dedupKey
-        if (repo.reminderLastKey() == key) return
-
-        ensureChannel(context)
+        val now = LocalDateTime.now()
+        val semester = repo.semester.first()
+        val courses = repo.courses.first()
         val lead = repo.reminderLeadMinutes.first()
-        val text = metaLine(slots, due.course)
+
+        // 两个通知点各自核对、各自去重（DESIGN §3.7）：同一轮可能只命中一个
+        // （两触发点相差一个提前量，通常分处两轮），也可能同时命中（闹钟被推迟跨过两点）。
+        // 先算「上课开始」（更晚的点）：它的窗口不依赖提前量，先判可避免 lead=0 时
+        // 两个窗口重叠导致的重复计算。
+        val startDue = dueClassStartPlan(semester, slots, courses, now)
+        val startKey = startDue?.dedupKey
+        if (startKey != null && repo.reminderLastKey(ReminderKeyKind.Start) != startKey) {
+            val posted = postClassNotification(
+                context,
+                id = CLASS_START_NOTIFICATION_ID,
+                title = "上课 · ${startDue.course.name}",
+                text = metaLine(slots, startDue.course),
+            )
+            if (posted) repo.setReminderLastKey(ReminderKeyKind.Start, startKey)
+        }
+
+        val due = dueReminderPlan(semester, slots, courses, now, leadMinutes = lead)
+        val key = due?.dedupKey
+        if (key != null && repo.reminderLastKey(ReminderKeyKind.Before) != key) {
+            val posted = postClassNotification(
+                context,
+                id = NOTIFICATION_ID,
+                title = "${ReminderDefaults.leadLabel(lead)}后上课 · ${due.course.name}",
+                text = metaLine(slots, due.course),
+            )
+            if (posted) repo.setReminderLastKey(ReminderKeyKind.Before, key)
+        }
+    }
+
+    /** 上课类通知的共用构建（提前量与上课开始两处共用，标题与 id 不同）。 */
+    private fun postClassNotification(
+        context: Context,
+        id: Int,
+        title: String,
+        text: String,
+    ): Boolean {
+        ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
-            .setContentTitle("${ReminderDefaults.leadLabel(lead)}后上课 · ${due.course.name}")
+            .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_EVENT)
@@ -224,10 +273,9 @@ internal object ReminderNotifications {
             )
             .build()
         // 无 POST_NOTIFICATIONS 权限时系统静默丢弃；SecurityException 等异常也不外漏
-        val posted = runCatching {
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_TAG, NOTIFICATION_ID, notification)
+        return runCatching {
+            NotificationManagerCompat.from(context).notify(NOTIFICATION_TAG, id, notification)
         }.isSuccess
-        if (posted) repo.setReminderLastKey(key)
     }
 
     /**

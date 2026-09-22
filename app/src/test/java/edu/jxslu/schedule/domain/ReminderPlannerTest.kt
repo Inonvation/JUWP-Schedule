@@ -71,6 +71,36 @@ class ReminderPlannerTest {
     }
 
     @Test
+    fun classStart_atStartMinute() {
+        // 14:00 整（5-6 节开始）：该发「上课」通知，窗口 15 分钟内
+        val plan = dueClassStartPlan(semester, slots, courses, at(14, 0))
+        assertEquals(2L, plan?.course?.id)
+        // 去重键与提前量提醒同构（同一节课同一键，靠前缀区分两类）
+        assertEquals("2026-09-17|2|840", plan?.dedupKey)
+    }
+
+    @Test
+    fun classStart_beforeStart_returnsNull() {
+        // 13:50：还没上课，「上课开始」点不该命中（这是提前量提醒的窗口）
+        assertNull(dueClassStartPlan(semester, slots, courses, at(13, 50)))
+    }
+
+    @Test
+    fun classStart_afterWindow_returnsNull() {
+        // 14:20：已越过上课后 15 分钟的补发窗口，不再发
+        assertNull(dueClassStartPlan(semester, slots, courses, at(14, 16)))
+    }
+
+    @Test
+    fun nextClassStart_isStartItself() {
+        val plan = nextClassStartPlan(semester, slots, courses, at(7, 0))
+        assertEquals(LocalDateTime.of(thursday, LocalTime.of(10, 15)), plan?.startAt)
+        // 10:08：10:15 的「开始」点还在，而它的去重键与提前量点相同（前缀在存储层区分）
+        val soon = nextClassStartPlan(semester, slots, courses, at(10, 8))
+        assertEquals(LocalDateTime.of(thursday, LocalTime.of(10, 15)), soon?.startAt)
+    }
+
+    @Test
     fun nextReminder_skipsPassedTrigger() {
         // 10:08：3-4 节的触发点 10:05 已过（闹钟丢失场景），下一个是 5-6 节
         val plan = nextReminderPlan(semester, slots, courses, at(10, 8), leadMinutes = 10)

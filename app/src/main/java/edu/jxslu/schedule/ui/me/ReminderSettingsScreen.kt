@@ -167,7 +167,7 @@ fun ReminderSettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 SettingSwitchRow(
                     title = "开启上课提醒",
-                    subtitle = "上课前提前提醒，点击通知直达 App",
+                    subtitle = "上课前提醒 + 上课时刻提醒，点击通知直达 App",
                     checked = enabled,
                     onCheckedChange = { value ->
                         viewModel.setEnabled(value)
@@ -216,7 +216,7 @@ fun ReminderSettingsScreen(
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "· 提醒按「节次开始时间 − 提前量」触发，一节一提醒，不重复；",
+                    "· 提醒有两个触发点：「节次开始时间 − 提前量」与上课时刻各发一次，不重复；",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 )

@@ -36,6 +36,15 @@ import kotlinx.coroutines.flow.map
  * （`view_prefs_json`，同一 [TimetablePrefs] JSON 结构），不再按课表分开——换课表不换观感。
  * ScheduleRepository 把全局视图偏好组装成本类，WeekScreen 等调用点不感知存储位置。
  */
+/** 上课提醒的「已发键」类别（DESIGN §3.7）：提前量通知与上课开始通知各自独立去重。 */
+enum class ReminderKeyKind(val prefix: String) {
+    /** 提前量通知（上课前 N 分钟）。 */
+    Before("before|"),
+
+    /** 上课开始通知（上课时刻）。 */
+    Start("start|"),
+}
+
 data class DisplayPrefs(
     /** 应用主题模式。System = 跟随系统深浅色。全局项。 */
     val themeMode: ThemeMode = ThemeMode.System,
@@ -665,14 +674,25 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
-     * 上课提醒的「已发键」（DESIGN §3.7）：闹钟与 15 分钟周期核对共用去重，
-     * 同一节课同一天只发一次。null = 从未发过。
+     * 上课提醒的「已发键」（DESIGN §3.7）：闹钟与 15 分钟周期核对共用去重。
+     * 同一节课同一天有**两个独立通知点**（提前量「上课前 N 分钟」与上课时刻
+     * 「开始上课」），按前缀分开去重：`before|日期|课id|起始分钟` /
+     * `start|日期|课id|起始分钟`。旧版无前缀的单键在读路径迁移为
+     * `before|旧值`（旧键只可能来自提前量提醒，上课开始点是 2026-09-22 新增）。
+     * null = 该类从未发过。
      */
-    suspend fun reminderLastKey(): String? =
-        context.displayDataStore.data.first()[KEY_REMINDER_LAST]
+    suspend fun reminderLastKey(kind: ReminderKeyKind): String? {
+        val raw = context.displayDataStore.data.first()[KEY_REMINDER_LAST] ?: return null
+        val migrated = if (raw.startsWith(KEY_BEFORE) || raw.startsWith(KEY_START)) {
+            raw
+        } else {
+            "${ReminderKeyKind.Before.prefix}$raw"
+        }
+        return if (migrated.startsWith(kind.prefix)) migrated.removePrefix(kind.prefix) else null
+    }
 
-    suspend fun setReminderLastKey(key: String) {
-        context.displayDataStore.edit { it[KEY_REMINDER_LAST] = key }
+    suspend fun setReminderLastKey(kind: ReminderKeyKind, key: String) {
+        context.displayDataStore.edit { it[KEY_REMINDER_LAST] = "${kind.prefix}$key" }
     }
 
     /**
@@ -797,6 +817,10 @@ class DisplayPrefsStore(private val context: Context) {
     private companion object {
         /** 作业截止提醒「已发键」保留条数（DESIGN §3.11：保留最近 50 条）。 */
         const val HOMEWORK_REMINDED_LIMIT = 50
+
+        // 上课提醒的键迁移里也用（见 reminderLastKey 的 KDoc）
+        const val KEY_BEFORE = "before|"
+        const val KEY_START = "start|"
 
         // ---- 全局项（现行有效） ----
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
