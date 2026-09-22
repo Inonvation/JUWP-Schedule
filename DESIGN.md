@@ -629,15 +629,19 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 
 | 项 | 规格 |
 |----|------|
-| 车号输入 | 尾部 3 位数字；完整车号模板 `100000` 内置于 `EbikeQr`（单测口径），拼 `?id=100000NNN`。3 位非数字/为空禁止生成，行内提示 |
-| 生成 | 点击生成 720×720px QR（`zxing:core`，容错 M，白边 1 模块），**展示区直接出码** |
-| 自动保存 | 生成即存系统相册（`Pictures/水贝贝`，JPEG 90），**开关 `ebikeAutoSave` 默认关**（用户拍板）——相册里只留用户真的要的码。开关放码下方一行；保存成功/失败走页内 `InlineNoticeRow`（弹层窗口纪律，Snackbar 不穿透二级页窗口） |
-| 扫完即焚 | 保存到相册的码在**回到 App 后自动删除**，**开关 `ebikeBurnAfterScan` 默认开**（保存码是扫码一次性耗材，不留痕）。机制：保存成功记录待焚毁 key（`ebikePendingDelete` stringSet，持久化——进程被杀恢复后仍能删）；页面 ON_RESUME 时 `EbikeViewModel.burnPending()` 按 key 分流删除（29+ 自己 insert 的 MediaStore uri，owner 免权限；26–28 自己写的公共目录文件），删成功的移出记录、失败的保留重试。开关关 = 完全回到旧语义（不新增记录也不删残留）。出码页生成按钮点击同时收起键盘 |
-| 最近车号 | 最近 8 个生成过的车号 chips（DataStore 列表，倒序去重），点击回填；仅本地，不入 git |
+| 纵向顺序（2026-09-22 重排） | 「打开快趣出行」→ 车号输入 → 生成 → 出码位 → 保存 / 扫一扫 → 最近生成 → 出码设置（两开关）→ 免责声明。开关原先夹在输入区与码区之间，现沉到页面最下方（用户口径：低频调整项不挡出码视线） |
+| 车号输入 | 尾部 3 位数字；`100000` 作为**输入框内的固定前缀**展示（`OutlinedTextField.prefix`），用户不再需要照抄整串车号（2026-09-22 用户反馈）。粘贴整条车号由 `EbikeQr.normalizeTailInput` 剥掉模板前缀再取后三位；恰好 3 位且以 `100000` 开头（如 `100`）不剥——那是合法尾部。3 位非数字/为空禁止生成，行内提示 |
+| 生成 | 点击生成 720×720px QR（`zxing:core`，容错 M，白边 1 模块）；点击同时收起键盘 |
+| 出码位（2026-09-22） | **固定方形、始终占位**：`fillMaxWidth` + `aspectRatio(1f)` 的描边框，未生成时是空框 + 图标提示，出码后原地换成码图。旧版"没码就没有这一块"，出码瞬间整页下跳一次 |
+| 保存 / 扫一扫 | 两枚按钮常显、等宽并排；**未出码时置灰不可点**（`enabled = false`）。按钮整行出现或消失同样会顶动下方内容，故不做条件渲染 |
+| 自动保存 | 生成即存系统相册（`Pictures/水贝贝`，JPEG 90），**开关 `ebikeAutoSave` 默认关**（用户拍板）——相册里只留用户真的要的码。开关在页面最下方「出码设置」区（`SettingsSection` + `SettingSwitchRow`，与设置页同规格）；保存成功/失败走页内 `InlineNoticeRow`（弹层窗口纪律，Snackbar 不穿透二级页窗口） |
+| 扫完即焚 | 保存到相册的码在**回到 App 后自动删除**，**开关 `ebikeBurnAfterScan` 默认开**（保存码是扫码一次性耗材，不留痕）。机制：保存成功记录待焚毁 key（`ebikePendingDelete` stringSet，持久化——进程被杀恢复后仍能删）；页面 ON_RESUME 时 `EbikeViewModel.burnPending()` 按 key 分流删除（29+ 自己 insert 的 MediaStore uri，owner 免权限；26–28 自己写的公共目录文件），删成功的移出记录、失败的保留重试。开关关 = 完全回到旧语义（不新增记录也不删残留）。开关与自动保存在同一区，见上行 |
+| 最近车号 | 最近 8 个生成过的车号 chips（`FlowRow` 自动折行——字体放大档位下 4 个 chip 也放不进一行；DataStore 列表，倒序去重），点击回填；标题行右侧「清空」一键删除全部，**无二次确认**（纯回填便利数据），清完给 Snackbar「已清空最近车号」；仅本地，不入 git |
 | 提示 | 「打开微信扫一扫」按钮 best-effort 三级兜底：`ShortCutDispatchAction`（微信桌面长按快捷方式真身，直达扫一扫）→ `BIZSHORTCUT` 旧式入口 → 微信首页手动引导；失败走页内 Snackbar；manifest `queries` 声明微信包可见性仅用于该探测 |
-| 打开快趣出行（2026-09-21） | 页内按钮（与「生成二维码」同型、常显）：临时改写系统「助手」设置（`Settings.Secure.assistant` → 快趣首页）+ 反射 `SearchManager.launchAssist`，由 SystemUI 以 `ACTION_ASSIST` 代启未导出的首页（**直达、跳过启动页**；同级「快捷方式」工具同款路径，真机实测）；需一次性 `pm grant WRITE_SECURE_SETTINGS`（见下），未授权/失败自动降级为桌面启动意图（启动页）；未安装/全失败走页内 Snackbar；manifest `queries` 声明包可见性 |
+| 打开快趣出行（2026-09-21；2026-09-22 移到输入框上方） | 页内按钮，用**描边样式**（`OutlinedButton`）置于车号输入框上方——本页主操作只有「生成二维码」一个实心按钮，两个实心按钮上下叠读不出主次。常显：临时改写系统「助手」设置（`Settings.Secure.assistant` → 快趣首页）+ 反射 `SearchManager.launchAssist`，由 SystemUI 以 `ACTION_ASSIST` 代启未导出的首页（**直达、跳过启动页**；同级「快捷方式」工具同款路径，真机实测）；需一次性 `pm grant WRITE_SECURE_SETTINGS`（见下），未授权/失败自动降级为桌面启动意图（启动页）；未安装/全失败走页内 Snackbar；manifest `queries` 声明包可见性 |
 | 直达前置 | 一次性 adb 授权：`adb shell pm grant edu.jxslu.schedule[.debug] android.permission.WRITE_SECURE_SETTINGS`（权限为 development 级，可 `pm grant`；未授权 = 自动降级启动页，不再提示） |
 | 提亮 | **不做**自动屏幕提亮（用户拍板） |
+| 免费时长提醒（2026-09-22） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点 = 点「打开微信扫一扫」的时刻**（偏保守）。开关 `ebikeFreeReminderEnabled` 默认关（通知是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。开关开 + 计时中显示倒计时条（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」）；到点发系统通知（独立 channel `ebike_free_ride`，IMPORTANCE_HIGH，点击回本页），同一计时只发一次（`ebikeFreeNotifiedAt` 按起点去重）。调度独立于上课提醒：`EbikeFreeRideReminder` + `EbikeFreeRideReceiver`，`setAndAllowWhileIdle`（不申请 SCHEDULE_EXACT_ALARM），**不共用** ClassReminder 的闹钟（那边与课表查询耦合）。兜底：进页 ON_RESUME 补发「已过触发点未通知」；开机补排**不做**（用户拍板，重启后进行中计时静默失效）。换车 = 再点一次「扫一扫」重新计时。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖触发点/吸附/倒计时/有效期） |
 
 #### 实现落位与红线
 
@@ -1787,17 +1791,25 @@ D3 编排调度 + 通知 → D4 设置页 + 更新课表流程 + 气泡 → D5 �
 - `domain/EbikeQr.kt`（纯 JVM）：
   - `bikeUrl(tail: String): String?` — 模板 `100000` + 3 位数字尾部，拼
     `https://www.kvcoogo.com/ebike?id=100000NNN`；尾部非 3 位数字返回 null。
+  - `normalizeTailInput(raw: String): String` — 输入框原始文本 → 尾部车号
+    （剔非数字、超 3 位且以 `100000` 开头则剥前缀、截 3 位）。UI 层唯一口径，
+    防止"粘贴整条车号被截成 `100`"出一张扫不开的码（2026-09-22）。
   - `qrMatrix(url: String): BitMatrix` — zxing 720px、容错 M、白边 1 模块。
   - `recentBikeIds(json: String?): List<String>` / `encodeRecentIds(...)` —
     最近车号列表的 JSON 序列化（倒序去重、上限 8），脏 JSON 回空列表。
+- `domain/EbikeFreeRide.kt`（纯 JVM，2026-09-22）：免费时长提醒的时刻计算——
+  `triggerAtMillis`（起点 +（15−提前量）分钟）、`remainingSeconds` / `progressFraction`
+  （倒计时与进度条）、`formatRemaining`（`mm:ss`）、`coerceLead`（1~5 吸附）、
+  `isActive`（有效期；起点 0 = 无计时）、`noticeText`（通知文案）。
 - `data/prefs`：`ebikeCardEnabled`（今日页卡开关，默认开）、`ebikeAutoSave`
   （生成即存相册，**默认关**，用户拍板）、`ebikeRecentIds`（JSON 列表）经
   `ScheduleRepository.displayPrefs` 既有合并链透出；`ebikeBurnAfterScan`（扫完即焚，
   **默认开**）、`ebikePendingDelete`（待焚毁 key 集合，stringSet）为出码页私有
   **直接读写 store**，不进 DisplayPrefs 合并链（待删集合是高频翻搅的过程态，
   不该进 UI 向快照；未来若其它页面要读焚毁开关再接线）。
-- `ui/ebike/`：`EbikeViewModel`（生成/保存/历史/焚毁）、`EbikeQrScreen`（输入 + 大码 +
-  自动保存开关 + 扫完即焚开关 + 最近 chips + 微信扫一扫 best-effort + 页内「打开快趣出行」）。
+- `ui/ebike/`：`EbikeViewModel`（生成/保存/历史清空/焚毁）、`EbikeQrScreen`（固定占位出码位 +
+  输入 + 保存/扫一扫 + 最近 chips + 微信扫一扫 best-effort + 「打开快趣出行」；
+  两个开关沉到页面最下方，布局顺序见 §3.9）。
   落相册走 MediaStore `Pictures/水贝贝`（API 29+ 免权限；26–28 需 `WRITE_EXTERNAL_STORAGE` 运行时申请）。
 - 打开快趣出行（2026-09-21）：`EbikeQrScreen.openKvcooApp` 三级——
   ①「助手通道」：`Settings.Secure.assistant` 临时指向 `com.kvcoo.go/com.kvcoo.go.sections.home.HomeActivity`
@@ -1807,6 +1819,14 @@ D3 编排调度 + 通知 → D4 设置页 + 更新课表流程 + 气泡 → D5 �
   `pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS`（development 级权限）；
   ② 未授权/反射被拦/失败 → 桌面启动意图（启动页，导出无门槛）；③ 全失败 → Snackbar。
   不做 Shizuku/root；非小米 ROM 行为未验证（降级兜底）。
+- 免费时长提醒（2026-09-22）：`ui/ebike/EbikeFreeRideReminder.kt`——`startRide`
+  写 `ebikeRideStartAt` 并重排；`reschedule` 按开关/起点/提前量排
+  `setAndAllowWhileIdle` 闹钟（无效则 cancel）；`check` 补发窗口内通知并落
+  `ebikeFreeNotifiedAt` 去重键；`endRide` 清起点 + 撤闹钟 + 撤通知。
+  `EbikeFreeRideReceiver`（exported=false，显式 PendingIntent）为闹钟落点。
+  通知 channel `ebike_free_ride`（IMPORTANCE_HIGH），点击回快趣出行码页。
+  prefs 键：`ebike_free_reminder_enabled` / `ebike_free_lead_minutes` /
+  `ebike_ride_start_at` / `ebike_free_notified_at`（stringSet 存起点毫秒字符串）。
 - 扫完即焚（2026-09-20）：`EbikeQrBitmaps.saveToGallery` 成功返回 `SaveResult.Saved`
   （附待焚毁 key：`m:` 前缀 MediaStore uri / `f:` 前缀文件路径，编码在 `EbikeQr` 纯 JVM 可测）；
   保存方（手动或自动）按 `ebikeBurnAfterScan` 把 key 并入 `ebikePendingDelete`；
@@ -1814,8 +1834,10 @@ D3 编排调度 + 通知 → D4 设置页 + 更新课表流程 + 气泡 → D5 �
   （29+ `ContentResolver.delete` 自己的 uri，26–28 `File.delete`），成功才移出记录，
   失败保留下次重试；防重入 + 开关关闭时不删。
 - 依赖：`com.google.zxing:core`（单 jar 无传递）。
-- 测试：`EbikeQrTest`（URL 拼装/校验/BitMatrix 参数/历史序列化 roundtrip/待焚毁 key
-  编码与解析/待焚毁集合合并上限）。
+- 测试：`EbikeQrTest`（URL 拼装/校验/输入规范化 `normalizeTailInput`/BitMatrix 参数/
+  历史序列化 roundtrip/待焚毁 key 编码与解析/待焚毁集合合并上限）。
+- 测试：`EbikeFreeRideTest`（触发点计算/提前量边界与吸附/剩余秒数与进度条/倒计时文案/
+  有效期判断/通知文案）。
 
 ### 4.19 校园卡付款码（2026-09-20，P6；UI 规格见 §3.10，默认关闭）
 
@@ -2222,7 +2244,7 @@ X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room
 | 背景层 | 由 JuwApp 铺在**外层 Scaffold 之下**（content 的第一个子节点），按 `currentRoute == WEEK` 只画课表 Tab。它铺满整个窗口，因此状态栏与底栏之下都是这张图 |
 | 状态栏可读性 | 背景层顶部叠一层随主题的垂直渐变（`background` 60% → 透明，高 = 状态栏 + 40dp）。状态栏图标色由系统按深浅主题定，亮/暗图上都可能失去对比，这条是兜底 |
 | 课表页底色 | WeekScreen 的 Scaffold `containerColor = Color.Transparent`（其余两页保持不透明底，所以图不会漏到今日/我的） |
-| 悬浮导航栏（`DisplayPrefs.floatingNavBar`，默认关） | 底栏换成**悬浮胶囊**（2026-09-22 用户按参考形态指定）：全圆角（`RoundedCornerShape(percent = 50)`）+ 阴影 8dp + 半透明 `surfaceContainer 82%`，两侧留 56dp、离手势条 12dp。选中态**只改图标与文字自身的颜色**（`onSurfaceVariant` → `onSurface`，180ms 渐变），不垫任何底色块。底色必须用 `surfaceContainer` 而不是 `surface`：后者与页面底色几乎同色，胶囊会读成「一条白色底栏」 |
+| 悬浮导航栏（`DisplayPrefs.floatingNavBar`，默认关） | 底栏换成**悬浮胶囊**（2026-09-22 用户按参考形态指定）：全圆角（`RoundedCornerShape(percent = 50)`）+ 阴影 8dp + 半透明 `surfaceContainer 82%`，两侧留 56dp、离手势条 12dp。选中态三重信号（2026-09-22 用户追加：原先只靠颜色，切页辨识度不够）：淡主色底块（`primary 12%`）+ 图标微放大（22dp × 1.18 ≈ 26dp，`graphicsLayer` 缩放不改布局）+ 颜色加深（`onSurfaceVariant` → `onSurface`），全部 180ms 渐变与页面转场同频。底色必须用 `surfaceContainer` 而不是 `surface`：后者与页面底色几乎同色，胶囊会读成「一条白色底栏」 |
 | 页面底部净空 | 悬浮形态下 `NavHost` **不再吃 Scaffold 的底栏 padding**，页面内容一直铺到窗口底、被胶囊压住一部分（真悬浮）；`LocalBottomBarClearance`（`ui/common`）带着净空值下发，页面的滚动内容把最后一项顶到胶囊上方。数值是解析式算的（胶囊 64dp + 12dp + 手势条），不测量组件——测量要等首帧，页面会先摆一次再往上跳 |
 | 净空的消费方 | 课表网格与今日页 dock 自己加；**提示通道 `AppSnackbarHost` 在组件内统一加**（页面底边就是窗口底之后，Snackbar 会落到胶囊与手势条底下，不能让每个调用点自己记着）。课表页的显示设置面板走**另一条路**：打开期间把底栏整个收起（`LocalBottomBarVisibleRequest`，见 §3.1），面板铺到屏幕底。新增贴住底边的表面时先确认它归这一栏里的哪一种 |
 | 今日页 dock | 同时改成独立卡片（§3.3）：不再贴屏幕底边，与底栏留 12dp，折叠动画与底栏形态解耦 |

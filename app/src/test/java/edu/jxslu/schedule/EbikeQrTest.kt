@@ -45,6 +45,39 @@ class EbikeQrTest {
         assertNull(EbikeQr.bikeUrl("六六九"))
     }
 
+    // ---- normalizeTailInput：输入框口径（前缀展示 + 整串粘贴） ----
+
+    @Test
+    fun `输入框剥掉模板前缀只留后三位`() {
+        // 车身二维码上读到的是整串，粘进来应得到后三位而不是被截成 "100"
+        assertEquals("669", EbikeQr.normalizeTailInput("100000669"))
+        assertEquals("007", EbikeQr.normalizeTailInput("100000007"))
+    }
+
+    @Test
+    fun `恰好三位的合法尾部不被当模板前缀剥掉`() {
+        // "100" 本身是合法尾部——剥前缀的条件必须卡在"超过三位"
+        assertEquals("100", EbikeQr.normalizeTailInput("100"))
+        assertEquals("666", EbikeQr.normalizeTailInput("666"))
+    }
+
+    @Test
+    fun `非数字一律剔除并截三位`() {
+        assertEquals("", EbikeQr.normalizeTailInput(""))
+        assertEquals("", EbikeQr.normalizeTailInput("六六九"))
+        assertEquals("69", EbikeQr.normalizeTailInput(" 6a9"))
+        assertEquals("668", EbikeQr.normalizeTailInput("6689"))
+        // 超长且不带模板前缀：截前三位，别把中间的字符拼进来
+        assertEquals("123", EbikeQr.normalizeTailInput("123456"))
+    }
+
+    @Test
+    fun `剥前缀后不足三位不补齐`() {
+        // 只粘了模板：后三位是空的，等用户再填，不该补 0 蒙一个车号
+        assertEquals("", EbikeQr.normalizeTailInput("100000"))
+        assertEquals("6", EbikeQr.normalizeTailInput("1000006"))
+    }
+
     // ---- qrMatrix：参数与内容 ----
 
     @Test

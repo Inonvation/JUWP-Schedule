@@ -1,7 +1,11 @@
 package edu.jxslu.schedule.ui.ebike
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.app.SearchManager
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,34 +15,47 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -49,9 +66,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.lifecycle.Lifecycle
@@ -60,10 +79,16 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.EbikeFreeRide
+import edu.jxslu.schedule.domain.EbikeQr
+import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.SettingChoiceRow
+import edu.jxslu.schedule.ui.common.SettingSwitchRow
+import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -71,12 +96,16 @@ import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.ScooterElectric
 
 /**
- * 共享单车出码页（DESIGN §3.9）：尾部车号输入 → 生成骑行二维码 →
- * 自动保存（开关默认关）/手动保存 + 扫完即焚（开关默认开：回到 App 即清除
- * 已保存的码）+ 最近车号回填 + 微信扫一扫 best-effort。
+ * 共享单车出码页（DESIGN §3.9）。2026-09-22 重排后的纵向顺序：
+ * 「打开快趣出行」（次要按钮，置于输入框上方）→ 车号输入（`100000` 固定前缀）
+ * → 生成 → **固定方形占位**的出码区 → 保存 / 扫一扫（未出码时置灰）
+ * → 最近车号（可一键清空）→ 出码设置两个开关（页面最下方）→ 免责声明。
+ *
+ * 更新逻辑：生成骑行二维码、自动保存（开关默认关）/手动保存、扫完即焚
+ * （开关默认开：回到 App 即清除已保存的码）、微信扫一扫 best-effort。
  * 结果提示走页面 Snackbar（二级页窗口内无更高层弹层，不会穿透问题）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EbikeQrScreen(
     onBack: () -> Unit = {},
@@ -90,8 +119,31 @@ fun EbikeQrScreen(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val haptics = rememberAppHaptics()
+    // 「结束骑行」二次确认弹窗（2026-09-22 用户口径：误触代价是提醒失效）
+    var showEndConfirm by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    // 免费提醒开关开启那一刻申请 POST_NOTIFICATIONS（API 33+，照上课提醒口径）
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    val requestNotifPermission = {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    // 免费时长提醒（DESIGN §3.9）：进页核对一次补发（闹钟被推迟/进程被杀的场景）
+    LaunchedEffect(Unit) {
+        EbikeFreeRideReminder.check(context)
+    }
+
+    LaunchedEffect(Unit) {
+        EbikeFreeRideReminder.check(context)
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -139,14 +191,36 @@ fun EbikeQrScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // 输入区：尾部 3 位车号；模板前缀在提示文案里交代，输入框只收尾部
+            // 打开「快趣出行」App（DESIGN §3.9）：输入框上方（2026-09-22 用户口径）——
+            // 装了 App 的人先开 App，不装的人往下看出码区。描边样式，主操作只有一个实心按钮。
+            // 装了才有效，失败走页内 Snackbar
+            OutlinedButton(
+                onClick = {
+                    haptics.tap()
+                    openKvcooApp(context) { message ->
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                AppNoticeVisuals(message, tone = NoticeTone.Warning),
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("打开快趣出行")
+            }
+
+            // 输入区：尾部 3 位车号。`100000` 前缀与示例占位一律用 outline 灰——
+            // 2026-09-22 真机反馈：默认色读起来像"已经帮填好了"，置灰后一眼可辨是提示
+            val hintGray = MaterialTheme.colorScheme.outline
             OutlinedTextField(
                 value = state.tailInput,
                 onValueChange = viewModel::onTailInput,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("车身号后三位") },
-                placeholder = { Text("如 669") },
-                supportingText = { Text("完整车号 = 100000 + 尾部三位（如 100000669）") },
+                prefix = { Text(EbikeQr.TEMPLATE, color = hintGray) },
+                placeholder = { Text("669", color = hintGray) },
+                supportingText = { Text("只填车身二维码上车号的后三位") },
                 isError = state.inputError != null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 singleLine = true,
@@ -168,165 +242,161 @@ fun EbikeQrScreen(
                 Text("生成二维码")
             }
 
-            // 打开「快趣出行」App（DESIGN §3.9）：与「生成二维码」同型的常显入口；
-            // 装了才有效，失败走页内 Snackbar
-            Button(
-                onClick = {
-                    haptics.tap()
-                    openKvcooApp(context) { message ->
-                        scope.launch {
-                            snackbar.showSnackbar(
-                                AppNoticeVisuals(message, tone = NoticeTone.Warning),
-                            )
-                        }
-                    }
-                },
+            // 出码区：固定方形占位，出码前也占满同一块高度
+            QrPanel(bitmap = state.generatedBitmap, bikeId = state.generatedBikeId)
+
+            // 保存 / 扫一扫：常显，未出码时置灰不可点——按钮整行出现或消失同样会顶动布局。
+            // 两种动作都会退出本页或落相册，放一起等宽，拇指够得到
+            val hasCode = state.generatedBitmap != null
+            Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("打开快趣出行")
-            }
-
-            // 自动保存开关（DESIGN §3.9：默认关，相册只留用户真的要的码）
-            var autoSaveChecked by remember(prefs.autoSave) { mutableStateOf(prefs.autoSave) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
+                Button(
+                    onClick = {
                         haptics.tap()
-                        autoSaveChecked = !autoSaveChecked
-                        scope.launch { Graph.displayPrefs(context).setEbikeAutoSave(autoSaveChecked) }
+                        viewModel.saveCurrent()
                     },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "生成后自动保存到相册",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "开启后每次出码即存入相册「水贝贝」",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
-                Switch(
-                    checked = autoSaveChecked,
-                    onCheckedChange = {
-                        haptics.tap()
-                        autoSaveChecked = it
-                        scope.launch { Graph.displayPrefs(context).setEbikeAutoSave(it) }
-                    },
-                )
-            }
-
-            // 扫完即焚开关（DESIGN §3.9：默认开——保存的码是扫码一次性耗材，用完不留痕）
-            var burnChecked by remember(prefs.burnAfterScan) { mutableStateOf(prefs.burnAfterScan) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        haptics.tap()
-                        burnChecked = !burnChecked
-                        scope.launch { Graph.displayPrefs(context).setEbikeBurnAfterScan(burnChecked) }
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "扫完码返回后自动删除",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "保存到相册的二维码会在回到 App 后自动清除",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
-                Switch(
-                    checked = burnChecked,
-                    onCheckedChange = {
-                        haptics.tap()
-                        burnChecked = it
-                        scope.launch { Graph.displayPrefs(context).setEbikeBurnAfterScan(it) }
-                    },
-                )
-            }
-
-            // 码展示区：有码出大图 + 操作行，无码给占位说明
-            val bitmap = state.generatedBitmap
-            if (bitmap != null) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    enabled = hasCode,
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "骑行二维码 · ${state.generatedBikeId}",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp)),
-                    )
-                    Text(
-                        text = "车号 ${state.generatedBikeId} · 微信「扫一扫」对准二维码即可开车",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = {
-                            haptics.tap()
-                            viewModel.saveCurrent()
-                        }) {
-                            Text("保存到相册")
-                        }
-                        Button(onClick = {
-                            haptics.tap()
-                            openWechatScan(context) { message ->
-                                scope.launch {
-                                    snackbar.showSnackbar(
-                                        AppNoticeVisuals(message, tone = NoticeTone.Warning),
-                                    )
-                                }
+                    Text("保存到相册")
+                }
+                Button(
+                    onClick = {
+                        haptics.tap()
+                        viewModel.onWechatScanClicked()
+                        openWechatScan(context) { message ->
+                            scope.launch {
+                                snackbar.showSnackbar(
+                                    AppNoticeVisuals(message, tone = NoticeTone.Warning),
+                                )
                             }
+                        }
+                    },
+                    enabled = hasCode,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("打开微信扫一扫")
+                }
+            }
+
+            // 免费时长计时条（DESIGN §3.9）：开关开 + 计时中才显示；每秒刷新倒计时
+            val timerActive = prefs.freeReminderEnabled && EbikeFreeRide.isActive(
+                prefs.rideStartAt,
+                System.currentTimeMillis(),
+            )
+            AnimatedVisibility(
+                visible = timerActive,
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+            ) {
+                FreeRideTimerBar(
+                    startAtMillis = prefs.rideStartAt,
+                    onEnd = { showEndConfirm = true },
+                )
+            }
+
+            // 最近车号（DESIGN §3.9：8 个，点击回填 + 一键清空）
+            if (prefs.recentIds.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "最近生成",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                            modifier = Modifier.weight(1f),
+                        )
+                        // 一键清空：历史只是回填便利项，不做二次确认，清了给 Snackbar
+                        TextButton(onClick = {
+                            haptics.tap()
+                            viewModel.clearRecent()
                         }) {
-                            Text("打开微信扫一扫")
+                            Text("清空")
                         }
                     }
-                }
-            } else {
-                PlaceholderHint()
-            }
-
-            // 最近车号（DESIGN §3.9：8 个，点击回填）
-            if (prefs.recentIds.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "最近生成",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        prefs.recentIds.take(4).forEach { tail ->
+                    // FlowRow 而非固定两行：字体放大档位下 3 位数字 chip 也可能放不下 4 个
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        prefs.recentIds.forEach { tail ->
                             RecentChip(tail) {
                                 haptics.tap()
                                 viewModel.onPickRecent(tail)
                             }
                         }
                     }
-                    if (prefs.recentIds.size > 4) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            prefs.recentIds.drop(4).take(4).forEach { tail ->
-                                RecentChip(tail) {
-                                    haptics.tap()
-                                    viewModel.onPickRecent(tail)
-                                }
-                            }
+                }
+            }
+
+            // 出码设置：两个开关放页面最下方（2026-09-22 用户口径）——低频调整项，
+            // 不再夹在码区与历史之间挡视线。开关行自带触感，调用方不叠
+            var autoSaveChecked by remember(prefs.autoSave) { mutableStateOf(prefs.autoSave) }
+            var burnChecked by remember(prefs.burnAfterScan) { mutableStateOf(prefs.burnAfterScan) }
+            SettingsSection(
+                title = "出码设置",
+                subtitle = "只影响本页的生成与保存行为，与登录状态无关。",
+            ) {
+                SettingSwitchRow(
+                    title = "生成后自动保存到相册",
+                    subtitle = "开启后每次出码即存入相册「水贝贝」",
+                    checked = autoSaveChecked,
+                    onCheckedChange = { checked ->
+                        autoSaveChecked = checked
+                        scope.launch { Graph.displayPrefs(context).setEbikeAutoSave(checked) }
+                    },
+                )
+                SettingSwitchRow(
+                    title = "扫完码返回后自动删除",
+                    subtitle = "保存到相册的二维码会在回到 App 后自动清除",
+                    checked = burnChecked,
+                    onCheckedChange = { checked ->
+                        burnChecked = checked
+                        scope.launch { Graph.displayPrefs(context).setEbikeBurnAfterScan(checked) }
+                    },
+                )
+            }
+
+            // 免费时长提醒（DESIGN §3.9）：独立开关 + 提前量 1~5 分钟（用户拍板默认 3）
+            var freeEnabled by remember(prefs.freeReminderEnabled) {
+                mutableStateOf(prefs.freeReminderEnabled)
+            }
+            SettingsSection(
+                title = "免费时长提醒",
+                subtitle = "扫码开车后按 15 分钟计，提前提醒换车或还车。",
+            ) {
+                SettingSwitchRow(
+                    title = "开启免费时长提醒",
+                    subtitle = "点「打开微信扫一扫」开始计时，到点前发系统通知",
+                    checked = freeEnabled,
+                    onCheckedChange = { checked ->
+                        freeEnabled = checked
+                        if (checked) requestNotifPermission()
+                        scope.launch {
+                            Graph.displayPrefs(context).setEbikeFreeReminderEnabled(checked)
+                            viewModel.onFreeReminderChanged()
                         }
-                    }
+                    },
+                )
+                if (freeEnabled) {
+                    SettingChoiceRow(
+                        title = "提前量",
+                        subtitle = "免费时段结束前几分钟提醒",
+                        options = listOf("1 分钟", "2 分钟", "3 分钟", "4 分钟", "5 分钟"),
+                        selectedIndex = prefs.freeLeadMinutes - EbikeFreeRide.LEAD_MIN,
+                        onSelect = { index ->
+                            scope.launch {
+                                Graph.displayPrefs(context)
+                                    .setEbikeFreeLeadMinutes(index + EbikeFreeRide.LEAD_MIN)
+                                viewModel.onFreeReminderChanged()
+                            }
+                        },
+                    )
                 }
             }
 
@@ -336,6 +406,29 @@ fun EbikeQrScreen(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
         }
+    }
+
+    // 结束骑行确认（DESIGN §3.9）：误触 = 提醒失效，比直接清掉多一道闸
+    if (showEndConfirm) {
+        AlertDialog(
+            onDismissRequest = { showEndConfirm = false },
+            title = { Text("结束骑行？") },
+            text = { Text("结束后将清空免费时长计时，不再提醒换车。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showEndConfirm = false
+                    haptics.tap()
+                    viewModel.onEndRide()
+                }) {
+                    Text("结束骑行", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEndConfirm = false }) {
+                    Text("继续骑行")
+                }
+            },
+        )
     }
 }
 
@@ -352,32 +445,114 @@ private fun RecentChip(tail: String, onClick: () -> Unit) {
     )
 }
 
+/**
+ * 免费时长计时条（DESIGN §3.9）：大号倒计时 + 细进度线 + 「结束骑行」。
+ * 2026-09-22 再改：恢复进度条（用户口径：点看不出趋势，线更直观），
+ * 高度压缩（label 小标签与大数字合并同一行基线，进度线 2dp），
+ * 整卡点击 = 弹结束确认（不是直接结束，误触代价是提醒失效）。
+ * 内部每秒自刷新（[produceState] 计时循环）；到点后本组件被调用方条件移除。
+ */
 @Composable
-private fun PlaceholderHint() {
-    val onSurface = MaterialTheme.colorScheme.onSurface
+private fun FreeRideTimerBar(startAtMillis: Long, onEnd: () -> Unit) {
+    // 每秒刷新一次剩余时间；页面离开组合时自动取消
+    val remaining by produceState(
+        initialValue = EbikeFreeRide.remainingSeconds(startAtMillis, System.currentTimeMillis()),
+        key1 = startAtMillis,
+    ) {
+        while (EbikeFreeRide.isActive(startAtMillis, System.currentTimeMillis())) {
+            value = EbikeFreeRide.remainingSeconds(startAtMillis, System.currentTimeMillis())
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
+    val progress = EbikeFreeRide.progressFraction(startAtMillis, System.currentTimeMillis())
+    AppCardRow(
+        onClick = onEnd,
+        onClickLabel = "结束骑行",
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    text = EbikeFreeRide.formatRemaining(remaining),
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontFeatureSettings = "tnum", // 等宽数字：每秒跳动不抖
+                    ),
+                )
+                Text(
+                    text = "  免费剩余",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(bottom = 3.dp),
+                )
+            }
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 5.dp),
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+            )
+        }
+        Text(
+            text = "结束骑行",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+/**
+ * 出码位（DESIGN §3.9）：**固定方形、始终占位**。
+ *
+ * 旧版「没码就没有这一块」，点生成后整页往下跳一次（2026-09-22 用户反馈）。
+ * 现在未生成时先摆一块描边空框 + 提示，出码后原地换成码图，高度不变，
+ * 下方按钮与历史不动。码图 1:1（[EbikeQr.QR_SIZE_PX] 方图）与占位框同比，无二次形变。
+ */
+@Composable
+private fun QrPanel(bitmap: Bitmap?, bikeId: String?) {
     val shape = RoundedCornerShape(14.dp)
-    Row(
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    Box(
         modifier = Modifier
             .fillMaxWidth()
+            .aspectRatio(1f)
             .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(
+                if (bitmap == null) {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+            )
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            HugeIcons.ScooterElectric,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(28.dp),
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = "输入车身号后三位生成骑行二维码，\n微信「扫一扫」扫码即可解锁对应车辆。",
-            style = MaterialTheme.typography.bodySmall,
-            color = onSurface.copy(alpha = 0.6f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "骑行二维码 · ${bikeId.orEmpty()}",
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    HugeIcons.ScooterElectric,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                    modifier = Modifier.size(40.dp),
+                )
+                Text(
+                    text = "填好后三位，点「生成二维码」\n再用微信「扫一扫」即可开车",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
     }
 }
 

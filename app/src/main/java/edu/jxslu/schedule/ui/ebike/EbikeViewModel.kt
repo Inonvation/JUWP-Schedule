@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.EbikeQr
+import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +41,12 @@ data class EbikePrefsSnapshot(
     val burnAfterScan: Boolean = true,
     val dark: Boolean = false,
     val recentIds: List<String> = emptyList(),
+    /** 免费时长提醒开关（DESIGN §3.9）。 */
+    val freeReminderEnabled: Boolean = false,
+    /** 免费时长提前量（分钟）。 */
+    val freeLeadMinutes: Int = EbikeFreeRide.DEFAULT_LEAD_MINUTES,
+    /** 本次骑行计时起点（epoch 毫秒）；0 = 无进行中计时。 */
+    val rideStartAt: Long = 0L,
 )
 
 sealed interface EbikeEvent {
@@ -64,30 +71,76 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
     private val _events = Channel<EbikeEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    /** 骑行相关偏好（卡开关不归本页管，但自动保存/焚毁/深浅色/历史在本页用）。 */
+    /** 骑行相关偏好（卡开关不归本页管，其余在本页用）。免费提醒三个流合进快照。 */
     val ebikePrefs: StateFlow<EbikePrefsSnapshot> = combine(
         prefs.ebikeAutoSave,
         prefs.ebikeBurnAfterScan,
         prefs.themeMode,
         prefs.ebikeRecentIds,
-    ) { autoSave, burnAfterScan, themeMode, recent ->
+        prefs.ebikeFreeReminderEnabled,
+        prefs.ebikeFreeLeadMinutes,
+        prefs.ebikeRideStartAt,
+    ) { array ->
+        val autoSave = array[0] as Boolean
+        val burnAfterScan = array[1] as Boolean
+        val themeMode = array[2] as ThemeMode
+        @Suppress("UNCHECKED_CAST")
+        val recent = array[3] as List<String>
+        val freeEnabled = array[4] as Boolean
+        val freeLead = array[5] as Int
+        val rideStartAt = array[6] as Long
         EbikePrefsSnapshot(
             autoSave = autoSave,
             burnAfterScan = burnAfterScan,
             dark = themeMode == ThemeMode.Dark,
             recentIds = recent,
+            freeReminderEnabled = freeEnabled,
+            freeLeadMinutes = freeLead,
+            rideStartAt = rideStartAt,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, EbikePrefsSnapshot())
 
-    /** 输入尾部车号（UI 已过滤为数字，这里再做一次长度上限防线）。 */
+    /** 免费提醒设置变更（开关/提前量）→ 重排闹钟。 */
+    fun onFreeReminderChanged() {
+        viewModelScope.launch { EbikeFreeRideReminder.reschedule(Graph.appContext) }
+    }
+
+    /** 点「打开微信扫一扫」：记起点、重排闹钟（换车再点一次 = 重新计时）。 */
+    fun onWechatScanClicked() {
+        viewModelScope.launch {
+            EbikeFreeRideReminder.startRide(Graph.appContext, System.currentTimeMillis())
+            _events.send(EbikeEvent.Notice("已开始记录 15 分钟免费时长", NoticeTone.Info))
+        }
+    }
+
+    /** 结束骑行：清起点、撤闹钟与通知。 */
+    fun onEndRide() {
+        viewModelScope.launch {
+            EbikeFreeRideReminder.endRide(Graph.appContext)
+            _events.send(EbikeEvent.Notice("已结束骑行计时", NoticeTone.Info))
+        }
+    }
+
+    /**
+     * 输入尾部车号：剥掉可能被粘进来的模板前缀（`100000669` → `669`）再截三位，
+     * 口径在 [EbikeQr.normalizeTailInput]（纯 JVM 可测）。
+     */
     fun onTailInput(value: String) {
-        val filtered = value.filter { it in '0'..'9' }.take(EbikeQr.TAIL_LENGTH)
+        val filtered = EbikeQr.normalizeTailInput(value)
         _uiState.update { it.copy(tailInput = filtered, inputError = null) }
     }
 
     /** 点击最近车号 chip 回填。 */
     fun onPickRecent(tail: String) {
         if (EbikeQr.bikeUrl(tail) != null) onTailInput(tail)
+    }
+
+    /** 一键清空最近车号（DESIGN §3.9）。历史只是回填便利项，清了不弹二次确认，直接提示。 */
+    fun clearRecent() {
+        viewModelScope.launch {
+            prefs.updateEbikeRecentIds { emptyList() }
+            _events.send(EbikeEvent.Notice("已清空最近车号", NoticeTone.Info))
+        }
     }
 
     /**

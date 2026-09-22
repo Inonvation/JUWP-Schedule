@@ -122,6 +122,11 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- 共享单车免费时长提醒（DESIGN §3.9）：到点闹钟落点，仅内部广播 -->
+        <receiver
+            android:name=".ui.ebike.EbikeFreeRideReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

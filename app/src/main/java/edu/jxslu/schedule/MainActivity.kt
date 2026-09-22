@@ -9,9 +9,11 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -197,6 +200,9 @@ private val FloatingBarSideMargin = 56.dp
 /** 悬浮胶囊与手势条的间距。 */
 private val FloatingBarBottomMargin = 12.dp
 
+/** 底栏图标基准尺寸；选中态在 [FloatingNavBarPill] 里乘 1.18 倍（约 26dp），不改布局。 */
+private val TabIconBaseSize = 22.dp
+
 /**
  * 悬浮胶囊的高度（解析值）：行内上下 6dp×2 + 列内上下 6dp×2 + 图标 22dp + 间距 2dp +
  * 文字 labelMedium 行高 16dp。
@@ -208,8 +214,8 @@ private val FloatingPillHeight = 64.dp
 /**
  * 悬浮胶囊底栏（DESIGN §4.22，2026-09-22 按用户给的参考形态改）。
  *
- * 全圆角 + 阴影 + 半透明底；**选中态只体现在图标与文字自身的颜色上**，不垫任何底色块
- * （用户 2026-09-22 指定：切到哪一页，那一页的图标就加深变黑）。
+ * 全圆角 + 阴影 + 半透明底；选中态三重信号：淡主色底块 + 图标微放大 +
+ * 图标/文字颜色加深（用户 2026-09-22 追加：原先只靠颜色，切页辨识度不够）。
  *
  * 底色用 `surfaceContainer` 而不是 `surface`：浅色主题下 `surface` 与页面底色几乎同色，
  * 胶囊会读成「一条普通白底栏」，浮不起来。
@@ -240,16 +246,27 @@ private fun FloatingNavBarPill(
         ) {
             tabs.forEach { tab ->
                 val selected = currentRoute == tab.route
-                // 选中 = 加深，不换底色块。颜色渐变过渡，切页时不会「啪」地跳一下
+                // 选中 = 淡主色底块 + 加深。颜色渐变过渡，切页时不会「啪」地跳一下
                 val contentColor by animateColorAsState(
                     targetValue = if (selected) colorScheme.onSurface else colorScheme.onSurfaceVariant,
                     animationSpec = tween(TabFadeMillis),
                     label = "navItemColor",
                 )
+                val itemBackground by animateColorAsState(
+                    targetValue = if (selected) colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
+                    animationSpec = tween(TabFadeMillis),
+                    label = "navItemBackground",
+                )
+                val iconScale by animateFloatAsState(
+                    targetValue = if (selected) 1.18f else 1f,
+                    animationSpec = tween(TabFadeMillis),
+                    label = "navItemIconScale",
+                )
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(percent = 50))
+                        .background(itemBackground)
                         // 用 selectable 而不是 clickable：TalkBack 要能读出「已选中的标签页」
                         .selectable(
                             selected = selected,
@@ -264,7 +281,12 @@ private fun FloatingNavBarPill(
                         imageVector = tab.icon,
                         contentDescription = null,
                         tint = contentColor,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier
+                            .size(TabIconBaseSize)
+                            .graphicsLayer {
+                                scaleX = iconScale
+                                scaleY = iconScale
+                            },
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(

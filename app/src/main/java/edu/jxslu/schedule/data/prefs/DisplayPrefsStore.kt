@@ -15,6 +15,7 @@ import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.DetectFailurePolicy
+import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
@@ -308,6 +309,26 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_HOMEWORK_REMINDER_ENABLED] ?: false
     }
 
+    /** 共享单车免费时长提醒开关（DESIGN §3.9）。默认关：通知是打扰型能力。 */
+    val ebikeFreeReminderEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_FREE_REMINDER_ENABLED] ?: false
+    }
+
+    /** 共享单车免费时长提醒提前量（分钟）。读路径吸附 1~5。 */
+    val ebikeFreeLeadMinutes: Flow<Int> = context.displayDataStore.data.map { p ->
+        EbikeFreeRide.coerceLead(p[KEY_EBIKE_FREE_LEAD] ?: EbikeFreeRide.DEFAULT_LEAD_MINUTES)
+    }
+
+    /** 本次骑行计时起点（epoch 毫秒）；0 = 无进行中计时。 */
+    val ebikeRideStartAt: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_RIDE_START_AT] ?: 0L
+    }
+
+    /** 已发过免费到点通知的起点集合（字符串存毫秒值）。 */
+    val ebikeFreeNotifiedAt: Flow<Set<String>> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_FREE_NOTIFIED_AT] ?: emptySet()
+    }
+
     /**
      * 日历同步的提前提醒分钟数（DESIGN §4.12）。全局项，默认 20，0 = 不提醒。
      * 值域 0–120 / 步长 5 的口径单一来源是 [CalendarSyncDefaults]，读路径先夹取防线。
@@ -510,6 +531,34 @@ class DisplayPrefsStore(private val context: Context) {
     /** 作业截止提醒开关（DESIGN §3.11）。 */
     suspend fun setHomeworkReminderEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_HOMEWORK_REMINDER_ENABLED] = value }
+    }
+
+    /** 共享单车免费时长提醒开关（DESIGN §3.9）。默认关：通知是打扰型能力。 */
+    suspend fun setEbikeFreeReminderEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_FREE_REMINDER_ENABLED] = value }
+    }
+
+    /** 共享单车免费时长提醒提前量（分钟，1~5）。 */
+    suspend fun setEbikeFreeLeadMinutes(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_EBIKE_FREE_LEAD] = EbikeFreeRide.coerceLead(value)
+        }
+    }
+
+    /**
+     * 本次骑行计时起点（epoch 毫秒）：点「打开微信扫一扫」即写。
+     * 0 = 无进行中计时。**持久化**——进程被杀重启后状态条与补发核对都靠它。
+     */
+    suspend fun setEbikeRideStartAt(value: Long) {
+        context.displayDataStore.edit { it[KEY_EBIKE_RIDE_START_AT] = value }
+    }
+
+    /** 已发过免费到点通知的起点毫秒值：同一计时只发一次。 */
+    suspend fun addEbikeFreeNotifiedAt(value: Long) {
+        context.displayDataStore.edit { p ->
+            val current = p[KEY_EBIKE_FREE_NOTIFIED_AT] ?: emptySet()
+            p[KEY_EBIKE_FREE_NOTIFIED_AT] = current + value.toString()
+        }
     }
 
     suspend fun setReminderLeadMinutes(value: Int) {
@@ -834,6 +883,10 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_REMINDER_LAST = stringPreferencesKey("reminder_last_key")
         val KEY_HOMEWORK_REMINDER_ENABLED = booleanPreferencesKey("homework_reminder_enabled")
         val KEY_HOMEWORK_REMINDED_KEYS = stringSetPreferencesKey("homework_reminded_keys")
+        val KEY_EBIKE_FREE_REMINDER_ENABLED = booleanPreferencesKey("ebike_free_reminder_enabled")
+        val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
+        val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
+        val KEY_EBIKE_FREE_NOTIFIED_AT = stringSetPreferencesKey("ebike_free_notified_at")
         val KEY_CURRENT_TIMETABLE = longPreferencesKey("current_timetable_id")
         val KEY_DEFAULT_CONFIG_SOURCE = longPreferencesKey("default_config_source_id")
         val KEY_SLOT_SCHEMA = intPreferencesKey("slot_schema_version")

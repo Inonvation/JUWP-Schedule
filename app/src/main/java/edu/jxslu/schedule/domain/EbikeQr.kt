@@ -86,6 +86,24 @@ object EbikeQr {
     }
 
     /**
+     * 输入框原始文本 → 尾部车号（最多 3 位数字）。UI 层的唯一口径（DESIGN §3.9）。
+     *
+     * 输入框里 `100000` 已作为固定前缀显示，用户不该再敲一遍；但整条车号
+     * （`100000669`）是能从车身二维码上直接读到的，粘进来的可能是整串。
+     * 这里把模板前缀剥掉再截三位，否则会被截成 `100` 出一张扫不开的码。
+     * 恰好 3 位且以模板开头（如 `100`）不剥——那是合法尾部。
+     */
+    fun normalizeTailInput(raw: String): String {
+        val digits = raw.filter { it in '0'..'9' }
+        val tail = if (digits.length > TAIL_LENGTH && digits.startsWith(TEMPLATE)) {
+            digits.removePrefix(TEMPLATE)
+        } else {
+            digits
+        }
+        return tail.take(TAIL_LENGTH)
+    }
+
+    /**
      * 生成 QR 位阵。容错取 M（15%，打印/屏幕亮度损失下仍有余量）；
      * 白边 1 模块（zxing 约定：margin 是模块数不是像素，1 已满足扫码器的静区要求，
      * UI 展示时再由外层容器给视觉留白）。
