@@ -4,7 +4,7 @@
 「从教务系统拿到课表/考试/成绩」完整数据链路的实现细节，以及换校适配的动手步骤。
 应用功能与界面规格见 [DESIGN.md](DESIGN.md)，爬虫脚本速查见 [scripts/README.md](scripts/README.md)。
 
-> 快照：v1.1.0（2026-09-21，Room v8）。工程实况（依赖版本、数据库版本、口径清单）
+> 快照：v1.2.0（2026-09-22，Room v8）。工程实况（依赖版本、数据库版本、口径清单）
 > 以 [AGENTS.md](AGENTS.md) 为准，本文只讲「为什么这么设计、换校要动哪里」。
 
 > 本项目是**江西水利电力大学的非官方学生项目**，仅供学习交流。
@@ -554,7 +554,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
 ```
 
-覆盖面（45 个测试类，`app/src/test/`）：
+覆盖面（46 个测试类，`app/src/test/`）：
 
 - **解析与数据链路**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
   `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 样例）、
@@ -566,7 +566,8 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
   `ScoreCalculatorTest` / `ScoreGroupsTest`、`CourseTweakTest`（调课规划）、
   `ScheduleDetectTest`（三方合并：归因/冲突/不误报）、`ScheduleExporterTest`（日历/CSV 展开）、
   `ReminderPlannerTest`（提醒时刻与窗口）、`CalendarSyncDefaultsTest`、
-  `TimetablePrefsDefaultsTest`、`ShortcutsTest`、`GridFontDecouplingTest`；
+  `TimetablePrefsDefaultsTest`、`ScheduleBackgroundTest`（背景图：参数夹取 / 模糊档位到解码尺寸 /
+  文件名白名单）、`ShortcutsTest`、`GridFontDecouplingTest`；
 - **笔记·作业**：`NoteExcerptTest`、`MarkdownParserTest` / `MarkdownEditTest`（自研子集
   与编辑器补全全分支）、`MathTexTest`、`HomeworkCenterTest` / `HomeworkReminderTest`、
   `CourseRemarkTest`（备注搬运：mergeKey 匹配 / kid 区分 / 不覆盖新行）；
