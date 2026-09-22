@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -95,6 +96,7 @@ import edu.jxslu.schedule.ui.common.GridCourseCard
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
+import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
 import edu.jxslu.schedule.ui.common.SingleSectionCard
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.readTextFromUri
@@ -581,6 +583,15 @@ fun WeekScreen(
     // 方案：不再用 ModalBottomSheet，改成**自绘的固定锚定面板**——
     // 结构上不存在 sheet 的拖拽手势与 nestedScroll 连接，面板只有三种退出口：
     // 「完成」按钮 / 点遮罩 / 系统返回。滚动冲突从根上消失，而不是靠参数对冲。
+    //
+    // 面板打开期间还要把底栏收起来（LocalBottomBarVisibleRequest）：底栏画在页面内容之后，
+    // 不收的话悬浮胶囊浮在面板上、盖住面板最下面一条，那一带的点击也归胶囊。
+    // onDispose 复原，免得面板还没关就切走 Tab 时底栏一直藏着。
+    val bottomBarVisibleRequest = LocalBottomBarVisibleRequest.current
+    DisposableEffect(displaySheetOpen) {
+        bottomBarVisibleRequest.value = !displaySheetOpen
+        onDispose { bottomBarVisibleRequest.value = true }
+    }
     if (displaySheetOpen) {
         DisplaySettingsOverlay(
             onDismiss = { displaySheetOpen = false },

@@ -61,6 +61,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
+import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
 import edu.jxslu.schedule.ui.me.SettingsScreen
 import edu.jxslu.schedule.ui.theme.JuwTheme
 import edu.jxslu.schedule.ui.today.TodayScreen
@@ -351,6 +352,10 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
         0.dp
     }
 
+    // 页面浮层（课表页的显示设置面板）可以请求收起底栏，见 LocalBottomBarVisibleRequest。
+    val bottomBarVisibleRequest = remember { mutableStateOf(true) }
+    val bottomBarVisible by bottomBarVisibleRequest
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         // 顶部 inset 归零（DESIGN §4.22）：垫了状态栏高度，课表页的背景图就铺不到状态栏。
@@ -358,21 +363,31 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
         // （Scaffold 的内边距与 contentWindowInsets 无关），所以底栏避让不受影响。
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            AppBottomBar(
-                floating = floatingNavBar,
-                tabs = tabs,
-                currentRoute = currentRoute,
-                onSelect = { tab ->
-                    haptics.tap()
-                    navController.navigate(tab.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
+            // 悬浮胶囊浮在页面内容之上，显示设置面板（画在 NavHost 里）盖不住它：
+            // 面板打开时把胶囊整个收起来，面板才能铺到屏幕底、那一带的点击才归面板。
+            // 只对悬浮形态生效——非悬浮形态是整宽不透明底栏，面板本来就在它上方，
+            // 收起来反而会让 NavHost 的 padding 变化、网格重排。
+            AnimatedVisibility(
+                visible = !floatingNavBar || bottomBarVisible,
+                enter = fadeIn(tween(TabFadeMillis)),
+                exit = fadeOut(tween(TabFadeMillis)),
+            ) {
+                AppBottomBar(
+                    floating = floatingNavBar,
+                    tabs = tabs,
+                    currentRoute = currentRoute,
+                    onSelect = { tab ->
+                        haptics.tap()
+                        navController.navigate(tab.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
                         }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-            )
+                    },
+                )
+            }
         },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
@@ -404,7 +419,10 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            CompositionLocalProvider(LocalBottomBarClearance provides bottomBarClearance) {
+            CompositionLocalProvider(
+                LocalBottomBarClearance provides bottomBarClearance,
+                LocalBottomBarVisibleRequest provides bottomBarVisibleRequest,
+            ) {
                 NavHost(
                     navController = navController,
                     startDestination = Routes.TODAY,

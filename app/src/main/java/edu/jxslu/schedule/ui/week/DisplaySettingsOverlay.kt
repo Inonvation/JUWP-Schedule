@@ -45,7 +45,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
-import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -164,10 +163,6 @@ internal fun DisplaySettingsOverlay(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // 整块面板抬到悬浮胶囊上缘之上（普通底栏形态下这个值是 0，位置不变）。
-                    // 面板是满宽的底部抽屉，底栏压在它身上会盖住最下面一两行，且那一带的点击
-                    // 会命中胶囊（bottomBar 后绘制、命中优先）——点「移除背景」直接跳走 Tab。
-                    .padding(bottom = LocalBottomBarClearance.current)
                     // 高度在 measure 阶段从 state 读取：拖动每帧只重测、不重组
                     .panelHeight(panelHeightPx),
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
