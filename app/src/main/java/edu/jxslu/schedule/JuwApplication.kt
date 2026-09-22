@@ -4,6 +4,7 @@ import android.app.Application
 import edu.jxslu.schedule.data.jw.JwDetectScheduler
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.ui.reminder.ClassReminder
+import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +69,20 @@ class JuwApplication : Application() {
                 val referenced = store.referencedNames(noteRepo.allBodies() + homeworkRepo.allDetails())
                 store.sweep(referenced)
             }.onFailure { android.util.Log.w("JuwApplication", "attachment sweep failed", it) }
+        }
+        // 课表页背景图（DESIGN §4.21）：先清掉目录里多余的旧图，再把当前这张解进内存缓存。
+        //
+        // 预热是为了首帧：不预热的话，切到课表 Tab 时网格先出、背景晚几十毫秒补上，
+        // 能看到一次闪入（该页对首帧闪动的容忍度很低，Pager 与底部抽屉都为这件事改过）。
+        // 解码目标按设备长边算，与渲染路径同一口径，命中率才是 100%。
+        appScope.launch {
+            runCatching {
+                val displayPrefs = Graph.repository(this@JuwApplication).displayPrefs.first()
+                Graph.scheduleBackground(this@JuwApplication).sweep(displayPrefs.bgImageName)
+                displayPrefs.bgImageName?.let { name ->
+                    warmScheduleBackground(this@JuwApplication, name, displayPrefs.bgImageBlur)
+                }
+            }.onFailure { android.util.Log.w("JuwApplication", "background warmup failed", it) }
         }
     }
 }

@@ -11,6 +11,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.repo.ImportPreview
 import edu.jxslu.schedule.data.repo.ImportResult
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.ScheduleCalculator
@@ -130,6 +131,63 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     private val _oneShot = MutableStateFlow<OneShot?>(null)
     val oneShot: StateFlow<OneShot?> = _oneShot
+
+    // ---- 背景图（DESIGN §4.21）：选图与移除都在 VM 里跑，转屏不丢进行中的导入 ----
+
+    private val _bgImporting = MutableStateFlow(false)
+
+    /** 背景图正在落盘：面板里「选择」按钮据此转成「处理中…」并禁用。 */
+    val bgImporting: StateFlow<Boolean> = _bgImporting
+
+    private val _bgNotice = MutableStateFlow<String?>(null)
+
+    /**
+     * 背景图操作的结果提示。**只给显示设置面板内部看**（`InlineNoticeRow`）：
+     * 那个面板是自绘的覆盖层，Snackbar 落在它下面，用户看不见（同导入弹层的检测结果）。
+     */
+    val bgNotice: StateFlow<String?> = _bgNotice
+
+    fun consumeBgNotice() {
+        _bgNotice.value = null
+    }
+
+    /**
+     * 选一张背景图（DESIGN §4.21）：落盘 → 写偏好 → 删旧文件。
+     * 顺序不可乱：先删旧文件再写偏好，中间失败就是偏好指向一个不存在的文件。
+     */
+    fun importScheduleBackground(context: Context, uri: Uri) {
+        if (_bgImporting.value) return
+        _bgImporting.value = true
+        _bgNotice.value = null
+        viewModelScope.launch {
+            try {
+                val app = context.applicationContext
+                val store = Graph.scheduleBackground(app)
+                // 直接读一次偏好，不读 uiState：uiState 是 WhileSubscribed 的，
+                // 没有订阅者时它的 value 是默认值，旧文件名会读成 null，旧图就删不掉了
+                val previous = repo.displayPrefs.first().bgImageName
+                val name = store.importUri(uri)
+                if (name == null) {
+                    _bgNotice.value = "这张图读不出来，换一张试试"
+                    return@launch
+                }
+                repo.setBackgroundImage(name)
+                if (previous != null && previous != name) store.delete(previous)
+            } finally {
+                _bgImporting.value = false
+            }
+        }
+    }
+
+    /** 移除背景：先清偏好再删文件（渲染层立即回到无背景，文件删失败也只是留个孤儿，冷启动会扫掉）。 */
+    fun removeScheduleBackground(context: Context) {
+        viewModelScope.launch {
+            val store = Graph.scheduleBackground(context.applicationContext)
+            val name = repo.displayPrefs.first().bgImageName
+            repo.setBackgroundImage(null)
+            store.delete(name)
+        }
+    }
 
     private val _pendingImportText = MutableStateFlow<String?>(null)
 
@@ -298,6 +356,11 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setDynamicColor(value) }
     }
 
+    /** 悬浮导航栏（DESIGN §4.22）。 */
+    fun setFloatingNavBar(value: Boolean) {
+        viewModelScope.launch { repo.setFloatingNavBar(value) }
+    }
+
     /** 开水双击确认（全局；默认双击防误触）。 */
     fun setWaterRequireDoubleClick(value: Boolean) {
         viewModelScope.launch { repo.setWaterRequireDoubleClick(value) }
@@ -358,6 +421,16 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     fun setShowCellBorder(value: Boolean) = viewModelScope.launch { repo.setShowCellBorder(value) }
 
     fun setShowGridLines(value: Boolean) = viewModelScope.launch { repo.setShowGridLines(value) }
+
+    // ---- 课表页背景图的数值参数（DESIGN §4.21）。选图与移除见 importScheduleBackground ----
+
+    fun setBgImageOpacity(value: Float) = viewModelScope.launch { repo.setBgImageOpacity(value) }
+
+    fun setBgImageDim(value: Float) = viewModelScope.launch { repo.setBgImageDim(value) }
+
+    fun setBgImageBlur(value: Float) = viewModelScope.launch { repo.setBgImageBlur(value) }
+
+    fun setBgImageScale(value: BgScale) = viewModelScope.launch { repo.setBgImageScale(value) }
 
     class Factory(private val repo: ScheduleRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

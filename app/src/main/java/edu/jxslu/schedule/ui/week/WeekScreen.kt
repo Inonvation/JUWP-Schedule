@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -92,6 +94,7 @@ import edu.jxslu.schedule.ui.common.GridCellStyle
 import edu.jxslu.schedule.ui.common.GridCourseCard
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.SingleSectionCard
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.readTextFromUri
@@ -113,6 +116,7 @@ import me.rerere.hugeicons.stroke.Import
 import me.rerere.hugeicons.stroke.Share08
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -354,6 +358,16 @@ fun WeekScreen(
         }
     }
 
+    // 背景图文件不在磁盘上（清过数据、恢复备份不完整、目录被系统清过）：
+    // 偏好里还挂着名字的话，渲染每次都会解一遍空气。校验一次就清掉名字，降级成无背景。
+    LaunchedEffect(state.bgImageName) {
+        val name = state.bgImageName ?: return@LaunchedEffect
+        if (!Graph.scheduleBackground(context).exists(name)) {
+            Log.w("WeekScreen", "background file missing, clearing preference")
+            viewModel.clearBackgroundImage()
+        }
+    }
+
     // ---- 网格字号换算（不依赖可用约束，提到 Scaffold 外）----
     // systemFontScale/gridScale 及各字号 sp 只由设置与列数决定，与 BoxWithConstraints 的
     // 可用宽高无关；上提到函数级是因为「表头高度」的动态下限 headerMinDp 要同时喂给两处：
@@ -387,6 +401,9 @@ fun WeekScreen(
     val headerMinDp = minHeaderHeightForDateFont(dateFontSp)
 
     Scaffold(
+        // 底色透明（DESIGN §4.22）：背景图由 JuwApp 铺在外层 Scaffold 之下（要盖到状态栏与底栏），
+        // 本页的 Surface 若不透明就会把它整块盖住。不透明底只由外层 Scaffold 提供，不会露出窗口底。
+        containerColor = Color.Transparent,
         // 底部导航栏 inset 已由外层底栏高度提供，内层不再消费（防底部双倍空白）；
         // 顶栏为自绘 56dp Row，本就不消费状态栏 inset，顶部由外层 padding 避让。
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -412,7 +429,10 @@ fun WeekScreen(
         BoxWithConstraints(
             Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // 悬浮底栏的净空：网格按可用高度自适应，不扣掉这段最后几行会被胶囊压住。
+                // 背景图不受影响——它在窗口层，照旧铺到屏幕底（§4.22）。
+                .padding(bottom = LocalBottomBarClearance.current),
         ) {
             val layout = buildGridLayout(
                 maxHeight = maxHeight,
@@ -797,6 +817,9 @@ private fun WeekTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // 顶部 inset 自取（DESIGN §4.22）：外层 Scaffold 归零后不再垫状态栏高度，
+            // 自绘顶栏自己让位；垫在 height 之外，总高 = 状态栏 + 56dp，与改动前一致。
+            .windowInsetsPadding(WindowInsets.statusBars)
             .height(TopBarHeight)
             .padding(start = 16.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,

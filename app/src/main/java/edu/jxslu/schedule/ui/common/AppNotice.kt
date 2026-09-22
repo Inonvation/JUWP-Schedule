@@ -77,8 +77,10 @@ class AppNoticeVisuals(
  * 延时后调 `data.dismiss()`，本函数把 `snackbar` 槽换成 [AppNoticeCard] 即可继承，
  * 顺带保留其进出场淡入淡出与缩放。自己起计时器会与它双份 dismiss。
  *
- * 位置由 Scaffold 的 `snackbarHost` 槽决定 → 天然落在底部导航栏上方，
- * 不需要手算底栏高度（这也是不自己摆 Box 的原因）。
+ * 位置由 Scaffold 的 `snackbarHost` 槽决定 → 贴着页面底边，不自己摆 Box 定位。
+ * 底边之上还要让开多少由 [LocalBottomBarClearance] 给（见下面的实现注释）：
+ * 普通底栏形态下页面底边本就在底栏上方、该值为 0；悬浮胶囊形态下页面铺到窗口底，
+ * 不补这一下提示卡就落在胶囊与手势条底下。
  */
 @Composable
 fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
@@ -86,7 +88,16 @@ fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
         // 居中：窄屏卡片即满宽，宽屏被下面那张卡的上限收窄后仍然居中。
         // 顺序要紧——`fillMaxWidth` 之后再加 `widthIn` 改不动已经定死的宽度，
         // 必须让上限先夹住约束（见 [AppNoticeCard]）
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+        //
+        // 底部净空加在**卡片外面**而不是改 [SnackbarHost] 的 modifier：宿主是被 Scaffold
+        // 按自身高度贴底摆的，垫在卡片外只长高这一层，卡片的底边就整块抬起来；
+        // 改宿主 modifier 会把它的高度算进 Scaffold 的落位公式，多绕一道。
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(bottom = LocalBottomBarClearance.current),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
             AppNoticeCard(data)
         }
     }

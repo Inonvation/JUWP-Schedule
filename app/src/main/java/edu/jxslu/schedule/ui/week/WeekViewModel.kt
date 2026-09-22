@@ -9,6 +9,7 @@ import edu.jxslu.schedule.data.calendar.CalendarSyncer
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
+import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.LocalTimeLike
@@ -99,6 +100,16 @@ data class WeekUiState(
     val showAtSign: Boolean = true,
     /** 点击空白格新建课程。 */
     val tapBlankToAdd: Boolean = true,
+    /** 背景图文件名（DESIGN §4.21）；null = 无背景。 */
+    val bgImageName: String? = null,
+    /** 背景图自身不透明度（下限到 1）。 */
+    val bgImageOpacity: Float = 1f,
+    /** 背景图压暗遮罩强度（0 到上限）。 */
+    val bgImageDim: Float = 0f,
+    /** 背景图模糊强度（0–1）。 */
+    val bgImageBlur: Float = 0f,
+    /** 背景图缩放方式。 */
+    val bgImageScale: BgScale = BgScale.Fill,
     /** 画当前时刻线用，每 30 秒刷新一次 */
     val now: LocalTimeLike = LocalTimeLike.now(),
 
@@ -197,6 +208,11 @@ class WeekViewModel(
                     showGridLines = prefs.showGridLines,
                     showAtSign = prefs.showAtSign,
                     tapBlankToAdd = prefs.tapBlankToAdd,
+                    bgImageName = prefs.bgImageName,
+                    bgImageOpacity = prefs.bgImageOpacity,
+                    bgImageDim = prefs.bgImageDim,
+                    bgImageBlur = prefs.bgImageBlur,
+                    bgImageScale = prefs.bgImageScale,
                     now = now,
                     timetableName = config.timetables
                         .firstOrNull { it.id == config.currentTimetableId }?.name.orEmpty(),
@@ -295,6 +311,16 @@ class WeekViewModel(
 
     fun setShowGridLines(value: Boolean) {
         viewModelScope.launch { repo.setShowGridLines(value) }
+    }
+
+    /**
+     * 清掉背景图配置（DESIGN §4.21）。两处调用：
+     * 渲染前发现偏好里的文件名在磁盘上已经不存在（清数据 / 恢复备份不完整），
+     * 以及用户在显示设置面板里点「移除背景」后由 MeViewModel 侧收尾。
+     * 文件本身的删除归 ScheduleBackgroundStore，这里只改偏好。
+     */
+    fun clearBackgroundImage() {
+        viewModelScope.launch { repo.setBackgroundImage(null) }
     }
 
     fun setWeek(week: Int) {

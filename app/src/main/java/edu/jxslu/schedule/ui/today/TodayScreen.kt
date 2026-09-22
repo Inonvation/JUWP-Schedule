@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -83,6 +84,8 @@ import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
+import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.CourseDetailSheet
 import edu.jxslu.schedule.ui.common.CourseEditSheet
@@ -304,10 +307,10 @@ fun TodayScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                // 根因：外层 JuwApp Scaffold 无 topBar，contentWindowInsets（systemBars）已垫了一个
-                // 状态栏高度；TopAppBar 默认 windowInsets 再消费一次 → 顶栏上方双倍空白。
-                // 顶部 inset 统一只由外层消费，这里归零。
-                windowInsets = WindowInsets(0, 0, 0, 0),
+                // 顶部 inset 自取（DESIGN §4.22）：外层 JuwApp Scaffold 的 contentWindowInsets 已归零，
+                // 不再垫状态栏高度——课表页要把背景图铺到状态栏，顶部就只能由各页自己让位。
+                // 这里取 statusBars 后顶栏总高与改动前一致，不会出现双倍空白。
+                windowInsets = WindowInsets.statusBars,
                 title = {
                     Column {
                         Text(stringResource(R.string.tab_today))
@@ -506,9 +509,11 @@ fun TodayScreen(
  * 超过上限时 dock 内部可滚——保住课表的可视区，也保证每个入口都还能够到
  * （不设上限的话，超出的部分会被挤出屏幕且无法访问）。
  *
- * **底**（2026-09-22 加）：整块 dock 铺 `surfaceContainerLow` + 顶部 20dp 圆角，
- * 让下半屏读起来是「工具台」而不是「页面没内容」——课少时内容区与 dock 之间那道
- * 屏高三分之一的空白，此前是页面最显眼的一块空。
+ * **形态**（2026-09-22 二改）：独立描边卡片（`AppCard`，14dp 圆角 + 1dp 描边），
+ * 左右外缩进 16dp、与底栏留 12dp。上一版是整宽铺 `surfaceContainerLow` + 顶部 20dp 圆角、
+ * 直接坐在屏幕底边上的「工具台」，加了悬浮导航栏之后它读起来像底栏的延长段：
+ * 半透明底栏压住卡片下缘，展开/收起的落点也看着落在底栏上。改成卡片后，
+ * 自身的折叠动画与底栏形态彼此无关，间距恒定。
  */
 @Composable
 private fun TodayBottomDock(
@@ -535,66 +540,76 @@ private fun TodayBottomDock(
     if (!hasShortcuts && ebikeCard == null && campusCard == null && waterCard == null) return
 
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
-    Column(
+    val bottomClearance = LocalBottomBarClearance.current
+    // 卡片外形走 AppCard（§3.2 卡片规格唯一出处）；内部内容自己带 16dp 横向内缩，
+    // 所以这里 contentPadding 给 0，不然就是两层内缩叠起来。
+    AppCard(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .heightIn(max = maxHeight)
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 16.dp),
+            .padding(horizontal = 16.dp)
+            // 悬浮底栏开着时，底部让位换成它给的净空（含胶囊高度、离底间距与手势条），
+            // 卡片正好落在胶囊上缘之上；普通形态仍留 12dp 呼吸距离。
+            .padding(bottom = bottomClearance.takeIf { it > 0.dp } ?: 12.dp),
+        contentPadding = PaddingValues(0.dp),
     ) {
-        // 把手恒在：整块内容（快捷方式网格 + 服务格 + 开水卡）都在它下面折叠
-        DockHandle(expanded = expanded, onToggle = onToggleDock)
-        // 只做高度动画，锚点选 **Top**：dock 贴底，高度收缩时它的顶边向下走，内容锚在顶边
-        // 于是整块跟着下移、底部滑出屏幕——这就是「抽屉整体下降」。
-        // 试过的两个版本都栽在这一点上：锚 Bottom（默认）时内容底边固定、只被削掉顶部；
-        // 再叠一层 slide 则是位移叠加（顶边下移 H + 内容自身再移 H = 2H），看上去像瞬间消失。
-        // 缓动统一 tween + FastOutSlowIn（缓入缓出），不用默认 spring——整屏宽的面板弹一下很晃。
-        AnimatedVisibility(
-            visible = expanded,
-            enter = expandVertically(
-                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-                expandFrom = Alignment.Top,
-            ),
-            exit = shrinkVertically(
-                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-                shrinkTowards = Alignment.Top,
-            ),
+        Column(
+            modifier = Modifier
+                .heightIn(max = maxHeight)
+                .verticalScroll(rememberScrollState()),
         ) {
-            Column {
-                if (hasShortcuts) {
-                    ShortcutQuickGrid(
-                        shortcuts.items,
-                        { onOpenShortcuts(null) },
-                        onShortcutError,
-                        onNotice,
-                    )
-                }
-                // 服务格一行两列：两个开关各自独立，只开一个时它独占整行
-                // （不补空位，免得单张卡留半屏空白）
-                val serviceCards: List<@Composable () -> Unit> =
-                    listOfNotNull(ebikeCard, campusCard)
-                if (serviceCards.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                start = 16.dp,
-                                end = 16.dp,
-                                top = if (hasShortcuts) 16.dp else 0.dp,
-                            ),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        serviceCards.forEach { card ->
-                            Box(Modifier.weight(1f)) { card() }
+            // 把手恒在：整块内容（快捷方式网格 + 服务格 + 开水卡）都在它下面折叠
+            DockHandle(expanded = expanded, onToggle = onToggleDock)
+            // 只做高度动画，锚点选 **Top**：卡片钉在底部，高度收缩时它的顶边向下走，
+            // 内容锚在顶边于是整块跟着下移——读起来就是「抽屉整体下降」。
+            // 试过的两个版本都栽在这一点上：锚 Bottom（默认）时内容底边固定、只被削掉顶部；
+            // 再叠一层 slide 则是位移叠加（顶边下移 H + 内容自身再移 H = 2H），看上去像瞬间消失。
+            // 缓动统一 tween + FastOutSlowIn（缓入缓出），不用默认 spring——整屏宽的面板弹一下很晃。
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(
+                    animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+                    expandFrom = Alignment.Top,
+                ),
+                exit = shrinkVertically(
+                    animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top,
+                ),
+            ) {
+                // 底部留白挂在**被折叠的内容**里，不是挂在滚动容器上：
+                // 挂容器上时收起态也留着这 16dp，卡片比把手高一截，文字看着偏上。
+                Column(Modifier.padding(bottom = 16.dp)) {
+                    if (hasShortcuts) {
+                        ShortcutQuickGrid(
+                            shortcuts.items,
+                            { onOpenShortcuts(null) },
+                            onShortcutError,
+                            onNotice,
+                        )
+                    }
+                    // 服务格一行两列：两个开关各自独立，只开一个时它独占整行
+                    // （不补空位，免得单张卡留半屏空白）
+                    val serviceCards: List<@Composable () -> Unit> =
+                        listOfNotNull(ebikeCard, campusCard)
+                    if (serviceCards.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = if (hasShortcuts) 16.dp else 0.dp,
+                                ),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            serviceCards.forEach { card ->
+                                Box(Modifier.weight(1f)) { card() }
+                            }
                         }
                     }
-                }
-                if (waterCard != null) {
-                    // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
-                    val hasAbove = hasShortcuts || serviceCards.isNotEmpty()
-                    Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { waterCard() }
+                    if (waterCard != null) {
+                        // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
+                        val hasAbove = hasShortcuts || serviceCards.isNotEmpty()
+                        Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { waterCard() }
+                    }
                 }
             }
         }
@@ -1088,7 +1103,9 @@ private fun DockHandle(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            // 左右 10dp + 内层 4dp = 文字离卡边 14dp，与 AppCardDefaults.Padding 同档，
+            // 收起态这行文字才和上方课程卡、作业卡的文字在同一条竖线上
+            .padding(horizontal = 10.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClickLabel = if (expanded) "收起常用功能" else "展开常用功能") {
                 haptics.tap()

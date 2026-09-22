@@ -10,6 +10,7 @@ import edu.jxslu.schedule.data.qiekj.QiekjTokenStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.NoteRepository
+import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.ykt.YktClient
@@ -37,6 +38,9 @@ object Graph {
 
     @Volatile
     private var attachmentStore: AttachmentStore? = null
+
+    @Volatile
+    private var scheduleBackgroundStore: ScheduleBackgroundStore? = null
 
     @Volatile
     private var jwCredentialStore: JwCredentialStore? = null
@@ -95,6 +99,16 @@ object Graph {
     fun attachmentStore(context: Context): AttachmentStore =
         attachmentStore ?: synchronized(this) {
             attachmentStore ?: AttachmentStore(context.applicationContext).also { attachmentStore = it }
+        }
+
+    /**
+     * 课表页背景图存储单例（DESIGN §4.21）：应用私有目录 schedule_bg，同时只留一张。
+     * 与笔记附件分开的原因是生命周期完全不同（附件按正文引用清扫，背景图只认偏好里的文件名）。
+     */
+    fun scheduleBackground(context: Context): ScheduleBackgroundStore =
+        scheduleBackgroundStore ?: synchronized(this) {
+            scheduleBackgroundStore ?: ScheduleBackgroundStore(context.applicationContext)
+                .also { scheduleBackgroundStore = it }
         }
 
     /** 胖乖仓库单例（DESIGN §4.10）：Retrofit client 只建一次，token 存加密 prefs。 */

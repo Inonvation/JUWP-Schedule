@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +37,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
+import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
@@ -46,6 +48,7 @@ import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Task01
 import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.BellRing
+import me.rerere.hugeicons.stroke.Blur
 import me.rerere.hugeicons.stroke.CalendarSync
 import me.rerere.hugeicons.stroke.ColorPicker
 import me.rerere.hugeicons.stroke.Clock01
@@ -138,15 +141,14 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        // 根因：外层 JuwApp Scaffold 无 topBar，contentWindowInsets（systemBars）已垫了一个
-        // 状态栏高度；TopAppBar 默认 windowInsets 再消费一次 → 顶栏上方双倍空白。
-        // 顶部 inset 统一只由外层消费，这里归零。
-        // 内容 inset 同理归零：底部导航栏 inset 已由外层（底栏高度）提供，
+        // 顶部 inset 自取（DESIGN §4.22）：外层 JuwApp Scaffold 的 contentWindowInsets 已归零，
+        // 状态栏高度由下面 TopAppBar 的 windowInsets 消费，总高与改动前一致。
+        // 内容 inset 仍归零：底部导航栏 inset 已由外层（底栏高度）提供，
         // 内层再消费一次就是底部双倍空白。
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                windowInsets = WindowInsets(0, 0, 0, 0),
+                windowInsets = WindowInsets.statusBars,
                 title = { Text(stringResource(R.string.tab_me)) },
             )
         },
@@ -161,7 +163,10 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                // 悬浮底栏的净空加在**滚动内容**上（不是滚动容器上）：容器要铺到窗口底，
+                // 列表才能从胶囊后面穿过去；最后一项靠这段留白顶到胶囊上方。
+                .padding(bottom = LocalBottomBarClearance.current),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // ---- 通用（全局观感） ----
@@ -189,6 +194,15 @@ fun SettingsScreen(
                     checked = state.displayPrefs.dynamicColor,
                     onCheckedChange = viewModel::setDynamicColor,
                     icon = HugeIcons.ColorPicker,
+                )
+                // 悬浮导航栏（DESIGN §4.22）：底栏半透明磨砂，课表页背景图透到屏幕底部。
+                // 默认关——不透明底栏是既有观感，这条是形态选择而不是修复。
+                SettingSwitchRow(
+                    title = "悬浮导航栏",
+                    subtitle = "底栏半透明，背景图透到屏幕底部",
+                    checked = state.displayPrefs.floatingNavBar,
+                    onCheckedChange = viewModel::setFloatingNavBar,
+                    icon = HugeIcons.Blur,
                 )
             }
 
