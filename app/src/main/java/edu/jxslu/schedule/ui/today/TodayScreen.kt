@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -65,7 +65,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
-import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
@@ -76,6 +75,8 @@ import edu.jxslu.schedule.domain.sectionRange
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.calculateActualCost
+import edu.jxslu.schedule.ui.common.AppCardRow
+import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.CourseDetailSheet
@@ -84,6 +85,7 @@ import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.ShortcutIcon
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
@@ -96,6 +98,9 @@ import edu.jxslu.schedule.ui.water.WaterViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.CalendarOff
+import me.rerere.hugeicons.stroke.CheckmarkCircle02
+import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Link01
@@ -239,20 +244,32 @@ fun TodayScreen(
             onOpenShortcuts = onOpenShortcuts,
             onShortcutError = showShortcutError,
             onNotice = showNotice,
-            // 共享单车卡（DESIGN §3.9）：开关关 = 整卡不占位，与开水卡同口径
+            // 共享单车格（DESIGN §3.9）：开关关 = 整格不占位，与开水卡同口径
             ebikeCard = if (ebikeCardEnabled) {
-                { EbikeQuickCard(onOpenEbike) }
+                {
+                    ServiceCard(
+                        icon = HugeIcons.ScooterElectric,
+                        title = "快趣出行码",
+                        subtitle = "微信扫一扫开车",
+                        onClickLabel = "打开共享单车出码",
+                        onClick = onOpenEbike,
+                    )
+                }
             } else {
                 null
             },
-            // 校园卡付款码卡（DESIGN §3.10）：默认关；点击进付款码页（FLAG_SECURE）；
-            // 右侧余额可点 → 功能入口弹层（充值/流水/认证码，2026-09-21 追加）
+            // 校园卡付款码格（DESIGN §3.10）：默认关；点击进付款码页（FLAG_SECURE）；
+            // 副行的余额可点 → 功能入口弹层（充值/流水/认证码，2026-09-21 追加）
             campusCard = if (campusCardEnabled) {
                 {
-                    CampusCardQuickCard(
-                        onOpen = onOpenPayCode,
-                        balanceText = campusBalance?.let { "¥%.2f".format(it.totalFen / 100.0) },
-                        onBalanceClick = { showCampusEntrySheet = true },
+                    val balance = campusBalance?.let { "余额 ¥%.2f".format(it.totalFen / 100.0) }
+                    ServiceCard(
+                        icon = HugeIcons.CreditCard,
+                        title = "水宝宝一卡通",
+                        subtitle = balance?.let { "$it ›" } ?: "点击出示付款码",
+                        onClickLabel = "打开校园卡付款码",
+                        onClick = onOpenPayCode,
+                        onSubtitleClick = balance?.let { { showCampusEntrySheet = true } },
                     )
                 }
             } else {
@@ -462,13 +479,21 @@ fun TodayScreen(
 /**
  * 底部固定区（DESIGN §3.3）：**钉在滚动区下方**，不随课表滚动。
  *
- * 结构：快捷方式三列图标网格（§3.8）在上，一键开水卡恒在最底。三态（加载中/空态/有课态）
- * 共用本组件，位置不随状态漂移；快捷方式开关关着或列表为空时整段不占位，
- * 开水卡关掉时同理（只剩一个空 Column，高度为 0）。
+ * 结构（2026-09-22 起）：快捷方式三列图标网格（§3.8）在上 → **服务格一行两列**
+ * （快趣出行 / 水宝宝一卡通，各自可关）→ 一键开水卡恒在最底。三态（加载中/空态/有课态）
+ * 共用本组件，位置不随状态漂移；全部关掉时只剩一个空 Column，高度为 0。
+ *
+ * **服务格并排的理由**：三张整行卡叠起来约 230dp，dock 顶到屏高 40% 上下，
+ * 且每张卡只承载「一行标题 + 一行说明」；快趣出行与一卡通都是「点开一个页面」的入口，
+ * 并排不丢信息、少约 70dp。开水卡不并——卡内要放解锁按钮与出水进度。
  *
  * **高度上限**：屏高 45%。8 条快捷方式（3 行）+ 开水卡在大字体小屏上足以吃掉半屏，
  * 超过上限时 dock 内部可滚——保住课表的可视区，也保证每个入口都还能够到
  * （不设上限的话，超出的部分会被挤出屏幕且无法访问）。
+ *
+ * **底**（2026-09-22 加）：整块 dock 铺 `surfaceContainerLow` + 顶部 20dp 圆角，
+ * 让下半屏读起来是「工具台」而不是「页面没内容」——课少时内容区与 dock 之间那道
+ * 屏高三分之一的空白，此前是页面最显眼的一块空。
  */
 @Composable
 private fun TodayBottomDock(
@@ -490,6 +515,8 @@ private fun TodayBottomDock(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .heightIn(max = maxHeight)
             .verticalScroll(rememberScrollState())
             .padding(top = 12.dp, bottom = 16.dp),
@@ -497,17 +524,28 @@ private fun TodayBottomDock(
         if (hasShortcuts) {
             ShortcutQuickGrid(shortcuts.items, { onOpenShortcuts(null) }, onShortcutError, onNotice)
         }
-        var hasAbove = hasShortcuts
-        if (ebikeCard != null) {
-            Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { ebikeCard() }
-            hasAbove = true
-        }
-        if (campusCard != null) {
-            Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { campusCard() }
-            hasAbove = true
+        // 服务格一行两列：两个开关各自独立，只开一个时它独占整行（不补空位，
+        // 免得单张卡留半屏空白）
+        val serviceCards: List<@Composable () -> Unit> = listOfNotNull(ebikeCard, campusCard)
+        if (serviceCards.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = if (hasShortcuts) 16.dp else 0.dp,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                serviceCards.forEach { card ->
+                    Box(Modifier.weight(1f)) { card() }
+                }
+            }
         }
         if (waterCard != null) {
             // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
+            val hasAbove = hasShortcuts || serviceCards.isNotEmpty()
             Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { waterCard() }
         }
     }
@@ -619,7 +657,7 @@ private fun TodayContent(
             // 「今天还有 2 节」下面只列 1 节，数字对不上页面课块数
             if (state.listCourses.isNotEmpty()) {
                 item(key = "remaining-header") {
-                    SectionLabel("今天还有 ${state.listCourses.size} 节")
+                    SectionHeader("今天还有 ${state.listCourses.size} 节")
                 }
                 items(state.listCourses, key = { it.id }) { course ->
                     CourseTimelineRow(
@@ -690,7 +728,7 @@ private fun FocusCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(AppCardDefaults.Shape)
             .background(primary.copy(alpha = 0.08f))
             .clickable(onClickLabel = "查看课程") {
                 haptics.tap()
@@ -760,16 +798,33 @@ private fun FocusCard(
  */
 @Composable
 private fun NextStartHint(state: TodayState) {
+    val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
     val first = state.remaining.firstOrNull() ?: return
-    Text(
-        text = "今天的课 ${clockOf(state.slots, first)} 开始",
-        style = MaterialTheme.typography.bodyMedium,
-        color = onSurface.copy(alpha = 0.55f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-    )
+    AppCardRow(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+    ) {
+        Icon(
+            imageVector = HugeIcons.Clock01,
+            contentDescription = null,
+            tint = primary,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "今天的课 ${clockOf(state.slots, first)} 开始",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = sectionRange(first),
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+            )
+        }
+    }
 }
 
 /** 自绘进度条：不引 M3 的 LinearProgressIndicator，免去两端圆角/端点圆点的版本差异。 */
@@ -796,41 +851,46 @@ private fun ProgressBar(progress: Float) {
     }
 }
 
-/** 今天结束后的落点：上完课 / 本来就没课。 */
+/**
+ * 今天结束后的落点：上完课 / 本来就没课。
+ *
+ * 2026-09-22 由「居中两行裸文字」改卡片：居中块与下方课程卡的左缘互不相干，
+ * 页面顶部看着像一句留言而不是一屏内容。现在与课程行同宽同左缘，图标交代语义。
+ */
 @Composable
 private fun DoneBlock(state: TodayState) {
+    val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 26.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    AppCardRow(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
     ) {
-        Text(
-            text = if (state.todayAllDone) "今天的课都上完了" else "今天没有课",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
+        Icon(
+            imageVector = if (state.todayAllDone) {
+                HugeIcons.CheckmarkCircle02
+            } else {
+                HugeIcons.CalendarOff
+            },
+            contentDescription = null,
+            tint = primary,
+            modifier = Modifier.size(22.dp),
         )
-        if (state.todayAllDone) {
-            Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = "今天共 ${state.todayTotal} 节",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
+                text = if (state.todayAllDone) "今天的课都上完了" else "今天没有课",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
             )
+            if (state.todayAllDone) {
+                Text(
+                    text = "今天共 ${state.todayTotal} 节",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                )
+            }
         }
     }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp),
-    )
 }
 
 /**
@@ -858,7 +918,7 @@ private fun CourseTimelineRow(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(AppCardDefaults.Shape)
             .background(accent.copy(alpha = 0.16f))
             .clickable(onClickLabel = "查看课程") {
                 haptics.tap()
@@ -903,34 +963,17 @@ private fun TomorrowBlock(
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 22.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "明天 · 周${dayLabel(state.tomorrowDay)}",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = if (state.tomorrowCourses.isEmpty()) {
-                    "没有课"
-                } else {
-                    "${state.tomorrowCourses.size} 节"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.5f),
-            )
-        }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(
+            title = "明天 · 周${dayLabel(state.tomorrowDay)}",
+            trailing = if (state.tomorrowCourses.isEmpty()) {
+                "没有课"
+            } else {
+                "${state.tomorrowCourses.size} 节"
+            },
+        )
         if (state.tomorrowCourses.isEmpty()) {
             // 标题行已交代「没有课」，这里只补一句收尾，不再复述一遍
-            Spacer(Modifier.height(6.dp))
             Text(
                 text = "可以放松一下",
                 style = MaterialTheme.typography.bodySmall,
@@ -939,7 +982,7 @@ private fun TomorrowBlock(
             )
             return@Column
         }
-        Spacer(Modifier.height(6.dp))
+        // 课程行自带 vertical 4dp 外间距，这里不再叠一层
         state.tomorrowCourses.forEach { course ->
             CourseTimelineRow(
                 course = course,
@@ -953,10 +996,10 @@ private fun TomorrowBlock(
 // monthDayFmt 已收拢为 domain/TodayFormat.kt 的 MONTH_DAY_FORMAT（与调课页共用）
 
 /**
- * 底部固定区四张同款描边卡（共享单车/校园卡/开水未登录态/开水已登录）的最小高度：
+ * 底部固定区描边卡（两张服务格 + 开水未登录态/已登录态）的最小高度：
  * = 两行文本（bodyMedium 20dp + bodySmall 16dp）+ 上下 padding 22dp。
  * 统一 min 后，开水卡在解锁流程中（副标题行收起、尾部换 TextButton）不再塌陷/增高，
- * 三张卡在 dock 里高度恒定；系统大字体时自然高度超过 min 也不受影响（min 只是下限）。
+ * 同排的两格高度恒定；系统大字体时自然高度超过 min 也不受影响（min 只是下限）。
  */
 private val QuickCardMinHeight = 58.dp
 
@@ -978,125 +1021,69 @@ private fun WaterCard(vm: WaterViewModel, onOpen: () -> Unit) {
 }
 
 /**
- * 快趣出行码卡（DESIGN §3.9，2026-09-20 改名）：与开水卡同款 1dp 描边形态；点卡片进出码页。
+ * 底部固定区的服务格（DESIGN §3.3/§3.9/§3.10，2026-09-22 由整行卡改两列并排）。
+ *
+ * 一行两格，每格 = 图标 + 标题 + 副行（可空）。格宽约 158dp（360dp 屏），
+ * 副行只放一行短文案，超出省略——并排把两个「点开一个页面」的入口从约 130dp 压到 58dp。
+ *
+ * [onSubtitleClick] 非 null 时副行单独可点（校园卡余额进功能弹层）：副行的 clickable
+ * 嵌在整格的 clickable 之内，点它不会冒泡去触发整格跳转。副行可点却没有提示时用户找不到，
+ * 所以调用方在文案尾部自带 `›`（文案口径归调用方，组件不管）。
  */
 @Composable
-private fun EbikeQuickCard(onOpen: () -> Unit) {
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val shape = RoundedCornerShape(14.dp)
-    val haptics = rememberAppHaptics()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .heightIn(min = QuickCardMinHeight)
-            .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .clickable(onClickLabel = "打开共享单车出码") {
-                haptics.tap()
-                onOpen()
-            }
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            HugeIcons.ScooterElectric,
-            contentDescription = null,
-            tint = primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = "快趣出行码",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "生成骑行二维码，微信扫一扫开车",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/**
- * 水宝宝一卡通卡（DESIGN §3.10，2026-09-20 改名，原「校园卡付款码卡」）：
- * 与开水卡同款 1dp 描边形态；点卡片进付款码页；右侧卡内余额可点，
- * 弹出功能入口弹层（充值/消费流水/认证码，DESIGN §3.10 2026-09-21 追加）。
- * 开关（我的 → 扩展服务 → 水宝宝一卡通）默认关——涉及凭证与资金等价物，用户显式开启才上桌。
- */
-@Composable
-private fun CampusCardQuickCard(
-    onOpen: () -> Unit,
-    /** 卡内余额文案（如 "¥19.95"）；null = 开关关/未取到 → 不显示余额区 */
-    balanceText: String?,
-    onBalanceClick: () -> Unit,
+private fun ServiceCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String?,
+    onClickLabel: String,
+    onClick: () -> Unit,
+    onSubtitleClick: (() -> Unit)? = null,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
-    val shape = RoundedCornerShape(14.dp)
     val haptics = rememberAppHaptics()
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .heightIn(min = QuickCardMinHeight)
-            .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .clickable(onClickLabel = "打开校园卡付款码") {
-                haptics.tap()
-                onOpen()
-            }
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    AppCardRow(
+        modifier = Modifier.heightIn(min = QuickCardMinHeight),
+        onClick = onClick,
+        onClickLabel = onClickLabel,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
     ) {
         Icon(
-            HugeIcons.CreditCard,
+            imageVector = icon,
             contentDescription = null,
             tint = primary,
             modifier = Modifier.size(20.dp),
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = "水宝宝一卡通",
+                text = title,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = "点击出示 · 等同现金，请勿分享",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (balanceText != null) {
-            // 余额可点区：clickable 在父级 clickable 之内，点击只命中本区不冒泡触发卡片跳转
-            Text(
-                text = balanceText,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = primary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClickLabel = "一卡通功能") {
-                        haptics.tap()
-                        onBalanceClick()
-                    }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (onSubtitleClick == null) {
+                        Modifier
+                    } else {
+                        Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClickLabel = "一卡通功能") {
+                                haptics.tap()
+                                onSubtitleClick()
+                            }
+                            .padding(horizontal = 2.dp, vertical = 2.dp)
+                    },
+                )
+            }
         }
     }
 }
@@ -1109,22 +1096,13 @@ private fun CampusCardQuickCard(
 private fun WaterLoggedOutCard(onOpen: () -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
-    val shape = RoundedCornerShape(14.dp)
-    val haptics = rememberAppHaptics()
-
-    Row(
+    AppCardRow(
         modifier = Modifier
-            .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .heightIn(min = QuickCardMinHeight)
-            .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .clickable(onClickLabel = "去登录胖乖生活") {
-                haptics.tap()
-                onOpen()
-            }
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .heightIn(min = QuickCardMinHeight),
+        onClick = onOpen,
+        onClickLabel = "去登录胖乖生活",
+        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
     ) {
         Icon(
             HugeIcons.Droplet,
@@ -1166,18 +1144,15 @@ private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit) {
     val flow = state.flow
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
-    val shape = RoundedCornerShape(14.dp)
-
-    Row(
+    AppCardRow(
         modifier = Modifier
-            .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .heightIn(min = QuickCardMinHeight)
-            .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .clickable(enabled = flow is UnlockFlowState.Idle) { onOpen() }
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .heightIn(min = QuickCardMinHeight),
+        onClick = onOpen,
+        onClickLabel = "打开胖乖生活开水页",
+        // 出水流程进行中不许再进页面（防重复解锁，VM 内另有 Mutex 兜底）
+        enabled = flow is UnlockFlowState.Idle,
+        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
     ) {
         Icon(
             HugeIcons.Droplet,

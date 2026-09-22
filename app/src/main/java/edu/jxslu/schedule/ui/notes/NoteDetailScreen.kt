@@ -6,12 +6,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -21,7 +17,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -35,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
@@ -51,15 +45,16 @@ import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.MarkdownEditor
-import edu.jxslu.schedule.ui.common.MarkdownModeToggle
 import edu.jxslu.schedule.ui.common.MarkdownView
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.TitleTextField
 import edu.jxslu.schedule.ui.common.epochMonthDay
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberImageInserter
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Delete02
+import me.rerere.hugeicons.stroke.Eye
 import me.rerere.hugeicons.stroke.PencilEdit02
 
 /**
@@ -197,6 +192,15 @@ fun NoteDetailScreen(
                 },
                 actions = {
                     if (editing) {
+                        // 「预览」在顶栏：此前是内容里的分段按钮，正文一长就得滚回顶部才够得着
+                        IconButton(
+                            onClick = {
+                                haptics.tap()
+                                editing = false
+                            },
+                        ) {
+                            Icon(HugeIcons.Eye, contentDescription = "预览")
+                        }
                         TextButton(
                             onClick = {
                                 haptics.tap()
@@ -245,29 +249,25 @@ fun NoteDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (editing) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("标题（可空）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                Text(
-                    text = title.text.ifBlank { "未命名笔记" },
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // 标题 + 创建日期成组（4dp）：日期属于标题的副信息，不该和正文抢同一层间距
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (editing) {
+                    TitleTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        placeholder = "标题（可空）",
+                    )
+                } else {
+                    Text(
+                        text = title.text.ifBlank { "未命名笔记" },
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                }
                 Text(
                     text = original?.let { "创建于 ${epochMonthDay(it.createdAt)}" } ?: "新笔记",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
-                Spacer(Modifier.weight(1f))
-                MarkdownModeToggle(editing = editing, onEditingChange = { editing = it })
             }
 
             if (editing) {

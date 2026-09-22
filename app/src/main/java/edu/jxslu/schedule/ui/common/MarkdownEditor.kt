@@ -12,15 +12,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -72,12 +68,12 @@ fun MarkdownEditor(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = minHeight)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(AppCardDefaults.Shape)
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
                 .border(
                     width = 1.dp,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    shape = AppCardDefaults.Shape,
                 )
                 .padding(12.dp),
         ) {
@@ -109,25 +105,42 @@ fun MarkdownEditor(
     }
 }
 
-/** 「编辑 | 预览」分段切换（新建默认编辑，已有内容默认预览，见 §3.11）。 */
+/**
+ * 无边框标题输入（笔记 / 作业详情共用，2026-09-22 新增）。
+ *
+ * 此前用 M3 的 `OutlinedTextField`：4dp 直角描边、聚焦时边框加粗、标签浮到边框上，
+ * 与全 App 的圆角卡片不是一套语言；而且查看态的标题是无边框大字，
+ * 两态切换时字号与左缘都跳一下。现在查看/编辑同字号（headlineSmall）同左缘，
+ * 编辑态只多一个占位提示与光标。
+ *
+ * 光标是唯一的位置线索，所以占位用 35% 透明而不是空行——不然新建笔记时光标容易看不见。
+ */
 @Composable
-fun MarkdownModeToggle(
-    editing: Boolean,
-    onEditingChange: (Boolean) -> Unit,
+fun TitleTextField(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    placeholder: String,
     modifier: Modifier = Modifier,
 ) {
-    SingleChoiceSegmentedButtonRow(modifier) {
-        SegmentedButton(
-            selected = editing,
-            onClick = { onEditingChange(true) },
-            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-            label = { Text("编辑") },
-        )
-        SegmentedButton(
-            selected = !editing,
-            onClick = { onEditingChange(false) },
-            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-            label = { Text("预览") },
+    Box(modifier.fillMaxWidth()) {
+        if (value.text.isEmpty()) {
+            Text(
+                text = placeholder,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+            )
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            textStyle = MaterialTheme.typography.headlineSmall.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            // 单行：标题里换行会让它变成两行大字把表单顶下去，旧的 OutlinedTextField 也是
+            // singleLine——这条口径不能因为换控件而丢
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -163,7 +176,7 @@ private fun EditorToolbar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(AppCardDefaults.Shape)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 4.dp),

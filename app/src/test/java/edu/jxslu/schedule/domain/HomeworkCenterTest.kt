@@ -93,6 +93,23 @@ class HomeworkCenterTest {
         assertEquals("10月12日", dueLabel(LocalDate.parse("2026-10-12"), today))
     }
 
+    /**
+     * 详情页截止文案：**不再自我复读**（旧版对远期日期给出「11月21日（11月21日）」），
+     * 远期补星期几，近期给「今天/已过期 N 天 · M月d日」。
+     */
+    @Test
+    fun dueDetailLabel_noDuplicateDateAndWeekday() {
+        val t = LocalDate.parse("2026-09-21") // 周一
+        assertEquals("今天 · 9月21日", dueDetailLabel(t, t))
+        assertEquals("明天 · 9月22日", dueDetailLabel(t.plusDays(1), t))
+        assertEquals("已过期 2 天 · 9月19日", dueDetailLabel(t.minusDays(2), t))
+        assertEquals("11月21日 · 周六", dueDetailLabel(LocalDate.parse("2026-11-21"), t))
+        assertEquals("10月12日 · 周一", dueDetailLabel(LocalDate.parse("2026-10-12"), t))
+        // 同一个日期只会出现一次
+        val far = dueDetailLabel(LocalDate.parse("2026-11-21"), t)
+        assertEquals(1, far.split("11月21日").size - 1)
+    }
+
     /** 课程作业列表：未完成（走统一排序）在前，已完成在后（最近完成的在前）。 */
     @Test
     fun courseOrder_pendingFirstThenDone() {

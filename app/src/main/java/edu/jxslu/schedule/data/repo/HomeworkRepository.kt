@@ -26,6 +26,10 @@ class HomeworkRepository(private val db: JuwDatabase) {
 
     fun observeGroups(): Flow<List<HomeworkCourseGroup>> = dao.observeGroups()
 
+    /** 全部作业（最近更新在前）；作业库「最近更新」区块用（点击直达详情，少一跳）。 */
+    fun observeAll(): Flow<List<Homework>> =
+        dao.observeAll().map { list -> list.map(HomeworkEntity::toDomain) }
+
     suspend fun homework(id: Long): Homework? = dao.getById(id)?.toDomain()
 
     /** 新建 / 更新；时间戳口径与 [NoteRepository.save] 一致（创建时间编辑不改）。 */

@@ -1,22 +1,15 @@
 package edu.jxslu.schedule.ui.homework
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Checkbox
@@ -33,7 +26,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,11 +35,9 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.Homework
 import edu.jxslu.schedule.domain.courseHomeworkOrder
 import edu.jxslu.schedule.domain.dueLabel
+import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
-import edu.jxslu.schedule.ui.common.StudyCourseRow
-import edu.jxslu.schedule.ui.common.courseTint
-import edu.jxslu.schedule.ui.common.epochMonthDay
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import me.rerere.hugeicons.HugeIcons
@@ -55,10 +45,6 @@ import me.rerere.hugeicons.stroke.Add01
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-/**
- * 作业库（我的 → 学习 → 作业，DESIGN §3.11）：按课程分组，行 = 未完成数 / 总数。
- * 点进课程作业列表；勾选在列表行内完成（像待办），完成后置灰 + 删除线，不隐藏（可反悔）。
- */
 /**
  * 某课程的作业列表（DESIGN §3.11）。排序口径在 domain：未完成在前（逾期 → 今天 → 未来 →
  * 无截止），已完成沉底（最近完成的在前）。
@@ -143,22 +129,10 @@ internal fun HomeworkRow(
     val haptics = rememberAppHaptics()
     val label = dueLabel(homework.dueDate, today)
     val overdue = homework.dueDate?.isBefore(today) == true && !homework.done
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.22f),
-                shape = RoundedCornerShape(12.dp),
-            )
-            .clickable {
-                haptics.tap()
-                onClick()
-            }
-            .padding(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    AppCardRow(
+        onClick = onClick,
+        // 勾选框自带 M3 的 48dp 触达区与内边距，卡片内间距向它让位（左右不对称是有意的）
+        contentPadding = PaddingValues(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
     ) {
         Checkbox(
             checked = homework.done,

@@ -167,6 +167,14 @@ class SubpageActivity : ComponentActivity() {
                 onOpenCourse = { name ->
                     SubpageActivity.start(this, SubpageScreen.NOTES_COURSE, courseName = name)
                 },
+                onOpenNote = { name, id ->
+                    SubpageActivity.start(
+                        this,
+                        SubpageScreen.NOTE_DETAIL,
+                        courseName = name,
+                        itemId = id,
+                    )
+                },
             )
             SubpageScreen.NOTES_COURSE -> NoteCourseScreen(
                 courseName = courseName.orEmpty(),
@@ -190,6 +198,14 @@ class SubpageActivity : ComponentActivity() {
                 onBack = onBack,
                 onOpenCourse = { name ->
                     SubpageActivity.start(this, SubpageScreen.HOMEWORK_COURSE, courseName = name)
+                },
+                onOpenHomework = { name, id ->
+                    SubpageActivity.start(
+                        this,
+                        SubpageScreen.HOMEWORK_DETAIL,
+                        courseName = name,
+                        itemId = id,
+                    )
                 },
             )
             SubpageScreen.HOMEWORK_COURSE -> HomeworkCourseScreen(

@@ -1,24 +1,18 @@
 package edu.jxslu.schedule.ui.common
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -34,6 +28,8 @@ import me.rerere.hugeicons.stroke.ChevronRight
  *
  * 归属键是课程名，同名课程取**当前课表**的配色（`Course.colorIndex`）；课表里已没有这门课时
  * 给中性色——旧内容仍要能看见、能编辑（换学期后旧笔记照样可查，见 §4.20「归属」）。
+ *
+ * 卡片观感走 [AppCardRow]（全 App 同一张描边卡，2026-09-22 统一）。
  */
 @Composable
 fun courseTint(courses: List<Course>, courseName: String): Color =
@@ -55,23 +51,10 @@ fun StudyCourseRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val haptics = rememberAppHaptics()
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.22f),
-                shape = RoundedCornerShape(12.dp),
-            )
-            .clickable {
-                haptics.tap()
-                onClick()
-            }
-            .padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    AppCardRow(
+        modifier = modifier,
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 13.dp),
     ) {
         Box(
             Modifier

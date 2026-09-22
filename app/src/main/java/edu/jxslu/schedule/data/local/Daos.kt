@@ -223,6 +223,10 @@ interface HomeworkDao {
     )
     fun observeGroups(): Flow<List<HomeworkCourseGroup>>
 
+    /** 全部作业（最近更新在前）；作业库「最近更新」区块取前几条，点击直达详情。 */
+    @Query("SELECT * FROM homework ORDER BY updatedAt DESC, id DESC")
+    fun observeAll(): Flow<List<HomeworkEntity>>
+
     @Query("SELECT * FROM homework WHERE id = :id")
     suspend fun getById(id: Long): HomeworkEntity?
 

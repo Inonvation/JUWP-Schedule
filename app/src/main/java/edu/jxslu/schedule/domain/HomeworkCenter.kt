@@ -102,3 +102,20 @@ fun dueLabel(due: LocalDate?, today: LocalDate): String? {
         else -> MONTH_DAY_FORMAT.format(due)
     }
 }
+
+/**
+ * 详情页的截止日期文案（2026-09-22 修 bug）。
+ *
+ * 旧写法是 `${M月d日}（${dueLabel}）`。但 [dueLabel] 在「不是今天/明天/已过期」时返回的
+ * **就是同一个 M月d日 串**，于是界面上出现「11月21日（11月21日）」这种自我复读。
+ *
+ * 现在两种情况分开表达，且都补上星期几（详情页有整行宽度可用）：
+ * - 近期（今天 / 明天 / 已过期）→ `今天 · 9月22日`、`已过期 3 天 · 9月19日`
+ * - 其余 → `11月21日 · 周六`
+ */
+fun dueDetailLabel(due: LocalDate, today: LocalDate): String {
+    val formatted = MONTH_DAY_FORMAT.format(due)
+    val weekday = "周${dayLabel(due.dayOfWeek.value)}"
+    val label = dueLabel(due, today) ?: formatted
+    return if (label == formatted) "$formatted · $weekday" else "$label · $formatted"
+}

@@ -3,11 +3,10 @@ package edu.jxslu.schedule.ui.homework
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,7 +26,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -45,16 +42,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.Homework
-import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
-import edu.jxslu.schedule.domain.dueLabel
+import edu.jxslu.schedule.domain.dueDetailLabel
 import edu.jxslu.schedule.domain.imageRefs
 import edu.jxslu.schedule.domain.removeImageRef
+import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.AttachmentStrip
@@ -62,6 +61,7 @@ import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.MarkdownEditor
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.TitleTextField
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberImageInserter
 import edu.jxslu.schedule.ui.reminder.ClassReminder
@@ -247,65 +247,74 @@ fun HomeworkDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            OutlinedTextField(
+            TitleTextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("作业标题") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                placeholder = "作业标题",
             )
 
-            // 截止日期（可空）：点击选择，右侧「清除」只在已设置时出现
-            val shape = RoundedCornerShape(12.dp)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(shape)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f), shape)
-                    .clickable { showDatePicker = true }
-                    .padding(horizontal = 14.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = HugeIcons.Calendar03,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = "截止日期",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = dueDate?.let { due ->
-                        "${MONTH_DAY_FORMAT.format(due)}（${dueLabel(due, LocalDate.now())}）"
-                    } ?: "未设置",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
-                if (dueDate != null) {
-                    Spacer(Modifier.width(6.dp))
-                    TextButton(onClick = { dueEpochDay = NO_DUE }) { Text("清除") }
+            // 两项成组（2026-09-22）：截止日期与完成状态同一张卡、中间一条分隔线。
+            // 此前日期是独立描边卡、「已完成」裸放，两块既不成组，纵向还各占一层间距
+            AppCard(contentPadding = PaddingValues(0.dp)) {
+                // 截止日期（可空）：点击选择，右侧「清除」只在已设置时出现
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showDatePicker = true }
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = HugeIcons.Calendar03,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "截止日期",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    // 值占剩余宽度、右对齐：远期日期会带星期几，长文案不能把「清除」挤出卡片
+                    Text(
+                        text = dueDate?.let { due -> dueDetailLabel(due, LocalDate.now()) } ?: "未设置",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (dueDate != null) {
+                        Spacer(Modifier.width(4.dp))
+                        TextButton(onClick = { dueEpochDay = NO_DUE }) { Text("清除") }
+                    }
                 }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = done,
-                    onCheckedChange = { checked ->
-                        haptics.toggle()
-                        done = checked
-                    },
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "已完成",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                )
+                AppCardDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            haptics.toggle()
+                            done = !done
+                        }
+                        .padding(end = 14.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = done,
+                        onCheckedChange = { checked ->
+                            haptics.toggle()
+                            done = checked
+                        },
+                    )
+                    Text(
+                        text = "已完成",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                    )
+                }
             }
 
             AttachmentStrip(
