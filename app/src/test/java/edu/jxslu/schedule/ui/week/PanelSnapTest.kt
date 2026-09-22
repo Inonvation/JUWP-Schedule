@@ -43,6 +43,25 @@ class PanelSnapTest {
         assertEquals(123.dp, nearestAnchor(123.dp, emptyList()))
     }
 
+    /**
+     * 拖动全程夹取上下两端。
+     *
+     * 上限这条是 2026-09-22 真机反馈的根因：只夹下限时向上拖能把面板拉过最高档
+     * （高度在 measure 阶段按 state 定，不受父约束拦），松手吸附回最高档就是「弹窗跳一下」。
+     */
+    @Test
+    fun dragClampsBothEnds() {
+        assertEquals(180f, clampPanelHeight(120f, 180f, 600f), 0f)
+        assertEquals(600f, clampPanelHeight(900f, 180f, 600f), 0f)
+        assertEquals(400f, clampPanelHeight(400f, 180f, 600f), 0f)
+    }
+
+    /** 退化屏（下限高于上限，极矮的分屏窗口）退回下限，不能抛：`coerceIn` 遇 min > max 会抛。 */
+    @Test
+    fun degenerateScreenFallsBackToMin() {
+        assertEquals(180f, clampPanelHeight(300f, 180f, 90f), 0f)
+    }
+
     /** 交互常量：最小高度 / 关闭余量 / 默认档与最大档。 */
     @Test
     fun interactionConstantsAreStable() {

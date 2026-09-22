@@ -51,7 +51,6 @@ import edu.jxslu.schedule.domain.TimetablePrefs
 import edu.jxslu.schedule.ui.common.ImageSource
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
-import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -110,10 +109,9 @@ fun DisplaySettingsContent(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp)
-            // 面板贴着窗口底（悬浮底栏形态下底边就是屏幕底），末组内容要自己让开胶囊：
-            // 不让的话「背景」组的缩放 chips 与「移除背景」正好压在胶囊覆盖带里，
-            // 看不清也点不到（点击会命中浮在上层的胶囊、直接跳 Tab）。
-            .padding(bottom = 28.dp + LocalBottomBarClearance.current),
+            // 末组留一段呼吸距离。**不再额外扣悬浮底栏的净空**：整块面板已经抬到胶囊上缘
+            // 之上（见 DisplaySettingsOverlay），这里再扣一次就是滚动末尾一段凭空空白。
+            .padding(bottom = 28.dp),
     ) {
         CollapsibleSection(title = "字号") {
             GridFontSizeRow(
@@ -461,7 +459,9 @@ private fun CourseFilterRow(
 /**
  * 字号滑块行（用户可设目标 dp，null = 跟随）。
  *
- * 排版：标题 + 当前值在滑块上方一行；滑块；下边界标注 + 跟随态/跟随按钮一行。
+ * 排版（2026-09-22 压缩，用户要求降低滑块占用高度）：标题 + 跟随槽位 + 当前值一行；
+ * 下边界标注 + 滑块 + 上边界标注一行。原先是三行（边界标注单占一行），
+ * 五根字号滑块就是四十多 dp 的纯行高。
  *
  * 「跟随」控件的**高度恒定**是本行的关键约束：dp==null 时显示提示文案、设置过时
  * 显示可点的「跟随」按钮——两者必须占同一固定高度（[FollowSlot]），否则第一次
@@ -479,55 +479,89 @@ private fun GridFontSizeRow(
 ) {
     val systemFontScale = LocalDensity.current.fontScale
     val effective = (dp ?: baseSp() * systemFontScale).coerceIn(minDp, maxDp)
-    Column(Modifier.padding(vertical = 10.dp)) {
+    Column(Modifier.padding(vertical = RowVerticalPadding)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.weight(1f))
+            FollowSlot(following = dp == null, followHint = followHint, onFollow = { onChange(null) })
             Text(
                 GridFont.dpLabel(effective),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp),
             )
         }
-        Slider(
+        RangeLabeledSlider(
             value = effective,
             onValueChange = { onChange(GridFont.snapDp(it)) },
             valueRange = minDp..maxDp,
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            minText = GridFont.dpLabel(minDp),
+            maxText = GridFont.dpLabel(maxDp),
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().height(FollowSlotHeight),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                GridFont.dpLabel(minDp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
-            Spacer(Modifier.weight(1f))
-            FollowSlot(following = dp == null, followHint = followHint, onFollow = { onChange(null) })
-            Spacer(Modifier.weight(1f))
-            Text(
-                GridFont.dpLabel(maxDp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
-        }
+    }
+}
+
+/**
+ * 滑块行的上下留白。原来每行 10dp，十一根滑块光留白就两百多 dp。
+ * 呼吸感靠 [RangeLabeledSlider] 里滑块自身的高度给，不再靠行间距。
+ */
+private val RowVerticalPadding = 2.dp
+
+/**
+ * 滑块的高度上限。M3 的 Slider 默认约 48dp（含上下各 14dp 的触摸余量），
+ * 收紧到 36dp 后拇指（20dp）仍完整落在里面，一块屏能多放两行多。
+ * 代价是触摸目标低于 48dp 的无障碍建议值——面板里的按钮与开关仍是 48dp，只放过滑块。
+ */
+private val SliderRowHeight = 36.dp
+
+/**
+ * 「边界标注 + 滑块 + 边界标注」一行（2026-09-22 起所有滑块的统一形态）。
+ *
+ * 边界标注原本单占一行（labelSmall 一行 16dp + 间距）。挪到滑块两侧后信息一条不少，
+ * 却省掉一整行；滑块的可用宽度少了两段文字（约 60dp），拖动行程仍然够用。
+ */
+@Composable
+private fun RangeLabeledSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    minText: String,
+    maxText: String,
+) {
+    val faint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(minText, style = MaterialTheme.typography.labelSmall, color = faint)
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            modifier = Modifier
+                .weight(1f)
+                .height(SliderRowHeight)
+                .padding(horizontal = 6.dp),
+        )
+        Text(maxText, style = MaterialTheme.typography.labelSmall, color = faint)
     }
 }
 
 /** 「跟随」槽位的固定高度：跟随态提示与可点按钮同高，切换时行高不变。 */
-private val FollowSlotHeight = 32.dp
+private val FollowSlotHeight = 28.dp
 
 /**
  * 固定高度的跟随态槽位。
  * 跟随中（[following]=true）：显示 [followHint] 提示文案（不可点，本就处于跟随态）；
  * 设置过：显示「跟随」按钮，点按清掉用户值回到跟随态。两态占同一 [FollowSlotHeight]，
  * 切换不再引起行高变化。
+ *
+ * 文案那一态居中显示（`Box` + `contentAlignment`）：`Modifier.height` 直接挂在 `Text` 上时
+ * 文字贴盒顶，与按钮里居中的「跟随」差约 6dp，两态切换时基线会窜一下。
  */
 @Composable
 private fun FollowSlot(
@@ -536,12 +570,16 @@ private fun FollowSlot(
     onFollow: () -> Unit,
 ) {
     if (following) {
-        Text(
-            followHint,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+        Box(
             modifier = Modifier.height(FollowSlotHeight),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                followHint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
+        }
     } else {
         TextButton(
             onClick = onFollow,
@@ -553,6 +591,12 @@ private fun FollowSlot(
     }
 }
 
+/**
+ * 通用滑块行（时间轴宽度 / 表头高度 / 格子高度 / 格子圆角 / 格子不透明度 / 背景三项）。
+ *
+ * 排版（2026-09-22 压缩）：标题 +「重置」+ 当前值一行；边界标注 + 滑块 + 边界标注一行。
+ * 原先边界标注单占一行，加上每行 10dp 上下留白，一根滑块要吃掉一百多 dp。
+ */
 @Composable
 private fun SliderSettingRow(
     title: String,
@@ -564,7 +608,7 @@ private fun SliderSettingRow(
     maxText: String,
     onReset: (() -> Unit)? = null,
 ) {
-    Column(Modifier.padding(vertical = 10.dp)) {
+    Column(Modifier.padding(vertical = RowVerticalPadding)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -585,28 +629,13 @@ private fun SliderSettingRow(
                 color = MaterialTheme.colorScheme.primary,
             )
         }
-        Slider(
+        RangeLabeledSlider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            minText = minText,
+            maxText = maxText,
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                minText,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                maxText,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
-        }
     }
 }
 

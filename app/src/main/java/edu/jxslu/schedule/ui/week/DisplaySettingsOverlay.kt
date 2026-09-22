@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
+import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -70,6 +71,18 @@ internal fun nearestAnchor(heightDp: Dp, anchors: List<Dp>): Dp =
     anchors.minByOrNull { abs(it.value - heightDp.value) } ?: heightDp
 
 /**
+ * 拖动过程中的高度夹取（纯函数，JVM 可测）：上下都不越档。
+ *
+ * 上限不是可选项：只夹下限时，向上拖能把面板拉过最高档（`panelHeight` 在 measure 阶段
+ * 直接按 state 定高，不受父约束拦），松手吸附回最高档就是「弹窗跳一下」——2026-09-22 真机反馈。
+ *
+ * 取 [maxOf] 再夹是防退化屏：极矮的分屏窗口里上限档可能反而低于 [minPx]，
+ * 而 `coerceIn(min, max)` 遇到 min > max 会直接抛。
+ */
+internal fun clampPanelHeight(heightPx: Float, minPx: Float, maxPx: Float): Float =
+    heightPx.coerceIn(minPx, maxOf(minPx, maxPx))
+
+/**
  * 显示设置覆盖面板（替代 ModalBottomSheet，见调用点注释里的根因）。
  * 唯一的显示设置形态与唯一入口：课表页顶栏眼睛图标（2026-09-20 起，
  * 「我的」侧跨 Tab 入口已删，DESIGN §3.1）都落到这里，
@@ -77,7 +90,8 @@ internal fun nearestAnchor(heightDp: Dp, anchors: List<Dp>): Dp =
  *
  * **把手交互**：顶部把手条上下拖动**连续调节面板高度**（向上拖变高、向下拖变矮），
  * 松手吸附到最近档位（屏高 25% / 40% / 60%，默认 40%）；拖到最小档后继续下拉超过
- * [PanelCollapseOverdrag] 关闭弹层。
+ * [PanelCollapseOverdrag] 关闭弹层。拖动全程的高度夹在 [PanelMinHeight, 最高档] 之间
+ * （见 [clampPanelHeight]）——不夹上限时向上多拖一点就冲过最高档，松手吸附回来就是一次跳动。
  *
  * 实现约束（「拖动抽搐/无法拖拽」的教训）：
  * - 高度用 [mutableFloatStateOf]（px）承载，拖动回调里**同步**赋值——
@@ -97,14 +111,17 @@ internal fun DisplaySettingsOverlay(
     val screenHeightDp = LocalConfiguration.current.screenHeightDp
     val density = LocalDensity.current
 
-    // 档位换算成 px，并夹进 [PanelMinHeight, 上限档]：小屏上 25% 可能不足 180dp
-    val maxPanelHeightPx = with(density) { (screenHeightDp * PanelMaxFraction).dp.toPx() }
-    val minPanelHeightPx = with(density) { PanelMinHeight.toPx() }
-    val anchorPx = remember(screenHeightDp) {
+    // 档位在 dp 域算（吸附函数 [nearestAnchor] 也是 dp 域，一处口径），并夹进
+    // [PanelMinHeight, 上限档]：小屏上 25% 可能不足 180dp。
+    // 上限先抬到不低于下限：极矮的分屏窗口里 60% 可能小于 180dp，coerceIn 会抛。
+    val panelMaxDp = maxOf(PanelMinHeight, (screenHeightDp * PanelMaxFraction).dp)
+    val anchorDp = remember(screenHeightDp) {
         PanelHeightFractions.map { fraction ->
-            with(density) { (screenHeightDp * fraction).dp.toPx() }.coerceIn(minPanelHeightPx, maxPanelHeightPx)
+            (screenHeightDp * fraction).dp.coerceIn(PanelMinHeight, panelMaxDp)
         }
     }
+    val minPanelHeightPx = with(density) { PanelMinHeight.toPx() }
+    val maxPanelHeightPx = with(density) { panelMaxDp.toPx() }
     val startHeightPx = remember(screenHeightDp) {
         with(density) { (screenHeightDp * PanelDefaultFraction).dp.toPx() }
             .coerceIn(minPanelHeightPx, maxPanelHeightPx)
@@ -147,6 +164,10 @@ internal fun DisplaySettingsOverlay(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // 整块面板抬到悬浮胶囊上缘之上（普通底栏形态下这个值是 0，位置不变）。
+                    // 面板是满宽的底部抽屉，底栏压在它身上会盖住最下面一两行，且那一带的点击
+                    // 会命中胶囊（bottomBar 后绘制、命中优先）——点「移除背景」直接跳走 Tab。
+                    .padding(bottom = LocalBottomBarClearance.current)
                     // 高度在 measure 阶段从 state 读取：拖动每帧只重测、不重组
                     .panelHeight(panelHeightPx),
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
@@ -163,14 +184,11 @@ internal fun DisplaySettingsOverlay(
                     ) {
                         CollapseHandle(
                             onDelta = { dragAmount ->
-                                // 向上拖（dragAmount < 0）增高；被钳到最小档后的
-                                // 继续下拉计入关闭判定
+                                // 向上拖（dragAmount < 0）增高。上下一并夹住：只夹下限时向上拖
+                                // 会把面板拉过最高档，松手吸附回来就是一次跳动
                                 val desired = panelHeightPx - dragAmount
-                                panelHeightPx = if (desired >= minPanelHeightPx) {
-                                    desired
-                                } else {
-                                    minPanelHeightPx
-                                }
+                                panelHeightPx = clampPanelHeight(desired, minPanelHeightPx, maxPanelHeightPx)
+                                // 被钳到最小档之后继续下拉计入关闭判定（用未夹取的 desired）
                                 if (desired < minPanelHeightPx) {
                                     val overdrag = minPanelHeightPx - desired
                                     if (overdrag >= collapseOverdragPx) {
@@ -179,9 +197,10 @@ internal fun DisplaySettingsOverlay(
                                 }
                             },
                             onDragStop = {
-                                // 吸附最近档位：px 域比较直接取最近锚
-                                panelHeightPx = anchorPx.minByOrNull { abs(it - panelHeightPx) }
-                                    ?: panelHeightPx
+                                // 吸附最近档位：换算一次到 dp 域，走与单测同一份实现
+                                panelHeightPx = with(density) {
+                                    nearestAnchor(panelHeightPx.toDp(), anchorDp).toPx()
+                                }
                             },
                         )
                     }
