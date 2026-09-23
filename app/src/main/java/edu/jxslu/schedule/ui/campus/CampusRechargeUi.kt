@@ -1,7 +1,6 @@
 package edu.jxslu.schedule.ui.campus
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
@@ -20,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import edu.jxslu.schedule.domain.YktPayment
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.launch
 
 /**
  * 校园卡充值/到账共享 UI（DESIGN §4.19「充值」、§3.10）。
@@ -57,6 +59,10 @@ fun RechargeSheet(
     var amount by rememberSaveable { mutableStateOf("") }
     var confirmStep by remember { mutableStateOf(false) }
     var toElectric by rememberSaveable { mutableStateOf(initiallyElectric) }
+    // 键盘弹出时 sheet 内容会被盖住：输入框获得焦点即把滚动条滚到底，
+    // 「下一步」始终可见（imePadding 对 M3 ModalBottomSheet 无效，2026-09-24 实机确认）
+    val scrollState = rememberScrollState()
+    val sheetScope = rememberCoroutineScope()
 
     val parsed = amount.toBigDecimalOrNull()
     val valid = parsed != null && parsed >= java.math.BigDecimal("0.01") &&
@@ -68,8 +74,7 @@ fun RechargeSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -117,6 +122,8 @@ fun RechargeSheet(
                         val dot = cleaned.indexOf('.')
                         if (dot >= 0 && cleaned.length - dot - 1 > 2) amount else cleaned
                     }
+                    // 键盘弹出/输入中：滚到底让「下一步」露出来
+                    sheetScope.launch { scrollState.animateScrollTo(scrollState.maxValue) }
                 },
                 label = { Text("充值金额（元）") },
                 supportingText = {
