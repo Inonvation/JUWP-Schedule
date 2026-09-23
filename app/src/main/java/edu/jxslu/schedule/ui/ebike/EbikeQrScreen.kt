@@ -1,7 +1,6 @@
 package edu.jxslu.schedule.ui.ebike
 
 import android.Manifest
-import android.app.ActivityManager
 import android.content.pm.PackageManager
 import android.os.Build
 import android.app.SearchManager
@@ -659,15 +658,19 @@ private const val KVCOO_DOWNLOAD_URL = "https://m.itmop.com/downinfo/288264.html
 
 /**
  * 打开「快趣出行」App（需已安装）。
- * 先杀它的后台进程（`killBackgroundProcesses`，普通应用无 force-stop 权限；
- * 只杀后台、不动前台活动）——下次启动重新初始化地图，等效「先停再开」刷新地图。
- * 1. 「助手通道」（2026-09-21 真机实测，同级「快捷方式」工具同款路径）：临时把系统「助手」
+ * 先用「桌面意图 + CLEAR_TASK」重启快趣（含启动页，等效冷启动刷新地图）；
+ * 重启失败再走「助手通道」直达首页；都失败提示。
+ * 1. 桌面意图 + CLEAR_TASK（2026-09-23 起，用户口径「先停止再打开」）：清掉现存
+ *    任务栈重建首页——进程就算活着，Activity 全销毁，地图跟着重新初始化。
+ *    比 killBackgroundProcesses 稳：后者杀不掉挂前台服务（定位）的进程，
+ *    CLEAR_TASK 不依赖系统肯不肯杀。
+ * 2. 「助手通道」（2026-09-21 真机实测，同级「快捷方式」工具同款路径）：临时把系统「助手」
  *    设置指到快趣首页 → 反射 `SearchManager.launchAssist` → 由 SystemUI（uid 1000）以
  *    `ACTION_ASSIST` 代启未导出的首页，直达、跳过启动页。需要**一次性** adb 授权：
  *    `adb shell pm grant edu.jxslu.schedule.debug android.permission.WRITE_SECURE_SETTINGS`
  *    （release 包名去掉 .debug）；未授权/反射被拦时静默走下一级；
- * 2. 桌面启动意图（启动页）兜底——启动页必然导出、无权限门槛；
- * 3. 未安装 → [onNotInstalled]（弹下载引导）；打开失败 → [onError]（Snackbar）。
+ * 3. 桌面启动意图（启动页）兜底——启动页必然导出、无权限门槛；
+ * 4. 未安装 → [onNotInstalled]（弹下载引导）；打开失败 → [onError]（Snackbar）。
  */
 private fun openKvcooApp(
     context: android.content.Context,
@@ -684,22 +687,31 @@ private fun openKvcooApp(
         onNotInstalled()
         return
     }
-    killKvcooBackground(context)
+    if (restartKvcoo(context)) return
     if (launchViaAssistant(context)) return
     fallbackOpenKvcoo(context, onError)
 }
 
 /**
- * 杀快趣后台进程（2026-09-23 新增：用户口径「先停止再打开，刷新地图」）。
- * `killBackgroundProcesses` 是普通应用唯一无 root 的杀后台路径，只杀后台进程、
- * 不影响前台活动；下次启动快趣重新初始化，等效冷启动。
+ * 「先停再开」的等效实现（2026-09-23 改）：拉快趣桌面意图 + `FLAG_ACTIVITY_CLEAR_TASK`
+ * + `FLAG_ACTIVITY_NEW_TASK`——清掉它现存的任务栈再重建首页。Activity 全销毁 →
+ * 地图跟着重建，视觉上就是「关掉重开」。不需要杀进程，不依赖系统许可。
+ * @return true = 已拉起（调用方直接返回，不要再走助手通道，免得开两次）。
  */
-private fun killKvcooBackground(context: android.content.Context) {
+private fun restartKvcoo(context: android.content.Context): Boolean {
     try {
-        val am = context.getSystemService(ActivityManager::class.java) ?: return
-        am.killBackgroundProcesses(KVCOO_PACKAGE)
+        val launch = context.packageManager.getLaunchIntentForPackage(KVCOO_PACKAGE)
+        if (launch != null) {
+            context.startActivity(
+                launch.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK,
+                ),
+            )
+            return true
+        }
+        return false
     } catch (_: Exception) {
-        // 杀不掉也不拦启动：上一次冷启动行为是退化的可接受结果
+        return false
     }
 }
 
