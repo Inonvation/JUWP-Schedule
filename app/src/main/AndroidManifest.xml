@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 上课提醒（DESIGN §3.7）：API 33+ 运行时权限，只在用户开启提醒开关那一刻申请 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 打开快趣出行前先杀它的后台进程（刷新地图）：普通应用没有 force-stop 权限，
+         killBackgroundProcesses 是唯一无 root 的杀后台路径；前台活动不受影响 -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 共享单车出码自动保存（DESIGN §3.9）：API 29+ 走 MediaStore 免权限；

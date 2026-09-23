@@ -1,10 +1,12 @@
 package edu.jxslu.schedule.ui.ebike
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.pm.PackageManager
 import android.os.Build
 import android.app.SearchManager
 import android.content.Intent
+import android.net.Uri
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
@@ -121,6 +123,9 @@ fun EbikeQrScreen(
     val haptics = rememberAppHaptics()
     // 「结束骑行」二次确认弹窗（2026-09-22 用户口径：误触代价是提醒失效）
     var showEndConfirm by remember { mutableStateOf(false) }
+    // 「未安装快趣出行」下载引导弹窗（2026-09-23 用户拍板：弹窗 + 跳参考下载页，
+    // 网站仅外部提供、不保证准确性，文案里写清楚）
+    var showInstallGuide by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     // 免费提醒开关开启那一刻申请 POST_NOTIFICATIONS（API 33+，照上课提醒口径）
@@ -192,13 +197,17 @@ fun EbikeQrScreen(
             OutlinedButton(
                 onClick = {
                     haptics.tap()
-                    openKvcooApp(context) { message ->
-                        scope.launch {
-                            snackbar.showSnackbar(
-                                AppNoticeVisuals(message, tone = NoticeTone.Warning),
-                            )
-                        }
-                    }
+                    openKvcooApp(
+                        context,
+                        onNotInstalled = { showInstallGuide = true },
+                        onError = { message ->
+                            scope.launch {
+                                snackbar.showSnackbar(
+                                    AppNoticeVisuals(message, tone = NoticeTone.Warning),
+                                )
+                            }
+                        },
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -425,6 +434,50 @@ fun EbikeQrScreen(
             },
         )
     }
+
+    // 未安装快趣出行的下载引导（2026-09-23）：弹窗代替之前的一句 Snackbar 提示，
+    // 附参考下载页链接（用户拍板：外部网站不保证准确性，文案写免责）
+    if (showInstallGuide) {
+        AlertDialog(
+            onDismissRequest = { showInstallGuide = false },
+            title = { Text("未安装快趣出行") },
+            text = {
+                Text(
+                    "需要先安装快趣出行 App 才能扫码开车。\n\n" +
+                        "可从参考页面下载安装包，但该网站为外部提供，" +
+                        "不保证下载内容安全准确，请自行甄别，由此产生的损失概不负责。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showInstallGuide = false
+                    haptics.tap()
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(KVCOO_DOWNLOAD_URL))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }.onFailure {
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                AppNoticeVisuals(
+                                    "浏览器打开失败，请手动复制链接访问",
+                                    tone = NoticeTone.Warning,
+                                ),
+                            )
+                        }
+                    }
+                }) {
+                    Text("去参考页下载")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInstallGuide = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -601,17 +654,26 @@ private const val KEY_SECURE_ASSISTANT = "assistant"
 /** 写入「助手」后等待 SystemUI 取用的时间（含启动耗时），随后恢复原值。 */
 private const val ASSISTANT_RESTORE_DELAY_MS = 1500L
 
+/** 参考下载页（外部提供，不保证准确性；UI 文案里写免责）。 */
+private const val KVCOO_DOWNLOAD_URL = "https://m.itmop.com/downinfo/288264.html"
+
 /**
  * 打开「快趣出行」App（需已安装）。
+ * 先杀它的后台进程（`killBackgroundProcesses`，普通应用无 force-stop 权限；
+ * 只杀后台、不动前台活动）——下次启动重新初始化地图，等效「先停再开」刷新地图。
  * 1. 「助手通道」（2026-09-21 真机实测，同级「快捷方式」工具同款路径）：临时把系统「助手」
  *    设置指到快趣首页 → 反射 `SearchManager.launchAssist` → 由 SystemUI（uid 1000）以
  *    `ACTION_ASSIST` 代启未导出的首页，直达、跳过启动页。需要**一次性** adb 授权：
  *    `adb shell pm grant edu.jxslu.schedule.debug android.permission.WRITE_SECURE_SETTINGS`
  *    （release 包名去掉 .debug）；未授权/反射被拦时静默走下一级；
  * 2. 桌面启动意图（启动页）兜底——启动页必然导出、无权限门槛；
- * 3. 全失败按「未安装 / 打不开」提示，走页面 Snackbar。
+ * 3. 未安装 → [onNotInstalled]（弹下载引导）；打开失败 → [onError]（Snackbar）。
  */
-private fun openKvcooApp(context: android.content.Context, onError: (String) -> Unit) {
+private fun openKvcooApp(
+    context: android.content.Context,
+    onNotInstalled: () -> Unit,
+    onError: (String) -> Unit,
+) {
     val installed = try {
         context.packageManager.getApplicationInfo(KVCOO_PACKAGE, 0)
         true
@@ -619,11 +681,26 @@ private fun openKvcooApp(context: android.content.Context, onError: (String) -> 
         false
     }
     if (!installed) {
-        onError("未安装快趣出行 App")
+        onNotInstalled()
         return
     }
+    killKvcooBackground(context)
     if (launchViaAssistant(context)) return
     fallbackOpenKvcoo(context, onError)
+}
+
+/**
+ * 杀快趣后台进程（2026-09-23 新增：用户口径「先停止再打开，刷新地图」）。
+ * `killBackgroundProcesses` 是普通应用唯一无 root 的杀后台路径，只杀后台进程、
+ * 不影响前台活动；下次启动快趣重新初始化，等效冷启动。
+ */
+private fun killKvcooBackground(context: android.content.Context) {
+    try {
+        val am = context.getSystemService(ActivityManager::class.java) ?: return
+        am.killBackgroundProcesses(KVCOO_PACKAGE)
+    } catch (_: Exception) {
+        // 杀不掉也不拦启动：上一次冷启动行为是退化的可接受结果
+    }
 }
 
 /** 「助手通道」：写设置 → 反射 launchAssist → 延迟恢复。任一步失败恢复原值并返回 false。 */
