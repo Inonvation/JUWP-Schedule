@@ -10,15 +10,21 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import kotlinx.coroutines.flow.first
+import java.util.concurrent.TimeUnit
 
 /**
  * 共享单车免费时长提醒（DESIGN §3.9，2026-09-22）。
@@ -40,6 +46,15 @@ object EbikeFreeRideReminder {
     private const val NOTIFICATION_TAG = "ebike_free_ride"
     private const val NOTIFICATION_ID = 4201
     private const val ALARM_REQUEST_CODE = 4202
+    private const val ONE_SHOT_WORK = "ebike_free_ride_check"
+    private const val PERIODIC_WORK = "ebike_free_ride_periodic"
+
+    /**
+     * 补发宽限窗（分钟）：闹钟被 ROM 推迟、App 进程被杀后恢复时，
+     * 「已过触发点但免费时段未完」的这几分钟仍补发通知。
+     * 上限取提前量上限（5）：再晚发「约 N 分钟后结束」就已经失真。
+     */
+    private const val GRACE_MINUTES = 5L
 
     /**
      * 记录计时起点并重排闹钟。开关关着也记起点（数据无害），
@@ -101,8 +116,11 @@ object EbikeFreeRideReminder {
             val now = System.currentTimeMillis()
             if (!EbikeFreeRide.isActive(startAt, now)) return
             val lead = prefs.ebikeFreeLeadMinutes.first()
-            // 只在「触发点已过、免费时段未完」的窗口内补发；没到点不抢跑
-            if (now < EbikeFreeRide.triggerAtMillis(startAt, lead)) return
+            // 宽限窗：错过闹钟后仍补发，但最多 GRACE_MINUTES；
+            // 再晚发「约 N 分钟后结束」就失真，直接放弃（等待下一个计时）
+            val graceEnd = EbikeFreeRide.triggerAtMillis(startAt, lead) +
+                GRACE_MINUTES * 60_000L
+            if (now < EbikeFreeRide.triggerAtMillis(startAt, lead) || now >= graceEnd) return
             val notified = prefs.ebikeFreeNotifiedAt.first()
             if (startAt.toString() in notified) return
             if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
@@ -110,6 +128,23 @@ object EbikeFreeRideReminder {
                 prefs.addEbikeFreeNotifiedAt(startAt)
             }
         }.onFailure { Log.w(TAG, "check failed", it) }
+    }
+
+    /** 一次性核对（闹钟触发 / 设置变更落点）：BroadcastReceiver 里不能做长任务。 */
+    fun enqueueCheck(context: Context) {
+        val request = OneTimeWorkRequestBuilder<EbikeFreeRideCheckWorker>()
+            .setConstraints(Constraints.NONE)
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(ONE_SHOT_WORK, ExistingWorkPolicy.REPLACE, request)
+    }
+
+    /** 10 分钟周期核对兜底：闹钟被 ROM 推迟 / 丢失时还能在窗口内补发。幂等（KEEP）。 */
+    fun ensurePeriodicWork(context: Context) {
+        val request = PeriodicWorkRequestBuilder<EbikeFreeRideCheckWorker>(10, TimeUnit.MINUTES)
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
     private fun postNotification(context: Context, lead: Int): Boolean {
@@ -165,13 +200,20 @@ object EbikeFreeRideReminder {
 /** 免费时长到点闹钟落点：显式 PendingIntent，无需 intent-filter。 */
 class EbikeFreeRideReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                EbikeFreeRideReminder.check(context)
-            } finally {
-                pendingResult.finish()
-            }
+        // 照上课提醒的口径：不阻塞广播线程，核对排进 WorkManager
+        EbikeFreeRideReminder.enqueueCheck(context)
+    }
+}
+
+/** 免费时长提醒的核对 Worker：发送窗口内通知。 */
+class EbikeFreeRideCheckWorker(
+    appContext: Context,
+    params: WorkerParameters,
+) : CoroutineWorker(appContext, params) {
+    override suspend fun doWork(): Result {
+        runCatching {
+            EbikeFreeRideReminder.check(applicationContext)
         }
+        return Result.success()
     }
 }

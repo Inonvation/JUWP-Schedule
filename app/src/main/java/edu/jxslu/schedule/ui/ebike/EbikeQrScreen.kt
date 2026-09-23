@@ -136,11 +136,6 @@ fun EbikeQrScreen(
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-    // 免费时长提醒（DESIGN §3.9）：进页核对一次补发（闹钟被推迟/进程被杀的场景）
-    LaunchedEffect(Unit) {
-        EbikeFreeRideReminder.check(context)
-    }
-
     LaunchedEffect(Unit) {
         EbikeFreeRideReminder.check(context)
     }

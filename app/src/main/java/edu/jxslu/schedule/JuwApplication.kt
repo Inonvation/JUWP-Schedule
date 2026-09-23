@@ -3,6 +3,7 @@ package edu.jxslu.schedule
 import android.app.Application
 import edu.jxslu.schedule.data.jw.JwDetectScheduler
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
@@ -32,6 +33,9 @@ class JuwApplication : Application() {
             // 提醒关/无课时 scheduleNext 内部是撤销闹钟的空跑，很廉价。
             ClassReminder.scheduleNext(this@JuwApplication)
             ClassReminder.ensurePeriodicWork(this@JuwApplication)
+            // 共享单车免费时长提醒（DESIGN §3.9）：进核对 Worker 排周期兜底（10 分钟，
+            // 覆盖闹钟被 ROM 推迟的场景）。无进行中计时 / 开关关时 check 是空跑，很廉价。
+            EbikeFreeRideReminder.ensurePeriodicWork(this@JuwApplication)
             // 调课自动检测（DESIGN §4.17）：周期任务按当前设置重排（开→排/关→撤），
             // 距上次检测超过一个周期时冷启动立即补测一次（兜 WorkManager 被 ROM 推迟）。
             // 功能默认关闭，关闭态下这两步都是零成本空跑。
