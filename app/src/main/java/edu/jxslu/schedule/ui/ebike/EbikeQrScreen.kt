@@ -1,7 +1,5 @@
 package edu.jxslu.schedule.ui.ebike
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
@@ -62,7 +60,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -75,12 +72,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.openSubpageForResult
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
@@ -96,7 +96,7 @@ import me.rerere.hugeicons.stroke.ScooterElectric
 
 /**
  * 共享单车出码页（DESIGN §3.9）。纵向顺序：
- * 「附近单车地图」（次要按钮，置于输入框上方）→ 车号输入
+ * 「附近单车地图」入口卡（`AppCardRow`，置于输入框上方）→ 车号输入
  * → 生成 → **固定方形占位**的出码区 → 保存 / 扫一扫（未出码时置灰）
  * → 最近车号（可一键清空）→ 免费时长提醒 → 出码设置两个开关
  * → 「打开快趣出行」文字入口 → 免责声明。
@@ -139,9 +139,7 @@ fun EbikeQrScreen(
     }
     // 有权限直接跑，缺权限先申请、授予后跑（与 WeekScreen 的日历同步同口径）
     fun withCalendarPermission(action: () -> Unit) {
-        val needed = CALENDAR_PERMISSIONS.filter {
-            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val needed = AppPermissions.missing(context, AppPermissions.calendar)
         if (needed.isEmpty()) {
             action()
         } else {
@@ -215,8 +213,13 @@ fun EbikeQrScreen(
             // 副标题顺带说清点进去能干什么，也把主次让给了下面那个实心的「生成二维码」
             AppCardRow(
                 onClick = {
-                    mapLauncher.launch(
-                        SubpageActivity.intent(context, SubpageScreen.EBIKE_MAP),
+                    // 走 launcher 而不是 openSubpage：地图页要用 Activity Result 把选中的
+                    // 车号带回来，普通 startActivity 收不到（DESIGN §3.9 「选中」一行）。
+                    // 转场由 openSubpageForResult 补，跟其他二级页入口一致
+                    openSubpageForResult(
+                        context,
+                        mapLauncher::launch,
+                        SubpageRequest(SubpageScreen.EBIKE_MAP),
                     )
                 },
                 onClickLabel = "打开附近单车地图",
@@ -665,15 +668,6 @@ private fun openWechatScan(context: android.content.Context, onError: (String) -
 
 /** 「快趣出行」App 包名（DESIGN §3.9）。 */
 private const val KVCOO_PACKAGE = "com.kvcoo.go"
-
-/**
- * 免费时长提醒写系统日历所需的运行时权限（DESIGN §3.9）。
- * 只在该功能被用到的那一刻申请（开开关 / 点扫一扫），不预取、不进页申请。
- */
-private val CALENDAR_PERMISSIONS = listOf(
-    Manifest.permission.READ_CALENDAR,
-    Manifest.permission.WRITE_CALENDAR,
-)
 
 /**
  * 打开「快趣出行」App（需已安装）。

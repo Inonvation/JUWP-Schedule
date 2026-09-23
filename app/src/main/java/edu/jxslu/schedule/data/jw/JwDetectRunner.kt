@@ -18,8 +18,9 @@ import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 import androidx.work.WorkerParameters
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.subpageLaunchIntent
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.data.prefs.DetectSettings
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
@@ -219,7 +220,8 @@ internal object JwDetectNotifier {
         PendingIntent.getActivity(
             context,
             requestCode,
-            SubpageActivity.intent(context, screen),
+            // 跳板走 MainActivity：二级页当 task 根的话，返回会直接退出 App
+            subpageLaunchIntent(context, SubpageRequest(screen)),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 

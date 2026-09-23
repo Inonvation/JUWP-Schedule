@@ -103,6 +103,7 @@ import edu.jxslu.schedule.ui.common.readTextFromUri
 import edu.jxslu.schedule.ui.common.resolveImportTarget
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.detect.DetectNotice
 import edu.jxslu.schedule.ui.detect.detectOutcomeNotice
@@ -117,9 +118,7 @@ import me.rerere.hugeicons.stroke.Eye
 import me.rerere.hugeicons.stroke.Import
 import me.rerere.hugeicons.stroke.Share08
 import android.Manifest
-import android.content.pm.PackageManager
 import android.util.Log
-import androidx.core.content.ContextCompat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -257,12 +256,7 @@ fun WeekScreen(
     }
 
     fun startCalendarSync() {
-        val needed = listOf(
-            android.Manifest.permission.READ_CALENDAR,
-            android.Manifest.permission.WRITE_CALENDAR,
-        ).filter {
-            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val needed = AppPermissions.missing(context, AppPermissions.calendar)
         // 先关分享弹层再进任何一条分支：弹层是独立窗口，盖在它下面的提醒一律不可见
         //（已授权分支此前就在这里关，拒绝分支漏了 → 提示被盖住）
         shareOpen = false

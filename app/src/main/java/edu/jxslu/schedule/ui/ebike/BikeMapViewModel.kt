@@ -216,6 +216,24 @@ class BikeMapViewModel(
         viewModelScope.launch { prefs.setEbikePanelHeightDp(value) }
     }
 
+    /**
+     * 把面板高度收进 [minDp]..[maxDp]（页面在窗口尺寸变化后调用）。
+     *
+     * 渲染时虽然也夹了一道，但状态本身不会跟着变，于是会出现"拖了不动"：存着 520dp 的
+     * 人转成横屏（上限只剩 280dp），面板画在 280dp，而拖动是从 520 开始算的，
+     * 手指得先走完那 240dp 才见效。让状态自己收敛就没这回事。
+     *
+     * 已经在范围内时原样返回同一个实例：StateFlow 按相等去重，不会多触发一次重组，
+     * 所以调用方可以放心地把它挂在「高度或上限变了」的效果上。
+     */
+    fun clampPanelHeight(minDp: Float, maxDp: Float) {
+        if (!minDp.isFinite() || !maxDp.isFinite() || maxDp < minDp) return
+        _uiState.update { current ->
+            val clamped = current.panelHeightDp.coerceIn(minDp, maxDp)
+            if (clamped == current.panelHeightDp) current else current.copy(panelHeightDp = clamped)
+        }
+    }
+
     /** 只看可用的车。不重新请求接口——数据已经在手上，重算一遍簇即可。 */
     fun setOnlyAvailable(value: Boolean) {
         if (_uiState.value.onlyAvailable == value) return

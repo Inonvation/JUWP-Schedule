@@ -92,15 +92,46 @@ class MainActivity : ComponentActivity() {
      */
     private val pendingRoute = mutableStateOf<String?>(null)
 
+    /**
+     * 待打开的二级页队列（DESIGN §3.1）。两条来源：
+     * - 通知跳板（作业提醒 / 调课检测）带的定位参数，长度 1；
+     * - 从桌面图标重新进前台时按 [SubpageStack] 记录的窗口链放回，可能多层。
+     *
+     * 与 [pendingRoute] 同形态：`mutableStateOf` + 组合里读 → `LaunchedEffect` 消费后置空，
+     * 免得每次重组都把用户又推回那个二级页。
+     */
+    private val pendingSubpages = mutableStateOf<List<SubpageRequest>>(emptyList())
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 桌面图标点击（NEW_TASK|RESET_TASK_IF_NEEDED）实测会在栈顶**新压一个
+        // MainActivity**，而下面那套窗口（含二级页）原样还在。这个多余实例不是
+        // task 的根，说明栈下面就是我们自己：把它关掉、连 setContent 都别走，
+        // 系统会把任务栈带到前台，露出用户离开时那一页——二级页不被销毁，
+        // 状态、滚动位置、地图视野全都在（这才是「真正的窗口保活」）。
+        //
+        // 判据必须带 CATEGORY_LAUNCHER + ACTION_MAIN：小组件点击（SINGLE_TOP|CLEAR_TOP）
+        // 与通知跳板（我们自己拼的显式 intent）都不带这两个，它们该正常起窗口。
+        // 真机四种 launchMode 组合的对比记在 AndroidManifest 那条注释里。
+        if (!isTaskRoot() &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER) &&
+            intent.action == Intent.ACTION_MAIN
+        ) {
+            finish()
+            return
+        }
         if (savedInstanceState == null) {
+            // task 与进程都是新的：窗口链只可能是「用户把 App 从最近任务划掉」留下的残影，
+            // 留着会让下一次点图标凭空落进某个二级页。只在真是根实例时清——
+            // 上面那条 finish 路径的实例不该动记录
+            if (isTaskRoot()) SubpageStack.clear()
             pendingRoute.value = intent?.getStringExtra(EXTRA_ROUTE)
+            pendingSubpages.value = SubpageRequest.from(intent)?.let { listOf(it) } ?: emptyList()
         }
         enableEdgeToEdge()
         setContent {
             JuwRoot {
-                JuwApp(pendingRoute = pendingRoute)
+                JuwApp(pendingRoute = pendingRoute, pendingSubpages = pendingSubpages)
             }
         }
     }
@@ -108,7 +139,30 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingRoute.value = intent.getStringExtra(EXTRA_ROUTE)
+        // 通知跳板：带二级页定位参数
+        val subpage = SubpageRequest.from(intent)
+        if (subpage != null) {
+            pendingRoute.value = null
+            pendingSubpages.value = listOf(subpage)
+            return
+        }
+        val route = intent.getStringExtra(EXTRA_ROUTE)
+        if (route != null) {
+            pendingRoute.value = route
+            return
+        }
+        // 没有业务 extra，且是桌面图标那类 LAUNCHER 入口：singleTask 的 clearTop 已经把
+        // 栈上的二级页拆掉，这里按记录把窗口链放回去（DESIGN §3.1）。
+        // 判据必须带 action/category：小组件整卡的 intent 同样没有 extra，
+        // 但它的语义是「回今日页」，不该被恢复逻辑截走。
+        val fromLauncher = intent.action == Intent.ACTION_MAIN &&
+            intent.categories?.contains(Intent.CATEGORY_LAUNCHER) == true
+        if (fromLauncher) {
+            // 只在「记录在、窗口没了」时补：二级页还活着说明它只是被前置，什么都不用做
+            // （pendingRestore 内部已经带这道门）。同步启动，不走组合里的 LaunchedEffect：
+            // onNewIntent 发生在窗口被带到前台、首帧绘制之前，这里启动的二级页能与主界面同一批上屏
+            SubpageStack.pendingRestore().forEach { openSubpage(this, it) }
+        }
     }
 }
 
@@ -313,7 +367,10 @@ private fun tabEnter(): EnterTransition = fadeIn(tween(TabFadeMillis))
 private fun tabExit(): ExitTransition = fadeOut(tween(TabFadeMillis))
 
 @Composable
-fun JuwApp(pendingRoute: MutableState<String?>? = null) {
+internal fun JuwApp(
+    pendingRoute: MutableState<String?>? = null,
+    pendingSubpages: MutableState<List<SubpageRequest>>? = null,
+) {
     val context = LocalContext.current
     val navController = rememberNavController()
     val haptics = rememberAppHaptics()
@@ -330,6 +387,16 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
             }
             pendingRoute.value = null
         }
+    }
+
+    // 待打开的二级页（通知跳板 / 从桌面图标回来恢复窗口链，DESIGN §3.1）。
+    // 先置空再依次启动：置空会重启这个 effect，新一轮读到空队列直接返回。
+    val subpageQueue = pendingSubpages?.value
+    LaunchedEffect(subpageQueue) {
+        if (subpageQueue.isNullOrEmpty()) return@LaunchedEffect
+        pendingSubpages.value = emptyList()
+        // 顺序即层次：先启动的在下面，最后一个在最上层
+        subpageQueue.forEach { openSubpage(context, it) }
     }
 
     // 「我的 → 显示设置」跨 Tab 触发已于 2026-09-20 删除（DESIGN §3.1）：

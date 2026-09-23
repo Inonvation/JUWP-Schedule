@@ -1,8 +1,6 @@
 package edu.jxslu.schedule.ui.me
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
@@ -52,6 +49,7 @@ import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
@@ -158,12 +156,7 @@ fun CalendarSettingsScreen(
 
     fun startSync() {
         syncAfterGrant = true
-        val needed = listOf(
-            Manifest.permission.READ_CALENDAR,
-            Manifest.permission.WRITE_CALENDAR,
-        ).filter {
-            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val needed = AppPermissions.missing(context, AppPermissions.calendar)
         if (needed.isEmpty()) {
             viewModel.sync(context)
         } else {
@@ -173,12 +166,7 @@ fun CalendarSettingsScreen(
 
     fun requestCalendarPermission() {
         syncAfterGrant = false
-        val needed = listOf(
-            Manifest.permission.READ_CALENDAR,
-            Manifest.permission.WRITE_CALENDAR,
-        ).filter {
-            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val needed = AppPermissions.missing(context, AppPermissions.calendar)
         if (needed.isNotEmpty()) calendarPermissionLauncher.launch(needed.toTypedArray())
     }
 
@@ -307,9 +295,7 @@ fun CalendarSettingsScreen(
 }
 
 private fun hasCalendarPermission(context: Context): Boolean =
-    listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR).all {
-        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-    }
+    AppPermissions.calendarGranted(context)
 
 class CalendarSettingsViewModel(
     private val repo: ScheduleRepository,

@@ -72,13 +72,21 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JuwSchedule"
         android:usesCleartextTraffic="true">
-        <!-- 根 Activity 固定单实例（2026-09-23）。
-             不加这条时的实际后果：应用退到后台后再被拉起（桌面图标 / am start），
-             系统会在同一个任务栈上**再压一个 MainActivity**，用户看到「今日页」，
-             而底下还压着刚才那个二级页——按返回就能退回去，观感是"导航乱了"。
-             singleTask 复用同一个实例并把栈上的二级页收起，行为与小组件点击
-             （SINGLE_TOP|CLEAR_TOP，见 ScheduleWidget.widgetIntent）一致；
-             代价是重新拉起会回到根页面，这是所有单 Activity 根节点的通用取舍。 -->
+        <!-- 根 Activity 的启动姿势（2026-09-23 真机定了三轮，别再改回去）：
+
+             桌面图标点击带的是 NEW_TASK|RESET_TASK_IF_NEEDED。实测四种组合：
+             - 默认（standard）：系统在栈顶**新压一个 MainActivity**，底下还压着刚才的
+               二级页——用户看到「今日页」，按返回又能退回二级页，观感是导航乱了；
+             - alwaysRetainTaskState="true"：同上，拦不住（它只管 task 超时被 reset 那条路）；
+             - launchMode="singleTask"：不重复压实例，但 clearTop 会**销毁二级页**，
+               回来只能落到根页，用户抱怨「明明在看付款码，回来变成今日页」；
+             - singleTask + alwaysRetainTaskState：仍然 clearTop（真机验过）。
+
+             现行解 = 保持 standard + alwaysRetainTaskState，由 MainActivity.onCreate
+             那条「不是 task 根就 finish 自己」兜住（见 MainActivity 的 KDoc）：
+             多余的实例根本没上屏就关掉了，下面那套窗口原样露出，二级页不会被销毁、
+             状态不丢。alwaysRetainTaskState 留着的用处是挡系统 30 分钟的 task reset
+             （否则挂后台半小时回来，二级页还是会被系统清掉，这条挡得住）。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

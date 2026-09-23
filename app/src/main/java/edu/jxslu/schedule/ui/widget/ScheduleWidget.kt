@@ -12,13 +12,12 @@ import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
 import androidx.glance.LocalContext
 import androidx.glance.LocalSize
-import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.SizeMode
-// Intent 版与 ComponentName/类版同名（分处两个包）：Kotlin 按实参类型消歧，
-// 传 Intent 走这个、`actionStartActivity<MainActivity>()` 走上面的类版
+// Intent 版：整卡与周网格都走它，配自家 widgetIntent —— 用类版（`actionStartActivity<T>()`）
+// 会丢掉 CLEAR_TASK，App 停在二级页时点了落不到主界面，见 widgetIntent 的 KDoc
 import androidx.glance.appwidget.action.actionStartActivity as actionStartActivityIntent
 import androidx.glance.appwidget.appWidgetBackground
 import androidx.glance.appwidget.cornerRadius
@@ -224,6 +223,7 @@ internal object WidgetSnapshotStore {
  */
 @Composable
 private fun WidgetContent(model: WidgetModel, metrics: WidgetMetrics) {
+    val context = LocalContext.current
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -232,7 +232,11 @@ private fun WidgetContent(model: WidgetModel, metrics: WidgetMetrics) {
             .background(GlanceTheme.colors.widgetBackground)
             // 整卡点击进 App 今日页。不做「点某一节就编辑」：小组件里没有键盘与校验，
             // 误触成本高于便利（DESIGN §3.6 明确不做）。周网格那一块单独指向课表页。
-            .clickable(actionStartActivity<MainActivity>()),
+            //
+            // 走自家 widgetIntent 而不是 actionStartActivity<MainActivity>()：后者生成的
+            // intent 不带 CLEAR_TASK，App 停在二级页时点整卡会只是把任务栈前置，
+            // 用户看到的是那个二级页，不是今日页
+            .clickable(actionStartActivityIntent(widgetIntent(context, null))),
     ) {
         Column(
             modifier = GlanceModifier
@@ -509,16 +513,20 @@ private fun WeekCourseCell(block: WidgetWeekBlock) {
 /**
  * 小组件点击用的显式 Intent。
  *
- * `SINGLE_TOP | CLEAR_TOP`：App 已在后台时复用同一个 MainActivity 实例并把栈上
- * 的二级页收起（点小组件就是要「回到课表」），而不是又叠一个实例；
- * 实例复用走 `onNewIntent`，`MainActivity` 在那里重新读 route extra。
+ * `NEW_TASK | CLEAR_TASK`：点小组件 = 从主窗口重新开始（整卡进今日页、周网格进课表页），
+ * 所以先把任务栈清空再起 `MainActivity`，用户不会停在上次那个二级页上。
+ *
+ * 别改回 `SINGLE_TOP | CLEAR_TOP`：`MainActivity` 是 standard，CLEAR_TOP 只有在
+ * intent 与栈中实例的 baseIntent 匹配（action/category 一致）时才生效，我们这份是
+ * 纯显式 intent，匹配不上——2026-09-23 真机实测点它清不掉二级页，用户看到的是
+ * 二级页而不是今日页。CLEAR_TASK 与匹配无关，行为确定。
  *
  * `route` 用 `MainActivity` 的常量（[edu.jxslu.schedule.EXTRA_ROUTE] / `ROUTE_WEEK`），
  * 不在这里另立一套——两处字符串漂移会让点击静默失效。
  */
 private fun widgetIntent(context: Context, route: String?): Intent =
     Intent(context, MainActivity::class.java).apply {
-        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         if (route != null) putExtra(edu.jxslu.schedule.EXTRA_ROUTE, route)
     }
 

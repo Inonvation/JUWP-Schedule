@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -36,23 +37,33 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.PermissionRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.BatteryCharging01
+import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.Energy
+import me.rerere.hugeicons.stroke.Image01
+import me.rerere.hugeicons.stroke.MapsLocation02
 import me.rerere.hugeicons.stroke.Notification01
 
 /**
  * 「我的 → 权限设置」统一出口（DESIGN §3.12）：忽略电池优化 / 允许自启动（锁后台）/
- * 通知权限，一处讲清、逐项申请。
+ * 通知 / 日历 / 定位（+ Android 9 及以下才有的相册写入），一处讲清、逐项申请。
  *
  * 交互口径与桌面小组件设置页（§3.6）相同：进页只读检测，不主动弹任何系统框；
  * 「去开启」都是用户点了才动。跳转复用 [WidgetCapabilities]，不复制第二份
- * （电池优化确认框、厂商自启动页的候选列表与兜底都只在那一处维护）。
- * 通知权限：API 33+ 未授权 → 先弹系统申请框；一旦被拒（含系统已静默拒绝、申请框不再出现）
- * 或 API 26–32 直接跳系统通知设置页，不留在原地反复点。状态徽标 ON_RESUME 重读，
- * 从系统设置回来后一致。
+ * （电池优化确认框、厂商自启动页的候选列表与兜底都只在那一处维护）；
+ * 权限检测与「应用详情页」落点走 [AppPermissions]，同样只有一份。
+ *
+ * 运行时权限（通知 / 日历 / 定位 / 相册）一律：先弹系统申请框，**被拒后立刻跳系统设置页**，
+ * 不在原地重弹——系统从第二次起静默拒绝，申请框根本不出现，用户反复点只会觉得按钮坏了；
+ * 通知在 API 26–32 没有申请框，直接跳通知设置页。状态徽标在 launcher 回调与 ON_RESUME
+ * 两处重读，自己改完和去系统设置改完都能一致。
+ *
+ * 相册写入整块只在 Android 9 及以下出现：10 起二维码走 MediaStore，系统不要这个权限，
+ * 在老系统之外显示一行「未开启」只会误导。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +76,11 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
     var notifEnabled by remember {
         mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
     }
+    var calendarGranted by remember { mutableStateOf(AppPermissions.calendarGranted(context)) }
+    var locationGranted by remember { mutableStateOf(AppPermissions.locationGranted(context)) }
+    // 权限给全了不代表定位能用：系统「位置信息」总开关另算，两种失败要分开讲
+    var locationServiceOn by remember { mutableStateOf(AppPermissions.locationServiceEnabled(context)) }
+    var albumWriteGranted by remember { mutableStateOf(AppPermissions.albumWriteGranted(context)) }
 
     // 从系统设置 / 厂商管家页回来时重读徽标（小组件设置页同口径）
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -73,6 +89,10 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 batteryWhitelisted = WidgetCapabilities.isIgnoringBatteryOptimizations(context)
                 notifEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                calendarGranted = AppPermissions.calendarGranted(context)
+                locationGranted = AppPermissions.locationGranted(context)
+                locationServiceOn = AppPermissions.locationServiceEnabled(context)
+                albumWriteGranted = AppPermissions.albumWriteGranted(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -90,6 +110,29 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
         if (!granted) jumpNotificationSettings(context)
     }
 
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        calendarGranted = grants.values.all { it }
+        if (!grants.values.all { it }) AppPermissions.jumpAppDetails(context)
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        // 精确给不给都算可用，粗略那一档也够定位到那一片
+        locationGranted = grants.values.any { it }
+        locationServiceOn = AppPermissions.locationServiceEnabled(context)
+        if (!locationGranted) AppPermissions.jumpAppDetails(context)
+    }
+
+    val albumWriteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        albumWriteGranted = granted
+        if (!granted) AppPermissions.jumpAppDetails(context)
+    }
+
     val requestNotif = {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(
@@ -99,6 +142,25 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             jumpNotificationSettings(context)
+        }
+    }
+
+    // 申请前只挑缺的那几个：已经给过的权限再申请一次，系统会当拒绝处理（框都不弹）
+    val requestCalendar = {
+        val needed = AppPermissions.missing(context, AppPermissions.calendar)
+        if (needed.isEmpty()) {
+            AppPermissions.jumpAppDetails(context)
+        } else {
+            calendarPermissionLauncher.launch(needed.toTypedArray())
+        }
+    }
+
+    val requestLocation = {
+        val needed = AppPermissions.missing(context, AppPermissions.location)
+        if (needed.isEmpty()) {
+            AppPermissions.jumpAppDetails(context)
+        } else {
+            locationPermissionLauncher.launch(needed.toTypedArray())
         }
     }
 
@@ -120,6 +182,8 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
+            // 分区卡之间的 12dp 换气（其余设置页统一口径）
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SettingsSection(
                 title = "保持后台可用",
@@ -159,6 +223,69 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
                     onClick = { requestNotif() },
                 )
             }
+            SettingsSection(
+                title = "日历",
+                subtitle = "同步课表进手机日历、骑行免费时长提醒写日历，都要这一对权限",
+            ) {
+                PermissionRow(
+                    title = "日历读写",
+                    detail = if (calendarGranted) {
+                        "已开启；课表同步与骑行提醒都能写进系统日历"
+                    } else {
+                        "未开启时日历同步会停在提示上；点「去开启」授权"
+                    },
+                    granted = calendarGranted,
+                    icon = HugeIcons.CalendarSetting01,
+                    actionText = if (calendarGranted) "查看" else "去开启",
+                    onClick = { requestCalendar() },
+                )
+            }
+            SettingsSection(
+                title = "定位",
+                subtitle = "只给「附近单车」里看车在哪用；不给也能手动拖动地图找车",
+            ) {
+                PermissionRow(
+                    title = "位置信息",
+                    detail = when {
+                        !locationGranted -> "未开启时「附近单车」定位不动；点「去开启」授权，选「大致位置」也够用"
+                        !locationServiceOn -> "App 已授权，但系统的「位置信息」总开关关着，定位仍会失败"
+                        else -> "已开启；只在单车地图页取一次坐标，不做后台跟踪"
+                    },
+                    granted = locationGranted && locationServiceOn,
+                    icon = HugeIcons.MapsLocation02,
+                    actionText = if (locationGranted) "查看" else "去开启",
+                    // 只有权限真的缺了才申请；总开关关着时带用户去应用详情页没有意义
+                    onClick = {
+                        if (locationGranted) AppPermissions.jumpAppDetails(context) else requestLocation()
+                    },
+                )
+            }
+            // Android 10 起系统相册走 MediaStore，不需要权限；这一段只服务老系统的设备
+            if (AppPermissions.albumWriteNeeded) {
+                SettingsSection(
+                    title = "相册",
+                    subtitle = "把共享单车二维码存进相册「水贝贝」；Android 10 起系统相册不再需要权限",
+                ) {
+                    PermissionRow(
+                        title = "相册写入",
+                        detail = if (albumWriteGranted) {
+                            "已开启；保存二维码能落到相册目录"
+                        } else {
+                            "未开启时「保存到相册」会提示没有相册写入权限，二维码出得来但存不下"
+                        },
+                        granted = albumWriteGranted,
+                        icon = HugeIcons.Image01,
+                        actionText = if (albumWriteGranted) "查看" else "去开启",
+                        onClick = {
+                            if (albumWriteGranted) {
+                                AppPermissions.jumpAppDetails(context)
+                            } else {
+                                albumWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                            }
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -176,8 +303,5 @@ private fun jumpNotificationSettings(context: Context) {
     }.getOrDefault(false)
     if (started) return
     // 兜底：应用详情页（与 WidgetCapabilities 的最终兜底同一落点）
-    context.startActivity(
-        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            .setData(Uri.parse("package:${context.packageName}")),
-    )
+    AppPermissions.jumpAppDetails(context)
 }

@@ -208,7 +208,7 @@ fun SettingsScreen(
                 )
                 SettingItem(
                     title = "权限设置",
-                    subtitle = "电池优化 · 自启动 · 通知",
+                    subtitle = "通知 · 日历 · 定位 · 电池优化 · 自启动",
                     icon = HugeIcons.Shield01,
                     onClick = onOpenPermissionSettings,
                 )

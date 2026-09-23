@@ -1,10 +1,6 @@
 package edu.jxslu.schedule.ui.ebike
 
-import android.Manifest
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -85,6 +81,7 @@ import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
@@ -113,12 +110,6 @@ private const val STALE_AFTER_MS = 90_000L
 private const val CLOCK_TICK_MS = 15_000L
 
 private val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
-
-/** API 31+ 的对话框会分开问「精确 / 大致」，两个一起申请，给哪个都够用。 */
-private val LOCATION_PERMISSIONS = arrayOf(
-    Manifest.permission.ACCESS_FINE_LOCATION,
-    Manifest.permission.ACCESS_COARSE_LOCATION,
-)
 
 /** 用户拒了权限时的那一句话：既要说明去哪开，也要说明不给也能用。 */
 private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里允许位置信息，或手动拖动地图找车"
@@ -252,7 +243,7 @@ fun BikeMapScreen(
             BikeLocator.hasPermission(context) -> locate(true)
             !prefs.ebikeLocationAsked.first() -> {
                 prefs.setEbikeLocationAsked(true)
-                permissionLauncher.launch(LOCATION_PERMISSIONS)
+                permissionLauncher.launch(AppPermissions.location.toTypedArray())
             }
         }
     }
@@ -282,10 +273,17 @@ fun BikeMapScreen(
             // 面板高度是**定值**（用户可拖把手改）：内容从「正在查附近的车」变成「二十个分组」时
             // 面板不长高、地图不被挤小。面板内部自己滚动，加载态与结果态的地图一模一样大。
             // 上限再被窗口比例压一道，窗口再矮也要给地图留三成
+            // 窗口矮到连下限都容不下时（多窗口 / 分屏）以下限为准：
+            // `coerceIn(min, max)` 在 min > max 时抛 IllegalArgumentException，
+            // 而 `minOf` 算出来的上限正好会在那种窗口下小于 180
             val maxPanelDp = minOf(MAX_PANEL_HEIGHT_DP, maxHeight.value * PANEL_MAX_RATIO)
-            val panelHeight = state.panelHeightDp
-                .coerceIn(MIN_PANEL_HEIGHT_DP, maxPanelDp)
-                .dp
+                .coerceAtLeast(MIN_PANEL_HEIGHT_DP)
+            // 上限一变（转屏 / 分屏 / 改系统字号）就把状态也收进来：只夹渲染值的话，
+            // 状态还停在超限的高度，拖动要从那里开始算，手指走一大截面板才动
+            LaunchedEffect(maxPanelDp, state.panelHeightDp) {
+                viewModel.clampPanelHeight(MIN_PANEL_HEIGHT_DP, maxPanelDp)
+            }
+            val panelHeight = state.panelHeightDp.coerceIn(MIN_PANEL_HEIGHT_DP, maxPanelDp).dp
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
@@ -323,7 +321,9 @@ fun BikeMapScreen(
                                 if (BikeLocator.hasPermission(context)) {
                                     locate(false)
                                 } else {
-                                    permissionLauncher.launch(LOCATION_PERMISSIONS)
+                                    // 与首次进页那条路同一份清单（AppPermissions.location），
+                                    // 别再另立一个常量：漏改一处就是编译期直接挂
+                                    permissionLauncher.launch(AppPermissions.location.toTypedArray())
                                 }
                             },
                         )
@@ -423,19 +423,8 @@ private fun MapCircleButton(
     }
 }
 
-/** 跳到本应用的系统设置页：权限被永久拒绝后唯一还有用的去处。 */
-private fun openAppPermissionSettings(context: Context) {
-    try {
-        context.startActivity(
-            Intent(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.fromParts("package", context.packageName, null),
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-    } catch (_: Exception) {
-        // 打不开就算了：提示本身的文案已经写清了手动路径
-    }
-}
+/** 跳到本应用的系统设置页：权限被永久拒绝后唯一还有用的去处（统一走 AppPermissions）。 */
+private fun openAppPermissionSettings(context: Context) = AppPermissions.jumpAppDetails(context)
 /**
  * 底部车辆面板：拖动把手 + 一行摘要 + 分组列表 + 免责声明。
  *
