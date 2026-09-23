@@ -22,8 +22,9 @@ import androidx.work.WorkerParameters
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.MainActivity
 import edu.jxslu.schedule.R
-import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.subpageLaunchIntent
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.prefs.ReminderKeyKind
 import edu.jxslu.schedule.domain.ReminderDefaults
@@ -34,6 +35,7 @@ import edu.jxslu.schedule.domain.metaLine
 import edu.jxslu.schedule.domain.nextHomeworkReminder
 import edu.jxslu.schedule.domain.HomeworkReminderPlan
 import edu.jxslu.schedule.domain.homeworkReminderGroup
+import edu.jxslu.schedule.domain.homeworkDisplayTitle
 import edu.jxslu.schedule.domain.nextClassStartPlan
 import edu.jxslu.schedule.domain.nextReminderPlan
 import kotlinx.coroutines.flow.first
@@ -320,7 +322,7 @@ internal object ReminderNotifications {
     /** 单条作业提醒：标题「明天截止 · 课名」，正文作业标题，点击直达该作业。 */
     private fun postSingleHomework(context: Context, plan: HomeworkReminderPlan): Boolean {
         val homework = plan.homework
-        val text = homework.title.ifBlank { "未命名作业" }
+        val text = homeworkDisplayTitle(homework.detail)
         val notification = NotificationCompat.Builder(context, HOMEWORK_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle("${plan.kind.label} · ${homework.courseName}")
@@ -333,11 +335,15 @@ internal object ReminderNotifications {
                     context,
                     HOMEWORK_CONTENT_REQUEST_CODE,
                     // 带 courseName/itemId：点通知直达这条作业（DESIGN §3.11）
-                    SubpageActivity.intent(
+                    // 跳板是 MainActivity 而非 SubpageActivity：进程没起时若让二级页当 task 根，
+                    // 返回会直接退出 App，见 subpageLaunchIntent 的 KDoc
+                    subpageLaunchIntent(
                         context,
-                        SubpageScreen.HOMEWORK_DETAIL,
-                        courseName = homework.courseName,
-                        itemId = homework.id,
+                        SubpageRequest(
+                            screen = SubpageScreen.HOMEWORK_DETAIL,
+                            courseName = homework.courseName,
+                            itemId = homework.id,
+                        ),
                     ),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
@@ -355,7 +361,7 @@ internal object ReminderNotifications {
      */
     private fun postHomeworkSummary(context: Context, plans: List<HomeworkReminderPlan>): Boolean {
         val kindLabel = plans.first().kind.label
-        val titles = plans.map { it.homework.title.ifBlank { "未命名作业" } }
+        val titles = plans.map { homeworkDisplayTitle(it.homework.detail) }
         val body = buildString {
             append(titles.take(SUMMARY_TITLE_LIMIT).joinToString(" · "))
             if (titles.size > SUMMARY_TITLE_LIMIT) append(" 等 ${titles.size} 项")
@@ -371,7 +377,7 @@ internal object ReminderNotifications {
                 PendingIntent.getActivity(
                     context,
                     HOMEWORK_SUMMARY_REQUEST_CODE,
-                    SubpageActivity.intent(context, SubpageScreen.HOMEWORK_TODO),
+                    subpageLaunchIntent(context, SubpageRequest(SubpageScreen.HOMEWORK_TODO)),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
             )

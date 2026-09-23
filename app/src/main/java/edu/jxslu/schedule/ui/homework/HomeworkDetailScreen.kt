@@ -5,12 +5,14 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -57,28 +59,32 @@ import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.AttachmentStrip
+import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.MarkdownEditor
+import edu.jxslu.schedule.ui.common.MarkdownView
 import edu.jxslu.schedule.ui.common.NoticeTone
-import edu.jxslu.schedule.ui.common.TitleTextField
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberImageInserter
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Eye
 import me.rerere.hugeicons.stroke.Calendar03
 import me.rerere.hugeicons.stroke.Delete02
+import me.rerere.hugeicons.stroke.PencilEdit02
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * 作业详情/编辑（DESIGN §3.11）：**表单式**（标题 / 截止日期 / 完成 / 详情）。
+ * 作业详情/编辑（DESIGN §3.11）：**编辑/预览双态**（2026-09-23 改）。
  *
- * 与笔记的区别：作业是"一条待办 + 说明"，不搞查看/编辑双态——打开即可改，保存是显式动作
- * （顶栏「保存」），返回时有未保存修改给确认弹窗。截止日期只到日粒度（`dueDate`），
- * 当天不算过期。
+ * 无标题——列表行与提醒文案取正文第一行摘要（`homeworkDisplayTitle`），进页直接写正文。
+ * 编辑态 = 截止日期 + 完成勾选 + 附件条 + 编辑器；预览态 = 截止日期 + 完成勾选 + MarkdownView
+ * 渲染（与笔记详情同一套）。保存是显式动作，返回有未保存修改给确认弹窗。
+ * 编辑器区域自己滚（外层不滚），工具条固定在底部——正文再长工具条也够得着。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,9 +109,6 @@ fun HomeworkDetailScreen(
     var original by remember { mutableStateOf<Homework?>(null) }
     var savedId by rememberSaveable { mutableStateOf(homeworkId) }
     var createdAt by rememberSaveable { mutableStateOf(0L) }
-    var title by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(""))
-    }
     var detail by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
@@ -118,6 +121,7 @@ fun HomeworkDetailScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     var showDiscard by remember { mutableStateOf(false) }
+    var editing by rememberSaveable { mutableStateOf(true) }
 
     LaunchedEffect(homeworkId) {
         if (homeworkId > 0) {
@@ -127,7 +131,6 @@ fun HomeworkDetailScreen(
                 if (!loadedFromDb) {
                     savedId = item.id
                     createdAt = item.createdAt
-                    title = TextFieldValue(item.title)
                     detail = TextFieldValue(item.detail)
                     dueEpochDay = item.dueDate?.toEpochDay() ?: NO_DUE
                     done = item.done
@@ -140,32 +143,28 @@ fun HomeworkDetailScreen(
 
     // 新作业：写过任何字段才算「有改动」（否则空表单返回时白问一次）
     val dirty = original?.let { base ->
-        title.text != base.title ||
-            detail.text != base.detail ||
+        detail.text != base.detail ||
             dueDate != base.dueDate ||
             done != base.done
-    } ?: (title.text.isNotBlank() || detail.text.isNotBlank() || dueDate != null || done)
+    } ?: (detail.text.isNotBlank() || dueDate != null || done)
 
     fun save(onSaved: () -> Unit = {}) {
-        if (title.text.isBlank() && detail.text.isBlank()) {
-            showNotice("先给作业起个名字", NoticeTone.Warning)
+        if (detail.text.isBlank()) {
+            showNotice("先写点什么", NoticeTone.Warning)
             return
         }
         // savedId/createdAt 参与：恢复后的新作业再次保存要更新同一行，不能再插一条
         val base = original ?: Homework(
             id = savedId,
             courseName = courseName,
-            title = "",
             detail = "",
             createdAt = createdAt,
         )
-        val newTitle = title.text.trim()
         val newDetail = detail.text
         val due = dueDate
         scope.launch {
             repo.save(
                 base.copy(
-                    title = newTitle,
                     detail = newDetail,
                     dueDate = due,
                     done = done,
@@ -211,6 +210,25 @@ fun HomeworkDetailScreen(
                     }
                 },
                 actions = {
+                    if (editing) {
+                        IconButton(
+                            onClick = {
+                                haptics.tap()
+                                editing = false
+                            },
+                        ) {
+                            Icon(HugeIcons.Eye, contentDescription = "预览")
+                        }
+                    } else {
+                        IconButton(
+                            onClick = {
+                                haptics.tap()
+                                editing = true
+                            },
+                        ) {
+                            Icon(HugeIcons.PencilEdit02, contentDescription = "编辑")
+                        }
+                    }
                     TextButton(
                         onClick = {
                             haptics.tap()
@@ -247,12 +265,6 @@ fun HomeworkDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            TitleTextField(
-                value = title,
-                onValueChange = { title = it },
-                placeholder = "作业标题",
-            )
-
             // 两项成组（2026-09-22）：截止日期与完成状态同一张卡、中间一条分隔线。
             // 此前日期是独立描边卡、「已完成」裸放，两块既不成组，纵向还各占一层间距
             AppCard(contentPadding = PaddingValues(0.dp)) {
@@ -317,19 +329,43 @@ fun HomeworkDetailScreen(
                 }
             }
 
-            AttachmentStrip(
-                fileNames = imageRefs(detail.text).toList(),
-                onRemove = { name -> detail = TextFieldValue(removeImageRef(detail.text, name)) },
-                onOpen = { viewer = it },
-            )
-
-            MarkdownEditor(
-                value = detail,
-                onValueChange = { detail = it },
-                placeholder = "作业要求、要提交的题号…（支持 Markdown 与 \$ 公式）",
-                minHeight = 180.dp,
-                onPickImages = pickImages,
-            )
+            if (editing) {
+                AttachmentStrip(
+                    fileNames = imageRefs(detail.text).toList(),
+                    onRemove = { name -> detail = TextFieldValue(removeImageRef(detail.text, name)) },
+                    onOpen = { viewer = it },
+                )
+                MarkdownEditor(
+                    value = detail,
+                    onValueChange = { detail = it },
+                    placeholder = "作业要求、要提交的题号…（支持 Markdown 与 \$ 公式）",
+                    minHeight = 240.dp,
+                    onPickImages = pickImages,
+                )
+            } else {
+                if (detail.text.isBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 360.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        EmptyHint(
+                            title = "作业是空的",
+                            body = "点右上角铅笔进入编辑。",
+                        )
+                    }
+                } else {
+                    MarkdownView(
+                        markdown = detail.text,
+                        modifier = Modifier.fillMaxWidth(),
+                        onImageClick = { viewer = it },
+                        onLinkClick = { url ->
+                            if (!openLink(context, url)) showNotice("打不开这个链接", NoticeTone.Warning)
+                        },
+                    )
+                }
+            }
         }
     }
 

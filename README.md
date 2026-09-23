@@ -21,7 +21,7 @@
 **扩展功能**
 
 - 胖乖生活：一键开水、余额查询、订单记录
-- 快趣出行码：输入车号生成骑行二维码，一键拉起微信扫一扫，扫完返回后自动删除相册中的二维码图片
+- 快趣出行码：输入车号生成骑行二维码，也可在**内置地图**上看附近有哪些车、点一下自动填车号；一键拉起微信扫一扫，扫完返回后自动删除相册中的二维码图片
 - 校园卡付款码：一键出示，喝水吃饭、寝室门禁不再需要水宝宝！支持查看一卡通余额与历史账单，凭证加密存本机，可随时关闭
 - 取快递快捷方式：一键直达拼多多取件码、淘宝身份码与菜鸟（无广告启动），排队取快递不再匆忙
 
@@ -80,6 +80,7 @@ DEVELOPER.md                # 架构 + 爬取实现 + 换校适配指南
 
 ## 参考
 
+- 快趣出行车辆接口参考：https://github.com/dlkz/kqcx-bikemap
 - 拾光课程表：https://github.com/XingHeYuZhuan/shiguangschedule
 - 胖乖参考实现：https://github.com/Inonvation/light-life
 - HugeIcons Compose：`com.github.rikkahub:hugeicons-compose`（JitPack）

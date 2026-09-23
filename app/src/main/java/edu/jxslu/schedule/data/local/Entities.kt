@@ -322,7 +322,6 @@ data class NoteEntity(
 data class HomeworkEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val courseName: String,
-    val title: String,
     val detail: String,
     /** yyyy-MM-dd；null = 未设截止日期。 */
     val dueDate: String?,
@@ -334,7 +333,6 @@ data class HomeworkEntity(
     fun toDomain(): Homework = Homework(
         id = id,
         courseName = courseName,
-        title = title,
         detail = detail,
         dueDate = dueDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
         done = done,
@@ -347,7 +345,6 @@ data class HomeworkEntity(
         fun fromDomain(homework: Homework): HomeworkEntity = HomeworkEntity(
             id = homework.id.takeIf { it > 0 } ?: 0,
             courseName = homework.courseName,
-            title = homework.title,
             detail = homework.detail,
             dueDate = homework.dueDate?.toString(),
             done = homework.done,

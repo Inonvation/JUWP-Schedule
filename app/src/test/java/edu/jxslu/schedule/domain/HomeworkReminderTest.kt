@@ -26,7 +26,6 @@ class HomeworkReminderTest {
     ) = Homework(
         id = id,
         courseName = "高等数学",
-        title = "第一章习题",
         dueDate = dueDate,
         done = done,
     )

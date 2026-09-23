@@ -30,6 +30,7 @@
 | Kotlin | **2.1.21**（+ compose / serialization / KSP 同版本） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
 | Room DB | **v8**：v2 加 `courses.kind`（理论/实验），v3 加多课表（`timetables` 表 + `courses.timetableId`），v4 加成绩表 `scores`，v5 加调课检测（`detect_baselines`/`detect_reports`），v6 加一卡通流水（`ykt_turnovers`，orderId 主键 + jndatetime 索引），v7 加笔记·课件与作业（`notes`/`homework`，**按课程名归属、不带 timetableId**，DESIGN §4.20），v8 加 `courses.remark`（课程备注，DEFAULT ''，DESIGN §4.3）。实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；逐级 `ALTER TABLE`/`CREATE TABLE`，**禁止**改 destructive |
+| Room DB | **v9**（2026-09-23）：`homework` 去 `title` 列（重建表搬数据，DESIGN §4.20）；作业无标题，列表/通知文案用 `homeworkDisplayTitle`（正文第一行摘要，唯一口径在 `domain/Homework.kt`，勿在 UI 另写） |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN 3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**） |
@@ -99,13 +100,15 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `MarkdownEditTest`（编辑器：列表续行全分支/选区包裹/`$` 自动配对/图片插入）、
 `MathTexTest`（LaTeX 子集：支持清单逐条解析/排版几何/超范围回退 null）、
 `NoteExcerptTest`（笔记摘要提取 + 正文 img 引用收集与移除）、
-`HomeworkCenterTest`（作业排序：逾期→今天→未来→无截止 / 汇总 / 截止文案）、
+`HomeworkCenterTest`（作业排序：逾期→今天→未来→无截止 / 汇总 / 截止文案 /
+`homeworkDisplayTitle` 摘要剥离：前缀/包边/空行/兜底）、
 `HomeworkReminderTest`（作业提醒点与有效期窗口 / 越窗跳过 / 去重键）、
 `CourseRemarkTest`（课程备注搬运：mergeKey 匹配/kid 区分/新行不覆盖/多行同 key）、
 `ScheduleExporterTest`（日历/CSV 事件展开）、`ReminderPlannerTest`（提醒时刻与有效期窗口）、
 `CalendarSyncDefaultsTest`（日历提醒档位表）、`TimetablePrefsDefaultsTest`（显示偏好默认值契约）、
 `GridFontDecouplingTest` / `GridFontScaleTest`（课表字号解耦与收敛）、
 `PanelSnapTest`（面板高度吸附）、`CompactPositionTest`（地点压缩）、
+`SubpageStackTest`（二级页离开位置：链增删/重建不重复/活窗口门控）、
 `JsStringDecodeTest`（evaluateJavascript 返回值解码）、`JwImportDiagnosisTest`（导入失败诊断契约）、
 `QiekjModelsTest`（胖乖响应包脏数据容错）、`YktPayCodeTest`（付款码矩阵参数）、
 `YktRechargeSignTest`（充值下单签名）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
@@ -113,7 +116,7 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 、`BikeNearbyTest`（附近单车：响应容错/聚簇/距离/状态推导）、
 `KqcxBikeClientTest`（失败分类：超时与网络不可达不能混）、
 `Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）
-等 52 个测试类。
+等 53 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
@@ -158,6 +161,16 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   在组件内部统一带（调用点不用管）。
   胶囊底色用 `surfaceContainer`（`surface` 与页面底色同色，会读成一条白底栏）；
   选中态只改图标与文字颜色，不加底色块。
+- **从桌面图标回到 App 要落在离开时那一页**（2026-09-23，DESIGN §3.1）：`MainActivity` 保持
+  standard + `alwaysRetainTaskState="true"`，**不要**改回 `singleTask`（它 clearTop，会把二级页
+  销毁，用户只能落到今日页）。桌面点击时系统会多压一个实例，由 `MainActivity.onCreate` 那条
+  「`!isTaskRoot()` + `action=MAIN` + `category=LAUNCHER` → `finish()`」让它不上屏就退出，
+  下面那套窗口原样露出——二级页**不重建**，这才是窗口保活。
+  `SubpageStack` 只是兜底（某 ROM 真走 clearTop、页面已被销毁时才按链重建），别把它当主路径，
+  也**别把记账挂到 `onDestroy`**：clearTop 不走 `finish()`，挂上去记录会被一起清掉。
+  通知的 `PendingIntent` 必须指向 MainActivity 跳板（`subpageLaunchIntent`）而不是
+  `SubpageActivity`，且带 `NEW_TASK|CLEAR_TASK`；小组件点击同理——`SINGLE_TOP|CLEAR_TOP`
+  在 standard 上匹配不上显式 intent，清不掉二级页。
 - 小组件是**单条目 + `SizeMode.Exact` 自适应**（2026-09-20 起，旧三档条目已删）：尺寸由
   `WidgetMetrics`（实测 dp）分档 Compact / List / Week，**不要再加按尺寸拆的 receiver 或
   `widget_info_*`**（旧版三条目内容重复，用户明确要求合并）。改渲染前先读 DESIGN §3.6；
@@ -194,6 +207,15 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   把参照点写出来，别让「473 米」在拖动后悄悄换意思）；**镜头静默区**
   （`CameraSuppressor` 吃掉程序性移动 30 米内的中心回调，否则「点分组→移动地图」会马上
   触发一次重查，把用户刚展开的列表换掉）。改这两处前先看 DESIGN §3.9 的对应行。
+  车号回传只有一条通道：地图页 `setResult(EXTRA_PICKED_CAR_NUM)`，**别改回进程级单例**
+  （单例会被任何一个还活着的出码页实例抢走，用户眼前那页空手而归）。`MainActivity` 是
+  `launchMode="singleTask"`，**别改回标准启动**：退到后台再被拉起时系统会在栈上再压一个
+  实例，用户看到「今日页」而底下还压着二级页，按返回又回去了。面板高度存在
+  `BikeMapUiState.panelHeightDp`（VM 状态，不是页面局部 `remember`），拖动回调传增量。
+  这三条的理由都写在 DESIGN §3.9 的表里。
+  singleTask 的 clearTop 会拆掉二级页，**「回来还在原来那页」靠 `SubpageStack`**：
+  二级页在 `onResume` 记账、用户主动关窗时在 `onFinish` 摘除（不挂 `onDestroy`，
+  clearTop 不走 `finish()`），`MainActivity.onNewIntent` 按记录重新打开。别把它当冗余删掉。
 - 车号口径（DESIGN §3.9）：输入框接受「1~3 位尾部」与「6~12 位完整车号」两种形态，
   唯一实现在 `EbikeQr.resolveCarNum`，`bikeUrl` 只认完整车号。地图选中的车走完整车号
   那条路（别的车队前缀是 `300000…`，靠尾部三位拼不出正确链接），
@@ -326,7 +348,9 @@ P6 打磨 — **进行中**（2026-09-21：笔记·课件与作业落地，含�
 作业截止提醒，见 DESIGN §3.11/§4.20；真机已验证 Room v6→v7 迁移与各新页面不崩，
 图片编辑与提醒弹出需人工点验。2026-09-22：课表页自定义背景图，见 DESIGN §4.21，
 选图与滑块调参需真机点验。2026-09-23：免费时长提醒由 App 通知改系统日历，
-见 DESIGN §3.9，已在 Redmi K70 的小米日历验证事件与两条提醒落库）
+见 DESIGN §3.9，已在 Redmi K70 的小米日历验证事件与两条提醒落库；同日修复
+「进二级页后挂后台、从桌面图标回来落到今日页」的导航错乱，见 DESIGN §3.1，
+已在 Redmi K70 验证：二级页实例 id 不变、录屏无今日页中间帧）
 
 ## 仓库与发版
 

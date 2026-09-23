@@ -11,7 +11,6 @@ import java.time.LocalDate
 data class Homework(
     val id: Long = 0,
     val courseName: String,
-    val title: String,
     val detail: String = "",
     /** 提交截止日期；null = 未设定。当天不算过期（文案「今天」，见 [dueLabel]）。 */
     val dueDate: LocalDate? = null,
@@ -21,6 +20,45 @@ data class Homework(
     val createdAt: Long = 0,
     val updatedAt: Long = 0,
 )
+
+/**
+ * 作业列表行显示文本（2026-09-23 去标题后新增）：取**正文第一行**、剥掉 Markdown 符号。
+ *
+ * 剥的顺序（后写的先剥，配合末尾 trim）：
+ * 1. 任务项前缀 `- [ ] ` / `- [x] `（x 大小写都认）；
+ * 2. 列表 / 引用前缀 `- `、`* `、`+ `、`> `；
+ * 3. 行首 `#`+空格（标题行）；
+ * 4. 行内强调包边 `**` `*` `~~` `` ` ``（只剥成对的行首/行尾，不碰中间的）；
+ * 5. 行内公式包边 `$…$`（剥 `$` 保留内容——正文里公式是内容，丢掉等于空行）。
+ *
+ * 空行跳过；全部是空行或空串返回「未命名作业」（与旧 title.ifBlank 的兜底文案一致）。
+ */
+fun homeworkDisplayTitle(detail: String): String =
+    detail.lineSequence()
+        .firstOrNull { it.isNotBlank() }
+        ?.trim()
+        ?.let(::stripMarkdownLine)
+        ?.takeIf { it.isNotBlank() }
+        ?: "未命名作业"
+
+private fun stripMarkdownLine(line: String): String {
+    var s = line.trim()
+    s = s.removePrefix("- [ ] ").removePrefix("- [X] ").removePrefix("- [x] ")
+    s = s.removePrefix("- ").removePrefix("* ").removePrefix("+ ").removePrefix("> ")
+    // 标题级从长到短剥：先剥 6 个 `#` 才轮到 5 个，避免 `######` 被 1 个 `#` 抢先剥成 `#####`
+    s = s.removePrefix("######").removePrefix("#####").removePrefix("####")
+        .removePrefix("###").removePrefix("##").removePrefix("#")
+    s = s.trim()
+    for (pair in listOf("**", "~~", "`", "*")) {
+        if (s.length >= pair.length * 2 && s.startsWith(pair) && s.endsWith(pair)) {
+            s = s.removePrefix(pair).removeSuffix(pair).trim()
+        }
+    }
+    if (s.length >= 2 && s.firstOrNull() == '$' && s.lastOrNull() == '$' && s.length > 2) {
+        s = s.substring(1, s.length - 1).trim()
+    }
+    return s
+}
 
 /**
  * 作业库的课程分组行（DAO 投影，DESIGN §3.11）。

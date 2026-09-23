@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.Homework
+import edu.jxslu.schedule.domain.homeworkDisplayTitle
 import edu.jxslu.schedule.domain.courseHomeworkOrder
 import edu.jxslu.schedule.domain.dueLabel
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -144,7 +145,7 @@ internal fun HomeworkRow(
         Spacer(Modifier.width(4.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = homework.title.ifBlank { "未命名作业" },
+                text = homeworkDisplayTitle(homework.detail),
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (homework.done) {
                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)

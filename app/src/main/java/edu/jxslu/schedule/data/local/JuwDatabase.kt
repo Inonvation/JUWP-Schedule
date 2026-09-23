@@ -22,7 +22,7 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         NoteEntity::class,
         HomeworkEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -254,6 +254,39 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v8 → v9：作业去标题（2026-09-23）。
+         *
+         * `homework` 表删 `title` 列——SQLite 不能 DROP COLUMN，走「建新表 → 搬数据 → 删旧表 →
+         * 改名 → 重建索引」的既有重建纪律（同 v2→v3 的 time_slots）。
+         * 旧 title 丢弃：列表行与提醒文案改用正文第一行摘要（`homeworkDisplayTitle`）。
+         * 索引名与 `HomeworkEntity` 的 `@Index` 声明逐字对齐（漏声明 = 迁移校验崩溃）。
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS homework_new (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "courseName TEXT NOT NULL, " +
+                        "detail TEXT NOT NULL, " +
+                        "dueDate TEXT, " +
+                        "done INTEGER NOT NULL, " +
+                        "doneAt INTEGER, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "INSERT INTO homework_new (id, courseName, detail, dueDate, done, doneAt, createdAt, updatedAt) " +
+                        "SELECT id, courseName, detail, dueDate, done, doneAt, createdAt, updatedAt FROM homework",
+                )
+                db.execSQL("DROP TABLE homework")
+                db.execSQL("ALTER TABLE homework_new RENAME TO homework")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_homework_courseName ON homework(courseName)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_homework_done ON homework(done)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_homework_dueDate ON homework(dueDate)")
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -272,6 +305,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
+                        MIGRATION_8_9,
                     )
                     .build()
                     .also { instance = it }

@@ -1,53 +1,79 @@
 package edu.jxslu.schedule.ui.homework
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.Homework
+import edu.jxslu.schedule.domain.HomeworkCourseGroup
+import edu.jxslu.schedule.domain.courseHomeworkOrder
+import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.SectionHeader
-import edu.jxslu.schedule.ui.common.StudyCourseRow
 import edu.jxslu.schedule.ui.common.courseTint
-import edu.jxslu.schedule.ui.common.epochMonthDay
+import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import kotlinx.coroutines.launch
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.ArrowDown01
 import java.time.LocalDate
 
 /**
- * 作业库（我的 → 学习 → 作业，DESIGN §3.11）：按课程分组，行 = 未完成数 / 总数。
- * 点进课程作业列表；勾选在列表行内完成（像待办），完成后置灰 + 删除线，不隐藏（可反悔）。
+ * 作业库（我的 → 学习 → 作业，DESIGN §3.11）：**按课程折叠分组**（2026-09-23 改）。
  *
- * 2026-09-22 起顶部多一块「最近更新」（最多 [RECENT_LIMIT] 条，行内可勾选、点击直达详情）：
- * 与笔记库同一改法，回访时少两跳。课程分组原样保留。
+ * 每门课程一张 [AppCard]：头行 = 课程色点 + 课程名 + 未完成计数，点行展开/收起
+ * 该课程的作业列表（AnimatedVisibility：高度展开/收起 + 淡入淡出，250ms/200ms）。
+ * 行内勾选照旧；点条目进详情；头行右侧「＋」直接进该课程的新建页。
+ * 「最近更新」区块移除（用户拍板 2026-09-23）。
+ *
+ * 展开状态存 [mutableStateMapOf]（内存，退出页面重置为全收起——展开是临时浏览动作）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeworkLibraryScreen(
     onBack: () -> Unit,
-    onOpenCourse: (String) -> Unit,
-    /** 「最近更新」区块的直达入口（省掉「先进课程再挑作业」那一跳）。 */
     onOpenHomework: (courseName: String, id: Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -56,9 +82,10 @@ fun HomeworkLibraryScreen(
     val repo = remember { Graph.homeworkRepository(context) }
     val scheduleRepo = remember { Graph.repository(context) }
     val groupsState by repo.observeGroups().collectAsStateWithLifecycle(initialValue = null)
-    // 两条流都到齐才渲染（理由同笔记库）：避免「最近更新」区块晚一帧插入把列表推下去
     val allItems by repo.observeAll().collectAsStateWithLifecycle(initialValue = null)
     val courses by scheduleRepo.courses.collectAsStateWithLifecycle(initialValue = emptyList())
+    val haptics = rememberAppHaptics()
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     Scaffold(
         topBar = {
@@ -93,37 +120,32 @@ fun HomeworkLibraryScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                // repo.observeAll 已按 updatedAt 倒序，这里只截前几条
-                val recent = all.take(RECENT_LIMIT)
-                if (recent.isNotEmpty()) {
-                    item(key = "recent-header") { SectionHeader("最近更新") }
-                    items(recent, key = { "recent-${it.id}" }) { homework ->
-                        HomeworkRow(
-                            homework = homework,
-                            today = today,
-                            showCourseName = true,
-                            onClick = { onOpenHomework(homework.courseName, homework.id) },
-                            onToggle = { done ->
-                                scope.launch {
-                                    repo.setDone(homework.id, done)
-                                    ClassReminder.enqueueCheck(context)
-                                }
-                            },
-                        )
-                    }
-                    item(key = "courses-header") { SectionHeader("按课程") }
-                }
+                item(key = "header") { SectionHeader("按课程") }
                 items(groups, key = { it.courseName }) { group ->
-                    val subtitle = if (group.pending > 0) {
-                        "${group.pending} 项未完成 / 共 ${group.total} 项 · 最近 ${epochMonthDay(group.latestAt)}"
-                    } else {
-                        "全部完成 · 共 ${group.total} 项"
-                    }
-                    StudyCourseRow(
-                        dotColor = courseTint(courses, group.courseName),
-                        title = group.courseName,
-                        subtitle = subtitle,
-                        onClick = { onOpenCourse(group.courseName) },
+                    val courseItems = all.filter { it.courseName == group.courseName }
+                    HomeworkCourseCard(
+                        courseName = group.courseName,
+                        subtitle = if (group.pending > 0) {
+                            "${group.pending} 项未完成 / 共 ${group.total} 项"
+                        } else {
+                            "全部完成 · 共 ${group.total} 项"
+                        },
+                        items = courseHomeworkOrder(courseItems, today),
+                        today = today,
+                        courses = courses,
+                        expanded = expanded[group.courseName] == true,
+                        onToggle = {
+                            haptics.tap()
+                            expanded[group.courseName] = !(expanded[group.courseName] == true)
+                        },
+                        onAdd = { onOpenHomework(group.courseName, 0L) },
+                        onOpenItem = { id -> onOpenHomework(group.courseName, id) },
+                        onToggleItem = { id, done ->
+                            scope.launch {
+                                repo.setDone(id, done)
+                                ClassReminder.enqueueCheck(context)
+                            }
+                        },
                     )
                 }
             }
@@ -131,5 +153,87 @@ fun HomeworkLibraryScreen(
     }
 }
 
-/** 「最近更新」区块的条数上限：库页定位是按课程管理，最近项只是少一跳的捷径。 */
-private const val RECENT_LIMIT = 3
+/**
+ * 课程分组折叠卡（作业库与作业中心共用，2026-09-23）：头行 + AnimatedVisibility 条目列表。
+ * [onAdd] 为 null 时隐藏「＋」（作业中心不需要新建入口）。
+ */
+@Composable
+internal fun HomeworkCourseCard(
+    courseName: String,
+    subtitle: String,
+    items: List<Homework>,
+    today: LocalDate,
+    courses: List<Course>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onAdd: (() -> Unit)?,
+    onOpenItem: (Long) -> Unit,
+    onToggleItem: (Long, Boolean) -> Unit,
+) {
+    AppCard(contentPadding = PaddingValues(0.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = "展开或收起 $courseName 的作业") { onToggle() }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(color = courseTint(courses, courseName), shape = CircleShape),
+            )
+            Spacer(Modifier.size(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = courseName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+            if (onAdd != null) {
+                IconButton(onClick = onAdd, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = HugeIcons.Add01,
+                        contentDescription = "在 $courseName 新建作业",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Icon(
+                imageVector = HugeIcons.ArrowDown01,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(if (expanded) 180f else 0f),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(animationSpec = tween(250)) + fadeIn(tween(250)),
+            exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(200)),
+        ) {
+            Column(
+                modifier = Modifier.padding(start = 32.dp, end = 14.dp, bottom = 10.dp),
+            ) {
+                items.forEach { homework ->
+                    HomeworkRow(
+                        homework = homework,
+                        today = today,
+                        onClick = { onOpenItem(homework.id) },
+                        onToggle = { done -> onToggleItem(homework.id, done) },
+                    )
+                }
+            }
+        }
+    }
+}

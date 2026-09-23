@@ -24,12 +24,45 @@ class HomeworkCenterTest {
     ) = Homework(
         id = id,
         courseName = "高等数学",
-        title = "作业$id",
         dueDate = due?.let(LocalDate::parse),
         done = done,
         createdAt = created,
         updatedAt = created,
     )
+
+    // ---- homeworkDisplayTitle（2026-09-23 去标题后的列表摘要口径） ----
+
+    @Test
+    fun displayTitle_plainText() {
+        assertEquals("完成课后习题", homeworkDisplayTitle("完成课后习题\n\n详情…"))
+    }
+
+    @Test
+    fun displayTitle_stripsMarkdownPrefixes() {
+        assertEquals("任务", homeworkDisplayTitle("- [ ] 任务"))
+        assertEquals("列表", homeworkDisplayTitle("- 列表"))
+        assertEquals("引用", homeworkDisplayTitle("> 引用"))
+        assertEquals("标题", homeworkDisplayTitle("## 标题"))
+    }
+
+    @Test
+    fun displayTitle_stripsWrapping() {
+        assertEquals("加粗", homeworkDisplayTitle("**加粗**"))
+        assertEquals("斜体", homeworkDisplayTitle("*斜体*"))
+        assertEquals("E = mc^2", homeworkDisplayTitle("\$E = mc^2\$"))
+    }
+
+    @Test
+    fun displayTitle_skipsBlankLines() {
+        assertEquals("正文在第三行", homeworkDisplayTitle("\n\n  \n正文在第三行"))
+    }
+
+    @Test
+    fun displayTitle_emptyFallsBack() {
+        assertEquals("未命名作业", homeworkDisplayTitle(""))
+        assertEquals("未命名作业", homeworkDisplayTitle("\n\n"))
+        assertEquals("未命名作业", homeworkDisplayTitle("**"))
+    }
 
     /** 逾期（降序：最近过期在前）→ 今天 → 未来（升序）→ 无截止（创建倒序） */
     @Test

@@ -1,6 +1,5 @@
 package edu.jxslu.schedule
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -103,29 +102,43 @@ enum class SubpageScreen {
  */
 class SubpageActivity : ComponentActivity() {
 
+    /**
+     * 本窗口的定位参数。onCreate 解析一次，[onResume] / [finish] 拿它记账
+     * （见 [SubpageStack]）。用 `by lazy` 不用 lateinit：解析只发生在 intents 上，
+     * 与 onCreate 的读取口径必须完全一致，写成两处迟早跑偏。
+     */
+    private val request: SubpageRequest by lazy {
+        // 脏 extra 回退到第一个入口：宁可开对一半的页，也不要崩溃
+        SubpageRequest.from(intent) ?: SubpageRequest(SubpageScreen.TIMETABLE_MANAGE)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val request = request
+        SubpageStack.onWindowCreated(request)
         enableEdgeToEdge()
-        // 脏 extra 回退到第一个入口：宁可开对一半的页，也不要崩溃
-        val screen = intent.getStringExtra(EXTRA_SCREEN)
-            ?.let { name -> SubpageScreen.entries.firstOrNull { it.name == name } }
-            ?: SubpageScreen.TIMETABLE_MANAGE
-        // 快捷方式 Snackbar「去设置」带的定位 id（只对 SHORTCUTS 有意义，其他页忽略）
-        val focusItemId = intent.getStringExtra(EXTRA_FOCUS_ITEM)
-        // 笔记/作业的定位参数（DESIGN §3.11）：课程名 + 条目 id（0 = 新建）
-        val courseName = intent.getStringExtra(EXTRA_COURSE_NAME)
-        val itemId = intent.getLongExtra(EXTRA_ITEM_ID, 0L)
         setContent {
             JuwRoot {
                 SubpageContent(
-                    screen = screen,
+                    screen = request.screen,
                     onBack = { finish() },
-                    focusItemId = focusItemId,
-                    courseName = courseName,
-                    itemId = itemId,
+                    focusItemId = request.focusItemId,
+                    courseName = request.courseName,
+                    itemId = request.itemId,
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 本页成为「离开 App 时看到的页」，见 SubpageStack 的类 KDoc
+        SubpageStack.onWindowResumed()
+    }
+
+    override fun onDestroy() {
+        SubpageStack.onWindowDestroyed(request)
+        super.onDestroy()
     }
 
     @Composable
@@ -184,9 +197,6 @@ class SubpageActivity : ComponentActivity() {
             // 笔记·课件（DESIGN §3.11）：课程库 → 课程列表 → 详情/编辑
             SubpageScreen.NOTES -> NoteLibraryScreen(
                 onBack = onBack,
-                onOpenCourse = { name ->
-                    SubpageActivity.start(this, SubpageScreen.NOTES_COURSE, courseName = name)
-                },
                 onOpenNote = { name, id ->
                     SubpageActivity.start(
                         this,
@@ -216,9 +226,6 @@ class SubpageActivity : ComponentActivity() {
             // 作业：课程库 → 课程列表 → 详情/编辑 + 作业中心
             SubpageScreen.HOMEWORK -> HomeworkLibraryScreen(
                 onBack = onBack,
-                onOpenCourse = { name ->
-                    SubpageActivity.start(this, SubpageScreen.HOMEWORK_COURSE, courseName = name)
-                },
                 onOpenHomework = { name, id ->
                     SubpageActivity.start(
                         this,
@@ -261,6 +268,9 @@ class SubpageActivity : ComponentActivity() {
     }
 
     override fun finish() {
+        // 用户主动关窗（页内返回 / 系统返回键 / 扫码完成自动退出）才从记录里摘掉。
+        // clearTop 与系统回收不走这里，记录必须留着，否则恢复不了。
+        SubpageStack.onWindowFinished(request)
         super.finish()
         @Suppress("DEPRECATION") // API 34+ 的 overrideActivityTransition 需要 34 才可用，minSdk 26 仍走这条
         // 顶层窗口向右滑出；入场传 0 = 露出的主窗口原地不动（覆盖语义）
@@ -268,8 +278,6 @@ class SubpageActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val EXTRA_SCREEN = "screen"
-
         /**
          * 附近单车地图选中的车号，**作为 Activity Result 回传**（DESIGN §3.9）。
          *
@@ -277,25 +285,6 @@ class SubpageActivity : ComponentActivity() {
          * 用户眼前这一页反而收不到（2026-09-23 真机排查）。
          */
         const val EXTRA_PICKED_CAR_NUM = "picked_car_num"
-        private const val EXTRA_FOCUS_ITEM = "focus_item"
-        private const val EXTRA_COURSE_NAME = "course_name"
-        private const val EXTRA_ITEM_ID = "item_id"
-
-        /**
-         * 通知 PendingIntent 用：只构造意图，不启动（start 里的窗口动画对非 Activity 无意义）。
-         * 带参与 [start] 同口径——通知点击直达某条笔记/作业就靠它（DESIGN §3.11）。
-         */
-        fun intent(
-            context: Context,
-            screen: SubpageScreen,
-            courseName: String? = null,
-            itemId: Long = 0L,
-        ): Intent = Intent(context, SubpageActivity::class.java)
-            .putExtra(EXTRA_SCREEN, screen.name)
-            .apply {
-                if (courseName != null) putExtra(EXTRA_COURSE_NAME, courseName)
-                if (itemId != 0L) putExtra(EXTRA_ITEM_ID, itemId)
-            }
 
         /**
          * [focusItemId] 只对 [SubpageScreen.SHORTCUTS] 生效：非空时设置页打开后
@@ -311,15 +300,15 @@ class SubpageActivity : ComponentActivity() {
             courseName: String? = null,
             itemId: Long = 0L,
         ) {
-            val intent = intent(context, screen, courseName, itemId)
-            if (focusItemId != null) intent.putExtra(EXTRA_FOCUS_ITEM, focusItemId)
-            context.startActivity(intent)
-            // 新窗口从右缘推入；退场传 0 = 主窗口原地不动，被覆盖而非被推走。
-            // 只有 context 是 Activity 时才有窗口动画可言
-            (context as? Activity)?.let {
-                @Suppress("DEPRECATION")
-                it.overridePendingTransition(R.anim.slide_in_right, 0)
-            }
+            openSubpage(
+                context,
+                SubpageRequest(
+                    screen = screen,
+                    focusItemId = focusItemId,
+                    courseName = courseName,
+                    itemId = itemId,
+                ),
+            )
         }
     }
 }
