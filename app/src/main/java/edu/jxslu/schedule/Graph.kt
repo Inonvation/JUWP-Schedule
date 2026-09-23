@@ -4,6 +4,8 @@ import android.content.Context
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.jw.JwCredentialStore
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
+import edu.jxslu.schedule.data.power.PowerClient
+import edu.jxslu.schedule.data.power.PowerRepository
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
@@ -54,6 +56,9 @@ object Graph {
 
     @Volatile
     private var kqcxBikeClient: KqcxBikeClient? = null
+
+    @Volatile
+    private var powerRepository: PowerRepository? = null
 
     /** 进程级 applicationContext（后台协程里落盘等场景复用，免 Activity 引用泄漏）。 */
     val appContext: Context by lazy { contextProvider() }
@@ -143,5 +148,14 @@ object Graph {
     fun kqcxBikeClient(context: Context): KqcxBikeClient =
         kqcxBikeClient ?: synchronized(this) {
             kqcxBikeClient ?: KqcxBikeClient.create().also { kqcxBikeClient = it }
+        }
+
+    /**
+     * 缴费平台（寝室电费）仓库单例（DESIGN §4.24）：OkHttp 连接池只建一次；
+     * token 只在仓库内存里，不落盘。
+     */
+    fun powerRepository(context: Context): PowerRepository =
+        powerRepository ?: synchronized(this) {
+            powerRepository ?: PowerRepository(PowerClient.create()).also { powerRepository = it }
         }
 }

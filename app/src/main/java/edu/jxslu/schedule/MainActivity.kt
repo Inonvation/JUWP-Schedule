@@ -66,6 +66,7 @@ import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
 import edu.jxslu.schedule.ui.me.SettingsScreen
+import edu.jxslu.schedule.ui.life.LifeScreen
 import edu.jxslu.schedule.ui.theme.JuwTheme
 import edu.jxslu.schedule.ui.today.TodayScreen
 import edu.jxslu.schedule.ui.water.WaterViewModel
@@ -76,6 +77,7 @@ import edu.jxslu.schedule.domain.ThemeMode
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Settings01
+import me.rerere.hugeicons.stroke.Wallet03
 import me.rerere.hugeicons.HugeIcons
 
 class MainActivity : ComponentActivity() {
@@ -403,18 +405,8 @@ internal fun JuwApp(
     // 显示设置唯一入口 = 课表页顶栏眼睛图标，「我的」侧属重复入口，
     // 对应的 Channel 链路（displaySettingsRequests → WeekScreen）一并移除。
 
-    val tabs = listOf(
-        BottomTab(Routes.TODAY, R.string.tab_today, HugeIcons.Calendar01),
-        BottomTab(Routes.WEEK, R.string.tab_week, HugeIcons.Book01),
-        BottomTab(Routes.ME, R.string.tab_me, HugeIcons.Settings01),
-    )
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
-
-    // 胖乖登录态没有 Flow：key 到 currentRoute，从开水页返回（或切 Tab）时重读 token。
-    // 根因：无 key 的 remember 在登录成功返回后仍是旧值，入口卡片一直显示「未登录」。
-    // 二级页改为独立窗口后，返回主窗口触发重组，这里随 currentRoute 重算。
-    val waterLoggedIn = remember(currentRoute) { Graph.qiekj(context).localToken() != null }
 
     // 胖乖 ViewModel 挂 Activity 作用域：今日页快捷入口与开水页（独立窗口）各自持有，
     // 这里这份供今日页直接触发 unlock 时使用
@@ -429,6 +421,30 @@ internal fun JuwApp(
     val displayPrefs by remember { Graph.repository(context).displayPrefs }
         .collectAsStateWithLifecycle(initialValue = null)
     val floatingNavBar = displayPrefs?.floatingNavBar == true
+
+    // 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。
+    // 未读出（首帧 null）按开处理——宁可先显示再收起，也别让底栏先少一项再补上。
+    val lifeTabEnabled = displayPrefs?.lifeTabEnabled ?: true
+
+    // 底栏四项：今日 · 课表 · 生活 · 我的（生活页在课表右侧）
+    val tabs = buildList {
+        add(BottomTab(Routes.TODAY, R.string.tab_today, HugeIcons.Calendar01))
+        add(BottomTab(Routes.WEEK, R.string.tab_week, HugeIcons.Book01))
+        if (lifeTabEnabled) add(BottomTab(Routes.LIFE, R.string.tab_life, HugeIcons.Wallet03))
+        add(BottomTab(Routes.ME, R.string.tab_me, HugeIcons.Settings01))
+    }
+
+    // 在生活页里把开关关掉（设置页是独立窗口，回来时这里才感知到）：退回今日页，
+    // 别停在已经被隐藏的 Tab 上——它连入口都没有了。
+    LaunchedEffect(lifeTabEnabled, currentRoute) {
+        if (!lifeTabEnabled && currentRoute == Routes.LIFE) {
+            navController.navigate(Routes.TODAY) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
 
     // 悬浮形态的底部净空 = 胶囊高 + 离底间距 + 手势条。**解析式算，不去测量**：
     // 测量要在首帧之后才拿得到高度，页面会先按「无净空」摆一次再往上跳。
@@ -561,8 +577,8 @@ internal fun JuwApp(
                             waterViewModel = waterViewModel,
                         )
                     }
-                    composable(Routes.WEEK) {
-                        WeekScreen(
+                composable(Routes.WEEK) {
+                    WeekScreen(
                             onOpenJwImport = {
                                 JwImportActivity.start(context)
                             },
@@ -584,59 +600,41 @@ internal fun JuwApp(
                             },
                         )
                     }
-                composable(Routes.ME) {
-                        SettingsScreen(
-                            onOpenJwImport = {
-                                JwImportActivity.start(context)
+                    // 生活页（DESIGN §3.13）：一卡通余额 / 付款码 / 寝室电费 / 充值入口 / 最近流水。
+                    // 三个出口都是二级页（独立窗口，返回语义清晰）：消费流水、全屏付款码、一卡通设置
+                    composable(Routes.LIFE) {
+                        LifeScreen(
+                            onOpenStatement = {
+                                SubpageActivity.start(context, SubpageScreen.CAMPUS_STATEMENT)
                             },
-                            onOpenScores = {
-                                SubpageActivity.start(context, SubpageScreen.SCORES)
+                            onOpenPayCode = {
+                                SubpageActivity.start(context, SubpageScreen.PAY_CODE)
                             },
-                            // 二级页统一独立窗口：底栏不可达，返回栈语义清晰（根因见 SubpageActivity）
-                            onOpenTimetableManage = {
-                                SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)
-                            },
-                            onOpenTimetableSettings = {
-                                SubpageActivity.start(context, SubpageScreen.TIMETABLE_SETTINGS)
-                            },
-                            onOpenDataSettings = {
-                                SubpageActivity.start(context, SubpageScreen.DATA_SETTINGS)
-                            },
-                            onOpenCourseTweak = {
-                                SubpageActivity.start(context, SubpageScreen.COURSE_TWEAK)
-                            },
-                            onOpenTweakDetect = {
-                                SubpageActivity.start(context, SubpageScreen.TWEAK_DETECT)
-                            },
-                            onOpenCampusCard = {
+                            onOpenCampusSettings = {
                                 SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
                             },
-                            onOpenWidgetSettings = {
-                                SubpageActivity.start(context, SubpageScreen.WIDGET_SETTINGS)
+                        )
+                    }
+                composable(Routes.ME) {
+                        SettingsScreen(
+                            onOpenGeneralSettings = {
+                                SubpageActivity.start(context, SubpageScreen.GENERAL_SETTINGS)
                             },
-                            onOpenPermissionSettings = {
-                                SubpageActivity.start(context, SubpageScreen.PERMISSION_SETTINGS)
+                            onOpenTimetableHub = {
+                                SubpageActivity.start(context, SubpageScreen.TIMETABLE_HUB)
                             },
-                            onOpenCalendarSettings = {
-                                SubpageActivity.start(context, SubpageScreen.CALENDAR_SETTINGS)
+                            onOpenLearningHub = {
+                                SubpageActivity.start(context, SubpageScreen.LEARNING_HUB)
                             },
-                            onOpenReminderSettings = {
-                                SubpageActivity.start(context, SubpageScreen.REMINDER_SETTINGS)
+                            onOpenWidgetCalendarHub = {
+                                SubpageActivity.start(context, SubpageScreen.WIDGET_CALENDAR_HUB)
                             },
-                            onOpenShortcuts = {
-                                SubpageActivity.start(context, SubpageScreen.SHORTCUTS)
+                            onOpenExtensionServices = {
+                                SubpageActivity.start(context, SubpageScreen.EXT_SERVICES_HUB)
                             },
-                            onOpenWater = {
-                                SubpageActivity.start(context, SubpageScreen.WATER)
+                            onOpenAbout = {
+                                SubpageActivity.start(context, SubpageScreen.ABOUT)
                             },
-                            // 学习分区（DESIGN §3.11）：笔记·课件库 / 作业库
-                            onOpenNotes = {
-                                SubpageActivity.start(context, SubpageScreen.NOTES)
-                            },
-                            onOpenHomework = {
-                                SubpageActivity.start(context, SubpageScreen.HOMEWORK)
-                            },
-                            waterLoggedIn = waterLoggedIn,
                         )
                     }
                 }
@@ -648,5 +646,6 @@ internal fun JuwApp(
 object Routes {
     const val TODAY = "today"
     const val WEEK = "week"
+    const val LIFE = "life"
     const val ME = "me"
 }

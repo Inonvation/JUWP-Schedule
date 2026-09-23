@@ -47,6 +47,9 @@
     → Kotlin 解析成 Course → 确认弹窗（选目标课表/合并或覆盖）→ Room 入库
 ```
 
+> 另有 `scripts/fetch_power.py`：寝室电费（新开普「移动服务平台」缴费 `charge.juwp.edu.cn`），
+> 与教务链路无关，也不进 App，说明见 `scripts/README.md` §5.5。
+
 为什么两条链路并存：
 
 - **Python 爬虫跑在开发机上**，用来把页面结构逆向清楚、产出可当解析器回归
@@ -62,11 +65,11 @@
 （DESIGN §4.17，默认关闭；凭证 EncryptedSharedPreferences 加密存储、排除云备份）。
 同一套页面规则自此有 Python 与 Kotlin 两份独立实现，**换校时两边要同步改**（见 §5.6）。
 
-除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、一卡通付款码与账单、快趣出行码
-与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、`data/ykt/`、`data/kqcx/`、
-`domain/EbikeQr.kt`），与课表核心零耦合——换校适配时整块删掉不影响课表功能
-（入口在 `ui/` 对应包与今日页底部固定区）。各自的实现细节见
-DESIGN §3.9 / §3.10 / §4.5 / §4.10 / §4.18 / §4.19 / §4.23。
+除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、一卡通付款码与账单、寝室电费、
+快趣出行码与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、`data/ykt/`、
+`data/power/`、`data/kqcx/`、`domain/EbikeQr.kt`），与课表核心零耦合——换校适配时整块
+删掉不影响课表功能（入口在 `ui/` 对应包、今日页底部固定区与底栏「生活」）。
+各自的实现细节见 DESIGN §3.9 / §3.10 / §3.13 / §4.5 / §4.10 / §4.18 / §4.19 / §4.23 / §4.24。
 
 ---
 
@@ -79,12 +82,12 @@ DESIGN §3.9 / §3.10 / §4.5 / §4.10 / §4.18 / §4.19 / §4.23。
 | 持久化 | Room 2.7.1（v8：课表/成绩/笔记/作业/检测/一卡通流水）+ DataStore（显示偏好与开关） |
 | 网络 | App 端 WebView + Retrofit（胖乖）+ OkHttp（教务检测、一卡通）；课表数据零自建后端 |
 | SDK | minSdk 26 / compileSdk 35 |
-| 测试 | 纯 JVM 单测 45 个类（domain 层可全量测，见 §9） |
+| 测试 | 纯 JVM 单测 57 个类（domain 层可全量测，见 §9） |
 
 分层与依赖方向（`app/src/main/java/edu/jxslu/schedule/`）：
 
 ```
-MainActivity.kt        底栏三 Tab：今日 / 课表 / 我的
+MainActivity.kt        底栏四 Tab：今日 / 课表 / 生活（可关，§3.13）/ 我的
 SubpageActivity.kt     二级页容器（成绩查询、笔记/作业 7 个二级页、各类设置）
 JwImportActivity.kt    教务导入独立窗口（独立 Activity，见 §5）
 Graph.kt               手写单例装配：Repository / 数据库 / 偏好
@@ -98,8 +101,9 @@ data/prefs/            DataStore 显示偏好与全局开关（含 slotSchemaVer
 data/jw/               教务：JwUrls、两个课表解析器、考试/成绩解析器、JwHttpSession（检测）
 data/qiekj/            胖乖生活 API（登录/开水/余额/订单）
 data/ykt/              一卡通（新中新慧新e校）登录、付款码与流水同步
+data/power/            寝室电费（新开普缴费平台）：登录、读表、电费流水与缴费页深链（§4.24）
 data/calendar/         系统日历同步（CalendarSyncer）
-ui/                    Compose Screen + ViewModel（today/week/me/water/campus/score/
+ui/                    Compose Screen + ViewModel（today/week/life/me/water/campus/score/
                        notes/homework/timetable/detect/reminder/ebike/...）
 ui/widget/             Glance 桌面小组件
 ```
@@ -555,7 +559,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
 ```
 
-覆盖面（52 个测试类，`app/src/test/`）：
+覆盖面（57 个测试类，`app/src/test/`）：
 
 - **解析与数据链路**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
   `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 样例）、
@@ -576,7 +580,11 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
   `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest`、`EbikeQrTest` /
   `EbikeFreeRideTest`、`BikeNearbyTest`（附近车辆响应容错 / 停车点聚簇 / 距离与状态推导）、
   `KqcxBikeClientTest`（失败分类：超时不能吃成网络不可达）、
-  `Gcj02Test`（WGS84 → GCJ-02：境外不偏移 / 境内偏移量级 / 邻近两点相对距离不变）；
+  `Gcj02Test`（WGS84 → GCJ-02：境外不偏移 / 境内偏移量级 / 邻近两点相对距离不变）、
+  `PowerModelsTest`（电费响应解析：项目 / 读数 / 流水 + 500 与 401 外壳 + 剩余电量键回退）、
+  `LifeFeedTest`（一卡通与电费流水混排：排序 / 限量 / 同刻稳定 / 解析失败沉底）、
+  `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
+  `PowerClientUrlTest`（缴费页 / 账单页深链形态与 feeitemid 钉子）；
 - **UI 边界**：`WidgetModelTest`（小组件分档/行数/明日接棒）、`ParseWeeksInputTest`、
   `CompactPositionTest`、`PanelSnapTest`、`GridFontScaleTest`。
 

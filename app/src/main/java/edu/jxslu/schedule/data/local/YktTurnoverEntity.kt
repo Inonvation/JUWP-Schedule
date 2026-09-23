@@ -57,6 +57,10 @@ interface YktTurnoverDao {
     )
     fun observeMonth(monthKey: String): kotlinx.coroutines.flow.Flow<List<YktTurnoverEntity>>
 
+    /** 最近 N 条流水（跨月，交易时间倒序）——生活页「最近流水」用（DESIGN §3.13）。 */
+    @Query("SELECT * FROM ykt_turnovers ORDER BY jndatetime DESC, orderId DESC LIMIT :limit")
+    fun observeRecent(limit: Int): kotlinx.coroutines.flow.Flow<List<YktTurnoverEntity>>
+
     /** 某月支出/收入汇总（分；响应式，表变化自动重发）。 */
     @Query(
         "SELECT " +

@@ -250,6 +250,7 @@ class ScheduleRepository(
     private data class ShellPrefs(
         val floatingNavBar: Boolean,
         val todayDockExpanded: Boolean,
+        val lifeTabEnabled: Boolean,
     )
 
     // ------------------------------------------------------------------
@@ -315,10 +316,12 @@ class ScheduleRepository(
         ),
         prefs.campusCardEnabled,
         prefs.viewPrefs,
-        // 外壳类偏好（DESIGN §3.3 今日页抽屉 / §4.22 悬浮导航栏）：最外层 combine 的第 5 个参数
+        // 外壳类偏好（DESIGN §3.3 今日页抽屉 / §4.22 悬浮导航栏 / §3.13 生活页）：
+        // 最外层 combine 的第 5 个参数
         combine(
             prefs.floatingNavBar,
             prefs.todayDockExpanded,
+            prefs.lifeTabEnabled,
             ::ShellPrefs,
         ),
     ) { global, ebike, campusCard, p, shell ->
@@ -335,6 +338,7 @@ class ScheduleRepository(
             campusCardEnabled = campusCard,
             floatingNavBar = shell.floatingNavBar,
             todayDockExpanded = shell.todayDockExpanded,
+            lifeTabEnabled = shell.lifeTabEnabled,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
             showSaturday = p.showSaturday,
@@ -516,6 +520,9 @@ class ScheduleRepository(
 
     /** 悬浮导航栏（DESIGN §4.22）：底栏半透明磨砂，课表背景图透到屏幕底部。默认关。 */
     suspend fun setFloatingNavBar(value: Boolean) = prefs.setFloatingNavBar(value)
+
+    /** 生活页开关（DESIGN §3.13）。 */
+    suspend fun setLifeTabEnabled(value: Boolean) = prefs.setLifeTabEnabled(value)
 
     /** 触感反馈开关（全局）。 */
     suspend fun setHapticsEnabled(value: Boolean) = prefs.setHapticsEnabled(value)

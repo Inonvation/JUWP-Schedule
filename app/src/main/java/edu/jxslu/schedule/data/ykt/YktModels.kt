@@ -160,6 +160,12 @@ sealed class YktException(message: String, cause: Throwable? = null) : Exception
 
     /** 网络不可达 / 超时。 */
     class Network(cause: Throwable) : YktException("网络不可达：${cause.message ?: "未知错误"}", cause)
+
+    /**
+     * 平台服务时间外（支付一步被服务端业务拒绝，如「未获取到要充值的卡号」）。
+     * UI 据此在 App 内弹提示，**不降级跳浏览器**（2026-09-23 用户拍板）。
+     */
+    class NotInServiceTime(message: String) : YktException(message)
 }
 
 /** 一卡通 JSON 解析（BOM 剥离 + 容错）。纯函数，JVM 可测。 */
@@ -209,6 +215,30 @@ object YktModels {
     fun barcodeFrom(data: kotlinx.serialization.json.JsonElement?): YktBarcodeData? {
         val obj = data as? JsonObject ?: return null
         return runCatching { json.decodeFromJsonElement(YktBarcodeData.serializer(), obj) }.getOrNull()
+    }
+
+    /**
+     * 电子账户充值目标（`queryCard?scene=recharge` 的 `accinfo[]`，DESIGN §3.10 账户口径）。
+     * 电子账户的 type 形如 `<account>-000`；没有电子账户行时返回 null（该卡不支持）。
+     */
+    fun electricAccountFrom(data: kotlinx.serialization.json.JsonElement?): Pair<String, Long>? {
+        val arr = (data as? JsonObject)?.get("card")?.jsonArray ?: return null
+        for (el in arr) {
+            val obj = el as? JsonObject ?: continue
+            val infos = obj["accinfo"] as? kotlinx.serialization.json.JsonArray ?: continue
+            for (info in infos) {
+                val io = info as? JsonObject ?: continue
+                val type = (io["type"] as? JsonPrimitive)?.content ?: continue
+                // 电子账户的 type 以 `-000` 结尾（正式卡是裸卡号）；2026-09-23 实测
+                if (type.endsWith("-000")) {
+                    val rawBalance = (io["balance"] as? JsonPrimitive)?.content
+                    val fen = rawBalance?.toLongOrNull()
+                        ?: rawBalance?.toDoubleOrNull()?.let { Math.round(it) }
+                    return type to (fen ?: 0L)
+                }
+            }
+        }
+        return null
     }
 
     /**

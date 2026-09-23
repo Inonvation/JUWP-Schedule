@@ -1,6 +1,7 @@
-# 教务爬虫脚本说明
+# 爬虫脚本说明
 
-江西水利电力大学教务（强智科技）的**课表 / 考试 / 成绩抓取脚本**说明。文档覆盖理论课表、实验课表、考试安排、课程成绩四条链路。
+江西水利电力大学教务（强智科技）的**课表 / 考试 / 成绩抓取脚本**说明，覆盖理论课表、实验课表、考试安排、课程成绩四条链路；
+另附寝室电费（新开普缴费平台，**不在教务域**，2026-09-23 打通，见 §5.5）。
 
 爬虫只在本机调试用，**App 端不跑 Python**——App 走 WebView + 注入 JS（见 [§5.3](#53-app-端-webview-注入实现要点)）。
 
@@ -15,14 +16,18 @@ python -m venv .venv-scraper
 
 # 2) 填凭证
 copy scripts\credentials.local.json.example scripts\credentials.local.json
-#    编辑填入学号 / 密码（该文件已 gitignore，禁止提交）
+#    编辑填入学号 / 密码；跑电费脚本还要填 powerPassword（缴费平台查询密码，与教务密码不同）
+#    该文件已 gitignore，禁止提交
 
 # 3) 抓取（--term 均可省略；所有脚本顶层 term = 实际爬到的学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py       # 理论课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py   # 实验课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py         # 考试安排（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py        # 课程成绩（缺省全部学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_power.py         # 寝室电费（非教务，无 --term；本人绑定房间剩余电量）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history   # 追加电费充值流水
 # 指定学期：加 --term 2025-2026-2（脚本会校验请求学期 = 教务返回学期，不一致即报错）
+# 电费查别的房间：--room 1A101（可加 --building 1A 提速）
 ```
 
 | 产出 | 内容 |
@@ -34,6 +39,8 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `scripts/out/xskb_vt0.html` | 理论课表页快照 |
 | `scripts/out/syxkb.html` | 实验课表页快照 |
 | `scripts/out/*_raw.json` / `exams_raw.json` / `scores_raw.json` | 解析中间产物（含原始文本，排错用） |
+| `scripts/out/power.json` | 寝室电费（房间 / 剩余电量 / 可选充值流水与月度汇总） |
+| `scripts/out/power_raw.json` | 电费接口原始数据（排错用） |
 
 ---
 
@@ -46,6 +53,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `fetch_lab_courses.py` | 实验课表 → JSON（含周次聚合） | 纯解析，不做登录 |
 | `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
 | `fetch_scores.py` | 课程成绩 → JSON | 同上；`--term` 缺省查全部学期 |
+| `fetch_power.py` | 寝室电费 → JSON | 新开普缴费平台，学号 + 查询密码；**与教务链路无关** |
 | `gen_week_layout_preview.py` | 生成课表排版提案 HTML | 与爬取无关 |
 | `out/` | 抓取产物与页面快照 | 快照可当解析器回归 fixture |
 | `_archive/` | 历史一次性探测脚本 | **勿依赖**，仅留档溯源 |
@@ -256,6 +264,49 @@ App 与脚本走**同一组接口**，对应实现（改接口先改两处）：
 学期口径统一：脚本输出顶层 `term` = 实际爬取的学期；App 的考试导入走壳页下拉、成绩导入走
 `kksj=''`（全部学期，按返回数据的 `xnxqid` 分组入库），与「我的 → 成绩查询」的学期 chips 对齐。
 
+### 5.5 寝室电费（新开普缴费平台，2026-09-23 实测）
+
+**不在教务域**，是另一套系统：新开普「移动服务平台」缴费（`charge.juwp.edu.cn`，前端 BladeX + Vue）。
+登录用学号 + **缴费平台查询密码**，与教务/统一身份认证那套密码不通用（实测教务密码登录本平台返回
+`{"error":"unauthorized"}`）。
+
+```
+POST https://charge.juwp.edu.cn/blade-auth/oauth/token   # 登录，access_token 有效期 3599 秒
+     Authorization: Basic Y2hhcmdlOmNoYXJnZV9zZWNyZXQ=   # charge:charge_secret，前端公开常量
+     username=<学号>&password=<查询密码>&grant_type=password&scope=all
+     &logintype=student-sno-queryPassword                # 取值来自 GET /charge/logintype
+
+GET  /charge/feeitem/showFeeitem                          # 收费项目清单（**免登录**）
+GET  /charge/feeitem/singleFeeitem?feeitemid=181          # 详情；sceneinfo = 本人绑定房间
+POST /charge/feeitem/getThirdData                         # type=select 逐级取场景；type=IEC 读电表
+GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
+```
+
+除登录与 `showFeeitem` 外，每个请求都带两个 header：`Authorization: Basic Y2hhcmdlOmNoYXJnZV9zZWNyZXQ=`
+与 `synjones-auth: bearer <access_token>`。
+
+平台当前只有**一个**收费项目：`feeitemid=181`「房间电费」，0.62 元/度，归属「生活缴费 / 财务处」，
+`impl_interface=iECSceneServiceImpl`（电控场景，校区 → 楼栋 → 房间三级）。
+
+`getThirdData` 有两种形态：
+
+| 形态 | 请求参数 | 返回 |
+|------|----------|------|
+| 逐级取场景 | `feeitemid=181&type=select&level=<已选层数>` + 已选项（`campus`、`building`） | `map.total` = 层级定义（code/level/name），`map.data` = 该层候选 |
+| 读电表 | `feeitemid=181&type=IEC&level=3&campus=0&building=0&room=14600` | `map.showData` = 电表读数（中文键），`map.data` = 房间元信息 |
+
+四个坑：
+
+1. **参数少一个就回 500**：`getThirdData` 缺 `feeitemid`，或只给场景三键却不给 `type=IEC`/`level`，
+   一律返回 `{"code":500,"msg":"未知异常，请联系管理员"}`。别把它当成平台故障。
+2. **登录端点不在 `/charge` 下**，是根域的 `/blade-auth/oauth/token`；业务接口才在 `charge.juwp.edu.cn/charge/…`。
+   token 3599 秒过期，脚本一次登录一次用完，不落盘。
+3. **读数在 `map.showData` 的中文键里**（`{"当前剩余电量":"55.57"}`），`map.data.remark` 是同一份
+   JSON 字符串。平台加功能会加键，所以 `power.json` 除 typed 字段外还留了 `meter.fields` 原文。
+4. **`sceneinfo` 里的校区名是学校旧名**（南昌工程学院），房间名以 IEC 返回的 `map.data` 为准。
+
+App 端（水贝贝）当前没有接这条链路，脚本只产出 `scripts/out/power.json` 供本机查看。
+
 ---
 
 ## 6. 故障排查
@@ -270,12 +321,17 @@ App 与脚本走**同一组接口**，对应实现（改接口先改两处）：
 | 考试/成绩接口返回空但 len 也异常小 | 分页参数用了 `page/limit` | 改成 `pageNum` / `pageSize`（§5.4） |
 | 课程全部堆在周一 | 用了 `qz-hasCourse-N` 当星期 | 改回按 `<td>` 列序 + carry |
 | 周次解析为空 | 详情文本格式变化 | 看 `out/*_raw.json` 里的 `detail_raw` / `weeks_raw` |
+| 电费登录返回 `{"error":"unauthorized"}` | 用了教务密码 | 填缴费平台查询密码（`powerPassword`），两套密码不通用（§5.5） |
+| 电费 `getThirdData` 返回 `{"code":500,"msg":"未知异常…"}` | 参数不全 | 按 §5.5 的表格给全 `feeitemid` / `type` / `level` / 场景三键 |
+| 手上链接里的 `token=` 回 401 未授权 | 该 token 已过期（无 `exp` 声明，靠服务端会话） | 每次现登一次拿新 token，别复用旧链接 |
 
 ---
 
 ## 7. 红线
 
 - 凭证只放 `scripts/credentials.local.json`，**已 gitignore**，禁止提交、禁止硬编码进 App 代码
+- 缴费平台的**查询密码**（键 `powerPassword`）与教务 `password` 是两套，同样只放这份凭证文件，
+  禁止写进 App 代码、文档或示例
 - 抓取仅供本机调试；App 端默认由用户自己在 WebView 登录（代码不出现密码）；
   调课自动检测（DESIGN §4.17，默认关闭）开启后，用户显式提供的凭证加密存本机
   （`jw_credentials.xml`，已排除云备份与设备迁移），仅用于本机向教务登录

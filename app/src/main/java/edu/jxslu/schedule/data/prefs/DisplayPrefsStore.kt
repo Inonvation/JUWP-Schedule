@@ -58,6 +58,12 @@ data class DisplayPrefs(
      */
     val floatingNavBar: Boolean = false,
     /**
+     * 生活页（DESIGN §3.13）。全局项，**默认开**：底栏第三项「生活」（课表右侧），
+     * 承载一卡通余额/付款码、寝室电费、充值入口与最近流水。
+     * 关 = 底栏回到 3 项（今日 · 课表 · 我的），二级页入口不受影响。
+     */
+    val lifeTabEnabled: Boolean = true,
+    /**
      * 触感反馈开关。全局项（交互手感不随课表变）。
      * 默认开：点击类操作给轻触感是系统应用的普遍预期，嫌吵的人再关。
      */
@@ -288,6 +294,29 @@ class DisplayPrefsStore(private val context: Context) {
     /** 悬浮导航栏（DESIGN §4.22）。默认关：不透明底栏是既有观感，用户显式开启才改。 */
     val floatingNavBar: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_FLOATING_NAV_BAR] ?: false
+    }
+
+    /** 生活页开关（DESIGN §3.13）。默认开：新 Tab 直接可用，嫌底栏挤的人再关。 */
+    val lifeTabEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_LIFE_TAB_ENABLED] ?: true
+    }
+
+    /** 「我的」账号条：姓名（教务学籍卡导入）。null/空 = 未导入过，退回学号显示。 */
+    val profileName: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_NAME].orEmpty()
+    }
+
+    /** 「我的」账号条：班级（教务学籍卡导入）。缺失时账号条副行只剩学号。 */
+    val profileClass: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_CLASS].orEmpty()
+    }
+
+    /** 学籍卡落库；姓名/班级为空串时各键不动，避免一次脏解析抹掉已有数据。 */
+    suspend fun setProfile(name: String?, className: String?) {
+        context.displayDataStore.edit { p ->
+            if (!name.isNullOrBlank()) p[KEY_PROFILE_NAME] = name.trim()
+            if (!className.isNullOrBlank()) p[KEY_PROFILE_CLASS] = className.trim()
+        }
     }
 
     /** 开水双击确认。全局项，默认双击防误触。 */
@@ -552,6 +581,10 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setFloatingNavBar(value: Boolean) {
         context.displayDataStore.edit { it[KEY_FLOATING_NAV_BAR] = value }
+    }
+
+    suspend fun setLifeTabEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_LIFE_TAB_ENABLED] = value }
     }
 
     suspend fun setWaterRequireDoubleClick(value: Boolean) {
@@ -936,6 +969,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
         val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")
+        val KEY_LIFE_TAB_ENABLED = booleanPreferencesKey("life_tab_enabled")
         val KEY_WATER_REQUIRE_DOUBLE_CLICK = booleanPreferencesKey("water_require_double_click")
         val KEY_CALENDAR_REMINDER_MINUTES = intPreferencesKey("calendar_reminder_minutes")
         val KEY_REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")
@@ -979,6 +1013,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCORE_INCLUDE_FREE_ELECTIVES = booleanPreferencesKey("score_include_free_electives")
         val KEY_SCORE_GROUP_BY_YEAR = booleanPreferencesKey("score_group_by_year")
         val KEY_SCORE_SORT_MODE = stringPreferencesKey("score_sort_mode")
+        val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
+        val KEY_PROFILE_CLASS = stringPreferencesKey("profile_class")
 
         // ---- 调课自动检测（DESIGN §4.17；凭证不在这里，见 JwCredentialStore） ----
         val KEY_DETECT_ENABLED = booleanPreferencesKey("tweak_detect_enabled")

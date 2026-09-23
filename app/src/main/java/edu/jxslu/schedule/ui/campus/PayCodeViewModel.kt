@@ -41,6 +41,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** 付款码页三态。 */
 sealed class PayCodeUiState {
 
+    /**
+     * 未取码（生活页内嵌用法，DESIGN §3.13）：占位态，点了才登录取码。
+     * 付款码页（§3.10）自己不用这个态——它进页就 [PayCodeViewModel.load]。
+     */
+    data object Idle : PayCodeUiState()
+
     /** 取码中（进页自动触发）。 */
     data object Loading : PayCodeUiState()
 
@@ -87,17 +93,31 @@ class PayCodeViewModel(
 
     private val syncer = YktTurnoverSyncer(repo, db)
 
-    private val _uiState = MutableStateFlow<PayCodeUiState>(PayCodeUiState.Loading)
+    // 初值 Idle：付款码页进页就 load()（Loading 立刻接上），生活页内嵌用法则停在占位态不取码
+    private val _uiState = MutableStateFlow<PayCodeUiState>(PayCodeUiState.Idle)
     val uiState: StateFlow<PayCodeUiState> = _uiState.asStateFlow()
 
     private val _bitmaps = MutableStateFlow<PayCodeBitmaps?>(null)
     val bitmaps: StateFlow<PayCodeBitmaps?> = _bitmaps.asStateFlow()
 
     /**
-     * 卡余额快照（DESIGN §4.19 余额展示）：null = 未取到 / 取失败（静默，不挡出码主流程）。
-     * cardBalanceFen 元素为每卡「卡账户余额」，elecBalanceFen 为水电账户余额。
+     * 卡余额快照（DESIGN §4.19 余额展示 + §3.10 账户口径）：null = 未取到 / 取失败
+     * （静默，不挡出码主流程）。
+     *
+     * [cardFen] = 正式卡（CARD，食堂/门禁）；[accountFen] = 电子账户（ACCOUNT，电费等
+     * 线上缴费）——**两个独立钱包**，不是同一笔钱的两份视图。[totalFen] = 两者之和
+     * （兼容既有「合计」场景）。数据源 `codebarPayinfo`（CARD 与 ACCOUNT 行）。
      */
-    data class BalanceSnapshot(val cards: List<YktCard>, val totalFen: Long, val elecFen: Long)
+    data class BalanceSnapshot(
+        val cards: List<YktCard>,
+        val totalFen: Long,
+        /** 正式卡余额（CARD 行 db_balance + unsettle_amount）。 */
+        val cardFen: Long,
+        /** 电子账户余额（ACCOUNT 行，2026-09-23 实测与 CARD 同接口返回）。 */
+        val accountFen: Long,
+        /** 兼容字段：此前「水电账户」口径（queryCard 的 elec_accamt），与 accountFen 不同源。 */
+        val elecFen: Long,
+    )
 
     private val _balance = MutableStateFlow<BalanceSnapshot?>(null)
     val balance: StateFlow<BalanceSnapshot?> = _balance.asStateFlow()
@@ -172,11 +192,7 @@ class PayCodeViewModel(
             try {
                 val cards = repo.cards(username, password)
                 if (cards.isNotEmpty()) {
-                    _balance.value = BalanceSnapshot(
-                        cards = cards,
-                        totalFen = cards.sumOf { it.cardBalanceFen },
-                        elecFen = cards.sumOf { it.elecBalanceFen },
-                    )
+                loadBalanceSnapshot(cards)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -190,6 +206,39 @@ class PayCodeViewModel(
     fun refreshBalance() {
         val credentials = credentialStore.read() ?: return
         loadBalance(credentials.username, credentials.password)
+    }
+
+    /**
+     * 余额快照（DESIGN §3.10 账户口径，2026-09-23 实测定源）：
+     * - 正式卡（cardFen）= queryCard 的 db_balance + unsettle_amount（单位分）；
+     * - **电子账户（accountFen）= queryCard 的 accinfo[] 首项 balance（独立钱包，
+     *   实测 codebarPayinfo 的 ACCOUNT 行只是正式卡镜像，不能当电子账户余额）**。
+     */
+    private suspend fun loadBalanceSnapshot(cards: List<YktCard>) {
+        val credentials = credentialStore.read() ?: return
+        val detail = runCatching { repo.rechargeAccountDetail(credentials.username, credentials.password) }.getOrNull()
+        _balance.value = BalanceSnapshot(
+            cards = cards,
+            totalFen = cards.sumOf { it.cardBalanceFen },
+            cardFen = cards.sumOf { it.cardBalanceFen },
+            accountFen = detail?.second ?: 0L,
+            elecFen = cards.sumOf { it.elecBalanceFen },
+        )
+    }
+
+    /**
+     * 收起码（生活页内嵌用法，DESIGN §3.13）：丢掉手上这批码、停掉消费检测，回到 [PayCodeUiState.Idle]。
+     *
+     * 码只在「展开期间」存在——位图立刻回收，下次展开重新取一批，窗口里不留旧码。
+     */
+    fun collapse() {
+        payWatchJob?.cancel()
+        payWatchJob = null
+        loaded = false
+        _bitmaps.value?.qr?.recycle()
+        _bitmaps.value?.barcode?.recycle()
+        _bitmaps.value = null
+        _uiState.value = PayCodeUiState.Idle
     }
 
     // ------------------------------------------------------------------

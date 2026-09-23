@@ -84,6 +84,41 @@ class YktRepository(private val client: YktClient) {
         return load(fresh) ?: throw YktException.Protocol("登录成功但取余额失败")
     }
 
+    /**
+     * 电子账户充值目标与余额（`queryCard?scene=recharge` 的 `accinfo[]` 首项，
+     * DESIGN §3.10 账户口径）。`second` = 电子账户余额（**单位分**，独立钱包；
+     * 2026-09-23 实测 codebarPayinfo 的 ACCOUNT 行只是正式卡镜像，不能当电子账户余额）。
+     * 没有电子账户行返回 null。
+     */
+    suspend fun rechargeAccountDetail(username: String, password: String): Pair<String, Long>? {
+        val token = cachedToken ?: doLogin(username, password)
+        val raw = client.get("/berserker-app/ykt/tsm/queryCard?scene=recharge", token = token)
+        if (raw.httpCode == 401) return null
+        val env = parse(raw)
+        if (env.code != 200) return null
+        return YktModels.electricAccountFrom(env.data)
+    }
+
+    /** 电子账户 type（`<account>-000` 形态）；充值下单的 `yktcard` 参数用。 */
+    suspend fun electricAccountType(username: String, password: String): String? =
+        rechargeAccountDetail(username, password)?.first
+
+    /** 账户列表（`codebarPayinfo` 的 CARD/ACCOUNT 行，DESIGN §3.10 账户口径）。 */
+    suspend fun payAccounts(username: String, password: String): List<YktPayAccount> {
+        suspend fun load(t: String): List<YktPayAccount>? {
+            val raw = client.get("/berserker-app/ykt/tsm/codebarPayinfo", token = t)
+            if (raw.httpCode == 401) return null
+            val env = parse(raw)
+            if (env.code != 200) {
+                throw YktException.Protocol("取账户失败：${env.messageOrBlank.ifBlank { env.code.toString() }}")
+            }
+            return YktModels.payAccountsFrom(env.data)
+        }
+        cachedToken?.let { token -> load(token)?.let { return it } }
+        val fresh = doLogin(username, password)
+        return load(fresh) ?: throw YktException.Protocol("登录成功但取账户失败")
+    }
+
     // ------------------------------------------------------------------
     // 充值（DESIGN §4.19「充值」；用户主动触发，无自动充值）
     // ------------------------------------------------------------------
@@ -109,6 +144,11 @@ class YktRepository(private val client: YktClient) {
         password: String,
         /** 金额（元），两位小数内；服务端口径即元，不乘 100。 */
         yuan: String,
+        /**
+         * 充值目标账户（DESIGN §3.10 账户口径）：`account-000` 形态 = 电子账户；
+         * null = 正式卡（`yktcard` 传 6 位卡号，2026-09-21 实测口径）。
+         */
+        targetAccount: String? = null,
     ): YktRechargeStart {
         val token = cachedToken ?: doLogin(username, password)
 
@@ -133,48 +173,66 @@ class YktRepository(private val client: YktClient) {
 
         // [2] 组表单 + 签名（字段与前端 confirm() 一致；appid/密钥是前端公开常量。
         //     appid 业务字段必须带——缺了服务端会 302 到无 orderid 的错误页，2026-09-21 真机实测）
+        // 下单统一走 `/blade-pay/pay`（paystep=0，2026-09-23 实测）：
+        // thirdOrder 在夜间时段会 500「异常了」（服务端时间闸门），blade-pay 全天可用。
+        // 正式卡 yktcard=6位卡号；电子账户 yktcard=accinfo type（<account>-000 形态）。
+        // ⚠️ blade-pay 下单**不带 yktcard 字段**（带了支付一步反而报「未获取到要充值的卡号」，
+        // 服务端按会话取充值目标——与 thirdOrder 的语义不同）。
         val form = mapOf(
             "feeitemid" to FEE_ITEM_ID_RECHARGE,
-            "appid" to edu.jxslu.schedule.domain.YktRechargeSign.APP_ID_VALUE,
             "tranamt" to yuan,
+            "flag" to "choose",
             "source" to "app",
-            "synjones-auth" to "bearer $token",
-            "yktcard" to account,
+            "paystep" to "0",
             "synAccessSource" to "h5",
         )
-        val signed = edu.jxslu.schedule.domain.YktRechargeSign.signed(form)
-        val raw = client.postFormPlain(
-            "/charge/order/thirdOrder",
-            signed,
-            referer = YktClient.BASE + "/campus-card/",
+        val raw = client.postSigned(
+            "/blade-pay/pay",
+            token,
+            edu.jxslu.schedule.domain.YktRechargeSign.signed(form),
+            referer = YktClient.BASE + "/payment/",
         )
 
-        // [3] 成功形态 = 302 Location = 官方收银台完整 URL（2026-09-21 实测）：
-        //   /payment?orderid=<id>&token=<JWT>（收银台从 URL 读 token/orderid 建立登录态）。
+        // 成功 = JSON 带 orderid（2026-09-23 实测）。302 Location 分支保留作平台改版兜底。
         val location = raw.location
         if (raw.httpCode in 300..399 && location != null) {
             val orderId = orderIdFromUrl(location)
-                // 只暴露 path 与 query 键名（不含值），token 不进任何提示
                 ?: throw YktException.Protocol(
                     "下单重定向未带订单号（跳转至 ${location.substringBefore('?')}，平台可能已改版）",
                 )
-            // [4] 直拉微信：收银台的「立即付款」一步等效于 blade-pay/pay → checkmweb，
-            //     该校微信充值渠道免密（实测），App 内三跳直达 weixin:// 拉起微信支付。
-            payDirect(orderId, token)?.let { return started(it) }
+            payDirect(orderId, token, yktcard = (targetAccount ?: account))?.let { return started(it) }
             return started(YktRechargeOrder.Cashier(orderId = orderId, cashierUrl = location))
         }
-        // 兜底：非 302（平台可能改成 JSON/HTML 应答），从响应体提取
         val orderId = extractOrderId(raw.text, raw.httpCode)
             ?: throw YktException.Protocol(
                 if (raw.httpCode in 200..299) "下单未返回订单号（平台可能已改版）"
                 else "下单失败（HTTP ${raw.httpCode}，平台可能已改版）",
             )
-        return started(
-            YktRechargeOrder.Cashier(
-                orderId = orderId,
-                cashierUrl = buildCashierUrl(orderId, token),
-            ),
-        )
+        // 直拉微信：paystep=2（CAMPUSCARD 渠道免密）→ checkmweb → weixin:// 拉起微信。
+        // 服务端按「会话内最近一次下单」取充值目标，**这里不能传 yktcard**（传了报
+        // 「未获取到要充值的卡号」，2026-09-23 夜间实测——与白天成功形态一致）。
+        //
+        // **paystep=2 被服务端拒绝（「未获取到要充值的卡号」等）= 大概率是平台服务时间闸门**
+        // （2026-09-23 夜间实测：白天同一请求返回 paysubmit，夜间一律 400）。此时**不降级
+        // 跳浏览器**——用户要求：服务时间外就在 App 内提示，不跳网站。
+        val payDirectResult = runCatching { payDirect(orderId, token) }
+        val payAttempt = payDirectResult.getOrNull()
+        if (payAttempt != null) return started(payAttempt)
+        // payDirect 失败分两类：
+        // - 业务拒绝（Protocol，服务端 msg 如「未获取到要充值的卡号」）= 服务时间闸门，
+        //   转 NotInServiceTime，UI 在 App 内提示，**不跳浏览器**（2026-09-23 拍板）；
+        // - 网络/结构异常（null 或 Network）：兜底打开收银台。
+        when (val err = payDirectResult.exceptionOrNull()) {
+            is YktException.Protocol -> throw YktException.NotInServiceTime(
+                "当前不在充值服务时间内：${err.message}",
+            )
+
+            null -> return started(
+                YktRechargeOrder.Cashier(orderId = orderId, cashierUrl = buildCashierUrl(orderId, token)),
+            )
+
+            else -> throw err
+        }
     }
 
     /**
@@ -189,16 +247,19 @@ class YktRepository(private val client: YktClient) {
      *
      * 任一环失败返回 null（上层降级打开收银台 URL，不阻断充值）。
      */
-    private suspend fun payDirect(orderId: String, token: String): YktRechargeOrder.WechatPay? {
-        // [1] 发起支付（免密渠道；若平台日后开启密码，这一步会报错 → 走收银台兜底）
-        val payForm = mapOf(
-            "paytypeid" to PAY_TYPE_ID_WECHAT,
-            "paytype" to PAY_TYPE_WECHAT,
-            "paystep" to "2",
-            "orderid" to orderId,
-            "redirect_url" to "${YktClient.BASE}/payment/?name=result",
-            "synAccessSource" to "h5",
-        )
+    private suspend fun payDirect(orderId: String, token: String, yktcard: String? = null): YktRechargeOrder.WechatPay? {
+        // [1] 发起支付（免密渠道；若平台日后开启密码，这一步会报错 → 走收银台兜底）。
+        // yktcard 必带：服务端按它定位充值目标（正式卡=6位卡号；电子账户=<account>-000 形态），
+        // 缺了报「未获取到要充值的卡号」（2026-09-23 实测）。
+        val payForm = buildMap {
+            put("paytypeid", PAY_TYPE_ID_WECHAT)
+            put("paytype", PAY_TYPE_WECHAT)
+            put("paystep", "2")
+            put("orderid", orderId)
+            yktcard?.let { put("yktcard", it) }
+            put("redirect_url", "${YktClient.BASE}/payment/?name=result")
+            put("synAccessSource", "h5")
+        }
         val payRaw = runCatching {
             client.postFormAuth(
                 "/blade-pay/pay",
@@ -206,9 +267,15 @@ class YktRepository(private val client: YktClient) {
                 referer = YktClient.BASE + "/payment/",
                 token = token,
             )
-        }.getOrNull() ?: return null
+        }.getOrNull() ?: return null   // 网络层失败：交上层走收银台兜底
         val payEnv = runCatching { parse(payRaw) }.getOrNull()
-        if (payEnv?.code != 200) return null
+        if (payEnv == null) return null
+        if (payEnv.code != 200) {
+            // 服务端业务拒绝（夜间时间闸门等）：带原话抛出，上层识别后 App 内提示
+            throw YktException.Protocol(
+                payEnv.messageOrBlank.ifBlank { "支付被拒绝（code=${payEnv.code}）" },
+            )
+        }
         val paysubmit = ((payEnv.data as? JsonObject)?.get("paysubmit") as? JsonPrimitive)?.content
             ?: return null
         // [2] checkmweb（Referer=商户域名，微信硬校验；followRedirects(false) 也无妨——中间页是 200 HTML）

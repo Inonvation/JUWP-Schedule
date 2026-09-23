@@ -54,6 +54,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.YktArrival
 import edu.jxslu.schedule.domain.YktPayment
+import edu.jxslu.schedule.data.ykt.YktCard
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktException
@@ -218,8 +219,8 @@ fun CampusCardSettingsScreen(
                     content = {
                         if (balanceSnapshot != null) {
                             Text(
-                                "卡余额 ¥%.2f".format(balanceSnapshot.totalFen / 100.0) +
-                                    if (balanceSnapshot.elecFen > 0) " · 电费 ¥%.2f".format(balanceSnapshot.elecFen / 100.0) else "",
+                                "正式卡 ¥%.2f".format(balanceSnapshot.cardFen / 100.0) +
+                                    if (balanceSnapshot.accountFen > 0) " · 电子账户 ¥%.2f".format(balanceSnapshot.accountFen / 100.0) else "",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -345,27 +346,33 @@ fun CampusCardSettingsScreen(
     if (showRechargeSheet) {
         RechargeSheet(
             balanceFen = balance?.totalFen,
+            // 电子账户余额来自同一份 queryCard（ACCOUNT 行）；null = 不显示账户切换
+            accountFen = balance?.accountFen,
             onDismiss = { showRechargeSheet = false },
-            onLaunch = { yuan ->
+            onLaunch = { yuan, toElectric ->
                 showRechargeSheet = false
                 busy = true
-                viewModel.recharge(
-                    yuan,
-                    // Activity context 直接启动（不设 NEW_TASK）：微信/浏览器在调用方 task
-                    // 内打开，返回无缝、无 task 重排 → 顶栏不跳动
-                    launchExternal = { intent ->
-                        runCatching {
-                            (context as? Activity)?.startActivity(intent)
-                                ?: context.startActivity(
-                                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            true
-                        }.getOrDefault(false)
-                    },
-                ) { notice ->
-                    busy = false
-                    scope.launch {
-                        snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
+                scope.launch {
+                    val target = if (toElectric) viewModel.electricAccountType() else null
+                    viewModel.recharge(
+                        yuan,
+                        targetAccount = target,
+                        // Activity context 直接启动（不设 NEW_TASK）：微信/浏览器在调用方 task
+                        // 内打开，返回无缝、无 task 重排 → 顶栏不跳动
+                        launchExternal = { intent ->
+                            runCatching {
+                                (context as? Activity)?.startActivity(intent)
+                                    ?: context.startActivity(
+                                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                true
+                            }.getOrDefault(false)
+                        },
+                    ) { notice ->
+                        busy = false
+                        scope.launch {
+                            snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
+                        }
                     }
                 }
             },
@@ -379,6 +386,7 @@ fun CampusCardSettingsScreen(
         CampusPendingConfirmDialog(
             orderFen = watchingForDialog.orderFen,
             onDismiss = { viewModel.dismissPendingConfirm() },
+            onNotPaid = { viewModel.notPaid() },
         )
     }
 
@@ -467,6 +475,16 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     }
 
     /**
+     * 电子账户充值目标（`accinfo` 首项 type，`<account>-000` 形态，DESIGN §3.10）。
+     * 充值弹层选「电子账户」时由调用方取；取不到（平台不支持）返回 null = 走正式卡口径。
+     * suspend：由充值弹层所在协程调用，不自己开作用域。
+     */
+    suspend fun electricAccountType(): String? {
+        val credentials = credentialStore.read() ?: return null
+        return runCatching { repo.electricAccountType(credentials.username, credentials.password) }.getOrNull()
+    }
+
+    /**
      * 拉取余额快照。[notify] 为真时（init 首拉）同时恢复未确认充值的轮询；
      * 手动刷新不需要重复挂轮询——init 已挂、`watchRechargeArrival` 自行收口。
      */
@@ -479,11 +497,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             val saved = credentialStore.read() ?: return
             val cards = repo.cards(saved.username, saved.password)
             if (cards.isNotEmpty()) {
-                _balance.value = PayCodeViewModel.BalanceSnapshot(
-                    cards = cards,
-                    totalFen = cards.sumOf { it.cardBalanceFen },
-                    elecFen = cards.sumOf { it.elecBalanceFen },
-                )
+                _balance.value = buildSnapshot(cards)
             }
         } catch (e: CancellationException) {
             throw e
@@ -493,6 +507,28 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             _balanceLoaded.value = true
             _balanceRefreshing.value = false
         }
+    }
+
+    /**
+     * 由 queryCard 构造余额快照（DESIGN §3.10 账户口径）：正式卡 = card 表字段；
+     * 电子账户 = accinfo[] 首项 balance（独立钱包，2026-09-23 实测 codebarPayinfo
+     * 的 ACCOUNT 行是正式卡镜像，不能用作电子账户余额）。accinfo 取不到当 0。
+     */
+    private suspend fun buildSnapshot(cards: List<YktCard>): PayCodeViewModel.BalanceSnapshot {
+        val credentials = credentialStore.read()
+        val accountFen = if (credentials != null) {
+            runCatching { repo.rechargeAccountDetail(credentials.username, credentials.password) }
+                .getOrNull()?.second ?: 0L
+        } else {
+            0L
+        }
+        return PayCodeViewModel.BalanceSnapshot(
+            cards = cards,
+            totalFen = cards.sumOf { it.cardBalanceFen },
+            cardFen = cards.sumOf { it.cardBalanceFen },
+            accountFen = accountFen,
+            elecFen = cards.sumOf { it.elecBalanceFen },
+        )
     }
 
     init {
@@ -575,11 +611,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             return NoticeFeedback("该账号下没有可用的校园卡账户，无法出示付款码", NoticeTone.Error)
         }
         cards?.let {
-            _balance.value = PayCodeViewModel.BalanceSnapshot(
-                cards = it,
-                totalFen = it.sumOf { c -> c.cardBalanceFen },
-                elecFen = it.sumOf { c -> c.elecBalanceFen },
-            )
+            _balance.value = buildSnapshot(it)
         }
         credentialStore.save(user, pwd)
         prefs.setCampusCardEnabled(true)
@@ -604,6 +636,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      */
     fun recharge(
         yuan: String,
+        /** 电子账户 type（`<account>-000`）；null = 充正式卡。见 [electricAccountType]。 */
+        targetAccount: String? = null,
         launchExternal: (android.content.Intent) -> Boolean,
         onResult: (NoticeFeedback) -> Unit,
     ) {
@@ -615,10 +649,18 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             }
             val placed = try {
                 withTimeoutOrNull(RECHARGE_TIMEOUT_MS) {
-                    repo.rechargeCreate(saved.username, saved.password, yuan)
+                    repo.rechargeCreate(saved.username, saved.password, yuan, targetAccount = targetAccount)
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: YktException.NotInServiceTime) {
+                // 服务时间外：App 内提示，**不打开浏览器、不清等待态**（订单 30 分钟自动失效）
+                prefs.clearPendingRecharge()
+                _arrivalState.value = ArrivalState.Idle
+                _arrivalBaseFen = null
+                _arrivalAccount = null
+                onResult(NoticeFeedback(e.message ?: "当前不在充值服务时间内", NoticeTone.Warning))
+                return@launch
             } catch (e: YktException) {
                 onResult(NoticeFeedback(e.message ?: "下单失败，请稍后重试", NoticeTone.Error))
                 return@launch
@@ -733,11 +775,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         try {
             val cards = repo.cards(username, password)
             if (cards.isNotEmpty()) {
-                _balance.value = PayCodeViewModel.BalanceSnapshot(
-                    cards = cards,
-                    totalFen = cards.sumOf { it.cardBalanceFen },
-                    elecFen = cards.sumOf { it.elecBalanceFen },
-                )
+                _balance.value = buildSnapshot(cards)
                 val arrivedFen = YktArrival.balanceArrival(
                     account = _arrivalAccount,
                     balanceBeforeFen = _arrivalBaseFen,
@@ -848,6 +886,20 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
     fun dismissPendingConfirm() {
         _pendingConfirmVisible.value = false
+    }
+
+    /**
+     * 用户声明「我没有付款」：停到账轮询、清等待态与持久化记录。
+     * 未支付订单由平台 30 分钟自动失效，不扣款（DESIGN §4.19）。
+     */
+    fun notPaid() {
+        watchJob?.cancel()
+        watchJob = null
+        _pendingConfirmVisible.value = false
+        _arrivalState.value = ArrivalState.Idle
+        _arrivalBaseFen = null
+        _arrivalAccount = null
+        viewModelScope.launch { prefs.clearPendingRecharge() }
     }
 
     /**

@@ -20,6 +20,8 @@
 
 **扩展功能**
 
+- 生活页（底栏「生活」）：一卡通余额、付款码、**寝室剩余电量**、充值入口与最近流水收在一页，
+  付款码默认不预取（点一下才显示），电费充值跳缴费平台网页完成；可在「我的 → 通用」关掉这一页
 - 胖乖生活：一键开水、余额查询、订单记录
 - 快趣出行码：输入车号生成骑行二维码，也可在**内置地图**上看附近有哪些车、点一下自动填车号；一键拉起微信扫一扫，扫完返回后自动删除相册中的二维码图片
 - 校园卡付款码：一键出示，喝水吃饭、寝室门禁不再需要水宝宝！支持查看一卡通余额与历史账单，凭证加密存本机，可随时关闭
@@ -73,7 +75,7 @@ app/src/main/java/edu/jxslu/schedule/
   domain/                   # 纯逻辑层：Course / ScheduleCalculator 等，可 JVM 测
   data/local|repo|prefs|jw|qiekj|ykt/   # Room 存储 · 仓库 · DataStore · 教务解析 · 胖乖 · 一卡通
   ui/today|week|me|score|widget|…/      # Compose 界面按模块分包
-scripts/                    # 教务爬虫（Python，本机调试用，见 scripts/README.md）
+scripts/                    # 爬虫脚本（Python，教务 + 缴费平台，本机调试用，见 scripts/README.md）
 DESIGN.md                   # UI 与领域模型规格（改导航/课表模型前必读）
 DEVELOPER.md                # 架构 + 爬取实现 + 换校适配指南
 ```

@@ -361,6 +361,11 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setFloatingNavBar(value) }
     }
 
+    /** 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。 */
+    fun setLifeTabEnabled(value: Boolean) {
+        viewModelScope.launch { repo.setLifeTabEnabled(value) }
+    }
+
     /** 开水双击确认（全局；默认双击防误触）。 */
     fun setWaterRequireDoubleClick(value: Boolean) {
         viewModelScope.launch { repo.setWaterRequireDoubleClick(value) }

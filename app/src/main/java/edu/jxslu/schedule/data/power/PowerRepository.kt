@@ -1,0 +1,223 @@
+package edu.jxslu.schedule.data.power
+
+/**
+ * 电费读表与流水编排（DESIGN §4.24）。
+ *
+ * - 凭证复用一卡通的 `YktCredentialStore`（学号 + 查询密码；2026-09-23 实测两个平台同一密码）；
+ * - token **仅内存缓存**（3599 秒有效期也不落盘），业务码 401 时重登一次；
+ * - 无自动重试：失败直接抛分类异常（[PowerException]），UI 给对应文案。
+ */
+class PowerRepository(private val client: PowerClient) {
+
+    private var cachedToken: String? = null
+
+    /** 登录并换回 access_token（供深链复用）。 */
+    suspend fun login(username: String, password: String): String {
+        val raw = client.login(username, password)
+        if (raw.httpCode == 401) throw PowerException.Credential("学号或查询密码不对")
+        if (raw.httpCode != 200) throw PowerException.Protocol("登录失败：HTTP ${raw.httpCode}")
+        val token = PowerModels.parseToken(raw.text)
+            ?: throw PowerException.Protocol("登录响应里没有 access_token")
+        cachedToken = token
+        return token
+    }
+
+    /** 一次取数：项目详情（含绑定房间）+ 该房间电表读数。 */
+    suspend fun snapshot(username: String, password: String): PowerSnapshot =
+        withToken(username, password) { token ->
+            val detail = client.get(
+                path = "/charge/feeitem/singleFeeitem",
+                token = token,
+                params = mapOf("feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString()),
+            )
+            val feeItem = PowerModels.parseFeeItem(expectOk(detail, "取电费项目详情"))
+            PowerSnapshot(feeItem, readMeter(token, feeItem))
+        }
+
+    /** 电费流水（充值/退款，按时间升序）。 */
+    suspend fun history(username: String, password: String): List<PowerTurnover> =
+        withToken(username, password) { token ->
+            val raw = client.get(
+                path = "/charge/turnover/personal_data",
+                token = token,
+                params = mapOf(
+                    "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
+                    "flag" to "3",
+                ),
+            )
+            PowerModels.parseTurnovers(expectOk(raw, "取电费流水"))
+        }
+
+    /**
+     * 「电费充值」深链：平台前端按 URL 里的 `token` 直接登录，落在房间电费缴费页，
+     * 支付在网页里完成（一期口径，DESIGN §3.13）。
+     */
+    suspend fun payPageUrl(username: String, password: String): String {
+        val token = cachedToken ?: login(username, password)
+        return PowerClient.payPageUrl(token, PowerModels.RECHARGE_FEE_ITEM_ID)
+    }
+
+    /** 「缴费账单」深链：同一平台的账单页（按月总支出）。 */
+    suspend fun billPageUrl(username: String, password: String): String {
+        val token = cachedToken ?: login(username, password)
+        return PowerClient.billPageUrl(token)
+    }
+
+    /**
+     * 电费下单（DESIGN §4.24「电费充值」，2026-09-23 实测）。
+     * `feeitemid=181 + tranamt + paystep=0`，签名口径见 [PowerPaySign]。
+     * 返回订单号与支付有效期；渠道列表用 [channels] 单独取（`payList` 也随下单返回）。
+     */
+    suspend fun createOrder(username: String, password: String, yuan: String): PowerOrder =
+        withToken(username, password) { token ->
+            val raw = client.postSigned(
+                "/blade-pay/pay",
+                token,
+                PowerPaySign.signed(
+                    mapOf(
+                        "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
+                        "tranamt" to yuan,
+                        "flag" to "choose",
+                        "source" to "app",
+                        "paystep" to "0",
+                        "synAccessSource" to "h5",
+                    ),
+                ),
+            )
+            expectOk(raw, "电费下单")
+            PowerPayModels.orderFrom(raw.text)
+                ?: throw PowerException.Protocol("下单响应里没有 orderid（平台可能已改版）")
+        }
+
+    /** 渠道列表（`payList`；生活页用 `ACCOUNT` 行展示「电子账户」）。 */
+    suspend fun channels(username: String, password: String): List<PowerPayChannel> =
+        withToken(username, password) { token ->
+            val raw = client.postSigned("/blade-pay/pay", token, PowerPaySign.signed(channelProbeForm()))
+            expectOk(raw, "取支付渠道")
+            PowerPayModels.channelsFrom(raw.text)
+        }
+
+    private fun channelProbeForm() = mapOf(
+        "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
+        "tranamt" to "0.01",
+        "flag" to "choose",
+        "source" to "app",
+        "paystep" to "0",
+        "synAccessSource" to "h5",
+    )
+
+    /**
+     * 第一步支付：`paystep=2` + 电子账户渠道 → 服务端返回 `passwordMap`
+     * （键 = uuid，值 = 乱序数字串）与 `ccctype`。UI 用它渲染密码键盘。
+     */
+    suspend fun payChallenge(
+        username: String,
+        password: String,
+        orderId: String,
+    ): PowerPayChallenge = withToken(username, password) { token ->
+        val raw = client.postSigned(
+            "/blade-pay/pay",
+            token,
+            PowerPaySign.signed(
+                mapOf(
+                    "orderid" to orderId,
+                    "paystep" to "2",
+                    "paytype" to "ACCOUNT",
+                    "paytypeid" to "59",
+                    "synAccessSource" to "h5",
+                ),
+            ),
+        )
+        expectOk(raw, "发起电子账户支付")
+        PowerPayModels.challengeFrom(raw.text)
+            ?: throw PowerException.Protocol("支付响应里没有 passwordMap（平台可能已改版）")
+    }
+
+    /**
+     * 第二步支付：带 6 位密文（`passwordMap[uuid][i]` 拼接）+ uuid + ccctype。
+     * `code=200` = 受理成功（由查单确认 status=1）；密码错返回 [PowerPayResult.Rejected]。
+     */
+    suspend fun payConfirm(
+        username: String,
+        password: String,
+        challenge: PowerPayChallenge,
+        /** 6 位密文（已按 `passwordMap[uuid]` 乱序表替换，见 [PowerPayChallenge.cipherOf]。）。 */
+        cipher: String,
+    ): PowerPayResult = withToken(username, password) { token ->
+        val uuid = challenge.passwordMap.keys.firstOrNull()
+            ?: throw PowerException.Protocol("支付响应缺 uuid")
+        val form = buildMap {
+            put("orderid", challenge.orderId)
+            put("paystep", "2")
+            put("paytype", "ACCOUNT")
+            put("paytypeid", "59")
+            put("password", cipher)
+            put("uuid", uuid)
+            challenge.accountType?.let { put("ccctype", it) }
+            put("synAccessSource", "h5")
+        }
+        val raw = client.postSigned("/blade-pay/pay", token, PowerPaySign.signed(form))
+        val code = PowerPayModels.codeOf(raw.text)
+        when (code) {
+            200 -> PowerPayResult.Accepted
+            else -> PowerPayResult.Rejected(
+                PowerPayModels.messageOf(raw.text) ?: "支付失败（code=${code ?: raw.httpCode}）",
+            )
+        }
+    }
+
+    /** 查单（`order.status`：0 待支付 / 1 已完成）。 */
+    suspend fun orderStatus(username: String, password: String, orderId: String): Int? =
+        withToken(username, password) { token ->
+            val raw = client.get(
+                "/charge/pay/getpayinfo",
+                token,
+                mapOf("orderid" to orderId, "userAgent" to "android"),
+            )
+            expectOk(raw, "查电费订单")
+            PowerPayModels.orderStatusFrom(raw.text)
+        }
+
+    /** 读电表：`feeitemid` / `type=IEC` / `level` / 场景三键缺一不可（缺了平台只回 500 未知异常）。 */
+    private suspend fun readMeter(token: String, feeItem: PowerFeeItem): PowerMeter {
+        val scene = feeItem.scene
+        if (scene.isEmpty() || feeItem.room == null) {
+            throw PowerException.Protocol("项目没给绑定房间，读不了表")
+        }
+        val form = mutableMapOf(
+            "feeitemid" to feeItem.id.toString(),
+            "type" to "IEC",
+            "level" to scene.size.toString(),
+        )
+        scene.forEach { form[it.code] = it.id }
+        val raw = client.postForm("/charge/feeitem/getThirdData", token, form)
+        return PowerModels.parseMeter(expectOk(raw, "读电表"), System.currentTimeMillis())
+    }
+
+    /** 业务码 401 = token 过期：重登一次再跑（只重试一次，再失败就抛出去）。 */
+    private suspend fun <T> withToken(
+        username: String,
+        password: String,
+        block: suspend (String) -> T,
+    ): T {
+        val token = cachedToken ?: login(username, password)
+        return try {
+            block(token)
+        } catch (e: PowerException.Credential) {
+            block(login(username, password))
+        }
+    }
+
+    /** HTTP 与业务码双关：401 归凭证类，其余非 200 归协议类。 */
+    private fun expectOk(raw: PowerClient.Raw, what: String): String {
+        if (raw.httpCode == 401) throw PowerException.Credential("登录状态已失效")
+        if (raw.httpCode != 200) throw PowerException.Protocol("$what：HTTP ${raw.httpCode}")
+        val code = PowerModels.codeOf(raw.text)
+        if (code == 401) throw PowerException.Credential("登录状态已失效")
+        if (code != 200) {
+            val msg = PowerModels.messageOf(raw.text).orEmpty()
+            throw PowerException.Protocol("$what：code=$code $msg".trim())
+        }
+        return raw.text
+    }
+}

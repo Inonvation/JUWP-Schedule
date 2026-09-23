@@ -1,6 +1,9 @@
 package edu.jxslu.schedule.ui.campus
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,31 +43,70 @@ import edu.jxslu.schedule.domain.YktPayment
 @Composable
 fun RechargeSheet(
     balanceFen: Long?,
+    /**
+     * 电子账户余额（分）；null = 未知/不支持。非 null 时显示目标账户选择
+     * （默认正式卡，DESIGN §3.10 账户口径）。
+     */
+    accountFen: Long? = null,
     onDismiss: () -> Unit,
-    onLaunch: (String) -> Unit,
+    /** [toElectricAccount] = true 表示充到电子账户（`yktcard` 走 accinfo type）。 */
+    onLaunch: (yuan: String, toElectricAccount: Boolean) -> Unit,
+    /** 预选电子账户（生活页「去充值」入口联动，DESIGN §4.24）。 */
+    initiallyElectric: Boolean = false,
 ) {
     var amount by rememberSaveable { mutableStateOf("") }
     var confirmStep by remember { mutableStateOf(false) }
+    var toElectric by rememberSaveable { mutableStateOf(initiallyElectric) }
 
     val parsed = amount.toBigDecimalOrNull()
     val valid = parsed != null && parsed >= java.math.BigDecimal("0.01") &&
         parsed <= java.math.BigDecimal("500.00")
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        // verticalScroll + imePadding：键盘弹起时 sheet 内容随键盘高度上移且可滚，
+        // 「下一步」不再被输入框/键盘挡住（2026-09-23 反馈；manifest 已是 adjustResize）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text("校园卡充值", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            balanceFen?.let {
-                Text(
-                    "当前卡余额 ¥%.2f".format(it / 100.0),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
+            if (accountFen == null) {
+                balanceFen?.let {
+                    Text(
+                        "当前卡余额 ¥%.2f".format(it / 100.0),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
+            } else {
+                // 目标账户选择（DESIGN §3.10）：正式卡 = 食堂/门禁；电子账户 = 电费等线上缴费
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.FilterChip(
+                        selected = !toElectric,
+                        onClick = { toElectric = false },
+                        label = {
+                            Text(
+                                balanceFen?.let { "正式卡 ¥%.2f".format(it / 100.0) } ?: "正式卡",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        },
+                    )
+                    androidx.compose.material3.FilterChip(
+                        selected = toElectric,
+                        onClick = { toElectric = true },
+                        label = {
+                            Text(
+                                "电子账户 ¥%.2f".format(accountFen / 100.0),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        },
+                    )
+                }
             }
             androidx.compose.material3.OutlinedTextField(
                 value = amount,
@@ -80,7 +122,12 @@ fun RechargeSheet(
                 supportingText = {
                     Text(
                         when {
-                            amount.isEmpty() -> "0.01 – 500.00 元；将直接拉起微信支付"
+                            amount.isEmpty() ->
+                                if (toElectric) {
+                                    "0.01 – 500.00 元；电子账户用于电费等线上缴费"
+                                } else {
+                                    "0.01 – 500.00 元；将直接拉起微信支付"
+                                }
                             !valid -> "金额需在 0.01 – 500.00 元之间"
                             else -> "确认后在微信内完成支付"
                         },
@@ -104,7 +151,7 @@ fun RechargeSheet(
                 onClick = { confirmStep = true },
                 enabled = valid,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("下一步") }
+            ) { Text(if (toElectric) "立即支付" else "下一步") }
         }
     }
 
@@ -114,16 +161,22 @@ fun RechargeSheet(
             title = { Text("确认充值金额？") },
             text = {
                 Text(
-                    "将为校园卡账户充值 ¥$amount。\n\n" +
-                        "点击「去支付」会直接拉起微信（微信充值渠道），在微信内确认支付；" +
-                        "未支付的订单会自动失效，不会扣款。",
+                    if (toElectric) {
+                        "将为电子账户充值 ¥$amount。\n\n" +
+                            "电子账户用于电费等线上缴费。点击「立即支付」直接拉起微信支付，" +
+                            "在微信内确认；未支付的订单会自动失效，不会扣款。"
+                    } else {
+                        "将为校园卡账户充值 ¥$amount。\n\n" +
+                            "点击「去支付」会直接拉起微信（微信充值渠道），在微信内确认支付；" +
+                            "未支付的订单会自动失效，不会扣款。"
+                    },
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     confirmStep = false
-                    onLaunch(amount)
-                }) { Text("去支付") }
+                    onLaunch(amount, toElectric)
+                }) { Text(if (toElectric) "立即支付" else "去支付") }
             },
             dismissButton = {
                 TextButton(onClick = { confirmStep = false }) { Text("取消") }
@@ -174,19 +227,27 @@ fun CampusArrivalDialog(
 fun CampusPendingConfirmDialog(
     orderFen: Long,
     onDismiss: () -> Unit,
+    /** 用户声明「我没有付款」：清等待态与轮询（未支付订单 30 分钟自动失效）。 */
+    onNotPaid: (() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("支付完成，正在确认到账") },
+        title = { Text("正在确认充值结果") },
         text = {
             Text(
-                "已收到 ¥%.2f 的充值支付，校园卡系统余额更新有延迟（常见数分钟）。\n\n".format(orderFen / 100.0) +
-                    "App 正在每 5 秒自动检测，确认到账后会立即提示；您可以先做别的，" +
-                    "关闭本提示不影响检测。",
+                "已发起 ¥%.2f 的充值订单。若你已在微信完成支付，余额更新常有数分钟延迟，".format(orderFen / 100.0) +
+                    "App 正在每 5 秒自动检测，确认到账后立即提示。\n\n" +
+                    "如果你没有付款（在微信里取消或直接返回），点「我没有付款」，" +
+                    "未支付订单 30 分钟后自动失效，不会扣款。",
             )
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("知道了") }
+            TextButton(onClick = onDismiss) { Text("我已付款，等通知") }
+        },
+        dismissButton = {
+            if (onNotPaid != null) {
+                TextButton(onClick = onNotPaid) { Text("我没有付款") }
+            }
         },
     )
 }

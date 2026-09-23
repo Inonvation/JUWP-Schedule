@@ -115,8 +115,12 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 、`ScheduleBackgroundTest`（背景图：默认值/模糊档位到解码尺寸/文件名白名单）
 、`BikeNearbyTest`（附近单车：响应容错/聚簇/距离/状态推导）、
 `KqcxBikeClientTest`（失败分类：超时与网络不可达不能混）、
-`Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）
-等 53 个测试类。
+`Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）、
+`PowerModelsTest`（电费响应解析：项目/读数/流水 + 500 与 401 外壳 + 剩余电量键回退）、
+`LifeFeedTest`（一卡通与电费流水混排：排序/限量/同刻稳定/解析失败沉底）、
+`DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
+`PowerClientUrlTest`（缴费页/账单页深链形态与 feeitemid 钉子）
+等 57 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
@@ -305,13 +309,15 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 ## 架构（改代码前对齐）
 
 ```
-MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity 承载二级页（含成绩查询 SCORES、
+MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开，DESIGN §3.13）+ 路由 jw_import；
+               SubpageActivity 承载二级页（含成绩查询 SCORES、
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score（纯逻辑，可 JVM 测）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
                  + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
+                 + LifeFeed（一卡通与电费流水混排，§3.13）
 data/local/      Room v8：courses / time_slots / semester_config / timetables / scores
                  / detect_baselines / detect_reports / ykt_turnovers / notes / homework
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
@@ -323,7 +329,9 @@ data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
 data/kqcx/       快趣出行「附近车辆」接口（DESIGN §4.23；无鉴权、无凭证、只发坐标）
-ui/today|week|me|water|campus|jwvw|score|timetable|common|theme|widget|ebike|notes|homework
+data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIGN §4.24；凭证复用一卡通的
+                 学号 + 查询密码；token 仅内存、无日志拦截器）
+ui/today|week|life|me|water|campus|jwvw|score|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -351,6 +359,23 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
   token 只存内存不落盘；付款码不进日志/剪贴板/相册；凭证交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）
   调用链（11 步顺序不可乱）见 DESIGN §4.10
 
+## 生活页（一卡通 · 寝室电费，DESIGN §3.13/§4.24）
+
+- 底栏第三项「生活」，开关 `DisplayPrefs.lifeTabEnabled` **默认开**（我的 → 通用 → 生活页）；
+  关掉后底栏回到 3 项，页内关掉时自动退回今日页。今日页那张「水宝宝一卡通卡」**暂时保留**
+  （付款码最短路径），是否合并待用户拍板。
+- **码不预取**：`PayCodeViewModel` 初值 `Idle`（占位条），点击才 `load()`，收起调 `collapse()`
+  （丢码 + 回收位图 + 停消费检测）。展开期间 `FLAG_SECURE` + 亮度拉满，收起即恢复。
+  付款码页与生活页共用这一份 VM，别再写第二套取码逻辑。
+- **一处凭证**：电费登录 = 一卡通的学号 + 查询密码（`YktCredentialStore`，2026-09-23 实测
+  两个平台同一密码）。一关了之：凭证清掉时电费卡同样显示「未开启凭证」。
+- **读表参数缺一不可**：`feeitemid=181` / `type=IEC` / `level=3` / campus+building+room；
+  少一个平台只回 `code=500「未知异常」`（HTTP 200），**业务码 401 也藏在 HTTP 200 里**，
+  必须读 body 的 `code` 才能触发重登。
+- **电费充值一期只跳网页**：`PowerClient.pageUrl` 把现登 token 放进 URL（前端按 `token`
+  直接登录），`#/pays?id=181` 缴费页、`#/bill` 账单页；App 内下单（`thirdOrder`）留二期。
+  无效路由会被前端打回首页，新增深链前先实测。
+
 ## 沟通与 DoD
 
 - 与用户中文交流；少形容词，多可验证结论
@@ -366,7 +391,11 @@ P6 打磨 — **进行中**（2026-09-21：笔记·课件与作业落地，含�
 选图与滑块调参需真机点验。2026-09-23：免费时长提醒由 App 通知改系统日历，
 见 DESIGN §3.9，已在 Redmi K70 的小米日历验证事件与两条提醒落库；同日修复
 「进二级页后挂后台、从桌面图标回来落到今日页」的导航错乱，见 DESIGN §3.1，
-已在 Redmi K70 验证：二级页实例 id 不变、录屏无今日页中间帧）
+已在 Redmi K70 验证：二级页实例 id 不变、录屏无今日页中间帧。2026-09-23（同日）：
+生活页落地（底栏第 4 项 + 寝室电费），见 DESIGN §3.13/§4.24，脚本侧电费链路已实测、
+App 侧 615 条单测全绿，Redmi K70 实测：底栏 4 项、电费读数 55.37 度（9A101）、
+点占位条取码成功且展开期间 FLAG_SECURE 生效（截图为全黑）、收起后恢复、
+生活页开关关掉后底栏回 3 项；**电费充值/缴费账单深链（跳浏览器）与消费流水页待人工点验**）
 
 ## 仓库与发版
 

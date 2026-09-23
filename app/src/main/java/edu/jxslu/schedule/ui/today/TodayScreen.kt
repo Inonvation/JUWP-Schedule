@@ -511,11 +511,15 @@ fun TodayScreen(
         val activityContext = LocalContext.current
         edu.jxslu.schedule.ui.campus.RechargeSheet(
             balanceFen = campusBalance?.totalFen,
+            accountFen = campusBalance?.accountFen,
             onDismiss = { showCampusRechargeSheet = false },
-            onLaunch = { yuan ->
+            onLaunch = { yuan, toElectric ->
                 showCampusRechargeSheet = false
-                campusViewModel.recharge(
-                    yuan,
+                scope.launch {
+                    val target = if (toElectric) campusViewModel.electricAccountType() else null
+                    campusViewModel.recharge(
+                        yuan,
+                        targetAccount = target,
                     // Activity context 直接启动（不设 NEW_TASK）：返回无缝、无顶栏跳动
                     launchExternal = { intent ->
                         runCatching {
@@ -526,9 +530,10 @@ fun TodayScreen(
                             true
                         }.getOrDefault(false)
                     },
-                ) { notice ->
-                    scope.launch {
-                        snackbar.showSnackbar(edu.jxslu.schedule.ui.common.AppNoticeVisuals(notice.text, tone = notice.tone))
+                    ) { notice ->
+                        scope.launch {
+                            snackbar.showSnackbar(edu.jxslu.schedule.ui.common.AppNoticeVisuals(notice.text, tone = notice.tone))
+                        }
                     }
                 }
             },
@@ -565,6 +570,7 @@ fun TodayScreen(
         edu.jxslu.schedule.ui.campus.CampusPendingConfirmDialog(
             orderFen = campusWatching.orderFen,
             onDismiss = { campusViewModel.dismissPendingConfirm() },
+            onNotPaid = { campusViewModel.notPaid() },
         )
     }
     // 从微信返回的瞬间立即补检一轮（充值从今日页发起的场景）

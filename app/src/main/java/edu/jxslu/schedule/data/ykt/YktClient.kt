@@ -129,6 +129,13 @@ class YktClient private constructor(private val http: OkHttpClient) {
             }
         }
 
+    /**
+     * POST 签名表单（`/blade-pay/pay` 下单）。鉴权走 **header**（与 [postFormAuth] 同款），
+     * 但不设 Referer（由调用方按场景给）。
+     */
+    suspend fun postSigned(path: String, token: String, form: Map<String, String>, referer: String): Raw =
+        postFormAuth(path, form, referer, token)
+
     private suspend fun postFormInternal(
         path: String,
         form: Map<String, String>,

@@ -1,0 +1,339 @@
+package edu.jxslu.schedule.ui.life
+
+import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.local.JuwDatabase
+import edu.jxslu.schedule.data.local.YktTurnoverEntity
+import edu.jxslu.schedule.data.power.PowerException
+import edu.jxslu.schedule.data.power.PowerPayChallenge
+import edu.jxslu.schedule.data.power.PowerPayResult
+import edu.jxslu.schedule.data.power.PowerModels
+import edu.jxslu.schedule.data.power.PowerRepository
+import edu.jxslu.schedule.data.power.PowerSnapshot
+import edu.jxslu.schedule.data.power.PowerTurnover
+import edu.jxslu.schedule.data.ykt.YktCredentialStore
+import edu.jxslu.schedule.data.ykt.YktRepository
+import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
+import edu.jxslu.schedule.domain.LifeFeed
+import edu.jxslu.schedule.domain.LifeFeedItem
+import edu.jxslu.schedule.domain.LifeFeedKind
+import edu.jxslu.schedule.ui.common.NoticeTone
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/**
+ * 生活页状态（DESIGN §3.13）。
+ *
+ * 电费卡片的数据全在这里；一卡通余额与付款码复用 [edu.jxslu.schedule.ui.campus] 的
+ * ViewModel（余额快照、取码、充值、到账判定都在那边，本页只做入口与展示）。
+ */
+data class PowerCardState(
+    val loading: Boolean = false,
+    /**
+     * 上次成功读数。刷新失败时**保留**它，卡上照旧显示上次的电量与时刻，
+     * 另起一行报错——不给一个看不出新旧的数字（DESIGN §3.13）。
+     */
+    val snapshot: PowerSnapshot? = null,
+    val error: String? = null,
+    /** 凭证没配置（或已随一卡通关闭被清除）：指引去「我的 → 校园卡」开启。 */
+    val noCredentials: Boolean = false,
+)
+
+/** 生活页 UI 状态。 */
+data class LifeUiState(
+    val power: PowerCardState = PowerCardState(),
+    val feed: List<LifeFeedItem> = emptyList(),
+)
+
+/** 一次性事件。 */
+sealed interface LifeEvent {
+    data class Notice(val text: String, val tone: NoticeTone) : LifeEvent
+}
+
+class LifeViewModel(
+    private val powerRepo: PowerRepository,
+    private val yktRepo: YktRepository,
+    private val credentialStore: YktCredentialStore,
+    private val db: JuwDatabase,
+) : ViewModel() {
+
+    private val syncer = YktTurnoverSyncer(yktRepo, db)
+
+    private val _power = MutableStateFlow(PowerCardState())
+
+    private val _powerTurnovers = MutableStateFlow<List<PowerTurnover>>(emptyList())
+
+    private val _events = Channel<LifeEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+    /** 本地一卡通流水（Room 响应式，同步后自动刷新）。 */
+    private val campusFeed = db.yktTurnoverDao().observeRecent(RECENT_ROOM_ROWS)
+        .map { rows -> rows.map { it.toFeedItem() } }
+
+    val uiState: StateFlow<LifeUiState> =
+        combine(_power, _powerTurnovers, campusFeed) { power, powerRows, campus ->
+            LifeUiState(
+                power = power,
+                feed = LifeFeed.merge(campus, powerRows.map { it.toFeedItem() }),
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LifeUiState())
+
+    /** 进页刷新：电费读数 + 一卡通流水增量同步（互不牵连，各自失败各自提示）。 */
+    fun refreshAll() {
+        refreshPower()
+        syncTurnovers()
+    }
+
+    /** 电费读数 + 电费流水（点卡片、右上刷新、进页都走它）。 */
+    fun refreshPower() {
+        val credentials = credentialStore.read()
+        if (credentials == null) {
+            _power.value = PowerCardState(noCredentials = true)
+            _powerTurnovers.value = emptyList()
+            return
+        }
+        _power.update { it.copy(loading = true, error = null, noCredentials = false) }
+        viewModelScope.launch {
+            try {
+                val snapshot = powerRepo.snapshot(credentials.username, credentials.password)
+                _power.update { it.copy(loading = false, snapshot = snapshot, error = null) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PowerException.Credential) {
+                _power.update {
+                    it.copy(loading = false, error = "${e.message}。若密码已改，请在「我的 → 校园卡」重新验证")
+                }
+            } catch (e: PowerException) {
+                _power.update { it.copy(loading = false, error = e.message ?: "电费读取失败") }
+            } catch (e: Exception) {
+                _power.update { it.copy(loading = false, error = "电费读取失败：${e.message ?: "未知错误"}") }
+            }
+            // 流水是附加信息：取不到不影响读数，也不额外打扰用户
+            runCatching { powerRepo.history(credentials.username, credentials.password) }
+                .onSuccess { _powerTurnovers.value = it }
+        }
+    }
+
+    /** 一卡通流水增量同步（同步成功即由 Room 流刷新列表）。 */
+    fun syncTurnovers() {
+        val credentials = credentialStore.read() ?: return
+        viewModelScope.launch {
+            try {
+                syncer.sync(credentials.username, credentials.password, maxPages = 1)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 本地已有流水照常展示，网络问题不打扰（DESIGN §4.19 L3 同款口径）
+            }
+        }
+    }
+
+    /**
+     * 「电费充值」：把带登录态的缴费页深链交给调用方打开（一期口径：支付在网页里完成）。
+     */
+    fun openPowerPayPage(onReady: (String) -> Unit) = openPlatformPage(
+        what = "电费充值",
+        url = { user, pwd -> powerRepo.payPageUrl(user, pwd) },
+        onReady = onReady,
+    )
+
+    /** 「缴费账单」：同一平台的账单页深链。 */
+fun openPowerBillPage(onReady: (String) -> Unit) = openPlatformPage(
+        what = "缴费账单",
+        url = { user, pwd -> powerRepo.billPageUrl(user, pwd) },
+        onReady = onReady,
+    )
+
+    // ------------------------------------------------------------------
+    // 电费充值（DESIGN §4.24：App 内下单 + 安全键盘密码，2026-09-23 打通）
+    // ------------------------------------------------------------------
+
+    /** 一次充值流程的状态。 */
+    data class PowerRechargeUi(
+        val step: Step = Step.Amount,
+        /** 下单成功的订单。 */
+        val orderId: String? = null,
+        /** 密码键盘挑战（paystep=2 的 passwordMap + ccctype）。 */
+        val challenge: PowerPayChallenge? = null,
+        val busy: Boolean = false,
+        val error: String? = null,
+    ) {
+        enum class Step { Amount, Password, Accepted }
+    }
+
+    private val _powerRecharge = MutableStateFlow(PowerRechargeUi())
+    val powerRecharge: StateFlow<PowerRechargeUi> = _powerRecharge.asStateFlow()
+
+    /** 下单（金额已由弹层校验过）。 */
+    fun placePowerOrder(yuan: String) {
+        val credentials = credentialStore.read() ?: run {
+            _events.trySend(LifeEvent.Notice("请先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning))
+            return
+        }
+        _powerRecharge.value = PowerRechargeUi(step = PowerRechargeUi.Step.Amount, busy = true)
+        viewModelScope.launch {
+            try {
+                val order = powerRepo.createOrder(credentials.username, credentials.password, yuan)
+                _powerRecharge.value = _powerRecharge.value.copy(orderId = order.orderId, busy = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PowerException) {
+                _powerRecharge.value = _powerRecharge.value.copy(busy = false, error = e.message)
+            } catch (e: Exception) {
+                _powerRecharge.value = _powerRecharge.value.copy(
+                    busy = false,
+                    error = "下单失败：${e.message ?: "未知错误"}",
+                )
+            }
+        }
+    }
+
+    /** 拿密码键盘挑战（进入密码步骤时调用）。 */
+    fun loadPayChallenge() {
+        val credentials = credentialStore.read() ?: return
+        val orderId = _powerRecharge.value.orderId ?: return
+        _powerRecharge.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val challenge = powerRepo.payChallenge(credentials.username, credentials.password, orderId)
+                _powerRecharge.value = _powerRecharge.value.copy(
+                    step = PowerRechargeUi.Step.Password,
+                    challenge = challenge,
+                    busy = false,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _powerRecharge.value = _powerRecharge.value.copy(
+                    busy = false,
+                    error = "发起支付失败：${e.message ?: "未知错误"}",
+                )
+            }
+        }
+    }
+
+    /**
+     * 提交 6 位数字密码：先按 [PowerPayChallenge.cipherOf] 换算成乱序密文再发。
+     * **任何失败（密码错/余额不足/网络）都停在密码步并显示服务端原话**——
+     * 绝不进入「已受理」（2026-09-23 实机纠错：此前盲报成功）。
+     */
+    fun submitPowerPassword(digits: String) {
+        val credentials = credentialStore.read() ?: return
+        val challenge = _powerRecharge.value.challenge
+        if (challenge == null) {
+            _powerRecharge.update { it.copy(error = "支付会话已失效，请重新下单") }
+            return
+        }
+        val cipher = challenge.cipherOf(digits)
+        if (cipher == null) {
+            _powerRecharge.update { it.copy(error = "键盘协议异常，请取消后重试") }
+            return
+        }
+        _powerRecharge.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            val result = runCatching {
+                powerRepo.payConfirm(credentials.username, credentials.password, challenge, cipher)
+            }.getOrElse { e -> PowerPayResult.Rejected(e.message ?: "支付失败") }
+            when (result) {
+                is PowerPayResult.Accepted -> {
+                    _powerRecharge.update { it.copy(step = PowerRechargeUi.Step.Accepted, busy = false) }
+                    refreshPower()
+                }
+
+                is PowerPayResult.Rejected -> _powerRecharge.update {
+                    it.copy(busy = false, error = result.message ?: "支付失败，请重试")
+                }
+            }
+        }
+    }
+
+    /** 关闭/取消充值弹层（未支付订单 30 分钟自动失效，DESIGN §4.24）。 */
+    fun dismissPowerRecharge() {
+        _powerRecharge.value = PowerRechargeUi()
+    }
+
+    /** 打开平台页面：先拿深链（顺带保证有 token），失败给一次性提示。 */
+    private fun openPlatformPage(
+        what: String,
+        url: suspend (String, String) -> String,
+        onReady: (String) -> Unit,
+    ) {
+        val credentials = credentialStore.read()
+        if (credentials == null) {
+            _events.trySend(LifeEvent.Notice("请先在「我的 → 校园卡」开启一卡通，再用${what}", NoticeTone.Warning))
+            return
+        }
+        viewModelScope.launch {
+            try {
+                onReady(url(credentials.username, credentials.password))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PowerException) {
+                _events.send(LifeEvent.Notice(e.message ?: "${what}打不开", NoticeTone.Error))
+            } catch (e: Exception) {
+                _events.send(LifeEvent.Notice("${what}打不开：${e.message ?: "未知错误"}", NoticeTone.Error))
+            }
+        }
+    }
+
+    private fun YktTurnoverEntity.toFeedItem(): LifeFeedItem {
+        val time = jndatetimeStr.take(16)
+        val title = if (income) {
+            turnoverType.ifBlank { "充值" }
+        } else {
+            locationName?.takeIf { it.isNotBlank() } ?: turnoverType.ifBlank { "消费" }
+        }
+        return LifeFeedItem(
+            kind = LifeFeedKind.CampusCard,
+            epochMs = jndatetime,
+            timeText = time,
+            title = title,
+            subtitle = if (time.isBlank()) "一卡通" else "一卡通 · $time",
+            amountFen = tranamtFen,
+            income = income,
+        )
+    }
+
+    private fun PowerTurnover.toFeedItem(): LifeFeedItem {
+        val time = dateText.take(16)
+        val room = PowerModels.roomLabelOf(room)
+        return LifeFeedItem(
+            kind = LifeFeedKind.Power,
+            epochMs = epochMs,
+            timeText = time,
+            title = if (refund) "电费退款" else "电费充值",
+            subtitle = listOfNotNull(room, time.takeIf { it.isNotBlank() }).joinToString(" · ")
+                .ifBlank { "寝室电费" },
+            amountFen = amountFen,
+            income = amountFen >= 0,
+        )
+    }
+
+    companion object {
+        /** 本地取几条用于混排：多取一条，防止电费与一卡通时间交织时最新一条被截掉。 */
+        private const val RECENT_ROOM_ROWS = LifeFeed.DEFAULT_LIMIT + 1
+
+        fun Factory(context: Context) = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = LifeViewModel(
+                Graph.powerRepository(context.applicationContext),
+                Graph.yktRepository(context.applicationContext),
+                Graph.yktCredentialStore(context.applicationContext),
+                JuwDatabase.get(context.applicationContext),
+            ) as T
+        }
+    }
+}

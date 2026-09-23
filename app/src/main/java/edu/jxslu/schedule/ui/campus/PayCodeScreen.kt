@@ -150,6 +150,9 @@ fun PayCodeScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             when (val s = state) {
+                // 未取码只出现在生活页内嵌用法（§3.13）；本页进页即 load()，走到这里说明
+                // 是同一份 ViewModel 被别处收起过——按加载中渲染，紧接着的 load() 会给出真状态
+                is PayCodeUiState.Idle -> LoadingBody()
                 is PayCodeUiState.Loading -> LoadingBody()
                 is PayCodeUiState.Error -> ErrorBody(s, onRetry = {
                     haptics.tap()
@@ -204,8 +207,8 @@ private fun BalanceRow(
                 )
             } else {
                 Text(
-                    text = "卡余额 ¥%.2f".format(balance.totalFen / 100.0) +
-                        if (balance.elecFen > 0) " · 电费 ¥%.2f".format(balance.elecFen / 100.0) else "",
+                    text = "正式卡 ¥%.2f".format(balance.cardFen / 100.0) +
+                        if (balance.accountFen > 0) " · 电子账户 ¥%.2f".format(balance.accountFen / 100.0) else "",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
