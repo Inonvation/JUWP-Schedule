@@ -54,6 +54,7 @@ import edu.jxslu.schedule.domain.buildTodayState
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.PermissionRow
 import edu.jxslu.schedule.ui.common.SettingsIconBadge
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.courseColor
@@ -183,7 +184,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
                 subtitle = "小组件在上下课时刻自动更新；不开也能用，开启后刷新更及时",
             ) {
                 Spacer(Modifier.height(4.dp))
-                PermRow(
+                PermissionRow(
                     title = "忽略电池优化",
                     detail = "防止系统冻结后台刷新；不同手机叫「电池优化白名单 / 省电策略无限制」",
                     granted = caps.batteryWhitelisted,
@@ -192,7 +193,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
                     onClick = { WidgetCapabilities.jumpBatteryOptimization(context) },
                 )
                 WidgetEntryDivider()
-                PermRow(
+                PermissionRow(
                     title = "允许自启动",
                     detail = "开机与被杀后能自行恢复刷新；在厂商设置里找「自启动 / 允许后台运行」",
                     granted = null,
@@ -317,67 +318,6 @@ private fun AddRow(
             ) { Text("添加") }
         }
         // 桌面不支持应用内 pin（DESIGN §3.6）：按钮隐藏，只留分区副标题里的手动引导
-    }
-}
-
-/** 权限行：图标 + 标题/说明 + 状态徽标 + 动作按钮。 */
-@Composable
-private fun PermRow(
-    title: String,
-    detail: String,
-    granted: Boolean?,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    actionText: String,
-    onClick: () -> Unit,
-) {
-    val haptics = rememberAppHaptics()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        SettingsIconBadge(icon = icon)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                if (granted != null) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (granted) "已开启" else "未开启",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (granted) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                        },
-                        modifier = Modifier
-                            .background(
-                                color = if (granted) {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                                },
-                                shape = MaterialTheme.shapes.small,
-                            )
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-            }
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        TextButton(
-            onClick = {
-                haptics.tap()
-                onClick()
-            },
-        ) { Text(actionText) }
     }
 }
 

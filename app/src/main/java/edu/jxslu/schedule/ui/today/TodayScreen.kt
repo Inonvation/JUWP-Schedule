@@ -35,18 +35,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+// M3 1.3.0 的下拉刷新不在 material3 根包，而在 pulltorefresh 子包
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,11 +60,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,10 +101,8 @@ import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.ShortcutIcon
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
-import edu.jxslu.schedule.ui.common.WaterUnlockButton
 import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
-import edu.jxslu.schedule.ui.common.rememberWaterRequireDoubleClick
 import edu.jxslu.schedule.ui.water.WaterEvent
 import edu.jxslu.schedule.ui.water.WaterUiState
 import edu.jxslu.schedule.ui.water.WaterViewModel
@@ -172,6 +174,11 @@ fun TodayScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 开水面板（WaterEntrySheet）的实时状态：弹窗打开时逐帧跟随流程态，
+    // 不能用打开瞬间的快照（Working 计时不会动）
+    val waterEntryState by waterViewModel?.uiState
+        ?.collectAsStateWithLifecycle()
+        ?: remember { mutableStateOf(WaterUiState()) }
     val homework by viewModel.homeworkPending.collectAsStateWithLifecycle()
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
@@ -190,6 +197,7 @@ fun TodayScreen(
     val campusArrival by campusViewModel.arrivalState.collectAsStateWithLifecycle()
     var showCampusEntrySheet by remember { mutableStateOf(false) }
     var showCampusRechargeSheet by remember { mutableStateOf(false) }
+    var showWaterEntrySheet by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Course?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
     var detailCourse by remember { mutableStateOf<Course?>(null) }
@@ -219,8 +227,8 @@ fun TodayScreen(
         }
     }
 
-    // 开水卡在今日页也能发起解锁，事件得有人收——此前只有开水页收，
-    // 今日页点「开水」后的超时/失效提示全部静默丢弃（Channel 无人消费即无处可去）。
+    // 余额面板/开水页发起解锁与查询的结果事件得有人收——此前只有开水页收，
+    // 今日页侧的超时/失效提示会全部静默丢弃（Channel 无人消费即无处可去）。
     // 今日页与开水二级页各持一份 WaterViewModel（两个 Activity，登录态/订单走仓库共享），
     // 所以两边各收自己那份的事件，不会重复消费。
     LaunchedEffect(waterViewModel) {
@@ -294,7 +302,7 @@ fun TodayScreen(
                 null
             },
             waterCard = if (waterCardEnabled && waterViewModel != null) {
-                { WaterCard(waterViewModel, onOpenWater) }
+                { WaterCard(waterViewModel, onOpenWater) { showWaterEntrySheet = true } }
             } else {
                 null
             },
@@ -330,34 +338,85 @@ fun TodayScreen(
         },
         snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
-        when {
-            state.loading -> TodayLoadingContent(padding, bottomDock)
+        // 下拉刷新（2026-09-23）：并行刷新一卡通余额 + 胖乖余额/设备 + 今日时间状态。
+        // 包住三态内容：空态（假期）也要能刷一卡通与胖乖余额。
+        //
+        // **指示器驻留**（2026-09-23 修「拉不动」观感）：M3 的 onRefresh 在松手且拉过
+        // 阈值后才回调，而 campus/water 的 loading 标志要等 VM 协程跑起来才置 true——
+        // 直接聚合两者的话 isRefreshing 在回调瞬间还是 false，指示器被立刻收回，
+        // 体感就是「拉下去又弹回去、啥都没发生」。手动 manualRefreshing 兜住回调瞬间：
+        // 触发即置 true，等两侧 loading 全部归零**且**最短驻留 650ms 后才收——
+        // 都没得刷（未登录/开关关）时也驻留一个完整周期，给「刷新完成」的确定反馈。
+        val campusRefreshing by campusViewModel.balanceRefreshing.collectAsStateWithLifecycle()
+        val waterRefreshing = waterEntryState.loadingBalance || waterEntryState.loadingDevices
+        var manualRefreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(manualRefreshing, campusRefreshing, waterRefreshing) {
+            if (!manualRefreshing) return@LaunchedEffect
+            if (campusRefreshing || waterRefreshing) return@LaunchedEffect
+            delay(650)
+            if (!campusRefreshing && !waterRefreshing) manualRefreshing = false
+        }
+        val refreshing = manualRefreshing || campusRefreshing || waterRefreshing
+        val pullRefreshState = rememberPullToRefreshState()
+        // 触感由 rememberAppHaptics 统一查开关（DisplayPrefs.hapticsEnabled），关掉时短路，
+        // 调用点不用自己判断。onRefresh 只在拉过阈值松手时回调——它响就等于「下拉成功」，
+        // 与消费流水页同一个语义（那里也是 tap）。
+        val haptics = rememberAppHaptics()
+        // 与消费流水页同口径：padding 收在刷新容器上，不再由三态内容各自让位。
+        // Scaffold 的 content 从 (0,0) 铺满整屏、TopAppBar 压在它上面，容器不带 padding 时
+        // 指示器整条滑入轨迹都在顶栏后面（`pullToRefreshIndicator` 里
+        // translationY = fraction × threshold − 自身高度，拉满也只到阈值处，比顶栏矮），
+        // 要拖过阈值一大截才露出半圈，读起来就是「拉了半天没反应」——2026-09-23 定位。
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .pullToRefresh(
+                    isRefreshing = refreshing,
+                    state = pullRefreshState,
+                    threshold = TodayPullRefreshThreshold,
+                    onRefresh = {
+                        haptics.tap()
+                        manualRefreshing = true
+                        viewModel.refreshTick()
+                        campusViewModel.refreshBalance()
+                        waterViewModel?.refreshBalance()
+                        waterViewModel?.refreshDevices()
+                    },
+                ),
+        ) {
+            when {
+                state.loading -> TodayLoadingContent(bottomDock)
 
-            !state.inTerm -> TodayEmptyContent(
-                padding,
-                "尚未开学或未配置学期",
-                "先在「课表设置」里填好开学日期与周数，也能手动加课。",
-                actionLabel = "去设置学期",
-                onAction = onOpenTimetableSettings,
-                bottomDock = bottomDock,
-            )
+                !state.inTerm -> TodayEmptyContent(
+                    "尚未开学或未配置学期",
+                    "先在「课表设置」里填好开学日期与周数，也能手动加课。",
+                    actionLabel = "去设置学期",
+                    onAction = onOpenTimetableSettings,
+                    bottomDock = bottomDock,
+                )
 
-            state.totalCourseCount == 0 -> TodayEmptyContent(
-                padding,
-                "课表为空",
-                "课表默认为空，请登录教务系统导入「学期理论课表」，也可手动加课。",
-                actionLabel = "从教务导入",
-                onAction = onOpenJwImport,
-                bottomDock = bottomDock,
-            )
+                state.totalCourseCount == 0 -> TodayEmptyContent(
+                    "课表为空",
+                    "课表默认为空，请登录教务系统导入「学期理论课表」，也可手动加课。",
+                    actionLabel = "从教务导入",
+                    onAction = onOpenJwImport,
+                    bottomDock = bottomDock,
+                )
 
-            else -> TodayContent(
-                state = state,
-                padding = padding,
-                homework = homework,
-                onOpenCourse = { detailCourse = it },
-                onOpenHomeworkTodo = onOpenHomeworkTodo,
-                bottomDock = bottomDock,
+                else -> TodayContent(
+                    state = state,
+                    homework = homework,
+                    onOpenCourse = { detailCourse = it },
+                    onOpenHomeworkTodo = onOpenHomeworkTodo,
+                    bottomDock = bottomDock,
+                )
+            }
+            PullToRefreshDefaults.Indicator(
+                state = pullRefreshState,
+                isRefreshing = refreshing,
+                modifier = Modifier.align(Alignment.TopCenter),
+                threshold = TodayPullRefreshThreshold,
             )
         }
     }
@@ -418,6 +477,17 @@ fun TodayScreen(
         )
     }
 
+    // 开水卡：点余额的开水操作面板（2026-09-23，DESIGN §3.3）——
+    // 余额/积分/开水按钮/流程态/结算明细，与开水页共享同一 WaterViewModel
+    if (showWaterEntrySheet && waterViewModel != null) {
+        edu.jxslu.schedule.ui.water.WaterEntrySheet(
+            state = waterEntryState,
+            onUnlock = { waterViewModel.unlock() },
+            onDismissFlow = { waterViewModel.dismissFlow() },
+            onToggleUsePoints = { waterViewModel.toggleUsePoints() },
+            onDismiss = { showWaterEntrySheet = false },
+        )
+    }
     // 校园卡：点余额的功能入口弹层 + 充值弹层 + 到账成功弹窗（DESIGN §3.10/§4.19）
     if (showCampusEntrySheet) {
         edu.jxslu.schedule.ui.campus.CampusEntrySheet(
@@ -519,7 +589,7 @@ fun TodayScreen(
  *
  * **服务格并排的理由**：三张整行卡叠起来约 230dp，dock 顶到屏高 40% 上下，
  * 且每张卡只承载「一行标题 + 一行说明」；快趣出行与一卡通都是「点开一个页面」的入口，
- * 并排不丢信息、少约 70dp。开水卡不并——卡内要放解锁按钮与出水进度。
+ * 并排不丢信息、少约 70dp。开水卡不并——卡内要放余额副行与流程简报。
  *
  * **高度上限**：屏高 45%。8 条快捷方式（3 行）+ 开水卡在大字体小屏上足以吃掉半屏，
  * 超过上限时 dock 内部可滚——保住课表的可视区，也保证每个入口都还能够到
@@ -638,15 +708,11 @@ private fun TodayBottomDock(
  */
 @Composable
 private fun TodayCenteredShell(
-    padding: PaddingValues,
     bottomDock: @Composable () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-    ) {
+    // 顶部/底部的避让由外层刷新容器给（2026-09-23 起），这里不再吃 Scaffold 的 padding
+    Column(modifier = Modifier.fillMaxSize()) {
         // fillMaxWidth 必须带：Box 默认 wrap 内容、crossAxis 左对齐，
         // 少了它整个居中态贴左（旧版加载态左偏的根因）
         Box(
@@ -664,10 +730,9 @@ private fun TodayCenteredShell(
 /** 加载态：水滴呼吸居中（DESIGN §3.2），底部固定区照常在位（DESIGN §3.3「加载中不留白屏」）。 */
 @Composable
 private fun TodayLoadingContent(
-    padding: PaddingValues,
     bottomDock: @Composable () -> Unit,
 ) {
-    TodayCenteredShell(padding, bottomDock) {
+    TodayCenteredShell(bottomDock) {
         LoadingHint("正在读取本机课表")
     }
 }
@@ -679,14 +744,13 @@ private fun TodayLoadingContent(
  */
 @Composable
 private fun TodayEmptyContent(
-    padding: PaddingValues,
     title: String,
     body: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
     bottomDock: @Composable () -> Unit,
 ) {
-    TodayCenteredShell(padding, bottomDock) {
+    TodayCenteredShell(bottomDock) {
         EmptyHint(title, body, actionLabel, onAction)
     }
 }
@@ -694,17 +758,12 @@ private fun TodayEmptyContent(
 @Composable
 private fun TodayContent(
     state: TodayState,
-    padding: PaddingValues,
     homework: PendingHomework,
     onOpenCourse: (Course) -> Unit,
     onOpenHomeworkTodo: () -> Unit,
     bottomDock: @Composable () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 16.dp),
@@ -1079,23 +1138,22 @@ private fun TomorrowBlock(
 /**
  * 底部固定区描边卡（两张服务格 + 开水未登录态/已登录态）的最小高度：
  * = 两行文本（bodyMedium 20dp + bodySmall 16dp）+ 上下 padding 22dp。
- * 统一 min 后，开水卡在解锁流程中（副标题行收起、尾部换 TextButton）不再塌陷/增高，
- * 同排的两格高度恒定；系统大字体时自然高度超过 min 也不受影响（min 只是下限）。
+ * 统一 min 后，开水卡与两格高度恒定；系统大字体时自然高度超过 min 也不受影响
+ * （min 只是下限）。
  */
 private val QuickCardMinHeight = 58.dp
 
 
 /**
  * 一键开水卡（DESIGN §3.3 底部固定区）：**默认常显**，按登录态分两形态——
- * 已登录 = 原一键开水交互（[WaterQuickEntry]，点「开水」直接走解锁流程，
- * 进度/结果原地显示；点卡片其余位置进开水页）；未登录 = 未登录态（[WaterLoggedOutCard]，
- * 点卡片跳开水页，登录表单就在该页）。
+ * 已登录 = 余额卡形态（[WaterQuickEntry]，点余额弹开水操作面板，点卡片其余位置进开水页）；
+ * 未登录 = 未登录态（[WaterLoggedOutCard]，点卡片跳开水页，登录表单就在该页）。
  */
 @Composable
-private fun WaterCard(vm: WaterViewModel, onOpen: () -> Unit) {
+private fun WaterCard(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntrySheet: () -> Unit) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     if (state.loggedIn) {
-        WaterQuickEntry(vm, onOpen)
+        WaterQuickEntry(vm, onOpen, onOpenEntrySheet)
     } else {
         WaterLoggedOutCard(onOpen)
     }
@@ -1107,7 +1165,7 @@ private fun WaterCard(vm: WaterViewModel, onOpen: () -> Unit) {
  *
  * 收起后 dock 只剩这一行（约 40dp）——大字体小屏上四张卡 + 三行图标最容易吃掉半屏，
  * 而这一整块并非每屏都要看。把手恒在：收起态它是「下面还有东西」的提示，也是唯一的
- * 展开入口，不能跟着一起藏。文案「常用功能」固定，右侧「展开 / 收起 + 方向箭头」表达状态。
+ * 展开入口，不能跟着一起藏。文案「江水生活」固定，右侧「展开 / 收起 + 方向箭头」表达状态。
  */
 @Composable
 private fun DockHandle(
@@ -1123,7 +1181,7 @@ private fun DockHandle(
             // 收起态这行文字才和上方课程卡、作业卡的文字在同一条竖线上
             .padding(horizontal = 10.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClickLabel = if (expanded) "收起常用功能" else "展开常用功能") {
+            .clickable(onClickLabel = if (expanded) "收起江水生活" else "展开江水生活") {
                 haptics.tap()
                 onToggle()
             }
@@ -1131,7 +1189,7 @@ private fun DockHandle(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "常用功能",
+            text = "江水生活",
             style = MaterialTheme.typography.labelLarge,
             color = onSurface.copy(alpha = 0.75f),
             modifier = Modifier.weight(1f),
@@ -1272,27 +1330,26 @@ private fun WaterLoggedOutCard(onOpen: () -> Unit) {
 }
 
 /**
- * 已登录的一键开水卡：与开水页共享同一 ViewModel，点「开水」直接走解锁流程，
- * 进度/结果原地显示；点卡片其余位置进开水页（选设备、看订单详情）。
- * 开水按钮支持单击/双击（全局偏好，默认双击）；进行中禁点防重复解锁（VM 内另有 Mutex 兜底）。
- *
- * 样式用 1dp 描边而不是主色底：焦点卡已是主色底，两个同款色块一个是信息一个是动作，
- * 分不清哪个能点。
+ * 已登录的开水卡（2026-09-23 重构）：不再卡内放「开水」按钮——
+ * 标题「胖乖生活」+ 副行设备名（同旧卡口径），**小票余额放卡片右侧**，点余额弹出
+ * 开水操作面板（[WaterEntrySheet]：余额/积分/开水按钮/流程态/结算明细，
+ * 与开水页共享同一 ViewModel）。整卡点击进开水页（选设备、看订单详情）。
+ * 流程不在卡内发起，但若弹窗/开水页留下进行中的流程，副行给流程简报——
+ * 关闭弹窗不等于丢弃状态，右侧余额仍可点回面板看完整进度。
  */
 @Composable
-private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit) {
+private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntrySheet: () -> Unit) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val flow = state.flow
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
+    val haptics = rememberAppHaptics()
     AppCardRow(
         modifier = Modifier
             .padding(horizontal = 16.dp)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
         onClickLabel = "打开胖乖生活开水页",
-        // 出水流程进行中不许再进页面（防重复解锁，VM 内另有 Mutex 兜底）
-        enabled = flow is UnlockFlowState.Idle,
         contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
     ) {
         Icon(
@@ -1303,58 +1360,88 @@ private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit) {
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            val title = when (flow) {
-                is UnlockFlowState.Idle -> "胖乖生活 · " + waterDeviceLabel(state)
-                is UnlockFlowState.PreChecking -> flow.step
-                is UnlockFlowState.Working -> "正在出水 ${waterClock(flow.elapsedSeconds)}"
-                is UnlockFlowState.Success -> "开水成功 · 花费 ¥${calculateActualCost(flow.result)}"
-                is UnlockFlowState.Failed -> "开水失败 · ${flow.message}"
-            }
-            if (flow is UnlockFlowState.Idle) {
-                // 设备名是异步取的（占位 → 真值），硬切像一次突变，淡入淡出更稳。
-                // 只给 Idle 这一支：出水计时那种每秒都变的文案淡入淡出会一直闪
-                Crossfade(
-                    targetState = title,
-                    animationSpec = tween(durationMillis = 180),
-                    label = "waterCardTitle",
-                ) { text -> WaterCardTitle(text) }
-            } else {
-                WaterCardTitle(title)
-            }
-            if (flow is UnlockFlowState.Idle) {
-                Text(
-                    text = if (rememberWaterRequireDoubleClick()) {
-                        "双击「开水」出水防误触，点卡片管理设备与订单"
-                    } else {
-                        "点「开水」立即出水，点卡片管理设备与订单"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = onSurface.copy(alpha = 0.55f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            WaterCardTitle("胖乖生活")
+            // 副行：Idle = 设备名（异步取的，占位口径见 [waterDeviceLabel]）；
+            // 流程态 = 流程简报（计时/结算文案每秒都在变，不做 Crossfade，会一直闪）。
+            // 简报纯展示不可点——进面板走右侧余额，副行不再嵌套 clickable
+            Text(
+                text = when (flow) {
+                    is UnlockFlowState.Idle -> waterDeviceLabel(state)
+                    is UnlockFlowState.PreChecking -> flow.step
+                    is UnlockFlowState.Working -> "正在出水 ${waterClock(flow.elapsedSeconds)}"
+                    is UnlockFlowState.Success -> "开水成功 · 花费 ¥${calculateActualCost(flow.result)}"
+                    is UnlockFlowState.Failed -> "开水失败 · ${flow.message}"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        // 右侧小票余额（进入面板的入口，见 [WaterEntryBalanceText]）。
+        // 余额没拉过给不可点占位（与一卡通「余额读取中…」同口径）
+        when {
+            // balance 是委托属性，smart cast 不可用，取本地快照
+            state.balance != null -> {
+                val balance = state.balance
+                WaterEntryBalanceText(
+                    text = "小票 ¥${balance?.ticketText} ›",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = primary,
+                    fontWeight = FontWeight.SemiBold,
+                    onClick = onOpenEntrySheet,
                 )
             }
-        }
-        Spacer(Modifier.width(8.dp))
-        when (flow) {
-            is UnlockFlowState.Idle -> WaterUnlockButton(
-                enabled = state.selectedDevice != null,
-                onUnlock = { vm.unlock() },
+            state.balanceLoaded -> WaterEntryBalanceText(
+                text = "余额暂不可用 ›",
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+                onClick = onOpenEntrySheet,
             )
-            is UnlockFlowState.PreChecking, is UnlockFlowState.Working ->
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-            is UnlockFlowState.Success ->
-                // Box 钳 36dp：M3 最小触达（48dp）会把 TextButton 布局撑高，
-                // 卡片在流程态反而比 Idle 态还高；与 WaterUnlockButton 同口径压平
-                Box(Modifier.height(36.dp), contentAlignment = Alignment.Center) {
-                    TextButton(onClick = { vm.dismissFlow() }) { Text("完成") }
-                }
-            is UnlockFlowState.Failed ->
-                Box(Modifier.height(36.dp), contentAlignment = Alignment.Center) {
-                    TextButton(onClick = { vm.unlock() }) { Text("重试") }
-                }
+            else -> Text(
+                text = "余额读取中…",
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
+}
+
+/**
+ * 右侧小票余额文本（2026-09-23）：开水操作面板的入口。
+ *
+ * 热区扩大靠 `clip → clickable → padding` 的顺序——padding 在 clickable **之内**，
+ * 触达块 = 文字 + 四周内缩（垂直 8dp×2 ≈ 32dp 高满足 M3 最小触达，左侧再扩 12dp），
+ * 文字本体位置不变（垂直居中抵消、无 end padding 所以右缘不动）；涟漪被 8dp 圆角收口。
+ * 该 clickable 嵌在整卡 clickable 之内，不冒泡触发整卡跳转。
+ */
+@Composable
+private fun WaterEntryBalanceText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    fontWeight: FontWeight? = null,
+    onClick: () -> Unit,
+) {
+    val haptics = rememberAppHaptics()
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        fontWeight = fontWeight,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClickLabel = "查看小票与开水") {
+                haptics.tap()
+                onClick()
+            }
+            .padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+    )
 }
 
 private fun waterClock(totalSeconds: Int): String {
@@ -1364,9 +1451,9 @@ private fun waterClock(totalSeconds: Int): String {
 }
 
 /**
- * 开水卡 Idle 态的设备名（2026-09-22）：设备列表是异步取的，
- * 没拉过先说「读取设备…」，拉过但没有才说「未选择设备」——首帧的占位文案
- * 不该用一个可能被立刻顶掉的结论。
+ * 开水卡 Idle 态副行的设备名（2026-09-22 引入，2026-09-23 余额移至右侧后回归副行）：
+ * 设备列表是异步取的，没拉过先说「读取设备…」，拉过但没有才说「未选择设备」——
+ * 首帧的占位文案不该用一个可能被立刻顶掉的结论。
  *
  * `devices.isEmpty()` 也算未就绪：[WaterUiState] 的 `loadingDevices` 初值是 false，
  * 而 `refreshDevices` 要等协程跑起来才置 true，中间那一帧会落到「未选择设备」。
@@ -1377,7 +1464,7 @@ private fun waterDeviceLabel(state: WaterUiState): String =
     state.selectedDevice?.goodsName?.ifBlank { "未命名设备" }
         ?: if (state.loadingDevices || state.devices.isEmpty()) "读取设备…" else "未选择设备"
 
-/** 开水卡主行文本（Idle 与流程态共用同一套字重与截断口径）。 */
+/** 开水卡主行文本（与流程简报共用同一套字重与截断口径）。 */
 @Composable
 private fun WaterCardTitle(text: String) {
     Text(
@@ -1506,3 +1593,13 @@ private fun ShortcutGridCell(
         )
     }
 }
+
+/**
+ * 今日页下拉刷新阈值（2026-09-23）。M3 默认 `PullToRefreshDefaults.PositionalThreshold` 是 80dp，
+ * 而 `PullToRefreshModifierNode` 里计入拖动的只有实际位移的一半
+ * （`adjustedDistancePulled = distancePulled * DragMultiplier`，`DragMultiplier = 0.5f`），
+ * 也就是真拖 160dp 才触发。今日页顶部可拖空间比消费流水页的列表短，收到 56dp（真拖 112dp）。
+ * modifier 的 threshold 与 `PullToRefreshDefaults.Indicator` 的 threshold **必须同值**：
+ * 前者决定松手触发点，后者决定图标滑出的落位，写岔了会出现「图标到位了却没刷新」。
+ */
+private val TodayPullRefreshThreshold = 56.dp

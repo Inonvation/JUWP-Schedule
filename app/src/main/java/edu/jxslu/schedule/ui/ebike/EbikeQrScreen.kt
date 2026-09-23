@@ -2,15 +2,8 @@ package edu.jxslu.schedule.ui.ebike
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.Build
-import android.app.SearchManager
 import android.content.Intent
-import android.net.Uri
 import android.graphics.Bitmap
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,11 +15,13 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -67,7 +62,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -80,6 +74,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -94,15 +90,22 @@ import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.ChevronRight
+import me.rerere.hugeicons.stroke.MapsLocation02
 import me.rerere.hugeicons.stroke.ScooterElectric
 
 /**
- * 共享单车出码页（DESIGN §3.9）。2026-09-22 重排后的纵向顺序：
- * 「打开快趣出行」（次要按钮，置于输入框上方）→ 车号输入（`100000` 固定前缀）
+ * 共享单车出码页（DESIGN §3.9）。纵向顺序：
+ * 「附近单车地图」（次要按钮，置于输入框上方）→ 车号输入
  * → 生成 → **固定方形占位**的出码区 → 保存 / 扫一扫（未出码时置灰）
- * → 最近车号（可一键清空）→ 出码设置两个开关（页面最下方）→ 免责声明。
+ * → 最近车号（可一键清空）→ 免费时长提醒 → 出码设置两个开关
+ * → 「打开快趣出行」文字入口 → 免责声明。
  *
- * 更新逻辑：生成骑行二维码、自动保存（开关默认关）/手动保存、扫完即焚
+ * 车号有两条进路：手输/粘贴，或从地图页选中一辆车（车号经 Activity Result 回传，
+ * 见 [SubpageActivity.EXTRA_PICKED_CAR_NUM]，收到即出码）。两条路最后都走
+ * [EbikeQr.resolveCarNum] + [EbikeQr.bikeUrl]，校验只有一处。
+ *
+ * 其余更新逻辑：生成骑行二维码、自动保存（开关默认关）/手动保存、扫完即焚
  * （开关默认开：回到 App 即清除已保存的码）、微信扫一扫 best-effort。
  * 结果提示走页面 Snackbar（二级页窗口内无更高层弹层，不会穿透问题）。
  */
@@ -122,22 +125,28 @@ fun EbikeQrScreen(
     val haptics = rememberAppHaptics()
     // 「结束骑行」二次确认弹窗（2026-09-22 用户口径：误触代价是提醒失效）
     var showEndConfirm by remember { mutableStateOf(false) }
-    // 「未安装快趣出行」下载引导弹窗（2026-09-23 用户拍板：弹窗 + 跳参考下载页，
-    // 网站仅外部提供、不保证准确性，文案里写清楚）
-    var showInstallGuide by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    // 免费提醒开关开启那一刻申请 POST_NOTIFICATIONS（API 33+，照上课提醒口径）
-    val notifPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { }
-    val requestNotifPermission = {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.POST_NOTIFICATIONS,
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    // 免费时长提醒走系统日历（DESIGN §3.9）：开开关 / 点扫一扫那一刻申请日历读写权限。
+    // 拒绝也照样续跑——计时与开关状态本身不依赖日历权限，只是写不进日历（提示由 VM 给）。
+    var resumeAfterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ ->
+        val resume = resumeAfterPermission
+        resumeAfterPermission = null
+        resume?.invoke()
+    }
+    // 有权限直接跑，缺权限先申请、授予后跑（与 WeekScreen 的日历同步同口径）
+    fun withCalendarPermission(action: () -> Unit) {
+        val needed = CALENDAR_PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isEmpty()) {
+            action()
+        } else {
+            resumeAfterPermission = action
+            calendarPermissionLauncher.launch(needed.toTypedArray())
         }
     }
     LaunchedEffect(Unit) {
@@ -152,6 +161,17 @@ fun EbikeQrScreen(
                 )
             }
         }
+    }
+
+    // 地图页选中的车（DESIGN §3.9）：走 Activity Result，只回到**发起这次跳转的**这一页。
+    // 不用进程级单例——那种通道会被任何一个还活着的出码页实例抢先消费，
+    // 用户眼前这页反而收不到（2026-09-23 真机排查：退后台再进来必现）
+    val mapLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val carNum = result.data?.getStringExtra(SubpageActivity.EXTRA_PICKED_CAR_NUM)
+        if (!carNum.isNullOrBlank()) viewModel.onPickCarNum(carNum)
     }
 
     // 扫完即焚触发点（DESIGN §3.9）：从微信/桌面回到 App（ON_RESUME）时清掉
@@ -190,40 +210,60 @@ fun EbikeQrScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // 打开「快趣出行」App（DESIGN §3.9）：输入框上方（2026-09-22 用户口径）——
-            // 装了 App 的人先开 App，不装的人往下看出码区。描边样式，主操作只有一个实心按钮。
-            // 装了才有效，失败走页内 Snackbar
-            OutlinedButton(
+            // 附近单车地图（DESIGN §3.9，2026-09-23 替换原「打开快趣出行」按钮）：
+            // 做成**入口卡**而不是表单按钮——它是"去另一个页面"，不是本页的提交动作。
+            // 副标题顺带说清点进去能干什么，也把主次让给了下面那个实心的「生成二维码」
+            AppCardRow(
                 onClick = {
-                    haptics.tap()
-                    openKvcooApp(
-                        context,
-                        onNotInstalled = { showInstallGuide = true },
-                        onError = { message ->
-                            scope.launch {
-                                snackbar.showSnackbar(
-                                    AppNoticeVisuals(message, tone = NoticeTone.Warning),
-                                )
-                            }
-                        },
+                    mapLauncher.launch(
+                        SubpageActivity.intent(context, SubpageScreen.EBIKE_MAP),
                     )
                 },
-                modifier = Modifier.fillMaxWidth(),
+                onClickLabel = "打开附近单车地图",
             ) {
-                Text("打开快趣出行")
+                Icon(
+                    HugeIcons.MapsLocation02,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "附近单车地图",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = "在地图上看车在哪，点一下自动填车号",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
+                Icon(
+                    HugeIcons.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
 
-            // 输入区：尾部 3 位车号。`100000` 前缀与示例占位一律用 outline 灰——
-            // 2026-09-22 真机反馈：默认色读起来像"已经帮填好了"，置灰后一眼可辨是提示
+            // 输入区。前缀与示例占位一律用 outline 灰——2026-09-22 真机反馈：
+            // 默认色读起来像"已经帮填好了"，置灰后一眼可辨是提示。
+            // 前缀是动态的（`EbikeQr.inputPrefix`）：输成完整车号后它自己消失，
+            // 免得选中的是别的校区的车却顶着 `100000` 的前缀
             val hintGray = MaterialTheme.colorScheme.outline
+            val prefixText = EbikeQr.inputPrefix(state.carInput)
             OutlinedTextField(
-                value = state.tailInput,
-                onValueChange = viewModel::onTailInput,
+                value = state.carInput,
+                onValueChange = viewModel::onCarInput,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("车身号后三位") },
-                prefix = { Text(EbikeQr.TEMPLATE, color = hintGray) },
+                label = { Text("车身号") },
+                prefix = if (prefixText.isEmpty()) null else {
+                    { Text(prefixText, color = hintGray) }
+                },
                 placeholder = { Text("669", color = hintGray) },
-                supportingText = { Text("只填车身二维码上车号的后三位") },
+                supportingText = { Text(EbikeQr.INPUT_HINT) },
                 isError = state.inputError != null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 singleLine = true,
@@ -268,12 +308,14 @@ fun EbikeQrScreen(
                 Button(
                     onClick = {
                         haptics.tap()
-                        viewModel.onWechatScanClicked()
-                        openWechatScan(context) { message ->
-                            scope.launch {
-                                snackbar.showSnackbar(
-                                    AppNoticeVisuals(message, tone = NoticeTone.Warning),
-                                )
+                        withCalendarPermission {
+                            viewModel.onWechatScanClicked()
+                            openWechatScan(context) { message ->
+                                scope.launch {
+                                    snackbar.showSnackbar(
+                                        AppNoticeVisuals(message, tone = NoticeTone.Warning),
+                                    )
+                                }
                             }
                         }
                     },
@@ -327,10 +369,10 @@ fun EbikeQrScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        prefs.recentIds.forEach { tail ->
-                            RecentChip(tail) {
+                        prefs.recentIds.forEach { carNum ->
+                            RecentChip(EbikeQr.chipLabel(carNum)) {
                                 haptics.tap()
-                                viewModel.onPickRecent(tail)
+                                viewModel.onPickRecent(carNum)
                             }
                         }
                     }
@@ -365,31 +407,35 @@ fun EbikeQrScreen(
                 )
             }
 
-            // 免费时长提醒（DESIGN §3.9）：独立开关 + 提前量 1~5 分钟（用户拍板默认 3）
+            // 免费时长提醒（DESIGN §3.9）：独立开关 + 提前量 1~5 分钟（用户拍板默认 3）。
+            // 2026-09-23 起提醒写在系统日历里，App 自己的通知链整套删除
             var freeEnabled by remember(prefs.freeReminderEnabled) {
                 mutableStateOf(prefs.freeReminderEnabled)
             }
             SettingsSection(
                 title = "免费时长提醒",
-                subtitle = "扫码开车后按 15 分钟计，提前提醒换车或还车。",
+                subtitle = "扫码开车后按 15 分钟计，写入系统日历，由日历提醒换车或还车。",
             ) {
                 SettingSwitchRow(
                     title = "开启免费时长提醒",
-                    subtitle = "点「打开微信扫一扫」开始计时，到点前发系统通知",
+                    subtitle = "点「打开微信扫一扫」后在系统日历建一条倒计时提醒",
                     checked = freeEnabled,
                     onCheckedChange = { checked ->
                         freeEnabled = checked
-                        if (checked) requestNotifPermission()
                         scope.launch {
                             Graph.displayPrefs(context).setEbikeFreeReminderEnabled(checked)
                             viewModel.onFreeReminderChanged()
+                        }
+                        // 只有开启才要权限：关闭是「删事件」，不需要任何权限
+                        if (checked) {
+                            withCalendarPermission { viewModel.onCalendarPermissionGranted() }
                         }
                     },
                 )
                 if (freeEnabled) {
                     SettingChoiceRow(
                         title = "提前量",
-                        subtitle = "免费时段结束前几分钟提醒",
+                        subtitle = "免费结束前几分钟提醒；结束那一刻再提醒一次",
                         options = listOf("1 分钟", "2 分钟", "3 分钟", "4 分钟", "5 分钟"),
                         selectedIndex = prefs.freeLeadMinutes - EbikeFreeRide.LEAD_MIN,
                         onSelect = { index ->
@@ -403,8 +449,27 @@ fun EbikeQrScreen(
                 }
             }
 
+            // 「打开快趣出行」（DESIGN §3.9，2026-09-23 降级）：内置地图已经能看车在哪，
+            // 官方 App 不再是必经步骤，留一个文字入口给习惯用它的人。低频，所以沉到页底
+            TextButton(
+                onClick = {
+                    haptics.tap()
+                    openKvcoo(context) { message ->
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                AppNoticeVisuals(message, tone = NoticeTone.Warning),
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("打开快趣出行")
+            }
+
             Text(
-                text = "非学校官方功能：二维码内容为共享电单车运营方链接，最终以小程序加载结果为准。",
+                text = "非学校官方功能：二维码内容与地图车辆数据均来自共享电单车运营方，" +
+                    "最终以小程序加载结果为准；地图数据可能延迟或不准。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
@@ -416,7 +481,7 @@ fun EbikeQrScreen(
         AlertDialog(
             onDismissRequest = { showEndConfirm = false },
             title = { Text("结束骑行？") },
-            text = { Text("结束后将清空免费时长计时，不再提醒换车。") },
+            text = { Text("结束后将清空免费时长计时，并删除系统日历里的提醒。") },
             confirmButton = {
                 TextButton(onClick = {
                     showEndConfirm = false
@@ -434,55 +499,12 @@ fun EbikeQrScreen(
         )
     }
 
-    // 未安装快趣出行的下载引导（2026-09-23）：弹窗代替之前的一句 Snackbar 提示，
-    // 附参考下载页链接（用户拍板：外部网站不保证准确性，文案写免责）
-    if (showInstallGuide) {
-        AlertDialog(
-            onDismissRequest = { showInstallGuide = false },
-            title = { Text("未安装快趣出行") },
-            text = {
-                Text(
-                    "需要先安装快趣出行 App 才能扫码开车。\n\n" +
-                        "可从参考页面下载安装包，但该网站为外部提供，" +
-                        "不保证下载内容安全准确，请自行甄别，由此产生的损失概不负责。",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showInstallGuide = false
-                    haptics.tap()
-                    runCatching {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(KVCOO_DOWNLOAD_URL))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    }.onFailure {
-                        scope.launch {
-                            snackbar.showSnackbar(
-                                AppNoticeVisuals(
-                                    "浏览器打开失败，请手动复制链接访问",
-                                    tone = NoticeTone.Warning,
-                                ),
-                            )
-                        }
-                    }
-                }) {
-                    Text("去参考页下载")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showInstallGuide = false }) {
-                    Text("取消")
-                }
-            },
-        )
-    }
 }
 
 @Composable
-private fun RecentChip(tail: String, onClick: () -> Unit) {
+private fun RecentChip(label: String, onClick: () -> Unit) {
     Text(
-        text = "…$tail",
+        text = label,
         style = MaterialTheme.typography.labelLarge,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -641,135 +663,41 @@ private fun openWechatScan(context: android.content.Context, onError: (String) -
     }
 }
 
-/** 「快趣出行」App 包名（DESIGN §3.9）。首页未导出，普通直启会被系统拒绝。 */
+/** 「快趣出行」App 包名（DESIGN §3.9）。 */
 private const val KVCOO_PACKAGE = "com.kvcoo.go"
 
-/** 快趣首页组件（assistant 设置用的扁平字符串）；「助手通道」的目标。 */
-private const val KVCOO_HOME_ASSISTANT = "com.kvcoo.go/com.kvcoo.go.sections.home.HomeActivity"
-
-/** 系统「助手」设置键（`Settings.Secure.ASSISTANT`）。 */
-private const val KEY_SECURE_ASSISTANT = "assistant"
-
-/** 写入「助手」后等待 SystemUI 取用的时间（含启动耗时），随后恢复原值。 */
-private const val ASSISTANT_RESTORE_DELAY_MS = 1500L
-
-/** 参考下载页（外部提供，不保证准确性；UI 文案里写免责）。 */
-private const val KVCOO_DOWNLOAD_URL = "https://m.itmop.com/downinfo/288264.html"
+/**
+ * 免费时长提醒写系统日历所需的运行时权限（DESIGN §3.9）。
+ * 只在该功能被用到的那一刻申请（开开关 / 点扫一扫），不预取、不进页申请。
+ */
+private val CALENDAR_PERMISSIONS = listOf(
+    Manifest.permission.READ_CALENDAR,
+    Manifest.permission.WRITE_CALENDAR,
+)
 
 /**
  * 打开「快趣出行」App（需已安装）。
- * 先用「桌面意图 + CLEAR_TASK」重启快趣（含启动页，等效冷启动刷新地图）；
- * 重启失败再走「助手通道」直达首页；都失败提示。
- * 1. 桌面意图 + CLEAR_TASK（2026-09-23 起，用户口径「先停止再打开」）：清掉现存
- *    任务栈重建首页——进程就算活着，Activity 全销毁，地图跟着重新初始化。
- *    比 killBackgroundProcesses 稳：后者杀不掉挂前台服务（定位）的进程，
- *    CLEAR_TASK 不依赖系统肯不肯杀。
- * 2. 「助手通道」（2026-09-21 真机实测，同级「快捷方式」工具同款路径）：临时把系统「助手」
- *    设置指到快趣首页 → 反射 `SearchManager.launchAssist` → 由 SystemUI（uid 1000）以
- *    `ACTION_ASSIST` 代启未导出的首页，直达、跳过启动页。需要**一次性** adb 授权：
- *    `adb shell pm grant edu.jxslu.schedule.debug android.permission.WRITE_SECURE_SETTINGS`
- *    （release 包名去掉 .debug）；未授权/反射被拦时静默走下一级；
- * 3. 桌面启动意图（启动页）兜底——启动页必然导出、无权限门槛；
- * 4. 未安装 → [onNotInstalled]（弹下载引导）；打开失败 → [onError]（Snackbar）。
+ *
+ * 2026-09-23 收敛为一级：桌面启动意图（启动页，导出无门槛），没装给一句提示。
+ * 删掉的两条路各有理由——「助手通道」（临时改写系统 `Settings.Secure.assistant` +
+ * 反射 `SearchManager.launchAssist`，由 SystemUI 代启未导出的首页）要用户先跑一次
+ * `adb shell pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`，
+ * 而且只在小米 ROM 上验证过；「未安装下载引导」指向的是第三方下载站。
+ * 内置地图（`BikeMapScreen`）已经把「看车在哪」接过来，官方 App 不再是必经步骤。
  */
-private fun openKvcooApp(
-    context: android.content.Context,
-    onNotInstalled: () -> Unit,
-    onError: (String) -> Unit,
-) {
-    val installed = try {
-        context.packageManager.getApplicationInfo(KVCOO_PACKAGE, 0)
-        true
-    } catch (_: Exception) {
-        false
-    }
-    if (!installed) {
-        onNotInstalled()
-        return
-    }
-    if (restartKvcoo(context)) return
-    if (launchViaAssistant(context)) return
-    fallbackOpenKvcoo(context, onError)
-}
-
-/**
- * 「先停再开」的等效实现（2026-09-23 改）：拉快趣桌面意图 + `FLAG_ACTIVITY_CLEAR_TASK`
- * + `FLAG_ACTIVITY_NEW_TASK`——清掉它现存的任务栈再重建首页。Activity 全销毁 →
- * 地图跟着重建，视觉上就是「关掉重开」。不需要杀进程，不依赖系统许可。
- * @return true = 已拉起（调用方直接返回，不要再走助手通道，免得开两次）。
- */
-private fun restartKvcoo(context: android.content.Context): Boolean {
-    try {
-        val launch = context.packageManager.getLaunchIntentForPackage(KVCOO_PACKAGE)
-        if (launch != null) {
-            context.startActivity(
-                launch.addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK,
-                ),
-            )
-            return true
-        }
-        return false
-    } catch (_: Exception) {
-        return false
-    }
-}
-
-/** 「助手通道」：写设置 → 反射 launchAssist → 延迟恢复。任一步失败恢复原值并返回 false。 */
-private fun launchViaAssistant(context: android.content.Context): Boolean {
-    val resolver = context.contentResolver
-    val previous = try {
-        Settings.Secure.getString(resolver, KEY_SECURE_ASSISTANT)
+private fun openKvcoo(context: android.content.Context, onError: (String) -> Unit) {
+    val launch = try {
+        context.packageManager.getLaunchIntentForPackage(KVCOO_PACKAGE)
     } catch (_: Exception) {
         null
     }
+    if (launch == null) {
+        onError("未安装快趣出行；可直接用「附近单车地图」，或手动输入车号出码")
+        return
+    }
     try {
-        Settings.Secure.putString(resolver, KEY_SECURE_ASSISTANT, KVCOO_HOME_ASSISTANT)
+        context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (_: Exception) {
-        return false // 无 WRITE_SECURE_SETTINGS（一次性 adb 授权）→ 走兜底
+        onError("打开快趣出行失败，请手动打开")
     }
-    return try {
-        val searchManager = context.getSystemService(SearchManager::class.java)
-        if (searchManager == null) {
-            restoreAssistant(resolver, previous)
-            false
-        } else {
-            SearchManager::class.java
-                .getMethod("launchAssist", Bundle::class.java)
-                .invoke(searchManager, Bundle())
-            Handler(Looper.getMainLooper()).postDelayed(
-                { restoreAssistant(resolver, previous) },
-                ASSISTANT_RESTORE_DELAY_MS,
-            )
-            true
-        }
-    } catch (_: Exception) {
-        restoreAssistant(resolver, previous)
-        false
-    }
-}
-
-private fun restoreAssistant(
-    resolver: android.content.ContentResolver,
-    previous: String?,
-) {
-    try {
-        Settings.Secure.putString(resolver, KEY_SECURE_ASSISTANT, previous)
-    } catch (_: Exception) {
-        // 恢复失败：下次触发会重写；助手设置本身可被用户手动改回
-    }
-}
-
-/** 启动页兜底：拉快趣桌面启动意图（导出，无权限门槛）。 */
-private fun fallbackOpenKvcoo(context: android.content.Context, onError: (String) -> Unit) {
-    try {
-        val launch = context.packageManager.getLaunchIntentForPackage(KVCOO_PACKAGE)
-        if (launch != null) {
-            context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            return
-        }
-    } catch (_: Exception) {
-        // 落到失败提示
-    }
-    onError("打开快趣出行失败，请手动打开")
 }

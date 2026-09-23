@@ -25,8 +25,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class EbikeUiState(
-    /** 输入框里的尾部车号（只允许数字进这个字段，UI 层过滤）。 */
-    val tailInput: String = "",
+    /**
+     * 输入框里的车号原文（只允许数字进这个字段，UI 层过滤）。
+     * 1~3 位 = 校园车队尾部；6~12 位 = 完整车号（地图选中的车是这一形态）。
+     */
+    val carInput: String = "",
     /** 已生成的二维码（null = 未生成）；与 [generatedBikeId] 成对。 */
     val generatedBitmap: Bitmap? = null,
     /** 已生成的完整车号（`100000669` 形态），存相册命名与提示用。 */
@@ -100,39 +103,101 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, EbikePrefsSnapshot())
 
-    /** 免费提醒设置变更（开关/提前量）→ 重排闹钟。 */
+    /** 免费提醒设置变更（开关/提前量）→ 重建或撤销日历事件。 */
     fun onFreeReminderChanged() {
-        viewModelScope.launch { EbikeFreeRideReminder.reschedule(Graph.appContext) }
+        viewModelScope.launch {
+            emitCalendarNotice(EbikeFreeRideReminder.reschedule(Graph.appContext))
+        }
     }
 
-    /** 点「打开微信扫一扫」：记起点、重排闹钟（换车再点一次 = 重新计时）。 */
+    /** 日历权限授予后的续跑：把进行中的计时补写进日历（开关开着才写）。 */
+    fun onCalendarPermissionGranted() {
+        viewModelScope.launch {
+            emitCalendarNotice(EbikeFreeRideReminder.check(Graph.appContext))
+        }
+    }
+
+    /** 点「打开微信扫一扫」：记起点 + 写日历提醒（换车再点一次 = 重新计时）。 */
     fun onWechatScanClicked() {
         viewModelScope.launch {
-            EbikeFreeRideReminder.startRide(Graph.appContext, System.currentTimeMillis())
-            _events.send(EbikeEvent.Notice("已开始记录 15 分钟免费时长", NoticeTone.Info))
+            val outcome = EbikeFreeRideReminder.startRide(
+                Graph.appContext,
+                System.currentTimeMillis(),
+            )
+            _events.send(
+                when (outcome) {
+                    EbikeFreeRideReminder.Outcome.Written ->
+                        EbikeEvent.Notice("已开始计时，日历提醒已写入", NoticeTone.Success)
+                    EbikeFreeRideReminder.Outcome.NoPermission ->
+                        EbikeEvent.Notice("已开始计时；没有日历权限，这次不会提醒", NoticeTone.Warning)
+                    EbikeFreeRideReminder.Outcome.NoCalendarAccount ->
+                        EbikeEvent.Notice("已开始计时；手机上没有可写日历账户，这次不会提醒", NoticeTone.Warning)
+                    is EbikeFreeRideReminder.Outcome.Failed ->
+                        EbikeEvent.Notice("已开始计时；写日历失败：${outcome.message}", NoticeTone.Warning)
+                    else ->
+                        EbikeEvent.Notice("已开始计时（免费时长提醒未开启）", NoticeTone.Info)
+                },
+            )
         }
     }
 
-    /** 结束骑行：清起点、撤闹钟与通知。 */
+    /** 结束骑行：清起点、删日历事件。 */
     fun onEndRide() {
         viewModelScope.launch {
-            EbikeFreeRideReminder.endRide(Graph.appContext)
-            _events.send(EbikeEvent.Notice("已结束骑行计时", NoticeTone.Info))
+            val outcome = EbikeFreeRideReminder.endRide(Graph.appContext)
+            _events.send(
+                when (outcome) {
+                    EbikeFreeRideReminder.Outcome.Removed ->
+                        EbikeEvent.Notice("已结束骑行，日历提醒已删除", NoticeTone.Info)
+                    EbikeFreeRideReminder.Outcome.NoPermission ->
+                        EbikeEvent.Notice("已结束骑行；没有日历权限，日历里的提醒没能删掉", NoticeTone.Warning)
+                    is EbikeFreeRideReminder.Outcome.Failed ->
+                        EbikeEvent.Notice("已结束骑行；删日历提醒失败：${outcome.message}", NoticeTone.Warning)
+                    else -> EbikeEvent.Notice("已结束骑行", NoticeTone.Info)
+                },
+            )
         }
+    }
+
+    /** 日历类动作的结果 → 一次性提示；[EbikeFreeRideReminder.Outcome.None] 不出声。 */
+    private suspend fun emitCalendarNotice(outcome: EbikeFreeRideReminder.Outcome) {
+        val notice = when (outcome) {
+            EbikeFreeRideReminder.Outcome.Written ->
+                EbikeEvent.Notice("日历提醒已写入", NoticeTone.Success)
+            EbikeFreeRideReminder.Outcome.Removed ->
+                EbikeEvent.Notice("日历里的免费时长提醒已删除", NoticeTone.Info)
+            EbikeFreeRideReminder.Outcome.NoPermission ->
+                EbikeEvent.Notice("没有日历权限，未写入日历提醒", NoticeTone.Warning)
+            EbikeFreeRideReminder.Outcome.NoCalendarAccount ->
+                EbikeEvent.Notice("手机上没有可写日历账户，未写入日历提醒", NoticeTone.Warning)
+            is EbikeFreeRideReminder.Outcome.Failed ->
+                EbikeEvent.Notice("写系统日历失败：${outcome.message}", NoticeTone.Warning)
+            EbikeFreeRideReminder.Outcome.None -> null
+        }
+        notice?.let { _events.send(it) }
     }
 
     /**
-     * 输入尾部车号：剥掉可能被粘进来的模板前缀（`100000669` → `669`）再截三位，
-     * 口径在 [EbikeQr.normalizeTailInput]（纯 JVM 可测）。
+     * 输入车号：只留数字、限长，口径在 [EbikeQr.normalizeCarInput]（纯 JVM 可测）。
      */
-    fun onTailInput(value: String) {
-        val filtered = EbikeQr.normalizeTailInput(value)
-        _uiState.update { it.copy(tailInput = filtered, inputError = null) }
+    fun onCarInput(value: String) {
+        val filtered = EbikeQr.normalizeCarInput(value)
+        _uiState.update { it.copy(carInput = filtered, inputError = null) }
     }
 
-    /** 点击最近车号 chip 回填。 */
-    fun onPickRecent(tail: String) {
-        if (EbikeQr.bikeUrl(tail) != null) onTailInput(tail)
+    /** 点击最近车号 chip 回填完整车号。 */
+    fun onPickRecent(carNum: String) {
+        if (EbikeQr.bikeUrl(carNum) != null) onCarInput(carNum)
+    }
+
+    /**
+     * 地图页选中的车（DESIGN §3.9）：回填完整车号并立即出码。
+     * 车号来自运营方接口，仍走一遍 [EbikeQr.bikeUrl] 校验，脏数据不出一张扫不开的码。
+     */
+    fun onPickCarNum(carNum: String) {
+        if (EbikeQr.bikeUrl(carNum) == null) return
+        _uiState.update { it.copy(carInput = carNum, inputError = null) }
+        generate()
     }
 
     /** 一键清空最近车号（DESIGN §3.9）。历史只是回填便利项，清了不弹二次确认，直接提示。 */
@@ -148,11 +213,11 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
      * 视自动保存开关落相册、并写最近历史。
      */
     fun generate() {
-        val tail = _uiState.value.tailInput
-        val url = EbikeQr.bikeUrl(tail)
-        if (url == null) {
+        val carNum = EbikeQr.resolveCarNum(_uiState.value.carInput)
+        val url = carNum?.let { EbikeQr.bikeUrl(it) }
+        if (carNum == null || url == null) {
             _uiState.update {
-                it.copy(inputError = "请输入 ${EbikeQr.TAIL_LENGTH} 位数字车号（车身二维码后三位）")
+                it.copy(inputError = EbikeQr.INPUT_HINT)
             }
             return
         }
@@ -162,11 +227,11 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
                 EbikeQrBitmaps.render(EbikeQr.qrMatrix(url), prefsSnapshot.dark)
             }
             _uiState.update {
-                it.copy(generatedBitmap = bitmap, generatedBikeId = EbikeQr.TEMPLATE + tail)
+                it.copy(generatedBitmap = bitmap, generatedBikeId = carNum)
             }
             if (prefsSnapshot.autoSave) saveCurrent()
             viewModelScope.launch {
-                prefs.updateEbikeRecentIds { EbikeQr.mergeRecent(it, tail) }
+                prefs.updateEbikeRecentIds { EbikeQr.mergeRecent(it, carNum) }
             }
         }
     }

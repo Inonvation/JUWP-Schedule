@@ -547,6 +547,9 @@ fun JuwApp(pendingRoute: MutableState<String?>? = null) {
                             onOpenWidgetSettings = {
                                 SubpageActivity.start(context, SubpageScreen.WIDGET_SETTINGS)
                             },
+                            onOpenPermissionSettings = {
+                                SubpageActivity.start(context, SubpageScreen.PERMISSION_SETTINGS)
+                            },
                             onOpenCalendarSettings = {
                                 SubpageActivity.start(context, SubpageScreen.CALENDAR_SETTINGS)
                             },

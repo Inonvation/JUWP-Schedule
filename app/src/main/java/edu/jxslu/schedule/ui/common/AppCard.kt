@@ -36,6 +36,12 @@ object AppCardDefaults {
 
     /** 默认内间距：左右 14dp、上下 12dp（两行文本约 56dp 高，与旧服务卡 58dp 基本持平）。 */
     val Padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+
+    /**
+     * 高亮态的描边宽度。颜色取主题主色（见 [AppCard] 的 highlighted 参数）。
+     * 只加粗到 1.5dp：再加就成"选中框"了，卡片是列表里的一行，不是被选中的单选项。
+     */
+    val HighlightedBorderWidth = 1.5.dp
 }
 
 /**
@@ -44,6 +50,9 @@ object AppCardDefaults {
  * [onClick] 为 null = 纯展示卡（不可点、无涟漪、不进无障碍可点集合）；
  * 非 null 时由本组件统一触发触感反馈（开关口径见 [rememberAppHaptics]），
  * 调用方不要再自己调 `haptics.tap()`。
+ *
+ * [highlighted] 用于「从别处定位到这张卡」的场景（比如点地图上的标记，列表滚过去并把它点亮）：
+ * 换主色描边 + 抬一档底色。默认 false，不影响既有调用点。
  */
 @Composable
 fun AppCard(
@@ -52,6 +61,7 @@ fun AppCard(
     onClickLabel: String? = null,
     /** 只影响点击：false = 卡片可见但不可点（如开水卡在出水过程中不许再进页面）。 */
     enabled: Boolean = true,
+    highlighted: Boolean = false,
     contentPadding: PaddingValues = AppCardDefaults.Padding,
     verticalArrangement: Arrangement.Vertical = Arrangement.Top,
     content: @Composable ColumnScope.() -> Unit,
@@ -62,8 +72,26 @@ fun AppCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(AppCardDefaults.Shape)
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, AppCardDefaults.Shape)
+            .background(
+                if (highlighted) {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+            )
+            .border(
+                width = if (highlighted) {
+                    AppCardDefaults.HighlightedBorderWidth
+                } else {
+                    1.dp
+                },
+                color = if (highlighted) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = AppCardDefaults.Shape,
+            )
             .then(
                 if (onClick == null) {
                     Modifier
@@ -97,6 +125,7 @@ fun AppCardRow(
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
     enabled: Boolean = true,
+    highlighted: Boolean = false,
     contentPadding: PaddingValues = AppCardDefaults.Padding,
     verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
     content: @Composable RowScope.() -> Unit,
@@ -106,6 +135,7 @@ fun AppCardRow(
         onClick = onClick,
         onClickLabel = onClickLabel,
         enabled = enabled,
+        highlighted = highlighted,
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.Center,
     ) {

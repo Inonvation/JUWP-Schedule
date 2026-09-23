@@ -444,6 +444,10 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
     private val _balanceLoaded = MutableStateFlow(false)
 
+    /** 余额拉取进行中（今日页下拉刷新聚合指示器用）。 */
+    private val _balanceRefreshing = MutableStateFlow(false)
+    val balanceRefreshing: StateFlow<Boolean> = _balanceRefreshing
+
     /**
      * 余额状态是否**已确定**（2026-09-22 加）：尝试过加载（成功或失败）、
      * 或压根没得加载（无凭证 / 开关关）都算。
@@ -454,31 +458,48 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      */
     val balanceLoaded: StateFlow<Boolean> = _balanceLoaded
 
+    /**
+     * 手动刷新余额（2026-09-23：今日页下拉刷新入口）。无凭证/开关关时静默直返；
+     * 失败静默（与 init 的口径一致，卡片副行维持旧值或「暂不可用」）。
+     */
+    fun refreshBalance() {
+        viewModelScope.launch { fetchBalance(notify = false) }
+    }
+
+    /**
+     * 拉取余额快照。[notify] 为真时（init 首拉）同时恢复未确认充值的轮询；
+     * 手动刷新不需要重复挂轮询——init 已挂、`watchRechargeArrival` 自行收口。
+     */
+    private suspend fun fetchBalance(notify: Boolean) {
+        _balanceRefreshing.value = true
+        try {
+            if (credentialStore.read() == null) return
+            val enabledNow = prefs.campusCardEnabled.first()
+            if (!enabledNow) return
+            val saved = credentialStore.read() ?: return
+            val cards = repo.cards(saved.username, saved.password)
+            if (cards.isNotEmpty()) {
+                _balance.value = PayCodeViewModel.BalanceSnapshot(
+                    cards = cards,
+                    totalFen = cards.sumOf { it.cardBalanceFen },
+                    elecFen = cards.sumOf { it.elecBalanceFen },
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 静默：余额取不到不影响设置页其余功能
+        } finally {
+            _balanceLoaded.value = true
+            _balanceRefreshing.value = false
+        }
+    }
+
     init {
         // 今日页也挂本 VM（卡片余额+弹窗充值）；开关关时绝不发起任何一卡通网络动作
         if (credentialStore.read() != null) {
             viewModelScope.launch {
-                val enabledNow = prefs.campusCardEnabled.first()
-                if (!enabledNow) {
-                    _balanceLoaded.value = true
-                    return@launch
-                }
-                try {
-                    val saved = credentialStore.read() ?: return@launch
-                    val cards = repo.cards(saved.username, saved.password)
-                    if (cards.isNotEmpty()) {
-                        _balance.value = PayCodeViewModel.BalanceSnapshot(
-                            cards = cards,
-                            totalFen = cards.sumOf { it.cardBalanceFen },
-                            elecFen = cards.sumOf { it.elecBalanceFen },
-                        )
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // 静默：余额取不到不影响设置页其余功能
-                }
-                _balanceLoaded.value = true
+                fetchBalance(notify = true)
                 // 恢复未确认充值（进程被杀场景，DESIGN §4.19「充值」）：窗口内重启轮询，超窗清除。
                 // 基线一并从记录里恢复，重启后余额口径照常可用（只靠流水口径会漏判到账）
                 val pending = runCatching { prefs.pendingRecharge.first() }.getOrNull()

@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import edu.jxslu.schedule.domain.BgScale
+import edu.jxslu.schedule.domain.BikeMapViewport
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.DetectFailurePolicy
@@ -147,7 +148,10 @@ data class DisplayPrefs(
      * 关掉 = 完全回到旧语义（已记录的待删项保留不动，不再新增、也不删除）。
      */
     val ebikeBurnAfterScan: Boolean = true,
-    /** 最近生成的共享单车车号（尾部 3 位，倒序去重，上限见 [EbikeQr.RECENT_LIMIT]）。 */
+    /**
+     * 最近生成的共享单车车号（**完整车号**，倒序去重，上限见 [EbikeQr.RECENT_LIMIT]）。
+     * 2026-09-23 之前只存尾部 3 位，[EbikeQr.decodeRecent] 读旧数据时补前缀。
+     */
     val ebikeRecentIds: List<String> = emptyList(),
     /**
      * 今日页校园卡付款码卡开关（DESIGN §3.10）。**默认关**：涉及凭证与资金等价物，
@@ -309,7 +313,7 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_HOMEWORK_REMINDER_ENABLED] ?: false
     }
 
-    /** 共享单车免费时长提醒开关（DESIGN §3.9）。默认关：通知是打扰型能力。 */
+    /** 共享单车免费时长日历提醒开关（DESIGN §3.9）。默认关：往用户日历里写东西属打扰型能力。 */
     val ebikeFreeReminderEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_FREE_REMINDER_ENABLED] ?: false
     }
@@ -324,9 +328,9 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_EBIKE_RIDE_START_AT] ?: 0L
     }
 
-    /** 已发过免费到点通知的起点集合（字符串存毫秒值）。 */
-    val ebikeFreeNotifiedAt: Flow<Set<String>> = context.displayDataStore.data.map { p ->
-        p[KEY_EBIKE_FREE_NOTIFIED_AT] ?: emptySet()
+    /** 当前骑行在系统日历里的事件 id（DESIGN §3.9）；0 = 没有在案事件。 */
+    val ebikeFreeEventId: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_FREE_EVENT_ID] ?: 0L
     }
 
     /**
@@ -365,6 +369,43 @@ class DisplayPrefsStore(private val context: Context) {
     /** 扫完即焚开关（DESIGN §3.9）。全局项，默认开。 */
     val ebikeBurnAfterScan: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_BURN_AFTER_SCAN] ?: true
+    }.distinctUntilChanged()
+
+    /**
+     * 是否已经自动申请过定位权限（DESIGN §3.9）。
+     *
+     * 进单车地图页时没授权就申请一次；这个标记保证**只自动申请一次**。
+     * 系统在用户拒绝两次后就静默拒绝，不看标记的话每次进页面都会白申请一次、
+     * 再弹一句"已拒绝"，那就成了骚扰。之后要走定位只能靠用户主动点按钮。
+     */
+    val ebikeLocationAsked: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_LOCATION_ASKED] ?: false
+    }.distinctUntilChanged()
+
+    /**
+     * 附近单车地图的底部面板高度（dp，DESIGN §3.9）；null = 没拖过，用默认值。
+     *
+     * 只做范围校验，窗口缩放导致的"放不下"由渲染时再夹一道，不覆写用户拖出来的值。
+     */
+    val ebikePanelHeightDp: Flow<Float?> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_PANEL_HEIGHT_DP]?.takeIf { it.isFinite() && it > 0f }
+    }.distinctUntilChanged()
+
+    /**
+     * 上次查看的附近单车地图视野（DESIGN §3.9）；null = 还没存过。
+     *
+     * 存的是**最近一次查询的中心与缩放**：没给定位权限的人下次进页面直接从这儿开局，
+     * 不用每次都回到校园中心重拖一遍。脏值（越界、非有限）当没存过，
+     * 免得一个坏偏好把地图甩到地图外的某处。
+     */
+    val ebikeMapViewport: Flow<BikeMapViewport?> = context.displayDataStore.data.map { p ->
+        val lat = p[KEY_EBIKE_VIEW_LAT]?.toDouble() ?: return@map null
+        val lng = p[KEY_EBIKE_VIEW_LNG]?.toDouble() ?: return@map null
+        val zoom = p[KEY_EBIKE_VIEW_ZOOM]?.toDouble() ?: return@map null
+        if (!lat.isFinite() || !lng.isFinite() || !zoom.isFinite()) return@map null
+        if (lat !in -90.0..90.0 || lng !in -180.0..180.0) return@map null
+        if (zoom !in MIN_MAP_ZOOM.toDouble()..MAX_MAP_ZOOM.toDouble()) return@map null
+        BikeMapViewport(lat, lng, zoom)
     }.distinctUntilChanged()
 
     /** 扫完即焚的待删记录（本功能保存的二维码 key 集合，DESIGN §3.9）。 */
@@ -533,7 +574,7 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_HOMEWORK_REMINDER_ENABLED] = value }
     }
 
-    /** 共享单车免费时长提醒开关（DESIGN §3.9）。默认关：通知是打扰型能力。 */
+    /** 共享单车免费时长日历提醒开关（DESIGN §3.9）。默认关：往用户日历里写东西属打扰型能力。 */
     suspend fun setEbikeFreeReminderEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_FREE_REMINDER_ENABLED] = value }
     }
@@ -547,18 +588,15 @@ class DisplayPrefsStore(private val context: Context) {
 
     /**
      * 本次骑行计时起点（epoch 毫秒）：点「打开微信扫一扫」即写。
-     * 0 = 无进行中计时。**持久化**——进程被杀重启后状态条与补发核对都靠它。
+     * 0 = 无进行中计时。**持久化**——进程被杀重启后状态条与兜底核对都靠它。
      */
     suspend fun setEbikeRideStartAt(value: Long) {
         context.displayDataStore.edit { it[KEY_EBIKE_RIDE_START_AT] = value }
     }
 
-    /** 已发过免费到点通知的起点毫秒值：同一计时只发一次。 */
-    suspend fun addEbikeFreeNotifiedAt(value: Long) {
-        context.displayDataStore.edit { p ->
-            val current = p[KEY_EBIKE_FREE_NOTIFIED_AT] ?: emptySet()
-            p[KEY_EBIKE_FREE_NOTIFIED_AT] = current + value.toString()
-        }
+    /** 当前骑行在系统日历里的事件 id（0 = 没有在案事件）。 */
+    suspend fun setEbikeFreeEventId(value: Long) {
+        context.displayDataStore.edit { it[KEY_EBIKE_FREE_EVENT_ID] = value }
     }
 
     suspend fun setReminderLeadMinutes(value: Int) {
@@ -599,6 +637,28 @@ class DisplayPrefsStore(private val context: Context) {
     /** 扫完即焚开关（DESIGN §3.9）。 */
     suspend fun setEbikeBurnAfterScan(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_BURN_AFTER_SCAN] = value }
+    }
+
+    /** 标记「已自动申请过定位权限」（DESIGN §3.9），见 [ebikeLocationAsked]。 */
+    suspend fun setEbikeLocationAsked(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_LOCATION_ASKED] = value }
+    }
+
+    /** 记住附近单车地图的最后视野（DESIGN §3.9），见 [ebikeMapViewport]。 */
+    suspend fun setEbikeMapViewport(lat: Double, lng: Double, zoom: Double) {
+        if (!lat.isFinite() || !lng.isFinite() || !zoom.isFinite()) return
+        if (lat !in -90.0..90.0 || lng !in -180.0..180.0) return
+        context.displayDataStore.edit {
+            it[KEY_EBIKE_VIEW_LAT] = lat.toFloat()
+            it[KEY_EBIKE_VIEW_LNG] = lng.toFloat()
+            it[KEY_EBIKE_VIEW_ZOOM] = zoom.toFloat().coerceIn(MIN_MAP_ZOOM, MAX_MAP_ZOOM)
+        }
+    }
+
+    /** 记住底部面板高度（DESIGN §3.9），见 [ebikePanelHeightDp]。 */
+    suspend fun setEbikePanelHeightDp(value: Float) {
+        if (!value.isFinite() || value <= 0f) return
+        context.displayDataStore.edit { it[KEY_EBIKE_PANEL_HEIGHT_DP] = value }
     }
 
     /**
@@ -886,7 +946,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_FREE_REMINDER_ENABLED = booleanPreferencesKey("ebike_free_reminder_enabled")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
-        val KEY_EBIKE_FREE_NOTIFIED_AT = stringSetPreferencesKey("ebike_free_notified_at")
+        val KEY_EBIKE_FREE_EVENT_ID = longPreferencesKey("ebike_free_event_id")
         val KEY_CURRENT_TIMETABLE = longPreferencesKey("current_timetable_id")
         val KEY_DEFAULT_CONFIG_SOURCE = longPreferencesKey("default_config_source_id")
         val KEY_SLOT_SCHEMA = intPreferencesKey("slot_schema_version")
@@ -897,6 +957,15 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_CARD_ENABLED = booleanPreferencesKey("ebike_card_enabled")
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
+        val KEY_EBIKE_LOCATION_ASKED = booleanPreferencesKey("ebike_location_asked")
+        val KEY_EBIKE_VIEW_LAT = floatPreferencesKey("ebike_view_lat")
+        val KEY_EBIKE_VIEW_LNG = floatPreferencesKey("ebike_view_lng")
+        val KEY_EBIKE_VIEW_ZOOM = floatPreferencesKey("ebike_view_zoom")
+        val KEY_EBIKE_PANEL_HEIGHT_DP = floatPreferencesKey("ebike_panel_height_dp")
+
+        /** 保存视野时的缩放范围，与瓦片源的 1~19 对齐。 */
+        const val MIN_MAP_ZOOM = 1.0f
+        const val MAX_MAP_ZOOM = 19.0f
         val KEY_EBIKE_PENDING_DELETE = stringSetPreferencesKey("ebike_pending_delete")
         val KEY_EBIKE_RECENT_IDS = stringPreferencesKey("ebike_recent_ids")
         val KEY_CAMPUS_CARD_ENABLED = booleanPreferencesKey("campus_card_enabled")

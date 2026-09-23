@@ -33,9 +33,14 @@ class JuwApplication : Application() {
             // 提醒关/无课时 scheduleNext 内部是撤销闹钟的空跑，很廉价。
             ClassReminder.scheduleNext(this@JuwApplication)
             ClassReminder.ensurePeriodicWork(this@JuwApplication)
-            // 共享单车免费时长提醒（DESIGN §3.9）：进核对 Worker 排周期兜底（10 分钟，
-            // 覆盖闹钟被 ROM 推迟的场景）。无进行中计时 / 开关关时 check 是空跑，很廉价。
+            // 共享单车免费时长日历提醒（DESIGN §3.9）：排周期兜底核对（10 分钟，
+            // 覆盖到期清理任务被 ROM 推迟、或事件在日历里被删掉的场景）。
+            // 无进行中计时 / 开关关时 check 是空跑，很廉价。
             EbikeFreeRideReminder.ensurePeriodicWork(this@JuwApplication)
+            // 冷启动核一次：计时已过期就删掉日历里的残留事件，计时中缺事件就补写
+            EbikeFreeRideReminder.check(this@JuwApplication)
+            // 首版通知 channel 的清理（改成系统日历后不再发通知，channel 得自己删）
+            EbikeFreeRideReminder.deleteLegacyChannel(this@JuwApplication)
             // 调课自动检测（DESIGN §4.17）：周期任务按当前设置重排（开→排/关→撤），
             // 距上次检测超过一个周期时冷启动立即补测一次（兜 WorkManager 被 ROM 推迟）。
             // 功能默认关闭，关闭态下这两步都是零成本空跑。

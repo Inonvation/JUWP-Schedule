@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.provider.AlarmClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -46,8 +47,11 @@ import java.util.concurrent.TimeUnit
  * 与桌面小组件（`ui/widget/TodayWidgetRefresh`）同构的三层兜底：
  * 边界闹钟（上课「提前量点 / 上课时刻」取更早的 / 作业「提醒点 20:00」，三者再取更早）为主，
  * WorkManager 15 分钟周期核对补发/补排，冷启动 / 数据变化 / 开机广播立即重排。
- * 同样用 `setAndAllowWhileIdle` 而不是精确闹钟：推迟几分钟可接受，
- * 不申请 `SCHEDULE_EXACT_ALARM` 敏感权限。
+ * 闹钟用 `setAlarmClock`（2026-09-23 自 `setAndAllowWhileIdle` 改）：
+ * 真机上提醒迟到几分钟是反复出现的问题——非精确闹钟可被 ROM 省电策略推迟。
+ * `setAlarmClock` 是系统级精确闹钟（系统时钟应用同款），到点即触发、不受推迟，
+ * 且不需要 SCHEDULE_EXACT_ALARM 等任何特殊权限；代价仅是触发时状态栏短暂
+ * 显示闹钟图标，对「上课提醒」语义贴切。小组件刷新保持非精确闹钟不动（见 §3.6）。
  */
 object ClassReminder {
 
@@ -104,7 +108,16 @@ object ClassReminder {
             }
             val triggerAtMillis = triggerAt
                 .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pending)
+            // 系统级精确闹钟：到点即触发，不受 Doze/省电推迟，无需特殊权限。
+            // showIntent 交给系统时钟的闹钟页：用户点状态栏那枚闹钟图标时落到「下一个闹钟列表」，
+            // 而不是本 App 的某个页面——那枚图标只表示"有个闹钟排着"，不是提醒本身
+            val clockPending = PendingIntent.getActivity(
+                context,
+                0,
+                Intent(AlarmClock.ACTION_SHOW_ALARMS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            manager.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAtMillis, clockPending), pending)
         }.onFailure { Log.w(TAG, "schedule reminder failed", it) }
     }
 

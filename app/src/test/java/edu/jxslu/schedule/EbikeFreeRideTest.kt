@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 共享单车免费时长提醒（DESIGN §3.9）：时刻计算、提前量吸附、
+ * 共享单车免费时长倒计时（DESIGN §3.9）：事件锚点、提醒偏移、提前量吸附、
  * 倒计时格式化、有效期判断。纯 JVM，口径见 [EbikeFreeRide]。
  */
 class EbikeFreeRideTest {
@@ -15,17 +15,29 @@ class EbikeFreeRideTest {
     private val start = 1_000_000_000_000L
 
     @Test
-    fun `提前量默认3触发点在12分钟后`() {
-        assertEquals(
-            start + 12 * 60_000L,
-            EbikeFreeRide.triggerAtMillis(start, 3),
-        )
+    fun `日历事件锚在免费结束时刻`() {
+        assertEquals(start + 15 * 60_000L, EbikeFreeRide.freeEndMillis(start))
     }
 
     @Test
-    fun `提前量边界 1和5`() {
-        assertEquals(start + 14 * 60_000L, EbikeFreeRide.triggerAtMillis(start, 1))
-        assertEquals(start + 10 * 60_000L, EbikeFreeRide.triggerAtMillis(start, 5))
+    fun `两条提醒偏移 提前量与事件开始`() {
+        // 事件开始 = 免费结束，所以「提前 3 分钟」＝免费结束前 3 分钟响，第二条在结束那一刻
+        assertEquals(listOf(3, 0), EbikeFreeRide.reminderOffsets(3))
+        assertEquals(listOf(1, 0), EbikeFreeRide.reminderOffsets(1))
+        assertEquals(listOf(5, 0), EbikeFreeRide.reminderOffsets(5))
+        // 越界走吸附，不出现 0 或负数（MINUTES 非负是日历 Provider 的硬要求）
+        assertEquals(listOf(1, 0), EbikeFreeRide.reminderOffsets(0))
+        assertEquals(listOf(5, 0), EbikeFreeRide.reminderOffsets(9))
+    }
+
+    @Test
+    fun `提醒时刻都不早于计时起点`() {
+        val freeEnd = EbikeFreeRide.freeEndMillis(start)
+        EbikeFreeRide.reminderOffsets(4).forEach { minutes ->
+            assertTrue(freeEnd - minutes * 60_000L >= start)
+        }
+        // lead=4 → 11 分钟后响（免费结束前 4 分钟）
+        assertEquals(start + 11 * 60_000L, freeEnd - 4 * 60_000L)
     }
 
     @Test
@@ -73,8 +85,8 @@ class EbikeFreeRideTest {
     }
 
     @Test
-    fun `通知文案含提前分钟数`() {
-        val text = EbikeFreeRide.noticeText(3)
+    fun `事件描述含免费时长与提前分钟数`() {
+        val text = EbikeFreeRide.eventDescription(3)
         assertTrue(text.contains("15"))
         assertTrue(text.contains("3"))
     }

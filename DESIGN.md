@@ -88,7 +88,7 @@
 │     ├── 分享图标   → 分享弹层（日历同步 / CSV / JSON，见 4.12）
 │     └── 课表名 ▾   → 切换课表弹层 → 管理课表
 └── 我的      SettingsScreen（入口列表，2026-09-21 起 6 分区）
-      ├── 通用：外观主题 · 动态取色 · 触感反馈（全局观感）
+      ├── 通用：外观主题 · 动态取色 · 触感反馈（全局观感）· 权限设置（§3.12）
       ├── 课表（副标题「当前：课表名」）：课表管理 / 课表设置（学期·作息）/ 教务导入 /
       │     上课提醒（§3.7）/ 调课 / 调课自动检测（§4.17）/ 成绩查询（§4.15）/ 课表数据
       ├── 学习（§3.11）：笔记·课件 / 作业 —— 按课程名归属，跨课表可见
@@ -103,6 +103,13 @@
 作业中心（`HOMEWORK`·`HOMEWORK_COURSE`·`HOMEWORK_DETAIL`·`HOMEWORK_TODO`，最后一个由
 今日页作业卡与截止提醒进）。带参跳转沿用 `SubpageActivity.start(...)` 的可选参数
 （`courseName` / `itemId`），与 `SHORTCUTS` 的 `focusItemId` 同一就近定位思路。
+
+权限设置页（§3.12，2026-09-23 新增）：`PERMISSION_SETTINGS`，忽略电池优化 /
+允许自启动（锁后台）/ 通知权限的统一申请出口。
+
+附近单车地图（§3.9，2026-09-23 新增）：`EBIKE_MAP`，由快趣出行码页顶部按钮进入，
+地图上选中车后把**完整车号**经 Activity Result（`EXTRA_PICKED_CAR_NUM`）回传给出码页
+并直接出码。
 
 弹层：课程编辑 Sheet、教务 WebView 全屏、订单列表 Sheet、登录 Sheet。
 
@@ -207,7 +214,8 @@
     半透明底栏压住卡片下缘，展开/收起的落点也看着落在底栏上。改成卡片后，dock 的折叠
     与底栏形态彼此无关，间距恒定，课少时那块空白也由卡片本身收住
   - **整块可折叠**（2026-09-22，用户要求）：dock 内容（快捷方式网格 + 服务格 + 开水卡）
-    全部收在一行把手「常用功能 / 展开·收起 + 方向箭头」之下，收起后 dock 只剩这一行约 40dp。
+    全部收在一行把手「江水生活 / 展开·收起 + 方向箭头」之下（2026-09-23 由「常用功能」改名），
+    收起后 dock 只剩这一行约 40dp。
     展开态持久化（`DisplayPrefs.todayDockExpanded`，键 `today_dock_expanded`，**默认展开**：
     用户开着某个开关本就是要用它，默认收起等于把入口藏起来）。把手恒在，不能跟着一起藏——
     它是收起态唯一的展开入口。全部入口都关掉时整块 dock 仍不占位（原口径不变）
@@ -229,13 +237,41 @@
     新增快捷方式按序落新行、区块向上生长
   - **高度上限 = 屏高 45%**，超出时 dock 内部可滚：8 条快捷方式 + 服务格 + 开水卡在大字体小屏上足以吃掉
     半屏，设上限既保住课表可视区，也保证每个入口都还能够到（不设上限会被挤出屏幕且无法访问）
-  - **开水卡恒展示**（2026-09-20 改名：标题自「一键开水 · 〈设备名〉」改「胖乖生活 · 〈设备名〉」，
-    与未登录态同一品牌口径；卡内「开水」按钮与一键出水交互不变；默认开，
-    「胖乖生活一键开水」页尾部设置可关）：
-    已登录保持一键出水交互（解锁按钮/进度/结果原地显示）；未登录显示**未登录态**
-    （「胖乖生活 · 未登录」+ 引导文案），
-    点卡片跳开水页（登录表单就在该页），不再因未登录整卡隐藏
-  - 开水卡在空态同样展示（2026-09-19 修：此前两处空态调用没传 `waterCard`，空态开水卡一直没出现）
+  - **开水卡恒展示**（2026-09-23 交互重构：卡内不再放「开水」按钮与单击/双击——
+    标题「胖乖生活」+ 副行设备名（旧卡口径回归），**小票余额在卡片右侧**
+    （主色加粗「小票 ¥X ›」，热区 = 文字四周内缩 ≥32dp 高，`clip→clickable→padding`
+    顺序、文字位置不动）；点**右侧余额**弹**开水操作面板**（ModalBottomSheet：
+    余额大字 + 积分 + 开水按钮（固定单击）+ 流程态（进度/结算明细/失败详情）+
+    积分抵扣开关），点卡片其余位置进开水页（选设备、看订单详情）；
+    默认开，「胖乖生活一键开水」页尾部设置可关）：
+    - 面板与开水页共享同一份 `WaterViewModel`（今日页 Activity 作用域），弹窗关闭
+      **不取消**流程——副行临时给流程简报（「正在出水 mm:ss」等，纯展示），
+      右侧余额仍可点回面板看完整进度，状态不丢
+    - 副行占位口径：没拉过设备列表 =「读取设备…」、拉过但没有 =「未选择设备」
+      （`waterDeviceLabel`）；右侧余额没拉过 =「余额读取中…」（不可点）、
+      拉过但没有 =「余额暂不可用 ›」（可点，`WaterUiState.balanceLoaded` 区分）
+    - 未登录显示**未登录态**（「胖乖生活 · 未登录」+ 引导文案），点卡片跳开水页
+      （登录表单就在该页），不再因未登录整卡隐藏
+    - 结算明细与开水页成功卡同一账单口径（§4.10）：本次花费 + 「小票支付/积分抵扣/现金」构成
+  - **下拉刷新**（2026-09-23 加，M3 下拉刷新包住三态内容）：并行刷新一卡通余额 +
+    胖乖余额/设备 + 今日时间状态（`refreshTick`）。空态（假期）同样可刷；课表/作业数据
+    来自 Room Flow 实时响应，不参与指示器
+    - **指示器驻留**：`onRefresh` 回调的瞬间 campus/water 的 loading 标志还是 false，
+      直接聚合两者会让指示器立刻弹回，像「拉下去又弹回来、啥都没发生」。用
+      `manualRefreshing` 兜住回调瞬间，等两侧 loading 归零**且**最短驻留 650ms 后才收；
+      都没得刷（未登录 / 开关关）时也驻留一个完整周期，给「刷新完成」的确定反馈
+    - **触发触感**：`onRefresh` 里 `haptics.tap()`——它只在拉过阈值松手时回调，响一声即
+      「下拉成功」。开关走全局 `DisplayPrefs.hapticsEnabled`（`rememberAppHaptics` 内部短路，
+      调用点不判），与消费流水页同语义
+    - **容器自带 padding + 阈值 56dp**（2026-09-23 修「拖不出来、也触发不了」）：
+      Scaffold 的 content 从 (0,0) 铺满整屏、TopAppBar 压在它上面，容器不吃那份 padding
+      时指示器的滑入轨迹整条都在顶栏后面（`translationY = fraction × threshold − 自身高度`，
+      拉满也只到阈值处、比顶栏矮），要拖过阈值一大截才露出半圈。M3 又只把实际拖动量的
+      一半计入（`DragMultiplier = 0.5f`，默认 80dp 阈值 = 真拖 160dp 才松手触发）。
+      现在 padding 收在刷新容器上（与消费流水页 §4.19 同口径），阈值收到
+      `TodayPullRefreshThreshold` = 56dp（真拖 112dp）。`Modifier.pullToRefresh` 与
+      `PullToRefreshDefaults.Indicator` 共用这一个常量——写岔会出现「图标到位了却没刷新」
+  - **开水卡在空态同样展示**（2026-09-19 修：此前两处空态调用没传 `waterCard`，空态开水卡一直没出现）
   - **服务格并排**（2026-09-22 自「一卡一行」改，用户拍板）：快趣出行码（§3.9）与水宝宝
     一卡通（§3.10）并成**一行两列**（各 `weight(1f)`，间隔 12dp），格内 = 图标 + 标题 +
     副行；只开一个时它独占整行（不补空位，免得留半张卡的空洞）。三张整行卡叠起来约 230dp、
@@ -309,6 +345,8 @@
 
 - 通用（全局观感）：外观主题、动态取色（Material You，默认开可关）、触感反馈、
   悬浮导航栏（§4.22，**默认关**：底栏半透明磨砂，课表背景图透到屏幕底部）
+- **权限设置**（2026-09-23 新增，§3.12）：忽略电池优化 / 允许自启动 / 锁后台 / 通知权限
+  —— 全局，与课表无关，放「通用」分区，进子页逐项申请或跳系统设置
 - 课表（副标题「当前：课表名」，组内按「配置 → 使用 → 数据」流排）：课表管理 /
   课表设置（学期+作息）/ 教务导入 / 上课提醒（§3.7）/ 调课 / 调课自动检测（§4.17）/
   成绩查询（§4.15）/ 课表数据（导出·导入·清空）—— 课表级，随当前课表（导出与清空也是当前课表口径）
@@ -356,8 +394,9 @@
 
 **开水设置**（2026-09-20 起并入开水页，`SubpageScreen.WATER_SETTINGS` 已删除）：
 两项都是今日页开水卡的行为——**显示开水卡片**（默认开，关掉今日页不再展示含未登录态）+
-**点击方式**（单击/双击，对今日页开水卡与开水页大按钮同时生效）。2026-09-19 曾收进
-独立「开水设置」子页，2026-09-20 并入开水页尾部（登录/未登录两态共用同一区块），
+**点击方式**（单击/双击，2026-09-23 起只对开水页大按钮生效；今日页余额面板的开水按钮
+固定单击——点余额→弹窗→点开水已是明确意图链，不再需要防误触确认）。
+2026-09-19 曾收进独立「开水设置」子页，2026-09-20 并入开水页尾部（登录/未登录两态共用同一区块），
 不再单独成页。均不依赖登录态——未登录也能关卡片显示与调点击方式；登录/退出在页内完成。
 「我的」侧入口名「胖乖生活一键开水」（2026-09-20 起，原「开水」）。
 
@@ -562,12 +601,17 @@
 
 | 层 | 机制 | 作用 |
 |----|------|------|
-| 1 | `AlarmManager.setAndAllowWhileIdle` 排上课与作业各触发点中**最早**的一个（上课侧 = 提前量点与上课时刻点取更早；可跨天，最多向后找 14 天） | 主路径 |
+| 1 | `AlarmManager.setAlarmClock` 排上课与作业各触发点中**最早**的一个（上课侧 = 提前量点与上课时刻点取更早；可跨天，最多向后找 14 天） | 主路径 |
 | 2 | WorkManager 15 分钟周期核对 | 闹钟被 ROM 推迟、重启丢失时补排/补发 |
 | 3 | 冷启动 / 课表·学期·作息数据变化 / `BOOT_COMPLETED` / 设置变更 | 立即重排 |
 
-- 与小组件一致用 `setAndAllowWhileIdle`，**不用精确闹钟**（理由见 §3.6）；
-  提醒可能被 Doze 推迟几分钟，设置页说明写明，并复用「忽略电池优化」引导的收益。
+- **用 `setAlarmClock` 而非 `setAndAllowWhileIdle`（2026-09-23 改）**：真机上
+  提醒迟到几分钟是反复出现的问题，`setAndAllowWhileIdle` 是非精确闹钟，
+  ROM（尤其 MIUI/澎湃OS 的省电策略）可把它推迟；`setAlarmClock` 是系统级精确闹钟
+  （系统时钟应用的同款通道），到点即触发、不受 Doze/省电推迟，且**不需要
+  SCHEDULE_EXACT_ALARM 等任何特殊权限**——代价仅是触发时状态栏短暂出现闹钟图标，
+  对「上课提醒」这个语义反而贴切。小组件刷新（§3.6）保持 `setAndAllowWhileIdle`
+  不动：晚几分钟无感知差异，不值得为它常驻闹钟图标。
 - 无效场景不排：提醒关、学期未配置、课表为空、不在学期周次内。
 - 下一个提醒时刻的计算是纯函数（`domain/ReminderPlanner`，JVM 可测），
   Android 侧（`ui/reminder/`）只负责排闹钟、发通知、去重落盘。
@@ -629,29 +673,74 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 
 | 项 | 规格 |
 |----|------|
-| 纵向顺序（2026-09-22 重排） | 「打开快趣出行」→ 车号输入 → 生成 → 出码位 → 保存 / 扫一扫 → 最近生成 → 出码设置（两开关）→ 免责声明。开关原先夹在输入区与码区之间，现沉到页面最下方（用户口径：低频调整项不挡出码视线） |
-| 车号输入 | 尾部 3 位数字；`100000` 作为**输入框内的固定前缀**展示（`OutlinedTextField.prefix`），用户不再需要照抄整串车号（2026-09-22 用户反馈）。粘贴整条车号由 `EbikeQr.normalizeTailInput` 剥掉模板前缀再取后三位；恰好 3 位且以 `100000` 开头（如 `100`）不剥——那是合法尾部。3 位非数字/为空禁止生成，行内提示 |
+| 纵向顺序（2026-09-22 重排；2026-09-23 换顶栏按钮） | 「附近单车地图」→ 车号输入 → 生成 → 出码位 → 保存 / 扫一扫 → 最近生成 → 出码设置（两开关）→ 「打开快趣出行」文字入口 → 免责声明。开关原先夹在输入区与码区之间，现沉到页面最下方（用户口径：低频调整项不挡出码视线） |
+| 车号输入（2026-09-23 改口径） | **一条输入框同时接受两种形态**：1~3 位=校园车队尾部，此时 `100000` 作为**输入框内的前缀**展示（`OutlinedTextField.prefix`，2026-09-22 用户反馈；`EbikeQr.inputPrefix` 在输入超过 3 位时返回空串，前缀自己消失）；6~12 位=完整车号（地图选中的车就是这一形态，别的校区前缀是 `300000…`，靠尾部 3 位拼不出正确 URL）。口径全在 `EbikeQr.normalizeCarInput` / `resolveCarNum`（纯 JVM 可测）。粘贴整条校园车号（`100000669`）原样保留，不必剥前缀——出码结果与旧版一致。输入不成车号（4~5 位、全非数字）禁止生成，行内提示 |
 | 生成 | 点击生成 720×720px QR（`zxing:core`，容错 M，白边 1 模块）；点击同时收起键盘 |
 | 出码位（2026-09-22） | **固定方形、始终占位**：`fillMaxWidth` + `aspectRatio(1f)` 的描边框，未生成时是空框 + 图标提示，出码后原地换成码图。旧版"没码就没有这一块"，出码瞬间整页下跳一次 |
 | 保存 / 扫一扫 | 两枚按钮常显、等宽并排；**未出码时置灰不可点**（`enabled = false`）。按钮整行出现或消失同样会顶动下方内容，故不做条件渲染 |
 | 自动保存 | 生成即存系统相册（`Pictures/水贝贝`，JPEG 90），**开关 `ebikeAutoSave` 默认关**（用户拍板）——相册里只留用户真的要的码。开关在页面最下方「出码设置」区（`SettingsSection` + `SettingSwitchRow`，与设置页同规格）；保存成功/失败走页内 `InlineNoticeRow`（弹层窗口纪律，Snackbar 不穿透二级页窗口） |
 | 扫完即焚 | 保存到相册的码在**回到 App 后自动删除**，**开关 `ebikeBurnAfterScan` 默认开**（保存码是扫码一次性耗材，不留痕）。机制：保存成功记录待焚毁 key（`ebikePendingDelete` stringSet，持久化——进程被杀恢复后仍能删）；页面 ON_RESUME 时 `EbikeViewModel.burnPending()` 按 key 分流删除（29+ 自己 insert 的 MediaStore uri，owner 免权限；26–28 自己写的公共目录文件），删成功的移出记录、失败的保留重试。开关关 = 完全回到旧语义（不新增记录也不删残留）。开关与自动保存在同一区，见上行 |
-| 最近车号 | 最近 8 个生成过的车号 chips（`FlowRow` 自动折行——字体放大档位下 4 个 chip 也放不进一行；DataStore 列表，倒序去重），点击回填；标题行右侧「清空」一键删除全部，**无二次确认**（纯回填便利数据），清完给 Snackbar「已清空最近车号」；仅本地，不入 git |
+| 最近车号 | 最近 8 个生成过的**完整车号** chips（`FlowRow` 自动折行——字体放大档位下 4 个 chip 也放不进一行；DataStore 列表，倒序去重），点击回填；标题行右侧「清空」一键删除全部，**无二次确认**（纯回填便利数据），清完给 Snackbar「已清空最近车号」；仅本地，不入 git。存储格式 2026-09-23 由「尾部 3 位」改为「完整车号」，`EbikeQr.decodeRecent` 读旧数据时给纯 3 位条目补上 `100000` 前缀，老用户历史不丢 |
 | 提示 | 「打开微信扫一扫」按钮 best-effort 三级兜底：`ShortCutDispatchAction`（微信桌面长按快捷方式真身，直达扫一扫）→ `BIZSHORTCUT` 旧式入口 → 微信首页手动引导；失败走页内 Snackbar；manifest `queries` 声明微信包可见性仅用于该探测 |
-| 打开快趣出行（2026-09-21；2026-09-22 移到输入框上方） | 页内按钮，用**描边样式**（`OutlinedButton`）置于车号输入框上方——本页主操作只有「生成二维码」一个实心按钮，两个实心按钮上下叠读不出主次。常显：临时改写系统「助手」设置（`Settings.Secure.assistant` → 快趣首页）+ 反射 `SearchManager.launchAssist`，由 SystemUI 以 `ACTION_ASSIST` 代启未导出的首页（**直达、跳过启动页**；同级「快捷方式」工具同款路径，真机实测）；需一次性 `pm grant WRITE_SECURE_SETTINGS`（见下），未授权/失败自动降级为桌面启动意图（启动页）；**先重启再开**（2026-09-23：桌面意图 + `FLAG_ACTIVITY_CLEAR_TASK`，清任务栈重建首页——进程活着 Activity 也全销毁，地图跟着重新初始化；`killBackgroundProcesses` 杀不掉挂前台服务的进程已弃用）；未安装弹 `AlertDialog` 下载引导（附参考下载页 `https://m.itmop.com/downinfo/288264.html`，文案写免责「外部网站不保证准确性、自行甄别、损失概不负责」），打开失败走页内 Snackbar；manifest `queries` 声明包可见性 + `KILL_BACKGROUND_PROCESSES` 权限 |
-| 直达前置 | 一次性 adb 授权：`adb shell pm grant edu.jxslu.schedule[.debug] android.permission.WRITE_SECURE_SETTINGS`（权限为 development 级，可 `pm grant`；未授权 = 自动降级启动页，不再提示） |
+| 打开快趣出行（2026-09-21 首版；2026-09-23 降级为文字入口） | 降为页面最下方一行 `TextButton`，与免责声明相邻。**助手通道整套删除**（`Settings.Secure.assistant` 改写 + 反射 `launchAssist` + `WRITE_SECURE_SETTINGS` + `KILL_BACKGROUND_PROCESSES` + `queries` 里的 `com.kvcoo.go` + 未安装引导弹窗）：内置地图（见下节）已经承担「看车在哪」这件事，官方 App 不再是必经步骤，而那条链路要用户先跑一次 adb 授权、且只在小米 ROM 上真机验证过。现在只剩桌面启动意图一级：装了则打开（启动页），未装给一句 Snackbar 提示，不再弹下载引导 |
 | 提亮 | **不做**自动屏幕提亮（用户拍板） |
-| 免费时长提醒（2026-09-22） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点 = 点「打开微信扫一扫」的时刻**（偏保守）。开关 `ebikeFreeReminderEnabled` 默认关（通知是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。开关开 + 计时中显示倒计时条（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」）；到点发系统通知（独立 channel `ebike_free_ride`，IMPORTANCE_HIGH，点击回本页），同一计时只发一次（`ebikeFreeNotifiedAt` 按起点去重）。调度独立于上课提醒：`EbikeFreeRideReminder` + `EbikeFreeRideReceiver`，`setAndAllowWhileIdle`（不申请 SCHEDULE_EXACT_ALARM），**不共用** ClassReminder 的闹钟（那边与课表查询耦合）。兜底：进页 ON_RESUME 补发「已过触发点未通知」（宽限窗 = 触发点后 5 分钟，再晚通知文案失真就放弃）；WorkManager 10 分钟周期核对兜底（闹钟被 ROM 推迟 / 丢失时窗口内补发），核对走 `EbikeFreeRideCheckWorker`（receiver 只排 Work，不阻塞广播线程）。开机补排**不做**（用户拍板，重启后进行中计时静默失效）。换车 = 再点一次「扫一扫」重新计时。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖触发点/吸附/倒计时/有效期） |
+| 免费时长倒计时（2026-09-22 首版；2026-09-23 由 App 通知改系统日历） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点 = 点「打开微信扫一扫」的时刻**（偏保守）。开关 `ebikeFreeReminderEnabled` 默认关（往用户日历里写东西同样是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。开关开 + 计时中显示倒计时条（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」），**到点提醒不再是 App 通知**：日历事件标题 `免费时长倒计时`、`DTSTART == DTEND == 免费结束时刻`（0 时长；2026-09-23 在 Redmi K70 的小米日历实测显示为「15:25-15:25」），挂两条 `Reminders`——`MINUTES = 提前量`（免费结束前 N 分钟响）与 `MINUTES = 0`（结束那一刻再响一次）。**锚点必须取免费结束时刻**：`Reminders.MINUTES` 只能表达「事件开始前 N 分钟」且非负，锚在计时起点的话「提前 3 分钟」会落到扫码之前。description 带独立标记 `水贝贝骑行提醒`（课表同步只认自己的 `水贝贝课表同步`，两边的删除/重写互不误伤），删除按 DataStore 里的 `ebikeFreeEventId`。删事件三条路：点「结束骑行」立即删、免费结束后 1 分钟的兜底 `WorkManager` 任务、进页 / 冷启动 / 10 分钟周期核对（`EbikeFreeRideCheckWorker`，**类名别改**——老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排）。进程被杀且兜底没跑成时事件会留到下次打开 App，这是交给系统日历的代价；开机补排**不做**（用户拍板，重启后进行中的计时静默失效）。换车 = 再点一次「扫一扫」重新计时。**App 内通知链整套删除**（精确闹钟 `setAlarmClock`、channel `ebike_free_ride`、`EbikeFreeRideReceiver`、`ebikeFreeNotifiedAt` 去重键、POST_NOTIFICATIONS 申请），日历权限 READ/WRITE_CALENDAR 只在该功能被用到的那一刻运行时申请。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖事件锚点/提醒偏移/吸附/倒计时/有效期），写入与删除在 `data/calendar/EbikeCalendarEvents.kt` |
+
+#### 附近单车地图（2026-09-23，`ui/ebike/BikeMapScreen`）
+
+把「打开快趣出行看地图」换成 App 自己的地图：二级页 `SubpageScreen.EBIKE_MAP`，
+请求运营方的附近车辆接口（契约与依据见 §4.23），在瓦片底图上画车。
+
+| 项 | 规格 |
+|----|------|
+| 顶栏 | 「附近单车」+ 返回；地图右上角两枚浮动按钮：「定位到我的位置」「回到校区」 |
+| 地图 | osmdroid `MapView`，高德栅格瓦片（512px 档，GCJ-02）。**地图不套在任何可滚动容器里**——拖动地图与滚动页面抢手势，只能靠拦截指针事件打补丁 |
+| 地图窗口不跳 | 底部面板高度是**定值**（不随内容变），内容从「正在查附近的车」变成「20 个分组」时面板不长高、地图不被挤小。面板内部的列表 `weight(1f)` 撑满并自己滚动，免责声明钉在面板底部。2026-09-23 之前面板按内容自适应，加载态与结果态的地图大小肉眼可见地不一样 |
+| 面板高度可拖 | 面板顶部一条 22dp 把手（`PanelDragHandle`，`detectVerticalDragGestures` 1:1 跟手、无吸附动画——拖动中的任何动画都会让地图跟着抖）：默认 300dp，夹在 180dp（内容区滚不塌）与 520dp、并再被窗口 70% 压一道（地图总留三成）。**松手才写 DataStore**（`ebike_panel_height_dp`），拖动途中不落盘；进页面按上次的高度开局 |
+| 查询时机 | 进页查一次；拖动停止 500ms 后查一次；点刷新按钮查一次；定位成功后一次。两次中心点位移 < 30 米不重复请求。页面不可见不查，**不做后台轮询** |
+| 覆盖范围（2026-09-23 追加） | 接口一次只返回**离查询点最近的 20 辆**。校园里一个车桩就停十几辆，所以单点查询只会返回那一个桩，别处的车看不见——用户的原话是「把窗口移过去就有了」。修法：中心点返回满 20 辆时，再在周围八个方位各 700 米处采样一次，按车号合并去重（`BikeNearby.samplePoints`）。稀疏区域只发 1 个请求，车多的区域才发满 9 个 |
+| 展示距离上限 | 多点采样会把两公里外的车也捞回来，超过 `BikeNearby.MAX_NEARBY_DISTANCE_METERS`（2 公里）的不进列表，那些不算「附近」 |
+| 地图中心针 | 窗口正中画一枚固定的水滴形针（`drawCenterPin`）：**尖端正好落在窗口中心**，针身立在中心上方，先描 3.5dp 白边再填深色针身——地图底色明暗不定，只画一层总有看不清的地方。它钉在屏幕上不随地图走，表示「现在查的是这里」。用针不用四刻线准星：针尖天然表达"就是这个点"，准星还要用户自己脑补交点；针身在上方也正好避开用户位置蓝点 |
+| 标记 | 按**停车点聚合**：`givecarName` 非空按它分组，为空回落 4 位小数网格（约 11 米）。理由是实测 20 辆车的坐标全落在 10 米见方内（2026-09-23 校园实测），逐个画就是坨在一起。聚合圈里写车辆数，配色三档：可用主色 / 电量低于阈值橙 / 离线或不可用灰。停车点名先过 `BikeNearby.correctSiteName` 纠错别字（见 §4.23），纠在聚簇之前，同一栋楼不会因两种错法裂成两簇 |
+| 底部面板 | 拖动把手之下是一行摘要：左边「附近 N 辆」（开着筛选时改「可用 N 辆」）+ 副行「更新于 hh:mm:ss」（超过 90 秒标警告色，提示数据可能已不准），右边「只看可用」`FilterChip` 与刷新按钮（请求在飞时换成进度圈）；下面是分组列表，点分组展开该点的车（车号 · 电量 · 距离），每辆车带「出码」。四态就地展示：加载中 / 空（这一带暂时没车，附「回到校区」出口）/ 失败（页内提示行，**保留上一次的列表**）/ 有数据 |
+| 选中 | 点列表里的车 → 车号经 **Activity Result**（`EXTRA_PICKED_CAR_NUM`）回传给**发起这次跳转的那个**出码页 → 地图页 `finish()`；出码页收到后回填输入框并立即出码。**不用进程级单例**：那种通道会被任何一个还活着的出码页实例抢先消费掉（退到后台那个也算），用户眼前这一页反而空手而归（2026-09-23 真机排查） |
+| 不落盘 | 结果只留内存。车随时被骑走，落盘下次打开只会误导 |
+| 免责 | 面板底部一行小字：数据来自第三方接口，可能延迟或不准，以运营平台为准 |
+| 定位（2026-09-23 追加） | **进页就定位**：已授权 → 静默取一次坐标（失败不提示，留在校园中心）；没授权且从没问过 → 直接申请一次权限。理由是「附近单车」这个页面本身就是申请定位的语境，晚问不如进页就问。取到的是 WGS84，经 `domain/Gcj02.kt` 转成 GCJ-02 再用，同时把镜头移过去并重查。用户位置在图上画成蓝点（外晕 + 实心两层，**最后画、压在所有车辆标记之上**：人站在车桩边上时蓝点正好被聚合圈盖住，而"我在哪"恰恰是点了定位之后要确认的事） |
+| 只自动申请一次 | `ebikeLocationAsked` 落 DataStore，进页只有第一次会自动弹框。系统在用户拒绝两次后静默拒绝，不看这个标记的话每次进页面都会白申请一次、再弹一句「已拒绝」，那就成了骚扰。之后要走定位只能靠用户点「定位」按钮 |
+| 「定位」按钮 | 已授权 → 直接取坐标；未授权 → 再申请一次（系统若已静默拒绝就只给提示）。按钮常显，不随授权状态出现或消失 |
+| 定位进行中 | 取定位最长 8 秒，这期间按钮换成进度指示并停止响应点击。没有这个状态，用户看不出点没点上，只会接着点 |
+| 定位失败的去路 | 提示带「去设置」动作，直跳本应用的系统设置页。系统在用户拒绝两次后就不再弹框，只说一句"没有权限"等于把人堵在原地 |
+| 距离的参照点 | 有定位时一律按**用户位置**算，标「距你」；没定位才按地图中心算，标「距中心」。不标参照点的话，用户拖一下地图，那个「473 米」就从"离你"变成"离屏幕中心"，而他一直按"离我"读 |
+| 只看可用 | 面板头行一个 `FilterChip`，过滤掉离线与电量低于运营方阈值的车，标题改成「可用 N 辆」。数据已在手上，只重算簇，不重新请求接口 |
+| 点分组联动地图 | 展开某个停车点时把地图移过去（不改缩放、不重查）。列表给的是查询半径内的车，远的那些确实在屏幕外，只展开列表用户看不到它在哪。静默区必须覆盖**整段动画**：只看「离瞄准点 30 米内」会漏掉动画前几帧（起点离终点可能两百米），照样触发重查（2026-09-23 真机踩到，表现是点一下分组列表就换一批） |
+| 空态出口 | 「这一带暂时没有车」下面跟一个「回到校区」按钮；开着「只看可用」时文案改成提示关掉筛选 |
+| 电量着色 | 低于 `BikeNearby.LOW_BATTERY_HINT_PERCENT`（30%）的百分比标警告色。纯展示阈值，与运营方的 `lowBattery` 无关；电量缺失时不标，缺数据不该变成警告 |
+| 视野记忆 | 每次查询成功把中心与缩放写进 DataStore（`ebike_view_*`）。进页面没有镜头请求时从这里恢复，且是**直接落位、不带动画**，否则又要从校园中心滑一次 |
+| 定位失败 | 四类文案走页内 Snackbar：没有权限 / 定位服务未开启 / 没有可用定位方式 / 取不到位置。最后一条附带「可手动拖动地图找车」，功能不受影响 |
+| 默认中心 | 仍是硬编码的校区坐标（`BikeNearby.DEFAULT_CENTER_*`）。没授权、定位失败、或用户就在校区时，进来看到的第一屏一样有车 |
+| 镜头请求是一次性动作 | 定位 / 回到校区写进 `BikeMapUiState.camera`（带 `nonce`），地图执行完回调 `onCameraApplied(nonce)` 立刻清掉。**不能只靠 `LaunchedEffect(nonce)` 自己成立**：Activity 一重建（转屏、内存回收、改字号）新组合会拿同一个 nonce 重放一次，表现是「我把地图拖到别处，回来它自己跳回去了」（2026-09-23 真机踩到） |
+| **不做（v1）** | 导航/路线；车辆预约；离线缓存；跟随移动（continuous 定位）；把定位画成带方向箭头的位置指示器 |
 
 #### 实现落位与红线
 
-- `domain/EbikeQr.kt`：URL 拼装、车号校验、BitMatrix 生成——纯 JVM 可测（`EbikeQrTest`）；
+- `domain/EbikeQr.kt`：车号口径（`normalizeCarInput` / `resolveCarNum` / `bikeUrl`）、
+  BitMatrix 生成——纯 JVM 可测（`EbikeQrTest`）；
   Bitmap 渲染与 MediaStore 落盘属 UI/data 层不进单测。
-- 依赖只加 `com.google.zxing:core`（纯 Java 单 jar，无传递依赖）。
-- **不做**：不绕过运营方任何校验（id 非法由小程序自行报错）；不缓存他人车号；无网络请求。
-- 运营方品牌名仅用于标识（标题「快趣出行码」、按钮「打开快趣出行」），不出现官方口吻/官方标识；
+- `domain/BikeNearby.kt`：附近车辆的响应解析、聚簇、距离与状态推导——纯 JVM 可测
+  （`BikeNearbyTest`），不碰网络与 Android 类型。
+- `domain/Gcj02.kt`：WGS84 → GCJ-02 转换（§4.23），纯 JVM 可测（`Gcj02Test`）。
+- `ui/ebike/BikeLocator.kt`：点「定位」时的一次性取坐标（平台 `LocationManager`，
+  不引 Play Services 的融合定位），坐标出口已经转成 GCJ-02。
+- `data/kqcx/KqcxBikeClient.kt`：一条 form POST，裸 OkHttp，只做请求与状态归一。
+- 依赖加 `com.google.zxing:core`（纯 Java 单 jar，无传递依赖）与
+  `org.osmdroid:osmdroid-android`（AAR，POM 无传递依赖）。
+- **不做**：不绕过运营方任何校验（id 非法由小程序自行报错）；不缓存他人车号到本地；
+  不代客开锁、不触碰计费与签到；不刷积分。
+- 出码路径**仍然无网络请求**；有网络请求的只有地图页，且只发「地图中心坐标 + deviceType」。
+- 运营方品牌名仅用于标识（标题「快趣出行码」、文字入口「打开快趣出行」），不出现官方口吻/官方标识；
   非官方功能免责口径与开水模块一致。
-
+  地图页同样标注数据来自第三方接口。
 ### 3.10 校园卡付款码（2026-09-20，P6；默认关闭）
 
 一卡通（新中新「慧新e校」，`yktwx.juwp.edu.cn`）的**付款码**搬进 App：食堂/超市扫码消费
@@ -801,6 +890,32 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
   - 两组都有（有人今天截止、有人明天截止）→ 发「今天截止」组（更紧急），另一组下轮再说
 - 去重键 = 作业 id + 提醒点日期，DataStore 保留最近 50 条；**整组一起记**（发出即记全组，
   免得下一轮把同一组再发一遍）
+
+### 3.12 权限设置页（2026-09-23，P6）
+
+入口：**我的 → 通用 → 权限设置**（独立二级页，`SubpageScreen.PERMISSION_SETTINGS`）。
+
+把散在三处的权限申请统一成一个子页：忽略电池优化与允许自启动原来只在
+桌面小组件设置页（§3.6）里，通知权限申请埋在上课提醒 / 共享单车免费提醒的
+开关开启那一瞬（用户不开提醒根本见不到申请框），「锁后台」只存在于自启动的
+文案里。四类引导同属「App 能不能在后台活得好」这个问题，归拢后一次讲清。
+
+四行结构（每行 = 图标 + 标题 + 一句说明 + 状态徽标 + 动作按钮）：
+
+| 权限 | 检测 | 动作 |
+|------|------|------|
+| 忽略电池优化 | `PowerManager.isIgnoringBatteryOptimizations` | 直接弹系统确认框；ROM 不支持该 action 时兜底到白名单列表页 |
+| 允许自启动 / 锁后台 | 无系统 API（厂商私有），不显示徽标 | 依次尝试小米 / 华为 / OPPO / vivo 的自启动管理页，全部失败兜底应用详情页 |
+| 通知权限 | `NotificationManagerCompat.areNotificationsEnabled` | API 33+ 未授权 → 先弹 `POST_NOTIFICATIONS` 申请框；**被拒后立刻跳系统通知设置页**（不在原地重弹：系统第二次起静默拒绝、申请框根本不出现，反复点只会像坏按钮），API 26–32 同样直接跳 |
+
+状态徽标在 ON_RESUME 重读（用户跳系统设置改完回来，徽标跟着变）。
+交互口径与 §3.6 相同：**进页只读检测，不主动弹任何系统框**，申请都由用户点「去开启」触发。
+申请框只有第一次点「去开启」会出现，之后这条路都直接落到系统通知设置页——
+那里是拒绝之后唯一还能把开关打开的地方。
+
+原入口保留：小组件设置页的「后台及时性」两行、提醒开关开启瞬间的通知权限申请
+都不删——它们是功能语境里的就近引导，权限设置页是统一出口。跳转逻辑复用
+`WidgetCapabilities.jumpBatteryOptimization / jumpAutoStart`，不复制第二份。
 
 ---
 
@@ -1472,6 +1587,8 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
   以 App 课表为准（接受）
 - 每个事件：标题=课程名、`EVENT_LOCATION`=教室、description=`教师：xxx` + 同步标记、
   `AVAILABILITY=BUSY`，另插 `Reminders` 一条提前提醒（时长见下）
+- 共享单车免费时长的日历事件（§3.9）用**另一个标记**（`水贝贝骑行提醒`）：这里的
+  「删除再写入」与「一键删除」都只认 `水贝贝课表同步`，两边互不误伤
 
 #### 日历同步设置（我的 → 日历同步，2026-09-19，全局子页）
 
@@ -1788,54 +1905,78 @@ D3 编排调度 + 通知 → D4 设置页 + 更新课表流程 + 气泡 → D5 �
 「扫普通链接二维码打开小程序」规则，完整 URL 以 `q` 参数透传给小程序页面，
 小程序自行解析 id 加载对应车辆——**改 id 生成的二维码前缀不变、依然命中**。
 
-- `domain/EbikeQr.kt`（纯 JVM）：
-  - `bikeUrl(tail: String): String?` — 模板 `100000` + 3 位数字尾部，拼
-    `https://www.kvcoogo.com/ebike?id=100000NNN`；尾部非 3 位数字返回 null。
-  - `normalizeTailInput(raw: String): String` — 输入框原始文本 → 尾部车号
-    （剔非数字、超 3 位且以 `100000` 开头则剥前缀、截 3 位）。UI 层唯一口径，
-    防止"粘贴整条车号被截成 `100`"出一张扫不开的码（2026-09-22）。
+- `domain/EbikeQr.kt`（纯 JVM；车号口径 2026-09-23 由「尾部 3 位」改为「完整车号」）：
+  - `normalizeCarInput(raw: String): String` — 输入框原始文本 → 只留数字、上限 12 位。
+    不再剥模板前缀：整条校园车号（`100000669`）原样留着，与旧版出码结果一致。
+  - `resolveCarNum(input: String): String?` — 规整输入 → 完整车号。1~3 位补 `100000` 前缀
+    （校园车队）；6~12 位按完整车号；其余（4~5 位、空串）返回 null。UI 层唯一口径。
+  - `inputPrefix(input: String): String` — 输入还停在尾部（≤3 位）时返回 `100000`，
+    否则返回空串（前缀提示自己消失，不会给出一个错的隐含前缀）。
+  - `bikeUrl(carNum: String): String?` — 完整车号 → `https://www.kvcoogo.com/ebike?id=<车号>`；
+    非 6~12 位数字返回 null（宁可拒掉也不出一张扫不开的码）。
+  - `tailOf(carNum)` — 展示用后三位。
   - `qrMatrix(url: String): BitMatrix` — zxing 720px、容错 M、白边 1 模块。
-  - `recentBikeIds(json: String?): List<String>` / `encodeRecentIds(...)` —
-    最近车号列表的 JSON 序列化（倒序去重、上限 8），脏 JSON 回空列表。
-- `domain/EbikeFreeRide.kt`（纯 JVM，2026-09-22）：免费时长提醒的时刻计算——
-  `triggerAtMillis`（起点 +（15−提前量）分钟）、`remainingSeconds` / `progressFraction`
-  （倒计时与进度条）、`formatRemaining`（`mm:ss`）、`coerceLead`（1~5 吸附）、
-  `isActive`（有效期；起点 0 = 无计时）、`noticeText`（通知文案）。
+  - `decodeRecent(json: String?)` / `encodeRecent(...)` — 最近车号列表的 JSON 序列化
+    （倒序去重、上限 8），脏 JSON 回空列表；读旧数据时给纯 3 位条目补 `100000` 前缀。
+- `domain/BikeNearby.kt`（纯 JVM，2026-09-23）：附近车辆接口的响应解析与后续处理——
+  `NearbyBike` 模型、`parse(raw, centerLat, centerLng)`（宽容取值：数字/字符串两种写法都认，
+  车号非数字、坐标越界一律丢弃；`errorCode != 0` 归为服务端错误；`carList` 缺失算结构不符，
+  不当成"没车"）、`cluster(bikes)`（按 `givecarName` 分组，为空回落 4 位小数网格）、
+  `reanchor`（换参照点重算距离并重排）、`samplePoints`（中心 + 八方位 700 米，补接口
+  只给最近 20 辆的短板）、`distanceMeters`（本地 haversine，不信服务端 `distance` 字段，
+  口径只有一处）、`formatDistance`、`correctSiteName`（停车点名纠错 + 纯数字占位名当没写）、
+  状态推导（可用 / 电量低 / 不可用 / 离线）。
+- `data/kqcx/KqcxBikeClient.kt`（2026-09-23）：一条 form POST（`lat` / `lng` / `deviceType=1`），
+  裸 OkHttp，只做请求与 HTTP 状态归一，业务判断交给 `domain/BikeNearby`。
+  接口地址、参数、响应字段与坐标基准见 §4.23。
+- `domain/EbikeFreeRide.kt`（纯 JVM，2026-09-22；2026-09-23 改口径）：免费时长倒计时的
+  时刻与文案——`freeEndMillis`（起点 + 15 分钟，日历事件锚点）、`reminderOffsets`
+  （提前量一条 + 0 一条）、`remainingSeconds` / `progressFraction`（倒计时与进度条）、
+  `formatRemaining`（`mm:ss`）、`coerceLead`（1~5 吸附）、`isActive`（有效期；起点 0 = 无计时）、
+  `EVENT_TITLE` / `EVENT_DURATION_MINUTES` / `eventDescription`（日历事件的标题、时长与备注）。
 - `data/prefs`：`ebikeCardEnabled`（今日页卡开关，默认开）、`ebikeAutoSave`
   （生成即存相册，**默认关**，用户拍板）、`ebikeRecentIds`（JSON 列表）经
   `ScheduleRepository.displayPrefs` 既有合并链透出；`ebikeBurnAfterScan`（扫完即焚，
   **默认开**）、`ebikePendingDelete`（待焚毁 key 集合，stringSet）为出码页私有
   **直接读写 store**，不进 DisplayPrefs 合并链（待删集合是高频翻搅的过程态，
   不该进 UI 向快照；未来若其它页面要读焚毁开关再接线）。
+  地图页的 `ebike_location_asked`（定位权限只自动申请一次的标记，§3.9）同样直接读写
+  store：它只在进页那一刻读一次，进 UI 向快照没有意义。
 - `ui/ebike/`：`EbikeViewModel`（生成/保存/历史清空/焚毁）、`EbikeQrScreen`（固定占位出码位 +
-  输入 + 保存/扫一扫 + 最近 chips + 微信扫一扫 best-effort + 「打开快趣出行」；
-  两个开关沉到页面最下方，布局顺序见 §3.9）。
+  输入 + 保存/扫一扫 + 最近 chips + 微信扫一扫 best-effort + 「附近单车地图」按钮 +
+  「打开快趣出行」文字入口；两个开关沉到页面最下方，布局顺序见 §3.9）、
+  `BikeMapScreen` + `BikeMapViewModel` + `OsmMapView` + `BikeMarkerOverlay`（地图页，见 §3.9）、
+  `BikeLocator`（一次性定位）。
+  选中车号不设转发层：地图页 `setResult(EXTRA_PICKED_CAR_NUM)`，出码页用
+  `rememberLauncherForActivityResult` 收（见 §3.9「选中」）。
   落相册走 MediaStore `Pictures/水贝贝`（API 29+ 免权限；26–28 需 `WRITE_EXTERNAL_STORAGE` 运行时申请）。
-- 打开快趣出行（2026-09-21）：`EbikeQrScreen.openKvcooApp` 三级——
-  ①「助手通道」：`Settings.Secure.assistant` 临时指向 `com.kvcoo.go/com.kvcoo.go.sections.home.HomeActivity`
-  → 反射 `SearchManager#launchAssist(Bundle)`（@SystemApi/@hide）→ `SearchManagerService` →
-  `StatusBarManagerInternal.startAssist` → SystemUI（uid 1000）按「助手」以 `ACTION_ASSIST` 代启
-  （真机实测全程链路；延时 1.5s 恢复 assistant 原值）。需要一次性
-  `pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS`（development 级权限）；
-  ② 未授权/反射被拦/失败 → 桌面启动意图（启动页，导出无门槛）；③ 全失败 → Snackbar。
-  不做 Shizuku/root；非小米 ROM 行为未验证（降级兜底）。
-- 免费时长提醒（2026-09-22）：`ui/ebike/EbikeFreeRideReminder.kt`——`startRide`
-  写 `ebikeRideStartAt` 并重排；`reschedule` 按开关/起点/提前量排
-  `setAndAllowWhileIdle` 闹钟（无效则 cancel）；`check` 补发窗口内通知并落
-  `ebikeFreeNotifiedAt` 去重键；`endRide` 清起点 + 撤闹钟 + 撤通知。
-  `EbikeFreeRideReceiver`（exported=false，显式 PendingIntent）为闹钟落点。
-  通知 channel `ebike_free_ride`（IMPORTANCE_HIGH），点击回快趣出行码页。
-  prefs 键：`ebike_free_reminder_enabled` / `ebike_free_lead_minutes` /
-  `ebike_ride_start_at` / `ebike_free_notified_at`（stringSet 存起点毫秒字符串）。
+- 打开快趣出行（2026-09-21 首版；2026-09-23 收敛为一级）：只剩
+  `getLaunchIntentForPackage("com.kvcoo.go")` → 桌面启动意图（启动页，导出无门槛）；
+  未安装给一句 Snackbar。助手通道、`WRITE_SECURE_SETTINGS`、`KILL_BACKGROUND_PROCESSES`、
+  `queries` 包可见性、未安装下载引导弹窗**全部删除**（理由见 §3.9）。
+- 免费时长倒计时 → 系统日历（2026-09-22 首版是 App 通知，2026-09-23 改）：
+  `ui/ebike/EbikeFreeRideReminder.kt`——`startRide` 写 `ebikeRideStartAt`、排到期清理、写事件；
+  `reschedule`（开关/提前量变更）删掉再写；`check` 兜底（计时中缺事件就补建，过期或关了开关
+  就清事件与起点）；`endRide` 清起点 + 撤清理任务 + 删事件。写入与删除在
+  `data/calendar/EbikeCalendarEvents.kt`（`create` / `deleteById` / `deleteAll`），事件锚点与
+  两条提醒的理由见 §3.9。权限 READ/WRITE_CALENDAR 在开开关或点「打开微信扫一扫」那一刻
+  运行时申请，拒绝也照常计时（只是没有提醒，提示由 `EbikeViewModel` 给）。
+  prefs 键：`ebike_free_reminder_enabled` / `ebike_free_lead_minutes` / `ebike_ride_start_at` /
+  `ebike_free_event_id`（long，在案事件 id）。
+  已删除：`ebikeFreeNotifiedAt` 去重键、通知 channel、`EbikeFreeRideReceiver`。
 - 扫完即焚（2026-09-20）：`EbikeQrBitmaps.saveToGallery` 成功返回 `SaveResult.Saved`
   （附待焚毁 key：`m:` 前缀 MediaStore uri / `f:` 前缀文件路径，编码在 `EbikeQr` 纯 JVM 可测）；
   保存方（手动或自动）按 `ebikeBurnAfterScan` 把 key 并入 `ebikePendingDelete`；
   页面 ON_RESUME 触发 `EbikeViewModel.burnPending()`，逐 key `deletePending`
   （29+ `ContentResolver.delete` 自己的 uri，26–28 `File.delete`），成功才移出记录，
   失败保留下次重试；防重入 + 开关关闭时不删。
-- 依赖：`com.google.zxing:core`（单 jar 无传递）。
-- 测试：`EbikeQrTest`（URL 拼装/校验/输入规范化 `normalizeTailInput`/BitMatrix 参数/
-  历史序列化 roundtrip/待焚毁 key 编码与解析/待焚毁集合合并上限）。
+- 依赖：`com.google.zxing:core`（单 jar 无传递）、`org.osmdroid:osmdroid-android`
+  （AAR，POM 无传递依赖；瓦片源与初始化三个坑见 §4.23）。
+- 测试：`EbikeQrTest`（URL 拼装/校验/输入规整 `normalizeCarInput` 与 `resolveCarNum`/
+  前缀提示/BitMatrix 参数/历史序列化 roundtrip 与旧 3 位数据的兼容读取/
+  待焚毁 key 编码与解析/待焚毁集合合并上限）。
+- 测试：`BikeNearbyTest`（响应解析容错/服务端错误码/空列表/坐标与车号非法丢弃/
+  聚簇口径/距离计算与排序/状态推导/距离文案）。
 - 测试：`EbikeFreeRideTest`（触发点计算/提前量边界与吸附/剩余秒数与进度条/倒计时文案/
   有效期判断/通知文案）。
 
@@ -2263,12 +2404,130 @@ X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room
 
 ---
 
+### 4.23 附近单车接口与地图（2026-09-23，P6；UI 规格见 §3.9）
+
+#### 接口契约（本地实测，2026-09-23）
+
+| 项 | 值 |
+|----|----|
+| 地址 | `POST https://api.kvcoogo.com/ManagerApi/api/v1.0.0/queryNearbyCar` |
+| 请求体 | `application/x-www-form-urlencoded`：`lat` / `lng` / `deviceType=1` |
+| 鉴权 | 无。`token` 头可以不发；上游参考项目写明「实测不校验，随便填」 |
+| 响应外层 | `{"errorCode":0,"resultCode":1,"resultMsg":"请求成功","result":{"carList":[…]}}` |
+| 车号 | `carNum` → 字符串，9 位数字（实测 `100000652` / `300000604` / `300000080`） |
+| 坐标 | `lat` / `lng`，**GCJ-02** |
+| 返回量 | 一次最多 20 辆，服务端按距离升序封顶 |
+
+用到的其余字段：`currentPercent`（电量）、`lowBattery`（低电阈值）、`status`（1 = 启用）、
+`onlineStatus`（1 = 在线）、`carTypeName`（车型）、`givecarName`（停车点）、
+`servicesiteName`（校区）。`sn` / `bluetoothKey` / `bluetoothName` 与出码无关，不取。
+
+**实测样例**（校园坐标 `(116.0285, 28.6883)`）：返回 20 辆，`servicesiteName` 全为
+「南昌工程学院」，坐标全部落在纬度 28.688226–28.688321、经度 116.028456–116.028546
+之间，**10 米见方**，`givecarName` 统一是「教学北大楼左侧」。这就是标记必须按停车点
+聚合的直接依据：不聚合，画面上只有一个点。
+
+#### 坐标基准（踩过就别再踩）
+
+瓦片（高德栅格）与车辆坐标都是 GCJ-02，**两者之间直接用，不要转换**：车辆坐标画到瓦片上
+不需要任何处理，查询中心点也直接发 GCJ-02。
+
+手机定位给的是 WGS84，是这条链路上**唯一**需要转换的地方：
+`domain/Gcj02.kt`（纯 JVM，`Gcj02Test`）负责这一步，只做单向 WGS84 → GCJ-02。
+漏了它定位点会偏出约 500 米；转两次会变成双重偏移，同样偏 500 米。反向转换没有用途，
+不要因为「看起来对称」而补一个。
+
+设备实测（2026-09-23）：接口返回的车辆坐标落在高德瓦片上的对应建筑物正上方，
+证明接口消费与产出都是 GCJ-02，`(116.0285, 28.6883)` 这类硬编码中心点也是这个基准。
+
+#### 定位（2026-09-23 追加）
+
+- `ui/ebike/BikeLocator.kt`：一次取坐标。只用平台 `LocationManager`，不引 Google Play
+  Services 的融合定位（国内机型上本来就不可用）。先看两分钟内的缓存定位（瞬时返回），
+  没有再同时挂网络与 GPS 两条更新，谁先给结果用谁，总超时 8 秒。
+  网络定位先到也无所谓：把地图中心落到用户那一片，粗略坐标就够。
+- **`LocationListener` 的四个方法都要写全**（含 API 29 起废弃的 `onStatusChanged`）：
+  它们在 API 30 的 `android.jar` 里才是 default 方法，编译期少写也能过，
+  但 26~29 的设备上框架会真的调用，缺实现就是 `AbstractMethodError`。
+- 权限：`ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` 一起申请，任一授权即可
+  （API 31+ 用户可能只给「大致位置」）。**进页面时没授权就申请一次**（§3.9），
+  用 `ebikeLocationAsked` 保证只自动申请一次；被拒之后改由「定位」按钮触发。
+  已授权的进页面静默定一次，失败不提示，留在校园中心。
+- manifest 里两条定位 `uses-feature` 都声明 `required="false"`：定位是可选能力，
+  不让应用商店把「需要 GPS 硬件」当成硬条件。
+- 依赖 `android.hardware.location` 的 `isLocationEnabled` 只在 API 28+ 存在，低版本跳过检查。
+
+#### 地图实现要点（osmdroid 6.1.18）
+
+- 依赖 `org.osmdroid:osmdroid-android:6.1.18`（Maven Central，AAR，POM 无 `<dependencies>`）。
+  加入后**第一次构建需要联网 resolve 一次**，之后 `--offline` 照常用。
+- 瓦片源用 `OnlineTileSourceBase` 自定义：512 像素档，四个域名
+  `wprd0[1-4].is.autonavi.com` 轮询，路径
+  `appmaptile?x=&y=&z=&lang=zh_cn&size=1&style=7`，配 `setTilesScaledToDpi(false)`。
+  该地址实测返回 200 `image/png`。它是高德的非公开栅格接口：不接官方 SDK、不申请 key，
+  属于灰色用法，页面免责声明要写清；地址失效时地图页降级为纯列表（瓦片加载失败不影响列表）。
+- 初始化三个坑，按顺序：
+  1. `Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", MODE_PRIVATE))`，
+     用平台 `SharedPreferences` 而非 `PreferenceManager`，免得为一个可选项拉进 `androidx.preference`；
+  2. 先把 `osmdroidBasePath` / `osmdroidTileCache` 指到应用私有目录（`cacheDir/osmdroid`）。
+     默认路径指向外部存储，Android 10 起瓦片缓存会静默失效；
+  3. `userAgentValue` 设成包名，否则瓦片服务可能回 403。
+- `MapView` 的 `onResume` / `onPause` / `onDetach` 要在 Compose 里用 `DisposableEffect` 手动转发，
+  osmdroid 不认 Compose 的生命周期。
+- 标记与点选：自绘 `Overlay`，`draw` 里按投影落点画圆与车辆数，
+  `onSingleTapConfirmed` 里做命中测试（24dp 半径）。不用 `Marker` 加 `Drawable`，
+  省掉一套位图资源。
+- R8：osmdroid 没有反射入口，预期不需要额外 keep；但 release 包**必须冒烟到地图页**，
+  混淆问题只在运行期暴露。
+
+#### 数据纪律
+
+- 刷新由用户动作驱动：进页一次、拖动停稳一次、点刷新一次。**不做后台轮询**，
+  不给第三方接口添压力。
+- 两次中心点位移 < 30 米不重复请求；拖动 debounce 500ms。
+- 结果只留内存，不落盘。
+- 查询内容只有「地图中心坐标 + `deviceType`」，不含任何账号或设备标识。
+
+#### 参考来源与许可
+
+| 仓库 | 许可证 | 取用范围 |
+|------|--------|----------|
+| [dlkz/kqcx-bikemap](https://github.com/dlkz/kqcx-bikemap) | **AGPL-3.0** | 只读参考：接口地址、参数、字段名、GCJ-02 基准、聚合必要性的实测现象。**未复用其代码** |
+| [Wuwang777/Kuaiqu_RemoteScan](https://github.com/Wuwang777/Kuaiqu_RemoteScan) | MIT | 只读参考：接口契约与「token 不校验」的结论。Node 项目，无 Kotlin 代码可取 |
+
+本仓库为 MIT。kqcx-bikemap 是 AGPL-3.0，抄它的代码会让整个仓库被迫改按 AGPL 发布，
+因此只取接口契约这一层事实（地址、参数名、字段名不受版权保护），实现全部自行编写。
+
+#### 测试清单（JVM）
+
+`BikeNearbyTest`：响应解析（数字与字符串两种写法、缺字段、`JsonNull`）、
+`errorCode != 0` 归为服务端错误、空 `carList` 返回空列表、车号非数字与坐标越界丢弃、
+按停车点聚簇、空停车点名回落网格、停车点名纠错与纯数字占位名、`reanchor` 换参照点后的
+距离与顺序、haversine 距离、排序、状态推导、电量偏低标记、距离文案。
+
+`Gcj02Test`：境外与非法坐标原样返回、境内偏移量在 100~1000 米量级、邻近两点转换后
+相对距离不变、确定性、国境判定矩形边界、极值不崩。**没有硬编码的"标准答案"坐标对**：
+手头没有权威对照表，抄一组网上的数字当断言只会让测试变成橡皮图章。
+
+`EbikeQrTest`：见 §4.18。
+
+#### 阶段拆解
+
+1. DESIGN 章节（§3.1 / §3.9 / §4.18 / §4.23 / §6 / §9）；
+2. `domain/EbikeQr.kt` 车号口径改造 + `domain/BikeNearby.kt` + 两个测试类；
+3. `data/kqcx/KqcxBikeClient.kt`；
+4. `ui/ebike/OsmMapView` + `BikeMarkerOverlay` + `BikeMapViewModel` + `BikeMapScreen`；
+5. 接线：`SubpageScreen.EBIKE_MAP`、出码页入口与 Activity Result 回填、删助手通道与两个权限；
+6. release 冒烟（含地图页）与真机点验。
+
+---
+
 ## 5. 非功能
 
 | 项 | 要求 |
 |----|------|
-| 隐私 | 账号/Token 不进 Log；不上传第三方分析；笔记·课件与作业（含图片）只存本机私有目录，无任何网络出口（§4.20）；课表背景图同样只落 `filesDir/schedule_bg/`（§4.21） |
-| 权限 | 网络 + 可选 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`（小组件后台及时性，见 §3.6）；震动按 M2 再要；笔记/作业与课表背景的选图走系统 Photo Picker，**零新增权限**（§4.20/§4.21） |
+| 隐私 | 账号/Token 不进 Log；不上传第三方分析；笔记·课件与作业（含图片）只存本机私有目录，无任何网络出口（§4.20）；课表背景图同样只落 `filesDir/schedule_bg/`（§4.21）。唯一的对外坐标出口是附近单车地图（§4.23）：只发地图中心坐标 + `deviceType`，不含账号或设备标识。默认中心是硬编码的校园坐标；只有用户点「定位」才会把个人位置发出去 |
+| 权限 | 网络 + 可选 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`（小组件后台及时性，见 §3.6）+ `ACCESS_FINE/COARSE_LOCATION`（附近单车地图的「定位」，只在点按钮时申请，见 §4.23）；震动按 M2 再要；笔记/作业与课表背景的选图走系统 Photo Picker，不申请相册权限（§4.20/§4.21） |
 | 性能 | 首页可交互 < 2s（中端机冷启动参考）；公式按 (源码, 字号) 内存缓存，图片按下采样尺寸解码（§4.20） |
 | 体积 | APK 目标 < 15MB。**2026-09-21 起 release 开启 R8 + 资源压缩**（此前 `isMinifyEnabled=false`，1.0.0 实测 17.9MB 超标）；开启后 release 实测 **3.6MB**。改混淆规则后必须装 release 包冒烟——R8 的问题只在运行时暴露 |
 | 稳定 | 胖乖接口失败不崩溃；教务 WebView 与原生状态分离 |
@@ -2288,6 +2547,10 @@ X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room
 | P5 教务 WebView | 适配江西水利电力大学 | **教务 URL** |
 | P5b 实验课表导入 | ✅ **已完成**（2026-09-17）：`SyjxScheduleParser` + `CourseKind`/DB v2 + 导入入口区分 + 周课表标注与筛选（见 §4.8） | P5 |
 | P6 打磨 | 深色、动效、错误态、真机 | P2–P5b |
+
+P6 追加（2026-09-21 起）：笔记·课件与作业（§3.11 / §4.20）、作业截止提醒、
+课表页自定义背景图（§4.21）、沉浸式顶栏与悬浮导航栏（§4.22）、
+权限设置页（§3.12）、附近单车地图（§3.9 / §4.23，2026-09-23）。
 
 ---
 
@@ -2338,6 +2601,13 @@ X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room
 | https://github.com/XingHeYuZhuan/shiguangschedule/wiki/如何适配教务v2 | 教务 v2 数据模型与 bridge |
 | https://github.com/linling-zy/kust-schedule | 分校深度定制 |
 | 本地 `F:\light-life-v3.0` | 胖乖 API 与 UI 模块 |
+
+共享单车（§3.9 / §4.23，2026-09-23 追加）：
+
+| 仓库 | 许可证 | 用途 |
+|------|--------|------|
+| [dlkz/kqcx-bikemap](https://github.com/dlkz/kqcx-bikemap) | AGPL-3.0 | 附近车辆接口的地址/参数/字段名、GCJ-02 坐标基准、瓦片源与 osmdroid 初始化口径。**只读参考接口契约，不复用代码**（AGPL 会传染） |
+| [Wuwang777/Kuaiqu_RemoteScan](https://github.com/Wuwang777/Kuaiqu_RemoteScan) | MIT | 接口契约与「token 不校验」的结论 |
 
 ---
 

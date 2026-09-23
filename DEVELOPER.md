@@ -62,10 +62,11 @@
 （DESIGN §4.17，默认关闭；凭证 EncryptedSharedPreferences 加密存储、排除云备份）。
 同一套页面规则自此有 Python 与 Kotlin 两份独立实现，**换校时两边要同步改**（见 §5.6）。
 
-除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、一卡通付款码与账单、快趣出行码），
-它们是彼此独立的 API 客户端（`data/qiekj/`、`data/ykt/`、`domain/EbikeQr.kt`），与课表核心
-零耦合——换校适配时整块删掉不影响课表功能（入口在 `ui/` 对应包与今日页底部固定区）。
-各自的实现细节见 DESIGN §3.9 / §3.10 / §4.5 / §4.10 / §4.18 / §4.19。
+除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、一卡通付款码与账单、快趣出行码
+与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、`data/ykt/`、`data/kqcx/`、
+`domain/EbikeQr.kt`），与课表核心零耦合——换校适配时整块删掉不影响课表功能
+（入口在 `ui/` 对应包与今日页底部固定区）。各自的实现细节见
+DESIGN §3.9 / §3.10 / §4.5 / §4.10 / §4.18 / §4.19 / §4.23。
 
 ---
 
@@ -554,7 +555,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
 ```
 
-覆盖面（46 个测试类，`app/src/test/`）：
+覆盖面（52 个测试类，`app/src/test/`）：
 
 - **解析与数据链路**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
   `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 样例）、
@@ -572,7 +573,10 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
   与编辑器补全全分支）、`MathTexTest`、`HomeworkCenterTest` / `HomeworkReminderTest`、
   `CourseRemarkTest`（备注搬运：mergeKey 匹配 / kid 区分 / 不覆盖新行）；
 - **校园生活**：`QiekjSignTest` / `QiekjModelsTest`、`YktKeyboardTest` / `YktModelsTest` /
-  `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest`、`EbikeQrTest`；
+  `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest`、`EbikeQrTest` /
+  `EbikeFreeRideTest`、`BikeNearbyTest`（附近车辆响应容错 / 停车点聚簇 / 距离与状态推导）、
+  `KqcxBikeClientTest`（失败分类：超时不能吃成网络不可达）、
+  `Gcj02Test`（WGS84 → GCJ-02：境外不偏移 / 境内偏移量级 / 邻近两点相对距离不变）；
 - **UI 边界**：`WidgetModelTest`（小组件分档/行数/明日接棒）、`ParseWeeksInputTest`、
   `CompactPositionTest`、`PanelSnapTest`、`GridFontScaleTest`。
 
@@ -593,7 +597,8 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 | debug/release | 两个 applicationId（`.debug` 后缀），可共存；启动 debug 包必须写全限定 Activity 名（`am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity`） |
 | WebView | MIUI 白屏 → 软件渲染兜底；教务页无 viewport meta → `useWideViewPort` 方案 |
 | 离线构建 | 依赖齐备后加 `--offline` 秒级完成：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline` |
-| 系统权限 | 「快趣出行直达」的 `WRITE_SECURE_SETTINGS` 按**包名**一次性 adb 授权（`pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`），debug 与 release 各授一次；未授权时该按钮走兜底，是预期行为不是 bug |
+| 系统权限 | 2026-09-23 起**不需要任何 adb 授权**：快趣出行的「助手通道」（`WRITE_SECURE_SETTINGS` + 改写 `Settings.Secure.assistant`）已随内置单车地图上线而删除，只剩桌面启动意图。详见 DESIGN §3.9 |
+| 运行时权限 | 只有「附近单车地图 → 定位到我的位置」会在**点击那一刻**申请定位权限（精确/粗略任一即可），进页不弹框；不给也能用——地图默认落在校区中心，拖动照常查车。见 DESIGN §4.23 |
 | release 体积 | 自 2026-09-21 开 R8 + 资源压缩：17.9MB → 3.6MB（见 §10.1） |
 
 ### 10.1 R8（release 自 2026-09-21 开启）

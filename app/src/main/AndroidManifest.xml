@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 教务导入失败时探测是否经由 VPN/代理出网（学校对代理出口区别对待，见 JwVpnDetector） -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 附近单车地图「定位到我的位置」（DESIGN §3.9）：只在该按钮被点击时才运行时申请，
+         不预取、不参与进页流程。精确档用于把地图中心落到用户所在的那一片车桩，
+         用户只给「大致位置」也能用（BikeLocator 两个权限任一即可）。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- 课表一键同步到系统日历（DESIGN §4.12）：删写本 App 标记事件 + 20 分钟提醒。
          只在用户点「同步到日历」时运行时申请，不预取 -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -14,9 +19,6 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 上课提醒（DESIGN §3.7）：API 33+ 运行时权限，只在用户开启提醒开关那一刻申请 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 打开快趣出行前先杀它的后台进程（刷新地图）：普通应用没有 force-stop 权限，
-         killBackgroundProcesses 是唯一无 root 的杀后台路径；前台活动不受影响 -->
-    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 共享单车出码自动保存（DESIGN §3.9）：API 29+ 走 MediaStore 免权限；
@@ -24,13 +26,6 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
-    <!-- 「打开快趣出行」直达首页（DESIGN §3.9）：需要临时改写系统「助手」设置
-         （Settings.Secure.assistant → 快趣首页 + 反射 launchAssist，启动后恢复原值）。
-         该权限为 signature|privileged|development，需 **一次性** adb 授权：
-         `adb shell pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`；
-         未授权时功能自动降级为「启动页」路径，属预期。 -->
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
-
     <!-- 今日页快捷方式（DESIGN §4.16）：API 30+ 包可见性声明。
          三个 package 让预设包可见（getLaunchIntentForPackage 不再对已安装的 App
          误报「未安装」）；MAIN/LAUNCHER 让所有有桌面入口的 App 可见——既是编辑表单
@@ -43,8 +38,9 @@
         <!-- 共享单车页（DESIGN §3.9）：「打开微信扫一扫」按钮 best-effort 拉起微信，
              需包可见性做 resolve 探测（不可见时按钮直接给手动扫码引导） -->
         <package android:name="com.tencent.mm" />
-        <!-- 共享单车页（DESIGN §3.9）：「打开快趣出行 App」按钮需要包可见性，
-             否则 getLaunchIntentForPackage 对已安装的 App 也会返回 null（误报未安装） -->
+        <!-- 共享单车页（DESIGN §3.9）：「打开快趣出行」入口需要包可见性，
+             否则 getLaunchIntentForPackage 对已安装的 App 也会返回 null（误报未安装）。
+             2026-09-23 删掉了助手通道与下载引导，这条声明仍要留：文字入口还在 -->
         <package android:name="com.kvcoo.go" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -55,6 +51,15 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
+
+    <!-- 定位是可选能力的可选依赖：不声明 required=false 的话，应用商店会把
+         「需要 GPS 硬件」当成硬条件，把没有 GPS 模块的设备过滤掉 -->
+    <uses-feature
+        android:name="android.hardware.location"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
 
     <application
         android:name=".JuwApplication"
@@ -67,9 +72,17 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JuwSchedule"
         android:usesCleartextTraffic="true">
+        <!-- 根 Activity 固定单实例（2026-09-23）。
+             不加这条时的实际后果：应用退到后台后再被拉起（桌面图标 / am start），
+             系统会在同一个任务栈上**再压一个 MainActivity**，用户看到「今日页」，
+             而底下还压着刚才那个二级页——按返回就能退回去，观感是"导航乱了"。
+             singleTask 复用同一个实例并把栈上的二级页收起，行为与小组件点击
+             （SINGLE_TOP|CLEAR_TOP，见 ScheduleWidget.widgetIntent）一致；
+             代价是重新拉起会回到根页面，这是所有单 Activity 根节点的通用取舍。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:alwaysRetainTaskState="true"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.JuwSchedule">
             <intent-filter>
@@ -126,10 +139,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- 共享单车免费时长提醒（DESIGN §3.9）：到点闹钟落点，仅内部广播 -->
-        <receiver
-            android:name=".ui.ebike.EbikeFreeRideReceiver"
-            android:exported="false" />
     </application>
 
 </manifest>

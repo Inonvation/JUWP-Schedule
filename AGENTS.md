@@ -33,6 +33,7 @@
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN 3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**） |
+| osmdroid | `org.osmdroid:osmdroid-android:6.1.18`（Maven Central；POM 里**没有** `<dependencies>`，不拉传递依赖）。瓦片源是自建的高德栅格地址（`ui/ebike/OsmMapView.kt`），初始化三个坑见 DESIGN §4.23；**加依赖后第一次构建要联网 resolve 一次**，之后 `--offline` 照常用 |
 | Glance | `androidx.glance:glance-appwidget:1.2.0`（桌面小组件，单条目 `SizeMode.Exact`）；传递抬 compose runtime 至 1.7.8，`androidx.core` 仍 1.15.0 |
 | 图标用法 | `import me.rerere.hugeicons.stroke.*` + `HugeIcons.Calendar01` 等 |
 | 课表背景图 | 全局显示偏好（`TimetablePrefs.bgImage*` 五字段，存 `view_prefs_json`），文件在 `filesDir/schedule_bg/` 只留一张（DESIGN §4.21）；**不要**并进 `notes_img/`，`AttachmentStore.sweep` 会按笔记引用差集把它删掉 |
@@ -68,10 +69,12 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
      DataStore/课表那几条 JSON 链是编译期 serializer，不受影响——**别只测它们就以为序列化没事**；
   3. 冒烟要覆盖「开了混淆才走到的分支」：`-printusage/-printmapping` 只在本地临时加（用完删），
      它们会把路径写进仓库文件。
-- **`WRITE_SECURE_SETTINGS`（快趣出行直达）是按包名一次性 adb 授权的**：
-  `adb shell pm grant <包名> android.permission.WRITE_SECURE_SETTINGS`——
-  debug 与 release 是两个包，**各授一次**；没授权时该按钮走兜底（打开对方启动页而非首页），
-  这是预期行为不是 bug（见 `ui/ebike/EbikeQrScreen.kt` 的助手通道 KDoc）。
+- **不再需要 `WRITE_SECURE_SETTINGS`**（2026-09-23 起）：快趣出行的「助手通道」
+  （改写系统 `Settings.Secure.assistant` + 反射 `launchAssist` 直达未导出的首页）连同
+  `KILL_BACKGROUND_PROCESSES` 权限一起删了，因为内置单车地图（`ui/ebike/BikeMapScreen.kt`）
+  已经承担「看车在哪」。现在「打开快趣出行」只剩桌面启动意图一级，打开的是启动页。
+  manifest 里保留 `com.kvcoo.go` 的 `queries` 声明仍是必须的，否则包可见性会让
+  `getLaunchIntentForPackage` 对已装应用也返回 null。**别把助手通道当漏项加回来**。
 - 测试结论从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总（Gradle 成功时不打印用例数）；
   读 XML 用 `-Encoding UTF8`，否则中文断言消息乱码。
 - 换机/重装后若 wrapper 重复下载：把 Gradle 8.10.2 解压版拷进
@@ -107,7 +110,10 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `QiekjModelsTest`（胖乖响应包脏数据容错）、`YktPayCodeTest`（付款码矩阵参数）、
 `YktRechargeSignTest`（充值下单签名）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
 、`ScheduleBackgroundTest`（背景图：默认值/模糊档位到解码尺寸/文件名白名单）
-等 46 个测试类。
+、`BikeNearbyTest`（附近单车：响应容错/聚簇/距离/状态推导）、
+`KqcxBikeClientTest`（失败分类：超时与网络不可达不能混）、
+`Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）
+等 52 个测试类。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
@@ -121,7 +127,8 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   不要用 `day - 1` 当列号（隐藏周六但显示周日时会错位）。
 - 今日页底部固定区（快捷方式网格 → **服务格一行两列** → 开水卡）是 `TodayBottomDock`，
   **钉在滚动区下方**、不进 `LazyColumn`；三态（加载/空/有课）共用同一份，别只改一处。
-  开水卡不并进服务格（卡内要放解锁按钮与出水进度）。整块内容可折叠（把手「常用功能」，
+  开水卡不并进服务格（卡内要放小票余额与流程简报；开水按钮在点余额弹出的
+  `WaterEntrySheet` 里）。整块内容可折叠（把手「江水生活」，
   展开态存 `DisplayPrefs.todayDockExpanded`，默认展开），**折叠动画只做高度、锚点必须选 Top**
   ——锚 Bottom 或再叠一层 slide 都会变形，两个失败版本记在 DESIGN §3.3，别重复试。
   改版前先读 DESIGN §3.3。
@@ -175,6 +182,30 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   纯函数，UI 只负责把结果应用回 `TextFieldValue`；不要在 Composable 里另写续行判断。
 - 笔记/作业的图片只走系统 Photo Picker（`PickVisualMedia`）+ 应用私有目录，**不申请相册权限**；
   正文引用形如 `![](img:文件名)`，删引用要同时清理文件（`data/repo/AttachmentStore.kt`）。
+- 附近单车地图（DESIGN §3.9/§4.23）的坐标基准是 **GCJ-02**，与高德栅格瓦片同一基准：
+  车辆坐标**直接画，不要转换**；唯一要转的是手机定位（WGS84 → GCJ-02），
+  唯一实现在 `domain/Gcj02.kt`，漏转或多转一次都会偏出约 500 米。
+  刷新只由用户动作驱动（进页 / 拖动停稳 / 点刷新 / 定位成功），**不要加后台轮询**
+  ——那是第三方接口，不是自家的。结果只留内存不落盘。
+  定位只走平台 `LocationManager`（`ui/ebike/BikeLocator.kt`），不引 Play Services 融合定位。
+  `LocationListener` 的四个回调都要写全：少写一个在 26~29 的设备上是 `AbstractMethodError`，
+  编译期看不出来。
+  两条容易改坏的口径：**距离的参照点**（有定位按用户位置、否则按地图中心，而且 UI 必须
+  把参照点写出来，别让「473 米」在拖动后悄悄换意思）；**镜头静默区**
+  （`CameraSuppressor` 吃掉程序性移动 30 米内的中心回调，否则「点分组→移动地图」会马上
+  触发一次重查，把用户刚展开的列表换掉）。改这两处前先看 DESIGN §3.9 的对应行。
+- 车号口径（DESIGN §3.9）：输入框接受「1~3 位尾部」与「6~12 位完整车号」两种形态，
+  唯一实现在 `EbikeQr.resolveCarNum`，`bikeUrl` 只认完整车号。地图选中的车走完整车号
+  那条路（别的车队前缀是 `300000…`，靠尾部三位拼不出正确链接），
+  **不要再按 `EbikeQr.TEMPLATE + 尾部` 拼 URL**。
+- 免费时长提醒（DESIGN §3.9）：**写的是系统日历，不是 App 通知**（2026-09-23 改）。
+  日历事件锚在**免费结束那一刻**（`DTSTART == DTEND`，0 时长），挂两条提醒：
+  `MINUTES = 提前量` 与 `MINUTES = 0`。理由：`Reminders.MINUTES` 只能表达
+  「事件开始前 N 分钟」且非负，锚在扫码时刻会让「提前 3 分钟」落到扫码之前。
+  事件 description 用独立标记 `水贝贝骑行提醒`（课表同步只认自己的 `水贝贝课表同步`），
+  删除按 DataStore 的 `ebikeFreeEventId`。**不要再把 `setAlarmClock`、通知 channel、
+  `EbikeFreeRideReceiver` 加回来**；`EbikeFreeRideCheckWorker` 的类名也别改
+  （老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排，兜底会永久消失）。
 
 ## 装真机
 
@@ -241,6 +272,8 @@ MainActivity → 底栏今日/课表/我的 + 路由 jw_import；SubpageActivity
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score（纯逻辑，可 JVM 测）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
+                 + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
+                 + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
 data/local/      Room v8：courses / time_slots / semester_config / timetables / scores
                  / detect_baselines / detect_reports / ykt_turnovers / notes / homework
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
@@ -251,6 +284,7 @@ data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleP
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
+data/kqcx/       快趣出行「附近车辆」接口（DESIGN §4.23；无鉴权、无凭证、只发坐标）
 ui/today|week|me|water|campus|jwvw|score|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
@@ -291,7 +325,8 @@ P5 教务 WebView · P5b 实验课表导入 — **已完成**
 P6 打磨 — **进行中**（2026-09-21：笔记·课件与作业落地，含自研 Markdown/LaTeX 渲染与
 作业截止提醒，见 DESIGN §3.11/§4.20；真机已验证 Room v6→v7 迁移与各新页面不崩，
 图片编辑与提醒弹出需人工点验。2026-09-22：课表页自定义背景图，见 DESIGN §4.21，
-选图与滑块调参需真机点验）
+选图与滑块调参需真机点验。2026-09-23：免费时长提醒由 App 通知改系统日历，
+见 DESIGN §3.9，已在 Redmi K70 的小米日历验证事件与两条提醒落库）
 
 ## 仓库与发版
 

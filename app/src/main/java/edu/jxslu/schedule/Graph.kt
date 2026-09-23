@@ -3,6 +3,7 @@ package edu.jxslu.schedule
 import android.content.Context
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.jw.JwCredentialStore
+import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
@@ -50,6 +51,9 @@ object Graph {
 
     @Volatile
     private var yktRepository: YktRepository? = null
+
+    @Volatile
+    private var kqcxBikeClient: KqcxBikeClient? = null
 
     /** 进程级 applicationContext（后台协程里落盘等场景复用，免 Activity 引用泄漏）。 */
     val appContext: Context by lazy { contextProvider() }
@@ -130,5 +134,14 @@ object Graph {
     fun yktRepository(context: Context): YktRepository =
         yktRepository ?: synchronized(this) {
             yktRepository ?: YktRepository(YktClient.create()).also { yktRepository = it }
+        }
+
+    /**
+     * 附近单车接口客户端单例（DESIGN §4.23）：OkHttp 连接池只建一次。
+     * 无凭证可存——这个接口不需要鉴权，客户端里也没有任何 token 字段。
+     */
+    fun kqcxBikeClient(context: Context): KqcxBikeClient =
+        kqcxBikeClient ?: synchronized(this) {
+            kqcxBikeClient ?: KqcxBikeClient.create().also { kqcxBikeClient = it }
         }
 }

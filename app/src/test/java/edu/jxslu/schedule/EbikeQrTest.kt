@@ -3,86 +3,130 @@ package edu.jxslu.schedule
 import edu.jxslu.schedule.domain.EbikeQr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 共享单车骑行二维码（DESIGN §3.9 / §4.18）：URL 拼装、车号校验、
- * BitMatrix 参数、最近车号序列化 roundtrip。
+ * 共享单车骑行二维码（DESIGN §3.9 / §4.18）：URL 拼装、车号校验、输入规整、
+ * BitMatrix 参数、最近车号序列化 roundtrip 与旧格式兼容读取。
+ *
+ * 2026-09-23 车号口径由「尾部 3 位」改为「完整车号」：输入框接受两种形态
+ * （1~3 位尾部 / 6~12 位完整车号），拼 URL 只认完整车号。
  */
 class EbikeQrTest {
 
     // ---- bikeUrl：拼装与校验 ----
 
     @Test
-    fun `拼装合法尾部车号`() {
+    fun `完整车号拼出行链接`() {
         assertEquals(
             "https://www.kvcoogo.com/ebike?id=100000669",
-            EbikeQr.bikeUrl("669"),
+            EbikeQr.bikeUrl("100000669"),
         )
-        // 前导零保留：尾部是字符串不是数字，"007" 不能变 7
+        // 别的车队的前缀原样保留：不能再补一遍 100000
+        assertEquals(
+            "https://www.kvcoogo.com/ebike?id=300000604",
+            EbikeQr.bikeUrl("300000604"),
+        )
+        // 前导零保留：车号是字符串不是数字，"007" 不能变 7
         assertEquals(
             "https://www.kvcoogo.com/ebike?id=100000007",
-            EbikeQr.bikeUrl("007"),
+            EbikeQr.bikeUrl("100000007"),
         )
     }
 
     @Test
-    fun `长度不为3位一律拒绝`() {
+    fun `车号位数越界一律拒绝`() {
         assertNull(EbikeQr.bikeUrl(""))
-        assertNull(EbikeQr.bikeUrl("6"))
-        assertNull(EbikeQr.bikeUrl("66"))
-        assertNull(EbikeQr.bikeUrl("6699"))
-        assertNull(EbikeQr.bikeUrl("100000669"))
+        // 3 位是尾部，不是完整车号：先过 resolveCarNum 补前缀
+        assertNull(EbikeQr.bikeUrl("669"))
+        // 4~5 位既不是合法尾部也不是完整车号
+        assertNull(EbikeQr.bikeUrl("1000"))
+        assertNull(EbikeQr.bikeUrl("10000"))
+        assertNull(EbikeQr.bikeUrl("1".repeat(EbikeQr.CAR_NUM_MAX_LENGTH + 1)))
+        // 边界值本身要能过
+        assertNotNull(EbikeQr.bikeUrl("1".repeat(EbikeQr.CAR_NUM_MIN_LENGTH)))
+        assertNotNull(EbikeQr.bikeUrl("1".repeat(EbikeQr.CAR_NUM_MAX_LENGTH)))
     }
 
     @Test
     fun `非数字字符拒绝`() {
-        assertNull(EbikeQr.bikeUrl("66a"))
-        assertNull(EbikeQr.bikeUrl("-69"))
-        assertNull(EbikeQr.bikeUrl(" 69"))
-        assertNull(EbikeQr.bikeUrl("六六九"))
+        assertNull(EbikeQr.bikeUrl("10000066a"))
+        assertNull(EbikeQr.bikeUrl("-100000669"))
+        assertNull(EbikeQr.bikeUrl(" 10000669"))
+        assertNull(EbikeQr.bikeUrl("一〇〇〇〇〇六六九"))
     }
 
-    // ---- normalizeTailInput：输入框口径（前缀展示 + 整串粘贴） ----
+    // ---- normalizeCarInput：输入框入口口径 ----
 
     @Test
-    fun `输入框剥掉模板前缀只留后三位`() {
-        // 车身二维码上读到的是整串，粘进来应得到后三位而不是被截成 "100"
-        assertEquals("669", EbikeQr.normalizeTailInput("100000669"))
-        assertEquals("007", EbikeQr.normalizeTailInput("100000007"))
+    fun `输入只留数字且限长`() {
+        assertEquals("", EbikeQr.normalizeCarInput(""))
+        assertEquals("", EbikeQr.normalizeCarInput("六六九"))
+        assertEquals("69", EbikeQr.normalizeCarInput(" 6a9"))
+        assertEquals("100000669", EbikeQr.normalizeCarInput("100000669"))
+        // 超长截到上限，不把 13 位原样带进状态
+        assertEquals(
+            "1".repeat(EbikeQr.INPUT_MAX_LENGTH),
+            EbikeQr.normalizeCarInput("1".repeat(EbikeQr.INPUT_MAX_LENGTH + 5)),
+        )
+    }
+
+    // ---- resolveCarNum：规整输入 → 完整车号 ----
+
+    @Test
+    fun `尾部补模板前缀`() {
+        assertEquals("100000669", EbikeQr.resolveCarNum("669"))
+        assertEquals("100000007", EbikeQr.resolveCarNum("007"))
+        // 恰好三位且以模板开头仍是尾部，不该被当成完整车号
+        assertEquals("100000100", EbikeQr.resolveCarNum("100"))
     }
 
     @Test
-    fun `恰好三位的合法尾部不被当模板前缀剥掉`() {
-        // "100" 本身是合法尾部——剥前缀的条件必须卡在"超过三位"
-        assertEquals("100", EbikeQr.normalizeTailInput("100"))
-        assertEquals("666", EbikeQr.normalizeTailInput("666"))
+    fun `完整车号原样保留`() {
+        // 粘贴整条校园车号：旧版剥前缀再截三位，结果相同；新版原样留着
+        assertEquals("100000669", EbikeQr.resolveCarNum("100000669"))
+        // 别的车队：前缀不是 100000，靠尾部三位拼不出来
+        assertEquals("300000604", EbikeQr.resolveCarNum("300000604"))
     }
 
     @Test
-    fun `非数字一律剔除并截三位`() {
-        assertEquals("", EbikeQr.normalizeTailInput(""))
-        assertEquals("", EbikeQr.normalizeTailInput("六六九"))
-        assertEquals("69", EbikeQr.normalizeTailInput(" 6a9"))
-        assertEquals("668", EbikeQr.normalizeTailInput("6689"))
-        // 超长且不带模板前缀：截前三位，别把中间的字符拼进来
-        assertEquals("123", EbikeQr.normalizeTailInput("123456"))
+    fun `构不成车号的输入返回 null`() {
+        assertNull(EbikeQr.resolveCarNum(""))
+        assertNull(EbikeQr.resolveCarNum("1000"))
+        assertNull(EbikeQr.resolveCarNum("10000"))
+        assertNull(EbikeQr.resolveCarNum("10000066a"))
+        assertNull(EbikeQr.resolveCarNum("1".repeat(EbikeQr.CAR_NUM_MAX_LENGTH + 1)))
+    }
+
+    // ---- inputPrefix：前缀提示只在尾部输入时出现 ----
+
+    @Test
+    fun `前缀只在尾部输入时出现`() {
+        assertEquals("", EbikeQr.inputPrefix(""))
+        assertEquals("100000", EbikeQr.inputPrefix("6"))
+        assertEquals("100000", EbikeQr.inputPrefix("669"))
+        // 已经输/粘了完整车号：前缀必须消失，否则出的是别家车队的车却顶着校园前缀
+        assertEquals("", EbikeQr.inputPrefix("1000"))
+        assertEquals("", EbikeQr.inputPrefix("300000604"))
     }
 
     @Test
-    fun `剥前缀后不足三位不补齐`() {
-        // 只粘了模板：后三位是空的，等用户再填，不该补 0 蒙一个车号
-        assertEquals("", EbikeQr.normalizeTailInput("100000"))
-        assertEquals("6", EbikeQr.normalizeTailInput("1000006"))
+    fun `尾部与 chip 文案`() {
+        assertEquals("669", EbikeQr.tailOf("100000669"))
+        assertEquals("604", EbikeQr.tailOf("300000604"))
+        assertEquals("…669", EbikeQr.chipLabel("100000669"))
+        // 别的车队给全串：两批车号的尾部会撞（100000669 与 300000669），撞了就得分开
+        assertEquals("300000669", EbikeQr.chipLabel("300000669"))
     }
 
     // ---- qrMatrix：参数与内容 ----
 
     @Test
     fun `矩阵尺寸与白边符合约定`() {
-        val m = EbikeQr.qrMatrix(EbikeQr.bikeUrl("669")!!)
+        val m = EbikeQr.qrMatrix(EbikeQr.bikeUrl("100000669")!!)
         assertEquals(EbikeQr.QR_SIZE_PX, m.width)
         assertEquals(EbikeQr.QR_SIZE_PX, m.height)
         // MARGIN=1：四角 1 个模块宽的静区应为白
@@ -95,8 +139,8 @@ class EbikeQrTest {
 
     @Test
     fun `不同车号矩阵不同`() {
-        val a = EbikeQr.qrMatrix(EbikeQr.bikeUrl("669")!!)
-        val b = EbikeQr.qrMatrix(EbikeQr.bikeUrl("670")!!)
+        val a = EbikeQr.qrMatrix(EbikeQr.bikeUrl("100000669")!!)
+        val b = EbikeQr.qrMatrix(EbikeQr.bikeUrl("100000670")!!)
         var diff = false
         for (y in 0 until a.height) {
             for (x in 0 until a.width) {
@@ -114,26 +158,41 @@ class EbikeQrTest {
 
     @Test
     fun `mergeRecent 倒序去重`() {
-        assertEquals(listOf("669"), EbikeQr.mergeRecent(emptyList(), "669"))
-        assertEquals(listOf("670", "669"), EbikeQr.mergeRecent(listOf("669"), "670"))
+        assertEquals(listOf("100000669"), EbikeQr.mergeRecent(emptyList(), "100000669"))
+        assertEquals(
+            listOf("100000670", "100000669"),
+            EbikeQr.mergeRecent(listOf("100000669"), "100000670"),
+        )
         // 重复生成同一车号：提前、不重复
-        assertEquals(listOf("669", "670"), EbikeQr.mergeRecent(listOf("670", "669"), "669"))
+        assertEquals(
+            listOf("100000669", "100000670"),
+            EbikeQr.mergeRecent(listOf("100000670", "100000669"), "100000669"),
+        )
     }
 
     @Test
     fun `mergeRecent 上限8条最旧被挤出`() {
-        var list = listOf("001", "002", "003", "004", "005", "006", "007", "008")
-        list = EbikeQr.mergeRecent(list, "009")
+        var list = (1..8).map { "10000000$it" }
+        list = EbikeQr.mergeRecent(list, "100000009")
         assertEquals(8, list.size)
-        assertEquals("009", list.first())
-        assertFalse(list.contains("008"))
-        assertTrue(list.contains("001"))
+        assertEquals("100000009", list.first())
+        assertFalse(list.contains("100000008"))
+        assertTrue(list.contains("100000001"))
     }
 
     @Test
     fun `序列化 roundtrip`() {
-        val list = listOf("669", "007", "100")
+        val list = listOf("100000669", "100000007", "300000604")
         assertEquals(list, EbikeQr.decodeRecent(EbikeQr.encodeRecent(list)))
+    }
+
+    @Test
+    fun `旧格式的纯三位条目补前缀读出来`() {
+        // 2026-09-23 之前只存尾部三位；升级读法不能把老用户的历史清空
+        assertEquals(
+            listOf("100000669", "100000007"),
+            EbikeQr.decodeRecent("""["669","007"]"""),
+        )
     }
 
     @Test
@@ -146,10 +205,19 @@ class EbikeQrTest {
 
     @Test
     fun `decode 清理越界与非法条目`() {
-        // 超上限截断 + 非法条目剔除 + 去重
-        val json = """["669","669","12","abc","001","002","003","004","005","006"]"""
+        // 超上限截断 + 非法条目剔除 + 去重。
+        // "12" 只有两位：旧格式只会存恰好三位，所以它是坏数据，不该被补成 10000012
+        val json = """["100000669","100000669","12","abc","001","002","003","004","005","006"]"""
         assertEquals(
-            listOf("669", "001", "002", "003", "004", "005", "006"),
+            listOf(
+                "100000669",
+                "100000001",
+                "100000002",
+                "100000003",
+                "100000004",
+                "100000005",
+                "100000006",
+            ),
             EbikeQr.decodeRecent(json),
         )
     }

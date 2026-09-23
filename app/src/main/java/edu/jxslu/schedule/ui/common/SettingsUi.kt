@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -23,6 +25,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -302,4 +305,71 @@ fun SettingsDivider(modifier: Modifier = Modifier) {
         modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp),
         color = MaterialTheme.colorScheme.outlineVariant,
     )
+}
+
+/**
+ * 权限引导行（DESIGN §3.12）：图标 + 标题/说明 + 可选状态徽标 + 动作按钮。
+ *
+ * 目前两个使用方：桌面小组件设置页（§3.6 的「后台及时性」两行）与
+ * 权限设置页（§3.12）。同一条规格只留一处定义，别再复制。
+ * `granted = null` 表示无系统 API 可查（如厂商自启动），不显示徽标。
+ */
+@Composable
+internal fun PermissionRow(
+    title: String,
+    detail: String,
+    granted: Boolean?,
+    icon: ImageVector,
+    actionText: String,
+    onClick: () -> Unit,
+) {
+    val haptics = rememberAppHaptics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingsIconBadge(icon)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                if (granted != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (granted) "已开启" else "未开启",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (granted) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                        },
+                        modifier = Modifier
+                            .background(
+                                color = if (granted) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                },
+                                shape = MaterialTheme.shapes.small,
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        TextButton(
+            onClick = {
+                haptics.tap()
+                onClick()
+            },
+        ) { Text(actionText) }
+    }
 }

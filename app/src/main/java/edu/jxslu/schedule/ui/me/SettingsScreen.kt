@@ -64,6 +64,7 @@ import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Layout2Row
 import me.rerere.hugeicons.stroke.Palette
 import me.rerere.hugeicons.stroke.Radar01
+import me.rerere.hugeicons.stroke.Shield01
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.Vibrate
 
@@ -104,6 +105,7 @@ fun SettingsScreen(
     onOpenDataSettings: () -> Unit = {},
     onOpenCourseTweak: () -> Unit = {},
     onOpenWidgetSettings: () -> Unit = {},
+    onOpenPermissionSettings: () -> Unit = {},
     onOpenCalendarSettings: () -> Unit = {},
     onOpenReminderSettings: () -> Unit = {},
     onOpenShortcuts: () -> Unit = {},
@@ -203,6 +205,12 @@ fun SettingsScreen(
                     checked = state.displayPrefs.floatingNavBar,
                     onCheckedChange = viewModel::setFloatingNavBar,
                     icon = HugeIcons.Blur,
+                )
+                SettingItem(
+                    title = "权限设置",
+                    subtitle = "电池优化 · 自启动 · 通知",
+                    icon = HugeIcons.Shield01,
+                    onClick = onOpenPermissionSettings,
                 )
             }
 

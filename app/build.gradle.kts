@@ -140,6 +140,11 @@ dependencies {
     // 只用 core 的 QRCodeWriter，不引 zxing 的 Android 侧模块
     implementation("com.google.zxing:core:3.5.3")
 
+    // 附近单车地图（DESIGN §3.9 / §4.23）：osmdroid 6.1.18 的 POM 里没有 <dependencies>，
+    // 不会拉进任何传递依赖，也不影响 androidx.core 的版本边界（对比 HugeIcons 那边的教训）。
+    // 瓦片源是自建的高德栅格地址（见 ui/ebike/OsmMapView.kt），不用它的在线默认源。
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

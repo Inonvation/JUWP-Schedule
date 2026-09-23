@@ -382,7 +382,7 @@ private fun WaterSettingsSection(
         )
         SettingChoiceRow(
             title = "点击方式",
-            subtitle = "双击确认防误触，对今日页开水卡与上方「开水」大按钮生效",
+            subtitle = "双击确认防误触，对上方「开水」大按钮生效（今日页余额面板固定单击）",
             icon = HugeIcons.GlassWater,
             options = listOf("单击", "双击"),
             selectedIndex = if (prefs.waterRequireDoubleClick) 1 else 0,

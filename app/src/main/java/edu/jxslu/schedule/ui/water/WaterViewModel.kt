@@ -40,6 +40,8 @@ data class WaterUiState(
     val selectedDevice: DeviceItem? = null,
     val loadingDevices: Boolean = false,
     val loadingBalance: Boolean = false,
+    /** 余额是否至少拉过一次（成功失败都算）：卡片副行区分「读取中」与「拉过但没有」用。 */
+    val balanceLoaded: Boolean = false,
     // ── 开水流程 ──
     val flow: UnlockFlowState = UnlockFlowState.Idle,
     val usePoints: Boolean = true,
@@ -217,9 +219,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
             _uiState.update { it.copy(loadingBalance = true) }
             repo.queryBalance()
         }.onSuccess { balance ->
-            _uiState.update { it.copy(balance = balance, loadingBalance = false) }
+            _uiState.update { it.copy(balance = balance, loadingBalance = false, balanceLoaded = true) }
         }.onFailure {
-            _uiState.update { it.copy(loadingBalance = false) }
+            _uiState.update { it.copy(loadingBalance = false, balanceLoaded = true) }
             if (it is TokenExpiredException) {
                 handleTokenExpired()
             } else {

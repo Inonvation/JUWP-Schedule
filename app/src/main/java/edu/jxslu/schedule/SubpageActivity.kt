@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import edu.jxslu.schedule.ui.me.CalendarSettingsScreen
 import edu.jxslu.schedule.ui.me.DataSettingsScreen
+import edu.jxslu.schedule.ui.me.PermissionSettingsScreen
 import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.ShortcutSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
@@ -20,6 +21,7 @@ import edu.jxslu.schedule.ui.campus.StatementScreen
 import edu.jxslu.schedule.ui.detect.ScheduleUpdateScreen
 import edu.jxslu.schedule.ui.detect.TweakDetectScreen
 import edu.jxslu.schedule.ui.ebike.EbikeQrScreen
+import edu.jxslu.schedule.ui.ebike.BikeMapScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
 import edu.jxslu.schedule.ui.homework.HomeworkLibraryScreen
@@ -46,6 +48,8 @@ enum class SubpageScreen {
     WATER,
     /** 我的 → 桌面小组件（DESIGN §3.6） */
     WIDGET_SETTINGS,
+    /** 我的 → 权限设置（电池优化 · 自启动/锁后台 · 通知，DESIGN §3.12） */
+    PERMISSION_SETTINGS,
     /** 我的 → 日历同步（提醒时长 · 一键删除，DESIGN §4.12） */
     CALENDAR_SETTINGS,
     /** 我的 → 上课提醒（DESIGN §3.7） */
@@ -60,6 +64,8 @@ enum class SubpageScreen {
     SCHEDULE_UPDATE,
     /** 今日 → 共享单车出码（DESIGN §3.9；独立窗口承载二维码展示） */
     EBIKE,
+    /** 今日 → 附近单车地图（DESIGN §3.9；从出码页进，选中的车号回填出码页） */
+    EBIKE_MAP,
     /** 我的 → 校园卡付款码设置（开关 · 凭证，DESIGN §3.10） */
     CAMPUS_CARD_SETTINGS,
     /** 今日 → 校园卡付款码展示页（DESIGN §3.10；FLAG_SECURE 独立窗口） */
@@ -137,6 +143,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.COURSE_TWEAK -> CourseTweakScreen(onBack = onBack)
             SubpageScreen.WATER -> WaterScreen(onBack = onBack)
             SubpageScreen.WIDGET_SETTINGS -> WidgetSettingsScreen(onBack = onBack)
+            SubpageScreen.PERMISSION_SETTINGS -> PermissionSettingsScreen(onBack = onBack)
             SubpageScreen.CALENDAR_SETTINGS -> CalendarSettingsScreen(onBack = onBack)
             SubpageScreen.REMINDER_SETTINGS -> ReminderSettingsScreen(onBack = onBack)
             SubpageScreen.SHORTCUTS ->
@@ -148,6 +155,19 @@ class SubpageActivity : ComponentActivity() {
             )
             SubpageScreen.SCHEDULE_UPDATE -> ScheduleUpdateScreen(onBack = onBack)
             SubpageScreen.EBIKE -> EbikeQrScreen(onBack = onBack)
+            SubpageScreen.EBIKE_MAP -> BikeMapScreen(
+                onBack = onBack,
+                onPicked = { carNum ->
+                    // 选中的车号用 Activity Result 回传，**不走进程级单例**：
+                    // 单例会被任何一个还活着的出码页实例抢先消费掉（被退到后台那个也算），
+                    // 结果是用户眼前这一页空手而归（2026-09-23 实测）。
+                    setResult(
+                        RESULT_OK,
+                        Intent().putExtra(EXTRA_PICKED_CAR_NUM, carNum),
+                    )
+                    onBack()
+                },
+            )
             SubpageScreen.CAMPUS_CARD_SETTINGS -> CampusCardSettingsScreen(
                 onBack = onBack,
                 onOpenStatement = { SubpageActivity.start(this, SubpageScreen.CAMPUS_STATEMENT) },
@@ -249,6 +269,14 @@ class SubpageActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_SCREEN = "screen"
+
+        /**
+         * 附近单车地图选中的车号，**作为 Activity Result 回传**（DESIGN §3.9）。
+         *
+         * 别改回进程级单例：那种通道会被任何一个还活着的出码页实例抢先消费掉，
+         * 用户眼前这一页反而收不到（2026-09-23 真机排查）。
+         */
+        const val EXTRA_PICKED_CAR_NUM = "picked_car_num"
         private const val EXTRA_FOCUS_ITEM = "focus_item"
         private const val EXTRA_COURSE_NAME = "course_name"
         private const val EXTRA_ITEM_ID = "item_id"
