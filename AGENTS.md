@@ -17,7 +17,7 @@
 2. `PROMPTS.md` 只读你要做的那一个阶段块
 3. `DESIGN.md` **只读与任务相关的章节**（§3 导航/UI 规格、§4.1–4.8 结构规格、§3.5 作息表）；
    历史实现记录在 `docs/devlog.md`（仅本地），只在排查"当初为什么这么改"时才翻
-4. 只读参考：`F:\light-life-v3.0`（胖乖）、`scripts/`（教务爬虫，说明见 `scripts/README.md`）
+4. 只读参考：`F:\light-life-v3.0`（胖乖）、`scripts/`（爬虫脚本，说明见 `scripts/README.md`）
 
 改导航或课表领域模型前，必须先改 `DESIGN.md` 对应章节（不是 devlog）。
 
@@ -171,6 +171,12 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   通知的 `PendingIntent` 必须指向 MainActivity 跳板（`subpageLaunchIntent`）而不是
   `SubpageActivity`，且带 `NEW_TASK|CLEAR_TASK`；小组件点击同理——`SINGLE_TOP|CLEAR_TOP`
   在 standard 上匹配不上显式 intent，清不掉二级页。
+- **二级页过渡分两套**（2026-09-23，DESIGN §3.1，实现在 `WindowTransitions.kt`）：
+  API 34+ 由窗口自己 `overrideActivityTransition` 声明（系统才会把返回手势进度交给它，
+  也就是预测性返回的跟手预览），API 33 及以下才用 `overridePendingTransition`。
+  **34+ 上调旧 API 会把跟手预览关掉**：它是已废弃 API，调了等于声明「未适配」，
+  真机上表现为滑到一半毫无预览、松手才切页。manifest 的 `enableOnBackInvokedCallback`
+  别改成 `false`（同一件事的声明）。
 - 小组件是**单条目 + `SizeMode.Exact` 自适应**（2026-09-20 起，旧三档条目已删）：尺寸由
   `WidgetMetrics`（实测 dp）分档 Compact / List / Week，**不要再加按尺寸拆的 receiver 或
   `widget_info_*`**（旧版三条目内容重复，用户明确要求合并）。改渲染前先读 DESIGN §3.6；
@@ -253,9 +259,9 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 无线调试（手机重启或 `adb usb` 后失效，IP 要现取勿记死）：
 `adb -s <serial> tcpip 5555` → `adb shell ip route` 取 IP（接口是 **wlan2**，不是 wlan0）→ `adb connect <ip>:5555`。
 
-## 教务爬虫（scripts/）
+## 爬虫脚本（scripts/）
 
-正式脚本 5 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 6 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
@@ -264,6 +270,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 | `fetch_lab_courses.py` | 实验课表（实践实验 → 实验课表查询，`--term` 可选） | `scripts/out/lab_courses.json` |
 | `fetch_exams.py` | 考试安排（`--term` 可选，缺省取教务当前学期；JSON 接口） | `scripts/out/exams.json` |
 | `fetch_scores.py` | 课程成绩（`--term` 可选，缺省全部学期；JSON 接口） | `scripts/out/scores.json` |
+| `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9A101`） | `scripts/out/power.json` |
 
 所有脚本输出 JSON 顶层 `term` = **实际爬到的学期**（如 `2026-2027-1`），App 导入确认弹窗据此展示；
 带 `--term` 时脚本会校验「请求学期 = 教务返回学期」，不一致直接报错而不是静默爬错学期。
@@ -273,7 +280,16 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py
+.\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history
 ```
+
+- **寝室电费是另一套系统**（新开普「移动服务平台」缴费，`charge.juwp.edu.cn`，与教务无关）：
+  登录 = 学号 + **缴费平台查询密码**（`credentials.local.json` 的 `powerPassword`），
+  **与教务 `password` 不通用**——实测教务密码登录返回 `{"error":"unauthorized"}`。
+  平台只挂了一个项目 `feeitemid=181`「房间电费」（0.62 元/度），读数取 `POST /charge/feeitem/getThirdData`
+  （`type=IEC`）的 `map.showData`（中文键，如「当前剩余电量」）；该接口**参数少一个就回
+  `code=500「未知异常，请联系管理员」`**（`feeitemid`/`type`/`level`/场景三键缺一不可）。
+  网站里带 `token=` 的分享链接是**易失**的，脚本按学号+查询密码现登，别复用链接里的 token。
 
 - **Session 必须 `trust_env = False`**：本机 shell 注入了 `HTTP_PROXY/HTTPS_PROXY`（IDE 本地代理），
   requests 默认走代理会让教务 SSO 落点返回 404、主页退回「用户没有登录」，现象像"教务挂了"。

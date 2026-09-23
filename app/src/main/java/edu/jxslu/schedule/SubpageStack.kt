@@ -186,10 +186,7 @@ internal fun openSubpage(context: Context, request: SubpageRequest) {
     // 不带 NEW_TASK：从 Activity 启动时二级页要留在**当前** task 里（MainActivity 之上），
     // 带上了会先做一次 task 查找，行为虽等价但语义绕
     context.startActivity(request.applyTo(Intent(context, SubpageActivity::class.java)))
-    (context as? Activity)?.let {
-        @Suppress("DEPRECATION")
-        it.overridePendingTransition(R.anim.slide_in_right, 0)
-    }
+    applySubpageOpenTransition(context)
 }
 
 /**
@@ -205,8 +202,5 @@ internal fun openSubpageForResult(
     request: SubpageRequest,
 ) {
     launch(request.applyTo(Intent(context, SubpageActivity::class.java)))
-    (context as? Activity)?.let {
-        @Suppress("DEPRECATION")
-        it.overridePendingTransition(R.anim.slide_in_right, 0)
-    }
+    applySubpageOpenTransition(context)
 }

@@ -129,10 +129,22 @@
 | 打开二级页（SubpageActivity / JwImportActivity） | 新窗口从右缘平移推入覆盖主窗口，280ms 减速曲线（`res/anim/slide_in_right`）；主窗口不传动画、原地不动（纯覆盖，非左右推移） |
 | 关闭二级页（页内返回 / 系统返回，统一走 `finish()`） | 顶层窗口向右滑出露出主窗口，240ms 加速曲线（`res/anim/slide_out_right`） |
 
-实现走 `overridePendingTransition`（minSdk 26；API 34+ 该 API 仍生效，34+ 专属的
-`overrideActivityTransition` 暂不引入）。二级页所有入口必须经
-`SubpageActivity.start(...)` / `JwImportActivity.start(...)`，转场随帮助方法生效；
-绕过 `start()` 直接 `startActivity` 会静默丢转场（MainActivity 曾有 3 处，已收口）。
+实现分两套（`WindowTransitions.kt`，2026-09-23 起）：
+
+| 系统 | 做法 | 效果 |
+|------|------|------|
+| API 34+（Android 14） | 窗口自己在 `onCreate` 调 `overrideActivityTransition` 声明 OPEN/CLOSE 过渡 | 系统把返回手势的进度交给这套动画：滑到一半能看见上一页、松手前可以撤回（预测性返回） |
+| API 33 及以下 | 启动方 / 关闭方调 `overridePendingTransition`（platform 没有新机制） | 手势结束后才播过渡 |
+
+**34+ 上不要调 `overridePendingTransition`**：它是已废弃 API，调了等于告诉系统「这个 App
+没适配预测性返回」，预览会被整个关掉。2026-09-23 在 Redmi K70（Android 16）上对比过：
+调旧 API 时手势过程中只有边缘指示条、没有任何预览，松手才切页；换成新 API 后能看到下层
+页面从左侧跟手推入。manifest 的 `android:enableOnBackInvokedCallback="true"` 是同一件事的
+声明（targetSdk 34+ 本就默认开，写出来是为了表明意图，**别改成 false**）。
+
+二级页所有入口必须经 `SubpageActivity.start(...)` / `openSubpage(...)` /
+`openSubpageForResult(...)` / `JwImportActivity.start(...)`，转场随这些帮助方法生效；
+绕过它们直接 `startActivity` 会静默丢转场（MainActivity 曾有 3 处，已收口）。
 
 **从桌面图标回到 App 时的页面恢复（P6，2026-09-23）**——桌面图标点击带的是
 `NEW_TASK|RESET_TASK_IF_NEEDED`，四种 manifest 组合都真机跑过：

@@ -117,6 +117,8 @@ class SubpageActivity : ComponentActivity() {
         val request = request
         SubpageStack.onWindowCreated(request)
         enableEdgeToEdge()
+        // 预测性返回（DESIGN §3.1）：34+ 由本窗口声明过渡，系统才会把手势进度交给它
+        enablePredictiveBackTransitions()
         setContent {
             JuwRoot {
                 SubpageContent(
@@ -272,9 +274,9 @@ class SubpageActivity : ComponentActivity() {
         // clearTop 与系统回收不走这里，记录必须留着，否则恢复不了。
         SubpageStack.onWindowFinished(request)
         super.finish()
-        @Suppress("DEPRECATION") // API 34+ 的 overrideActivityTransition 需要 34 才可用，minSdk 26 仍走这条
-        // 顶层窗口向右滑出；入场传 0 = 露出的主窗口原地不动（覆盖语义）
-        overridePendingTransition(0, R.anim.slide_out_right)
+        // 顶层窗口向右滑出；入场传 0 = 露出的主窗口原地不动（覆盖语义）。
+        // 34+ 由 enablePredictiveBackTransitions 声明，这里不碰旧 API
+        applySubpageCloseTransition(this)
     }
 
     companion object {

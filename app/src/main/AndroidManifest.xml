@@ -61,10 +61,14 @@
         android:name="android.hardware.location.gps"
         android:required="false" />
 
+    <!-- 预测性返回（DESIGN §3.1）。targetSdk 34+ 本来就默认启用，这里显式写出来是为了
+         表明意图：返回手势交给系统的 OnBackInvokedCallback，二级页的跟手预览才生效
+         （过渡动画由 WindowTransitions.kt 声明）。写成 false 会连带关掉手势预览，别改。 -->
     <application
         android:name=".JuwApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

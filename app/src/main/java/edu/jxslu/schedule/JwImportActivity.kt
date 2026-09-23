@@ -1,6 +1,5 @@
 package edu.jxslu.schedule
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -28,6 +27,8 @@ class JwImportActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 预测性返回（DESIGN §3.1）：34+ 由本窗口声明过渡，系统才会把手势进度交给它
+        enablePredictiveBackTransitions()
         val mode = intent.getStringExtra(EXTRA_MODE)
             ?.let { name -> JwImportMode.entries.firstOrNull { it.name == name } }
             ?: JwImportMode.Schedule
@@ -40,8 +41,7 @@ class JwImportActivity : ComponentActivity() {
 
     override fun finish() {
         super.finish()
-        @Suppress("DEPRECATION") // API 34+ 的 overrideActivityTransition 需要 34 才可用，minSdk 26 仍走这条
-        overridePendingTransition(0, R.anim.slide_out_right)
+        applySubpageCloseTransition(this)
     }
 
     companion object {
@@ -51,11 +51,7 @@ class JwImportActivity : ComponentActivity() {
             val intent = Intent(context, JwImportActivity::class.java)
                 .putExtra(EXTRA_MODE, mode.name)
             context.startActivity(intent)
-            // 只有 context 是 Activity 时才有窗口动画可言
-            (context as? Activity)?.let {
-                @Suppress("DEPRECATION")
-                it.overridePendingTransition(R.anim.slide_in_right, 0)
-            }
+            applySubpageOpenTransition(context)
         }
     }
 }
