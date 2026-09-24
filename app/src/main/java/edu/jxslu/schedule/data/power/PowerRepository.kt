@@ -1,5 +1,8 @@
 package edu.jxslu.schedule.data.power
 
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+
 /**
  * 电费读表与流水编排（DESIGN §4.24）。
  *
@@ -10,6 +13,14 @@ package edu.jxslu.schedule.data.power
 class PowerRepository(private val client: PowerClient) {
 
     private var cachedToken: String? = null
+
+    /** 读数缓存（项目详情 + 电表读数）。 */
+    private var cachedSnapshot: PowerSnapshot? = null
+    private var cachedSnapshotAtMs = 0L
+
+    /** 流水缓存。 */
+    private var cachedHistory: List<PowerTurnover>? = null
+    private var cachedHistoryAtMs = 0L
 
     /** 登录并换回 access_token（供深链复用）。 */
     suspend fun login(username: String, password: String): String {
@@ -22,9 +33,21 @@ class PowerRepository(private val client: PowerClient) {
         return token
     }
 
-    /** 一次取数：项目详情（含绑定房间）+ 该房间电表读数。 */
-    suspend fun snapshot(username: String, password: String): PowerSnapshot =
-        withToken(username, password) { token ->
+    /**
+     * 一次取数：项目详情（含绑定房间）+ 该房间电表读数。
+     *
+     * [force] 为 false 时先看内存缓存（TTL 见 [CACHE_TTL_MS]）：生活页进页那条路走缓存，
+     * 来回切 Tab 不会重复打平台；用户点卡片、充值成功后刷新一律传 true。
+     */
+    suspend fun snapshot(
+        username: String,
+        password: String,
+        force: Boolean = false,
+    ): PowerSnapshot {
+        if (!force) {
+            cachedSnapshot?.takeIf { isFresh(cachedSnapshotAtMs) }?.let { return it }
+        }
+        val fresh = withToken(username, password) { token ->
             val detail = client.get(
                 path = "/charge/feeitem/singleFeeitem",
                 token = token,
@@ -33,10 +56,26 @@ class PowerRepository(private val client: PowerClient) {
             val feeItem = PowerModels.parseFeeItem(expectOk(detail, "取电费项目详情"))
             PowerSnapshot(feeItem, readMeter(token, feeItem))
         }
+        cachedSnapshot = fresh
+        cachedSnapshotAtMs = System.currentTimeMillis()
+        return fresh
+    }
 
-    /** 电费流水（充值/退款，按时间升序）。 */
-    suspend fun history(username: String, password: String): List<PowerTurnover> =
-        withToken(username, password) { token ->
+    /**
+     * 电费流水（充值/退款，按时间升序）。
+     *
+     * 缓存口径同 [snapshot]：生活页「最近流水」与缴费账单页共用这一份，
+     * 从生活页点进账单页不会再多打一条。
+     */
+    suspend fun history(
+        username: String,
+        password: String,
+        force: Boolean = false,
+    ): List<PowerTurnover> {
+        if (!force) {
+            cachedHistory?.takeIf { isFresh(cachedHistoryAtMs) }?.let { return it }
+        }
+        val fresh = withToken(username, password) { token ->
             val raw = client.get(
                 path = "/charge/turnover/personal_data",
                 token = token,
@@ -47,6 +86,10 @@ class PowerRepository(private val client: PowerClient) {
             )
             PowerModels.parseTurnovers(expectOk(raw, "取电费流水"))
         }
+        cachedHistory = fresh
+        cachedHistoryAtMs = System.currentTimeMillis()
+        return fresh
+    }
 
     /**
      * 「电费充值」深链：平台前端按 URL 里的 `token` 直接登录，落在房间电费缴费页，
@@ -97,6 +140,35 @@ class PowerRepository(private val client: PowerClient) {
             PowerPayModels.channelsFrom(raw.text)
         }
 
+    /**
+     * 清理全部未支付订单（DESIGN §4.24，2026-09-24；2026-09-24 改为「打开充值弹层时」调用）。
+     *
+     * 平台**不自动清** `status=0` 的过期单（实测 105 条调试残留一直挂着），同项目未支付单
+     * 堆积会让**新下单 500「未知异常」**——这是用户报「余额充足却建不了单」的根因。流程：
+     * `GET /charge/order/personal_data?paystatus=0`（只列未支付）→
+     * 逐单 `POST /charge/order/deleteOrder`（**JSON body**，表单一律 500）→ 返回成功数。
+     *
+     * **触发点只有一个**（2026-09-24 收口）：`LifeViewModel.preparePowerRecharge()`——
+     * 用户点「电费充值」打开弹层时清一次；下单前会等这次清理结束。未支付单只可能由本流程
+     * 产生，所以这一个点足够，不需要刷新时清、也不做后台轮询与 12 小时闸门（一次清理是
+     * 1 + N 条请求，多一个触发点就是多一串对第三方平台的请求）。
+     */
+    suspend fun cancelAllPendingOrders(username: String, password: String): Int =
+        withToken(username, password) { token ->
+            val listRaw = client.get("/charge/order/personal_data", token, mapOf("paystatus" to "0"))
+            val ids = PowerModels.parsePendingOrderIds(expectOk(listRaw, "取未支付订单"))
+            ids.count { orderId ->
+                runCatching {
+                    val delRaw = client.postJson(
+                        "/charge/order/deleteOrder",
+                        token,
+                        buildJsonObject { put("orderid", JsonPrimitive(orderId)) },
+                    )
+                    PowerModels.codeOf(delRaw.text) == 200
+                }.getOrDefault(false)
+            }
+        }
+
     private fun channelProbeForm() = mapOf(
         "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
         "tranamt" to "0.01",
@@ -129,13 +201,16 @@ class PowerRepository(private val client: PowerClient) {
             ),
         )
         expectOk(raw, "发起电子账户支付")
-        PowerPayModels.challengeFrom(raw.text)
+        // 订单号用下单时那一个：paystep=2 响应里的 orderid 恒为 null（2026-09-24 实测）
+        PowerPayModels.challengeFrom(raw.text, requestedOrderId = orderId)
             ?: throw PowerException.Protocol("支付响应里没有 passwordMap（平台可能已改版）")
     }
 
     /**
      * 第二步支付：带 6 位密文（`passwordMap[uuid][i]` 拼接）+ uuid + ccctype。
      * `code=200` = 受理成功（由查单确认 status=1）；密码错返回 [PowerPayResult.Rejected]。
+     *
+     * [orderId] 优先于 [challenge] 里的订单号（VM 手上那个是下单时服务端给的，最可信）。
      */
     suspend fun payConfirm(
         username: String,
@@ -143,11 +218,15 @@ class PowerRepository(private val client: PowerClient) {
         challenge: PowerPayChallenge,
         /** 6 位密文（已按 `passwordMap[uuid]` 乱序表替换，见 [PowerPayChallenge.cipherOf]。）。 */
         cipher: String,
+        orderId: String? = null,
     ): PowerPayResult = withToken(username, password) { token ->
         val uuid = challenge.passwordMap.keys.firstOrNull()
             ?: throw PowerException.Protocol("支付响应缺 uuid")
+        val targetOrderId = orderId?.takeIf { it.isNotBlank() }
+            ?: challenge.orderId.takeIf { it.isNotBlank() }
+            ?: throw PowerException.Protocol("支付会话缺订单号，请重新下单")
         val form = buildMap {
-            put("orderid", challenge.orderId)
+            put("orderid", targetOrderId)
             put("paystep", "2")
             put("paytype", "ACCOUNT")
             put("paytypeid", "59")
@@ -219,5 +298,14 @@ class PowerRepository(private val client: PowerClient) {
             throw PowerException.Protocol("$what：code=$code $msg".trim())
         }
         return raw.text
+    }
+
+    /** 缓存是否还在 TTL 内。 */
+    private fun isFresh(cachedAtMs: Long): Boolean =
+        cachedAtMs > 0 && System.currentTimeMillis() - cachedAtMs <= CACHE_TTL_MS
+
+    companion object {
+        /** 读数与流水的内存缓存时长（DESIGN §4.24「请求节流」）。 */
+        private const val CACHE_TTL_MS = 120_000L
     }
 }

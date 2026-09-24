@@ -26,8 +26,11 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py        # 课程成绩（缺省全部学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py         # 寝室电费（非教务，无 --term；本人绑定房间剩余电量）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history   # 追加电费充值流水
+.\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py    # 教务处盖章成绩单 PDF（非强智教务，见 §5.6）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py --list   # 只列有成绩的学期与门数
 # 指定学期：加 --term 2025-2026-2（脚本会校验请求学期 = 教务返回学期，不一致即报错）
 # 电费查别的房间：--room 1A101（可加 --building 1A 提速）
+# 成绩单按学期：--term 2025-2026-2（可多个，合并成一张）
 ```
 
 | 产出 | 内容 |
@@ -41,6 +44,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `scripts/out/*_raw.json` / `exams_raw.json` / `scores_raw.json` | 解析中间产物（含原始文本，排错用） |
 | `scripts/out/power.json` | 寝室电费（房间 / 剩余电量 / 可选充值流水与月度汇总） |
 | `scripts/out/power_raw.json` | 电费接口原始数据（排错用） |
+| `scripts/out/transcript_<标签>.pdf` | 教务处**盖章**成绩单（A4，含证件照、成绩专用章与数字签名） |
 
 ---
 
@@ -54,6 +58,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
 | `fetch_scores.py` | 课程成绩 → JSON | 同上；`--term` 缺省查全部学期 |
 | `fetch_power.py` | 寝室电费 → JSON | 新开普缴费平台，学号 + 查询密码；**与教务链路无关** |
+| `fetch_transcript.py` | 教务处盖章成绩单 → PDF | 金格签章系统（`jwxyxx`）；共用 CAS，但**不经过强智教务**，见 §5.6 |
 | `gen_week_layout_preview.py` | 生成课表排版提案 HTML | 与爬取无关 |
 | `out/` | 抓取产物与页面快照 | 快照可当解析器回归 fixture |
 | `_archive/` | 历史一次性探测脚本 | **勿依赖**，仅留档溯源 |
@@ -305,7 +310,47 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
    JSON 字符串。平台加功能会加键，所以 `power.json` 除 typed 字段外还留了 `meter.fields` 原文。
 4. **`sceneinfo` 里的校区名是学校旧名**（南昌工程学院），房间名以 IEC 返回的 `map.data` 为准。
 
-App 端（水贝贝）当前没有接这条链路，脚本只产出 `scripts/out/power.json` 供本机查看。
+App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blade-pay` 下单 + 电子账户
+密码支付，DESIGN §4.24），脚本只产出 `scripts/out/power.json` 供本机查看。
+
+### 5.6 教务处盖章成绩单（签章管理系统，2026-09-24 实测）
+
+**不在强智教务里**。`fetch_scores.py` 抓的是成绩数据（`/jsxsd/kscj/cjcx_list`），
+要出**带教务处章的正式单据**得走另一个系统：门户应用「电子签章成绩单」指向的
+**金格签章管理系统** `jwxyxx.juwp.edu.cn/ptwork/`（前端 `author=yinqi`，开发者标注江西金格信安云）。
+
+| 环节 | 请求 | 说明 |
+|------|------|------|
+| SSO | CAS `service=http://jwxyxx.juwp.edu.cn/ptwork/cas` | 复用 `jw_session.sso_ptwork`；**不需要预热**（`bzb_njw` 是教务域的怪癖）。落地 `mainIndex?isDd=1`，该域唯一 cookie `sid` |
+| 列表 | `POST /ptwork/DzqzController/ddqzcjList` | form：`page` / `limit` / `sort` / `order` / `dysj`（空）/ `dytype`（空）/ `cjfs=1` / `xnxq`（可重复，空 = 全部学期）。应答 `[1,{ total, pages, pagePri, list:[…] }]`，`pagePri` 是不透明的加密条件串 |
+| 出单 | `POST /ptwork/DzqzController/printStartCj` | form：`dysj`=上一步的 `pagePri` / `dytype=1` / `cjfs=1`。应答 `application/x-msdownload`，`filename=成绩打印表.pdf`，正文即 PDF |
+
+四条实测口径（按直觉改会出错单）：
+
+1. **`dysj`（pagePri）才是权威条件，`xnxq` 被服务端忽略**。故意制造不一致
+   （`dysj` 指 2025-2026-2、`xnxq` 传 2024-2025-1）导出，出来仍是 2025-2026-2 的内容。
+   所以只能「先列表拿令牌、再带令牌出单」，不能按学期号直接拼请求；导出请求也就不传 `xnxq`。
+2. 列表 `limit` 无效，服务端固定 **15 行一页**；分页**不影响出单**（只翻出 15 行时，
+   PDF 里照样是全部 16 门）。只有取学期清单才需要按 `pages` 翻。
+3. `pagePri` 可重复使用，不是一次性。
+4. **令牌存在不等于有数据**。无成绩的学期照样返回 token，出单时给 79 字节 HTML
+   `parent.wzalert('未发现打印内容')`；令牌解不开时更糟——服务端返回一张
+   **空白却带章**的模板 PDF（60KB、0 门课）。故出单前必须用 `total>0` 拦，拿到字节后还要校验 `%PDF`。
+
+产物形态（拆包核对）：Aspose.Cells for Java v8.5.2 生成、iText 5.4.5 增量签名、
+`Producer: www.tosign.cn`；A4 单页双栏，表头有院系/专业/班级/姓名/学号/年级/层次/学籍状态与证件照，
+末尾「打印时间 + 学校盖章：」。章是压在「学校盖章：」上的**签章注释**（`/FT /Sig` + `/Subtype /Widget`，
+`Rect[433.5 3.5 546.5 116.5]`，签名证书 CN = 江西水利电力大学），另含印章图与验签二维码。
+**PDFium 系渲染器（含 pypdfium2）默认不画注释**，用它们截图自检会误判「没盖章」，要拿 WPS / Adobe 复核。
+
+两个入口的区别（排查时容易被带偏）：左侧栏「电子凭证 → 电子成绩签章」
+（`/DzqzController/ddqzcjFind`）与菜单首项「后台首页」（`/ptwork/main`）是同一套表单的两份模板、
+接口完全一样；但「后台首页」那份的**学年学期下拉是坏的**——最高只到 2022-2023-2，
+2020-2021-1 及更早共 37 个学期各重复一次（实测 83 项、去重后 46）。本脚本不解析页面下拉，
+学期清单从接口取，故不受影响；网页上出单请走「电子凭证 → 电子成绩签章」。
+
+红线：这份 PDF 含姓名、学号、证件照与全部成绩，**只落 `scripts/out/`（已 gitignore），不要外传、不要入公开仓库**；
+签章系统只有 HTTP 明文（443 实测连接超时），CAS 票据与成绩单都明文回传，脚本不做任何规避。
 
 ---
 
@@ -323,6 +368,8 @@ App 端（水贝贝）当前没有接这条链路，脚本只产出 `scripts/out
 | 周次解析为空 | 详情文本格式变化 | 看 `out/*_raw.json` 里的 `detail_raw` / `weeks_raw` |
 | 电费登录返回 `{"error":"unauthorized"}` | 用了教务密码 | 填缴费平台查询密码（`powerPassword`），两套密码不通用（§5.5） |
 | 电费 `getThirdData` 返回 `{"code":500,"msg":"未知异常…"}` | 参数不全 | 按 §5.5 的表格给全 `feeitemid` / `type` / `level` / 场景三键 |
+| `blade-pay` `paystep=0` 返回 `{"code":500,"msg":"未知异常…"}` | 账号名下未支付订单堆积（平台不自动清） | `GET /charge/order/personal_data?paystatus=0` 列出后逐单 `POST /charge/order/deleteOrder`（**JSON body**）清理 |
+| `paystep=2` 报「密码错误」 | 6 位消费密码输错（它是食堂 POS 支付密码，不是登录密码） | 用正确的消费密码重试；连续错误会锁，去一卡通 App/网页端重置 |
 | 手上链接里的 `token=` 回 401 未授权 | 该 token 已过期（无 `exp` 声明，靠服务端会话） | 每次现登一次拿新 token，别复用旧链接 |
 
 ---

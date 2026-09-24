@@ -20,6 +20,8 @@
 
 **扩展功能**
 
+- 宿舍报修（学校学工系统）：报修单的填写、照片/附件上传、提交与进度查询都在 App 内完成；
+  走学校统一身份认证，与教务同一套账号，登录过教务导入的话通常免登
 - 生活页（底栏「生活」）：一卡通余额、付款码、**寝室剩余电量**、充值入口与最近流水收在一页，
   付款码默认不预取（点一下才显示），电费充值跳缴费平台网页完成；可在「我的 → 通用」关掉这一页
 - 胖乖生活：一键开水、余额查询、订单记录
@@ -72,8 +74,9 @@ app/src/main/java/edu/jxslu/schedule/
   MainActivity.kt           # 底部导航：今日 / 课表 / 我的
   SubpageActivity.kt        # 二级页容器（课表管理/设置/成绩/调课/提醒/小组件等）
   JwImportActivity.kt       # 教务 WebView 导入（课表 / 考试 / 成绩）
+  DormRepairActivity.kt     # 宿舍报修 WebView（学工系统，统一认证免登）
   domain/                   # 纯逻辑层：Course / ScheduleCalculator 等，可 JVM 测
-  data/local|repo|prefs|jw|qiekj|ykt/   # Room 存储 · 仓库 · DataStore · 教务解析 · 胖乖 · 一卡通
+  data/local|repo|prefs|jw|qiekj|ykt|xg/  # Room 存储 · 仓库 · DataStore · 教务 · 胖乖 · 一卡通 · 学工
   ui/today|week|me|score|widget|…/      # Compose 界面按模块分包
 scripts/                    # 爬虫脚本（Python，教务 + 缴费平台，本机调试用，见 scripts/README.md）
 DESIGN.md                   # UI 与领域模型规格（改导航/课表模型前必读）

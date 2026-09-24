@@ -2,6 +2,12 @@ package edu.jxslu.schedule.ui.campus
 
 import android.content.Context
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -52,6 +59,8 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.prefs.PendingRecharge
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.domain.BalanceAlert
+import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.YktArrival
 import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.data.ykt.YktCard
@@ -64,6 +73,8 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
@@ -79,11 +90,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.font.FontWeight
 
 /**
- * 我的 → 校园卡（DESIGN §3.10）。管开关与凭证，不看付款码。
+ * 我的 → 校园卡（DESIGN §3.10）。管开关、凭证与两个余额提醒，不看付款码。
  *
  * 凭证交互与「调课自动检测」（§4.17）同口径（用户拍板的文案语义）：
  * **默认关闭**；开启 = 输入学号密码先真实登录验证一次，成功才落库并置开关；
  * 关闭 = 二次确认后清除凭证。密码框留空 = 沿用已保存的密码（覆盖场景才需要重输）。
+ *
+ * 2026-09-24 追加：**已保存的学号明文回填到输入框**（用户拍板），以及
+ * **寝室电费提醒 / 一卡通余额提醒**两个设置项（DESIGN §3.13）——它们共用本页这份凭证，
+ * 因此关掉凭证时两个提醒开关一并回落，不留「亮着但永远不生效」的死开关。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,6 +117,8 @@ fun CampusCardSettingsScreen(
     val arrivalState by viewModel.arrivalState.collectAsStateWithLifecycle()
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // Activity 窗口 context：通知权限申请、外部跳转（微信/浏览器）都用它
+    val context = LocalContext.current
 
     // 超时安抚提示（只弹一次：Timeout 状态被确认后转 Idle）
     androidx.compose.runtime.LaunchedEffect(arrivalState) {
@@ -129,18 +146,59 @@ fun CampusCardSettingsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    var username by rememberSaveable { mutableStateOf("") }
+    // 已保存学号**明文回填**（2026-09-24 用户拍板）：进页时读一次加密存储填进输入框，
+    // 之后的编辑由 rememberSaveable 管（转屏/重建不丢）。改了就覆盖，留空才报错。
+    val savedUsername = remember { viewModel.savedUsername }
+    var username by rememberSaveable { mutableStateOf(savedUsername.orEmpty()) }
     var password by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var confirmDisable by remember { mutableStateOf(false) }
     var showRechargeSheet by remember { mutableStateOf(false) }
+    var showPowerPicker by remember { mutableStateOf(false) }
+    var showYktPicker by remember { mutableStateOf(false) }
+
+    val powerAlertEnabled by viewModel.powerAlertEnabled.collectAsStateWithLifecycle()
+    val powerAlertYuan by viewModel.powerAlertYuan.collectAsStateWithLifecycle()
+    val yktAlertEnabled by viewModel.yktAlertEnabled.collectAsStateWithLifecycle()
+    val yktAlertYuan by viewModel.yktAlertYuan.collectAsStateWithLifecycle()
 
     fun feedback(notice: NoticeFeedback) {
         busy = false
         if (notice.tone != NoticeTone.Error) password = ""
         scope.launch {
             snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
+        }
+    }
+
+    fun showNotice(text: String, tone: NoticeTone = NoticeTone.Info) {
+        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(text, tone = tone)) }
+    }
+
+    // 两个提醒开关共用：开启那一刻请求 POST_NOTIFICATIONS（API 33+），拒绝不阻塞开关本身
+    // （口径同「我的 → 上课提醒」页：功能在系统设置里授权后自动生效）
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) showNotice("未授予通知权限，提醒不会显示；可在系统设置里重新开启", NoticeTone.Warning)
+    }
+    val requestNotifPermission = {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // 开关入口共用：提醒要拿这份凭证去读余额，没凭证就别让开关亮起来
+    val toggleAlert: (Boolean, (Boolean) -> Unit) -> Unit = { want, apply ->
+        if (want && !viewModel.hasSavedAccount) {
+            showNotice("请先在上方开启并保存学号密码，提醒需要用它读取余额", NoticeTone.Warning)
+        } else {
+            apply(want)
+            if (want) requestNotifPermission()
         }
     }
 
@@ -310,14 +368,77 @@ fun CampusCardSettingsScreen(
                     )
                 },
             )
+
+            // 余额提醒（DESIGN §3.13）：两个来源各一张卡，都需要上面那份凭证
+            AlertCard(
+                title = "寝室电费提醒",
+                switchTitle = "电费低于阈值时提醒",
+                subtitle = "每天检查一次，低于设定金额时发一条通知",
+                checked = powerAlertEnabled,
+                thresholdLabel = BalanceAlert.powerLabel(powerAlertYuan),
+                onToggle = { want -> toggleAlert(want) { viewModel.setPowerAlertEnabled(it) } },
+                onPickThreshold = { showPowerPicker = true },
+            )
+
+            AlertCard(
+                title = "一卡通余额提醒",
+                switchTitle = "余额低于阈值时提醒",
+                subtitle = "只算正式卡余额（付款码扣款的那个钱包）",
+                checked = yktAlertEnabled,
+                thresholdLabel = BalanceAlert.yktLabel(yktAlertYuan),
+                onToggle = { want -> toggleAlert(want) { viewModel.setYktAlertEnabled(it) } },
+                onPickThreshold = { showYktPicker = true },
+            )
+
+            SettingsCard(title = "关于余额提醒") {
+                Text(
+                    "· 检查在后台进行，每天一次（约 09:00），可能被系统省电策略推迟；打开 App 时若当天还没查过会补查一次；\n" +
+                        "· 同一天最多提醒一条：余额一直偏低也不会反复打扰，充值回到阈值以上即自然停止；\n" +
+                        "· 提醒依赖上面保存的学号与查询密码，关闭凭证时两个提醒会一并关掉；\n" +
+                        "· 取数失败（网络不通、平台改版）当次不提醒，也不会重试——不会因为反复登录触发风控。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                )
+            }
         }
+    }
+
+    if (showPowerPicker) {
+        WheelValueDialog(
+            title = "电费低于多少时提醒",
+            values = BalanceAlert.POWER_CHOICES.map { "¥$it" },
+            initialIndex = BalanceAlert.powerChoiceIndex(powerAlertYuan),
+            onConfirm = { index ->
+                showPowerPicker = false
+                viewModel.setPowerAlertYuan(BalanceAlert.POWER_CHOICES[index])
+            },
+            onDismiss = { showPowerPicker = false },
+        )
+    }
+
+    if (showYktPicker) {
+        WheelValueDialog(
+            title = "余额低于多少时提醒",
+            values = BalanceAlert.YKT_CHOICES.map { "¥$it" },
+            initialIndex = BalanceAlert.yktChoiceIndex(yktAlertYuan),
+            onConfirm = { index ->
+                showYktPicker = false
+                viewModel.setYktAlertYuan(BalanceAlert.YKT_CHOICES[index])
+            },
+            onDismiss = { showYktPicker = false },
+        )
     }
 
     if (confirmDisable) {
         AlertDialog(
             onDismissRequest = { confirmDisable = false },
             title = { Text("关闭校园卡付款码？") },
-            text = { Text("将清除已保存的学号密码，今日页入口同时隐藏；重新开启时需要重新输入并验证。") },
+            text = {
+                Text(
+                    "将清除已保存的学号密码，付款码入口同时隐藏，寝室电费与余额提醒也会一并关闭" +
+                        "（它们都要用这份凭证）；重新开启时需要重新输入并验证。",
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -342,7 +463,6 @@ fun CampusCardSettingsScreen(
     }
 
     // 充值流程（DESIGN §4.19「充值」）：金额弹层 → 二次确认 → 下单 → 直拉微信 → 等待到账
-    val context = LocalContext.current
     if (showRechargeSheet) {
         RechargeSheet(
             balanceFen = balance?.totalFen,
@@ -433,6 +553,68 @@ private fun SettingsCard(
     }
 }
 
+/**
+ * 余额提醒卡片（DESIGN §3.13）：开关行 + 阈值行。
+ *
+ * 阈值行在开关关闭时**置灰且点不动**，但值照旧显示（用户能看见上次设的是多少，
+ * 重新打开时不用重设）。卡片容器沿用本页私有的 [SettingsCard]，与上面三张卡同一观感。
+ */
+@Composable
+private fun AlertCard(
+    title: String,
+    switchTitle: String,
+    subtitle: String,
+    checked: Boolean,
+    thresholdLabel: String,
+    onToggle: (Boolean) -> Unit,
+    onPickThreshold: () -> Unit,
+) {
+    SettingsCard(title = title) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(switchTitle, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = checked, onCheckedChange = onToggle)
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = checked) { onPickThreshold() }
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "提醒阈值",
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (checked) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                },
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                thresholdLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (checked) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                },
+            )
+        }
+    }
+}
+
 class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
     private val prefs = Graph.displayPrefs(appContext)
@@ -443,8 +625,56 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
     val hasSavedAccount: Boolean get() = credentialStore.read() != null
 
+    /**
+     * 已保存的学号（明文回填到「校园卡账号」输入框，2026-09-24 用户拍板）。
+     * 普通 getter：只在进页时被读一次（UI 用 `remember` 承接），不做 State 免得每次重组都读加密存储。
+     */
+    val savedUsername: String? get() = credentialStore.read()?.username
+
     val enabled: StateFlow<Boolean> = prefs.campusCardEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    // ---- 余额提醒（DESIGN §3.13）：默认关；两个来源各自独立，但共用同一份凭证 ----
+
+    val powerAlertEnabled: StateFlow<Boolean> = prefs.powerAlertEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val powerAlertYuan: StateFlow<Int> = prefs.powerAlertYuan
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BalanceAlert.DEFAULT_POWER_YUAN)
+
+    val yktAlertEnabled: StateFlow<Boolean> = prefs.yktAlertEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val yktAlertYuan: StateFlow<Int> = prefs.yktAlertYuan
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BalanceAlert.DEFAULT_YKT_YUAN)
+
+    fun setPowerAlertEnabled(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setPowerAlertEnabled(value)
+            BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Power)
+        }
+    }
+
+    fun setPowerAlertYuan(value: Int) {
+        viewModelScope.launch {
+            prefs.setPowerAlertYuan(value)
+            BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Power)
+        }
+    }
+
+    fun setYktAlertEnabled(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setYktAlertEnabled(value)
+            BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Ykt)
+        }
+    }
+
+    fun setYktAlertYuan(value: Int) {
+        viewModelScope.launch {
+            prefs.setYktAlertYuan(value)
+            BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Ykt)
+        }
+    }
 
     /** 余额快照（开启后进页静默拉一次；失败静默——设置页只做引导不做主流程）。 */
     private val _balance = MutableStateFlow<PayCodeViewModel.BalanceSnapshot?>(null)
@@ -467,11 +697,14 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     val balanceLoaded: StateFlow<Boolean> = _balanceLoaded
 
     /**
-     * 手动刷新余额（2026-09-23：今日页下拉刷新入口）。无凭证/开关关时静默直返；
+     * 刷新余额（生活页进页、点余额卡、顶栏刷新都走它）。无凭证/开关关时静默直返；
      * 失败静默（与 init 的口径一致，卡片副行维持旧值或「暂不可用」）。
+     *
+     * [force] = false 只给**进页**那条路用：吃 `YktRepository` 的 60 秒余额缓存
+     * （DESIGN §4.24「请求节流」）。用户点卡片 / 顶栏刷新传 true，照旧拿实时值。
      */
-    fun refreshBalance() {
-        viewModelScope.launch { fetchBalance(notify = false) }
+    fun refreshBalance(force: Boolean = true) {
+        viewModelScope.launch { fetchBalance(notify = false, force = force) }
     }
 
     /**
@@ -488,16 +721,19 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      * 拉取余额快照。[notify] 为真时（init 首拉）同时恢复未确认充值的轮询；
      * 手动刷新不需要重复挂轮询——init 已挂、`watchRechargeArrival` 自行收口。
      */
-    private suspend fun fetchBalance(notify: Boolean) {
+    private suspend fun fetchBalance(notify: Boolean, force: Boolean = true) {
         _balanceRefreshing.value = true
         try {
             if (credentialStore.read() == null) return
             val enabledNow = prefs.campusCardEnabled.first()
             if (!enabledNow) return
             val saved = credentialStore.read() ?: return
-            val cards = repo.cards(saved.username, saved.password)
+            val cards = repo.cards(saved.username, saved.password, force = force)
             if (cards.isNotEmpty()) {
-                _balance.value = buildSnapshot(cards)
+                _balance.value = buildSnapshot(cards, force = force)
+                // 账号条姓名（DESIGN §3.3）：queryCard 原生带持卡人姓名，
+                // 首张非空即落库；班级仍归教务学籍卡管（一卡通没有这个字段）。
+                prefs.setProfile(cards.firstOrNull { it.ownerName.isNotBlank() }?.ownerName, null)
             }
         } catch (e: CancellationException) {
             throw e
@@ -514,10 +750,15 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      * 电子账户 = accinfo[] 首项 balance（独立钱包，2026-09-23 实测 codebarPayinfo
      * 的 ACCOUNT 行是正式卡镜像，不能用作电子账户余额）。accinfo 取不到当 0。
      */
-    private suspend fun buildSnapshot(cards: List<YktCard>): PayCodeViewModel.BalanceSnapshot {
+    private suspend fun buildSnapshot(
+        cards: List<YktCard>,
+        force: Boolean = true,
+    ): PayCodeViewModel.BalanceSnapshot {
         val credentials = credentialStore.read()
         val accountFen = if (credentials != null) {
-            runCatching { repo.rechargeAccountDetail(credentials.username, credentials.password) }
+            runCatching {
+                repo.rechargeAccountDetail(credentials.username, credentials.password, force = force)
+            }
                 .getOrNull()?.second ?: 0L
         } else {
             0L
@@ -618,10 +859,18 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         return NoticeFeedback("已开启，付款码入口已显示在今日页", NoticeTone.Success)
     }
 
+    /**
+     * 关闭：清凭证，并**一并关掉两个余额提醒**（DESIGN §3.13）——提醒都要用这份凭证去读
+     * 余额，凭证没了还把开关留在「开」只会得到一个亮着但永远不生效的死开关。
+     */
     fun disable(onDone: () -> Unit) {
         viewModelScope.launch {
             prefs.setCampusCardEnabled(false)
+            prefs.setPowerAlertEnabled(false)
+            prefs.setYktAlertEnabled(false)
             credentialStore.clear()
+            // 两个提醒都关了 → 内部会撤销每日周期任务，不白唤醒设备
+            BalanceAlertReminder.ensurePeriodicWork(appContext)
             onDone()
         }
     }
@@ -659,6 +908,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 _arrivalState.value = ArrivalState.Idle
                 _arrivalBaseFen = null
                 _arrivalAccount = null
+                _arrivalTarget = null
+                _arrivalWalletBaseFen = null
                 onResult(NoticeFeedback(e.message ?: "当前不在充值服务时间内", NoticeTone.Warning))
                 return@launch
             } catch (e: YktException) {
@@ -684,11 +935,15 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             val startedAt = System.currentTimeMillis()
             _arrivalBaseFen = placed.cardBalanceBeforeFen
             _arrivalAccount = placed.cardAccount
+            _arrivalTarget = placed.targetAccount
+            _arrivalWalletBaseFen = placed.walletBalanceBeforeFen
             prefs.setPendingRecharge(
                 fen = orderFen,
                 at = startedAt,
                 balanceBeforeFen = placed.cardBalanceBeforeFen,
                 cardAccount = placed.cardAccount,
+                targetAccount = placed.targetAccount,
+                walletBalanceBeforeFen = placed.walletBalanceBeforeFen,
             )
             when (order) {
                 is YktRechargeOrder.WechatPay -> {
@@ -773,18 +1028,34 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         orderFen: Long,
     ): Boolean {
         try {
-            val cards = repo.cards(username, password)
-            if (cards.isNotEmpty()) {
-                _balance.value = buildSnapshot(cards)
-                val arrivedFen = YktArrival.balanceArrival(
-                    account = _arrivalAccount,
-                    balanceBeforeFen = _arrivalBaseFen,
+            if (_arrivalTarget != null) {
+                // 电子账户：查目标钱包当前余额，与钱包基线比对（卡余额不动）。
+                // force = true：到账判定必须看实时值，吃缓存会把「已到账」判成「还没到」
+                val current = repo.rechargeAccountDetail(username, password, force = true)
+                val arrivedFen = YktArrival.walletArrival(
+                    balanceBeforeFen = _arrivalWalletBaseFen,
                     orderFen = orderFen,
-                    cardBalances = cards.associate { it.account to it.cardBalanceFen },
+                    currentFen = current?.second,
                 )
                 if (arrivedFen != null) {
                     markArrived(orderFen = orderFen, newBalanceFen = arrivedFen)
+                    if (current != null) refreshBalanceSilently(username, password)
                     return true
+                }
+            } else {
+                val cards = repo.cards(username, password, force = true)
+                if (cards.isNotEmpty()) {
+                    _balance.value = buildSnapshot(cards)
+                    val arrivedFen = YktArrival.balanceArrival(
+                        account = _arrivalAccount,
+                        balanceBeforeFen = _arrivalBaseFen,
+                        orderFen = orderFen,
+                        cardBalances = cards.associate { it.account to it.cardBalanceFen },
+                    )
+                    if (arrivedFen != null) {
+                        markArrived(orderFen = orderFen, newBalanceFen = arrivedFen)
+                        return true
+                    }
                 }
             }
         } catch (e: CancellationException) {
@@ -793,6 +1064,16 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             // 余额失败不中断，流水口径再试
         }
         return false
+    }
+
+    /** 到账后刷一次余额快照（静默；电子账户到账时让生活页余额立即更新）。 */
+    private fun refreshBalanceSilently(username: String, password: String) {
+        viewModelScope.launch {
+            runCatching {
+                val cards = repo.cards(username, password, force = true)
+                if (cards.isNotEmpty()) _balance.value = buildSnapshot(cards)
+            }
+        }
     }
 
     /** 判定到账的三处动作只有这一份：置 Arrived、撤「正在确认」弹窗、清持久化等待记录。 */
@@ -809,7 +1090,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         startedAt: Long,
     ): Boolean {
         try {
-            syncer.sync(username, password, maxPages = 1)
+            // force = true：这是到账核对，闸门挡掉就等于到账永远发现不了
+            syncer.sync(username, password, maxPages = 1, force = true)
             val count = db.yktTurnoverDao().countIncomeSince(startedAt)
             if (count > 0) {
                 markArrived(orderFen = orderFen, newBalanceFen = _balance.value?.totalFen)
@@ -878,6 +1160,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     private fun restoreArrivalBaseline(pending: PendingRecharge) {
         if (_arrivalBaseFen == null) _arrivalBaseFen = pending.balanceBeforeFen
         if (_arrivalAccount == null) _arrivalAccount = pending.cardAccount
+        if (_arrivalTarget == null) _arrivalTarget = pending.targetAccount
+        if (_arrivalWalletBaseFen == null) _arrivalWalletBaseFen = pending.walletBalanceBeforeFen
     }
 
     /** 「正在确认到账」提示弹窗可见性（回到前台且未到账时显示；到账/超时/用户关闭即撤）。 */
@@ -899,6 +1183,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         _arrivalState.value = ArrivalState.Idle
         _arrivalBaseFen = null
         _arrivalAccount = null
+        _arrivalTarget = null
+        _arrivalWalletBaseFen = null
         viewModelScope.launch { prefs.clearPendingRecharge() }
     }
 
@@ -912,6 +1198,14 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
     @Volatile
     private var _arrivalAccount: String? = null
+
+    /** 充值目标：`<account>-000` = 电子账户（到账判定走钱包口径）；null = 正式卡。 */
+    @Volatile
+    private var _arrivalTarget: String? = null
+
+    /** 充电子账户时：付款前目标钱包余额（分）。 */
+    @Volatile
+    private var _arrivalWalletBaseFen: Long? = null
 
     private var watchJob: kotlinx.coroutines.Job? = null
 

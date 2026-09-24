@@ -432,8 +432,8 @@ class WeekViewModel(
             val reminder = repo.calendarReminderMinutes.first()
             _shareMessage.value = when (val r = CalendarSyncer.sync(context, events, reminder)) {
                 is CalendarSyncer.CalendarSyncResult.Success -> NoticeFeedback(
-                    "已同步 ${r.count} 条课程到手机日历（${CalendarSyncDefaults.reminderLabel(reminder)}）",
-                    NoticeTone.Success,
+                    CalendarSyncDefaults.syncSuccessMessage(r.count, reminder, r.reminderMissing),
+                    if (r.reminderMissing > 0) NoticeTone.Warning else NoticeTone.Success,
                 )
                 is CalendarSyncer.CalendarSyncResult.Deleted -> NoticeFeedback(
                     "已删除 ${r.count} 条课程日历",

@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.data
 
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
+import edu.jxslu.schedule.domain.StartPage
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,5 +24,10 @@ class DisplayPrefsDefaultsTest {
         assertFalse("一卡通付款码默认关（涉及凭证）", prefs.campusCardEnabled)
         assertTrue("触感反馈默认开", prefs.hapticsEnabled)
         assertTrue("开水双击确认默认开", prefs.waterRequireDoubleClick)
+    }
+
+    @Test
+    fun startPageDefaultsToToday() {
+        assertEquals("启动页默认今日（DESIGN §3.3）", StartPage.Today, DisplayPrefs().startPage)
     }
 }

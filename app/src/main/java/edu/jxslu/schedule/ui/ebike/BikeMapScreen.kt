@@ -92,6 +92,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.BatteryLow
 import me.rerere.hugeicons.stroke.ChevronDown
 import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.Crosshair
@@ -366,11 +367,12 @@ fun BikeMapScreen(
                         viewModel.onResetToCampus()
                     },
                     onClusterTap = { key ->
-                        haptics.tap()
+                        // 触感由 ClusterCard 的 AppCard 自带（与 BikeRow 同口径）——
+                        // 这里再 tap 就会响两下（2026-09-24 用户反馈）
                         viewModel.onClusterTap(key)
                     },
                     onPick = { carNum ->
-                        haptics.tap()
+                        // 同上：BikeRow 是 AppCardRow，触感由卡片内部给
                         onPicked(carNum)
                     },
                 )
@@ -672,17 +674,37 @@ private fun ClusterCard(
 @Composable
 private fun BikeRow(bike: NearbyBike, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    val lowBadge = bike.batteryLowBadge
     AppCardRow(
         onClick = onClick,
         onClickLabel = "用 ${bike.carNum} 生成二维码",
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = bike.carNum,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
+        if (lowBadge) {
+            Icon(
+                HugeIcons.BatteryLow,
+                contentDescription = "电量低",
+                tint = MaterialTheme.semanticColors.warning,
+                modifier = Modifier.size(18.dp),
             )
+            Spacer(Modifier.width(8.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = bike.carNum,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                if (lowBadge) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "电量低",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.semanticColors.warning,
+                    )
+                }
+            }
             Text(
                 text = bikeInfoText(bike, scheme.onSurface.copy(alpha = 0.6f)),
                 style = MaterialTheme.typography.labelSmall,

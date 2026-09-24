@@ -102,6 +102,7 @@ fun JwImportScreen(
     val context = LocalContext.current
     val repo = remember { Graph.repository(context) }
     val scoreRepo = remember { Graph.scoreRepository(context) }
+    val prefs = remember { Graph.displayPrefs(context) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
@@ -403,6 +404,20 @@ fun JwImportScreen(
                 statusNote = "教务没有返回任何成绩"
                 snackbar.showSnackbar(statusNote)
                 return
+            }
+            // 账号条资料（DESIGN §3.3）：学籍卡抓不到只降级，不挡成绩导入。
+            // cardHtml 以 "ERR:" 开头时 parseStudentCard 会因缺标签返回 null，同一出口降级。
+            try {
+                val cardHtml = fetchJsonInWebView(
+                    wv,
+                    StudentCardFetcher.fetchJs(JwUrls.STUDENT_CARD),
+                    StudentCardFetcher.READ_RESULT_JS,
+                    timeoutLoops = 20,
+                )
+                val card = cardHtml?.let { ScoreParser.parseStudentCard(it) }
+                if (card != null) prefs.setProfile(card.name, card.studentClass)
+            } catch (_: Exception) {
+                // 学籍卡失败不影响成绩导入结果
             }
             val grouped = records.groupBy { it.term }.toSortedMap(compareByDescending { it })
             statusNote = "解析到 ${grouped.size} 个学期共 ${records.size} 条成绩，确认后写入"
@@ -912,11 +927,6 @@ fun JwImportScreen(
                         courses
                     }
                     val imported = repo.importParsedCourses(toImport, merge, targetId)
-                    // 教务数据成为本地数据 → 检测基线随之推进（DESIGN §4.17）；
-                    // 考试条目不参与检测，仓库侧过滤，只有理论/实验导入才动基线
-                    if (examDraft == null) {
-                        repo.refreshBaselineFromJwImport(targetId, toImport, draft.term)
-                    }
                     // 导入到非当前课表后切过去，返回主界面直接看到结果
                     repo.setCurrentTimetable(targetId)
                     // 终态反馈后再返回（DESIGN §3.3）：此前导入成功直接 onBack，
@@ -988,6 +998,28 @@ fun JwImportScreen(
             },
         )
     }
+}
+
+/**
+ * 学籍卡抓取脚本（DESIGN §3.3 账号条资料源）：整页 HTML 原样回传，Kotlin 正则解析。
+ * 页面是强智新模板的表单，没有现成 JSON 接口，注入 fetch 取 HTML 是最小改动路径。
+ */
+private object StudentCardFetcher {
+    const val READ_RESULT_JS: String = "window.__qzJson === null ? '' : String(window.__qzJson)"
+
+    fun fetchJs(url: String): String = """
+(function(){
+  try {
+    window.__qzJson = null;
+    fetch('$url', { credentials: 'same-origin' })
+      .then(function(r){ return r.text(); })
+      .then(function(t){ window.__qzJson = t; })
+      .catch(function(e){ window.__qzJson = 'ERR:' + String(e); });
+  } catch (e) {
+    window.__qzJson = 'ERR:' + String(e);
+  }
+})()
+""".trim()
 }
 
 /** 课表入口按钮：当前所在那张课表用实心，另一张描边，一眼看出「导入」会导哪一张。 */

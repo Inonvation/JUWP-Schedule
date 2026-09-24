@@ -32,16 +32,13 @@ import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
-import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.courseColor
-import edu.jxslu.schedule.ui.detect.DetectNotice
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.File02
 import me.rerere.hugeicons.stroke.FileExport
 import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.Import
-import me.rerere.hugeicons.stroke.RefreshCcwDot
 import me.rerere.hugeicons.stroke.CalendarSync
 
 /**
@@ -185,14 +182,6 @@ private fun WeekChip(
  *
  * 根因：此前三种导入散在三处（+ 图标只管加课、JSON 在「我的」页深处、教务导入靠空态提示），
  * 新用户拿到空课表找不到入口。收进一个弹层后，导入路径都在课表页顶栏一眼可见。
- *
- * 「检测课表更新」（DESIGN §4.17）2026-09-19 从「我的」页迁来：手动检测与导入同属
- * 「把教务数据弄进来」这一类动作，放同一弹层里用户不必跨页找；[detectChecking] 为 true 时
- * 该行文案变「正在检测…」且不可点——网络操作 1–3 秒，行内反馈足够，不弹进度框。
- *
- * 检测结果同样走**行内**（[detectNotice]）：弹层是独立窗口，比页面高一层，
- * 结果若只发 Snackbar 就会被本弹层盖住（此前正是如此）。弹层按设计保持打开，
- * 结果就落在发起检测的那一行下面。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -200,12 +189,6 @@ fun ImportEntrySheet(
     onManualAdd: () -> Unit,
     onJsonImport: () -> Unit,
     onJwImport: () -> Unit,
-    /** 手动检测调课（DESIGN §4.17）；结果内联在弹层里，有差异时才关弹层进「更新课表」 */
-    onDetectUpdate: () -> Unit,
-    /** 检测进行中：行内文案切换 + 防重复点击 */
-    detectChecking: Boolean,
-    /** 上一次检测的结果（null=还没检测过）；有差异的结果不在这里，直接跳页了 */
-    detectNotice: DetectNotice? = null,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -239,23 +222,6 @@ fun ImportEntrySheet(
                 subtitle = "登录教务系统，解析学期理论 / 实验课表",
                 onClick = onJwImport,
             )
-            ImportEntryRow(
-                icon = {
-                    Icon(HugeIcons.RefreshCcwDot, contentDescription = null, modifier = Modifier.size(22.dp))
-                },
-                title = if (detectChecking) "正在检测…" else "检测课表更新",
-                subtitle = "按教务最新课表检查是否被调课",
-                enabled = !detectChecking,
-                onClick = onDetectUpdate,
-            )
-            // 结果行只在检测结束后出现；再次点检测时由调用方清空
-            if (detectNotice != null && !detectChecking) {
-                InlineNoticeRow(
-                    message = detectNotice.text,
-                    tone = detectNotice.tone,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
         }
     }
 }

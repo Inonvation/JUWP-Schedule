@@ -29,6 +29,9 @@ class YktRepository(private val client: YktClient) {
         /** 微信充值渠道（getpayinfo 的 payList 单条：CAMPUSCARD/「微信充值」payid=63）。 */
         const val PAY_TYPE_ID_WECHAT = "63"
         const val PAY_TYPE_WECHAT = "CAMPUSCARD"
+
+        /** 余额快照的内存缓存时长（DESIGN §4.24「请求节流」）。 */
+        private const val BALANCE_CACHE_TTL_MS = 60_000L
     }
 
     /** 验证登录可用并返回 token（不缓存）——设置页「开启即验证」与登录共用。 */
@@ -66,8 +69,22 @@ class YktRepository(private val client: YktClient) {
             ?: throw YktException.Protocol("登录成功但取码失败（非凭证问题），请稍后重试")
     }
 
-    /** 卡余额列表（DESIGN §4.19）：queryCard → data.card[]；401 重登一次。 */
-    suspend fun cards(username: String, password: String): List<YktCard> {
+    /**
+     * 卡余额列表（DESIGN §4.19）：queryCard → data.card[]；401 重登一次。
+     *
+     * [force] 为 false 时先吃内存缓存（TTL 见 [BALANCE_CACHE_TTL_MS]，DESIGN §4.24
+     * 「请求节流」）：生活页**进页**那条路走缓存，来回切 Tab 不重复打平台。
+     * **到账判定必须传 true**（`checkArrivalOnce`）——它靠余额变化下结论，
+     * 吃到旧值会把「已到账」永远判成「还没到」。默认 true 就是为这个兜底。
+     */
+    suspend fun cards(
+        username: String,
+        password: String,
+        force: Boolean = true,
+    ): List<YktCard> {
+        if (!force) {
+            cachedCards?.takeIf { isFresh(cachedCardsAtMs) }?.let { return it }
+        }
         suspend fun load(t: String): List<YktCard>? {
             val raw = client.get("/berserker-app/ykt/tsm/queryCard", token = t)
             if (raw.httpCode == 401) return null
@@ -77,11 +94,16 @@ class YktRepository(private val client: YktClient) {
             }
             return YktModels.cardsFrom(env.data)
         }
-        cachedToken?.let { token ->
-            load(token)?.let { return it }
+        val result = run {
+            cachedToken?.let { token ->
+                load(token)?.let { return@run it }
+            }
+            val fresh = doLogin(username, password)
+            load(fresh) ?: throw YktException.Protocol("登录成功但取余额失败")
         }
-        val fresh = doLogin(username, password)
-        return load(fresh) ?: throw YktException.Protocol("登录成功但取余额失败")
+        cachedCards = result
+        cachedCardsAtMs = System.currentTimeMillis()
+        return result
     }
 
     /**
@@ -90,13 +112,23 @@ class YktRepository(private val client: YktClient) {
      * 2026-09-23 实测 codebarPayinfo 的 ACCOUNT 行只是正式卡镜像，不能当电子账户余额）。
      * 没有电子账户行返回 null。
      */
-    suspend fun rechargeAccountDetail(username: String, password: String): Pair<String, Long>? {
+    suspend fun rechargeAccountDetail(
+        username: String,
+        password: String,
+        force: Boolean = true,
+    ): Pair<String, Long>? {
+        if (!force) {
+            cachedAccountDetail?.takeIf { isFresh(cachedAccountDetailAtMs) }?.let { return it }
+        }
         val token = cachedToken ?: doLogin(username, password)
         val raw = client.get("/berserker-app/ykt/tsm/queryCard?scene=recharge", token = token)
         if (raw.httpCode == 401) return null
         val env = parse(raw)
         if (env.code != 200) return null
-        return YktModels.electricAccountFrom(env.data)
+        val detail = YktModels.electricAccountFrom(env.data)
+        cachedAccountDetail = detail
+        cachedAccountDetailAtMs = System.currentTimeMillis()
+        return detail
     }
 
     /** 电子账户 type（`<account>-000` 形态）；充值下单的 `yktcard` 参数用。 */
@@ -161,46 +193,57 @@ class YktRepository(private val client: YktClient) {
         if (cardsEnv.code != 200) {
             throw YktException.Protocol("取卡信息失败：${cardsEnv.messageOrBlank.ifBlank { cardsEnv.code.toString() }}")
         }
-        val card = YktModels.cardsFrom(cardsEnv.data).firstOrNull { it.lostflag == null || it.lostflag == "0" }
+        val allCards = YktModels.cardsFrom(cardsEnv.data)
+        val card = allCards.firstOrNull { it.lostflag == null || it.lostflag == "0" }
             ?: throw YktException.Protocol("没有可充值的卡账户（可能已挂失或冻结）")
         val account = card.account
-        // 付款前基线随下单结果一起交给上层持久化（到账判定用，见 YktRechargeStart）
+        // 付款前基线随下单结果一起交给上层持久化（到账判定用，见 YktRechargeStart）。
+        // 充电子账户时目标是钱包（accinfo），基线必须取**目标钱包**的余额——
+        // 卡余额不动，到账判定靠 walletBalanceBeforeFen（2026-09-24 用户实测修复）。
+        val wallet = targetAccount?.let { t ->
+            allCards.firstOrNull()?.account?.let { acct ->
+                if (t == "$acct-000") YktModels.electricAccountFrom(cardsEnv.data) else null
+            }
+        }
         fun started(order: YktRechargeOrder) = YktRechargeStart(
             order = order,
             cardBalanceBeforeFen = card.cardBalanceFen,
             cardAccount = account,
+            targetAccount = targetAccount,
+            walletBalanceBeforeFen = wallet?.second,
         )
 
-        // [2] 组表单 + 签名（字段与前端 confirm() 一致；appid/密钥是前端公开常量。
-        //     appid 业务字段必须带——缺了服务端会 302 到无 orderid 的错误页，2026-09-21 真机实测）
-        // 下单统一走 `/blade-pay/pay`（paystep=0，2026-09-23 实测）：
-        // thirdOrder 在夜间时段会 500「异常了」（服务端时间闸门），blade-pay 全天可用。
+        // [2] 组表单 + 签名（字段与官方充值页 confirm() 一致；appid/密钥是前端公开常量）。
+        // ⚠️ 2026-09-24 复测（白天）：blade-pay paystep=0 建单无论带不带 yktcard，
+        // paystep=2 一律 400「未获取到要充值的卡号」；thirdOrder 建单后同一支付请求
+        // 立即返回 paysubmit → checkmweb。**下单通道必须用 thirdOrder**——
+        // 2026-09-23「blade-pay 全天可用」的结论是夜间把缺 yktcard 的拒绝误判了（旧注释）。
         // 正式卡 yktcard=6位卡号；电子账户 yktcard=accinfo type（<account>-000 形态）。
-        // ⚠️ blade-pay 下单**不带 yktcard 字段**（带了支付一步反而报「未获取到要充值的卡号」，
-        // 服务端按会话取充值目标——与 thirdOrder 的语义不同）。
         val form = mapOf(
+            "appid" to edu.jxslu.schedule.domain.YktRechargeSign.APP_ID_VALUE,
             "feeitemid" to FEE_ITEM_ID_RECHARGE,
             "tranamt" to yuan,
-            "flag" to "choose",
+            "yktcard" to (targetAccount ?: account),
             "source" to "app",
-            "paystep" to "0",
+            "synjones-auth" to ("bearer " + token),
             "synAccessSource" to "h5",
         )
         val raw = client.postSigned(
-            "/blade-pay/pay",
+            "/charge/order/thirdOrder",
             token,
             edu.jxslu.schedule.domain.YktRechargeSign.signed(form),
-            referer = YktClient.BASE + "/payment/",
+            referer = YktClient.BASE + "/campus-card/",
         )
 
-        // 成功 = JSON 带 orderid（2026-09-23 实测）。302 Location 分支保留作平台改版兜底。
+        // 成功 = **302 Location** 下发收银台 URL（`/payment?orderid=…&token=<JWT>`，
+        // 2026-09-21/24 实测）；JSON 带 orderid 的形态保留作平台改版兜底。
         val location = raw.location
         if (raw.httpCode in 300..399 && location != null) {
             val orderId = orderIdFromUrl(location)
                 ?: throw YktException.Protocol(
                     "下单重定向未带订单号（跳转至 ${location.substringBefore('?')}，平台可能已改版）",
                 )
-            payDirect(orderId, token, yktcard = (targetAccount ?: account))?.let { return started(it) }
+            payDirect(orderId, token)?.let { return started(it) }
             return started(YktRechargeOrder.Cashier(orderId = orderId, cashierUrl = location))
         }
         val orderId = extractOrderId(raw.text, raw.httpCode)
@@ -209,18 +252,18 @@ class YktRepository(private val client: YktClient) {
                 else "下单失败（HTTP ${raw.httpCode}，平台可能已改版）",
             )
         // 直拉微信：paystep=2（CAMPUSCARD 渠道免密）→ checkmweb → weixin:// 拉起微信。
-        // 服务端按「会话内最近一次下单」取充值目标，**这里不能传 yktcard**（传了报
-        // 「未获取到要充值的卡号」，2026-09-23 夜间实测——与白天成功形态一致）。
+        // 官方收银台对 CAMPUSCARD 渠道**不发任何账户字段**（accountno/ccctype 只属于
+        // ACCOUNT 系渠道），yktcard 也不能带（带了服务端拒绝，2026-09-23/24 实测）——
+        // 充值目标由订单（thirdOrder 的 yktcard）携带。
         //
-        // **paystep=2 被服务端拒绝（「未获取到要充值的卡号」等）= 大概率是平台服务时间闸门**
-        // （2026-09-23 夜间实测：白天同一请求返回 paysubmit，夜间一律 400）。此时**不降级
-        // 跳浏览器**——用户要求：服务时间外就在 App 内提示，不跳网站。
+        // 支付一步被服务端业务拒绝（msg 非空）= 大概率是平台服务时间闸门（2026-09-23
+        // 夜间实测）。此时**不降级跳浏览器**——服务时间外就在 App 内提示（用户拍板）。
         val payDirectResult = runCatching { payDirect(orderId, token) }
         val payAttempt = payDirectResult.getOrNull()
         if (payAttempt != null) return started(payAttempt)
         // payDirect 失败分两类：
-        // - 业务拒绝（Protocol，服务端 msg 如「未获取到要充值的卡号」）= 服务时间闸门，
-        //   转 NotInServiceTime，UI 在 App 内提示，**不跳浏览器**（2026-09-23 拍板）；
+        // - 业务拒绝（Protocol，服务端 msg 非空）= 服务时间闸门（yktcard 已随订单下发，
+        //   2026-09-24），转 NotInServiceTime，UI 在 App 内提示，**不跳浏览器**（用户拍板）；
         // - 网络/结构异常（null 或 Network）：兜底打开收银台。
         when (val err = payDirectResult.exceptionOrNull()) {
             is YktException.Protocol -> throw YktException.NotInServiceTime(
@@ -246,17 +289,18 @@ class YktRepository(private val client: YktClient) {
      * 3. 中间页含 `weixin://wap/pay?prepayid%3D…` → `ACTION_VIEW` 直接拉起微信。
      *
      * 任一环失败返回 null（上层降级打开收银台 URL，不阻断充值）。
+     *
+     * 参数对齐官方收银台（chunk 6affa2d0）：CAMPUSCARD 渠道只发
+     * `paytypeid/paytype/paystep/orderid/redirect_url`，**不带 yktcard / accountno**。
      */
-    private suspend fun payDirect(orderId: String, token: String, yktcard: String? = null): YktRechargeOrder.WechatPay? {
+    private suspend fun payDirect(orderId: String, token: String): YktRechargeOrder.WechatPay? {
         // [1] 发起支付（免密渠道；若平台日后开启密码，这一步会报错 → 走收银台兜底）。
-        // yktcard 必带：服务端按它定位充值目标（正式卡=6位卡号；电子账户=<account>-000 形态），
-        // 缺了报「未获取到要充值的卡号」（2026-09-23 实测）。
+        // **不带 yktcard**：CAMPUSCARD 渠道的账户字段带不带都会被拒（2026-09-24 实测矩阵）。
         val payForm = buildMap {
             put("paytypeid", PAY_TYPE_ID_WECHAT)
             put("paytype", PAY_TYPE_WECHAT)
             put("paystep", "2")
             put("orderid", orderId)
-            yktcard?.let { put("yktcard", it) }
             put("redirect_url", "${YktClient.BASE}/payment/?name=result")
             put("synAccessSource", "h5")
         }
@@ -442,6 +486,22 @@ class YktRepository(private val client: YktClient) {
     /** 内存 token 缓存（进程级；仅本类写）。 */
     @Volatile
     private var cachedToken: String? = null
+
+    /**
+     * 余额快照的内存缓存（DESIGN §4.24「请求节流」）。
+     *
+     * 生活页一次进页原本要打两条余额请求（`queryCard` + `queryCard?scene=recharge`），
+     * 来回切几次 Tab 就是好几条。缓存 [BALANCE_CACHE_TTL_MS]，用户点卡片 / 下拉刷新
+     * 照旧拿实时值（那些调用点传 `force = true`）。
+     */
+    private var cachedCards: List<YktCard>? = null
+    private var cachedCardsAtMs = 0L
+    private var cachedAccountDetail: Pair<String, Long>? = null
+    private var cachedAccountDetailAtMs = 0L
+
+    /** 余额缓存是否还在 TTL 内。 */
+    private fun isFresh(cachedAtMs: Long): Boolean =
+        cachedAtMs > 0 && System.currentTimeMillis() - cachedAtMs <= BALANCE_CACHE_TTL_MS
 
     /** 用给定 token 试取码；401/失败返回 null（调用方重登），业务异常照抛。 */
     private suspend fun tryLoadBarcodes(token: String): YktBarcodeData? {

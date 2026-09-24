@@ -46,6 +46,10 @@ PORTAL = "http://portal.juwp.edu.cn"
 JW81 = "https://jiaowu.juwp.edu.cn:81"
 JW8080 = "http://jiaowu.juwp.edu.cn:8080"
 JW_SSO_SERVICE = "http://jiaowu.juwp.edu.cn/sso.jsp"
+# 签章管理系统（教务处成绩单出单与盖章）。只有 HTTP：443 实测连接超时。
+# 门户应用「电子签章成绩单」指向的就是下面这个 CAS 地址。
+PTWORK = "http://jwxyxx.juwp.edu.cn"
+PTWORK_SSO_SERVICE = f"{PTWORK}/ptwork/cas"
 STUDENT_HOME = f"{JW8080}/jsxsd/framework/xsMainV.htmlx"
 LAB_SCHEDULE = f"{JW8080}/jsxsd/syjx/toXskb.do"
 THEORY_SCHEDULE = f"{JW8080}/jsxsd/xskb/xskb_list.do?viweType=0"
@@ -153,6 +157,30 @@ def verify(jw: requests.Session) -> None:
             "教务会话无效（已退回登录页）。\n"
             "若本机设置了 HTTP_PROXY / HTTPS_PROXY，请确认 Session 的 trust_env 为 False。"
         )
+
+
+def sso_ptwork(cas: requests.Session) -> requests.Session:
+    """[2'] 用 CAS ticket 换签章系统会话，返回持有 `sid` 的 session。
+
+    与 [sso_jiaowu] 同构，两处不同：
+      - service 用 `/ptwork/cas`（签章系统自己的 CAS 回调，落地 mainIndex）；
+      - **不需要预热**：`bzb_njw` 是教务域的怪癖，签章系统只认 ticket。
+
+    `sid` 是该域唯一的 cookie，后面两个接口都靠它鉴权。
+    """
+    pt = new_session()
+    login_url = f"{CAS}/cas/login?service={quote(PTWORK_SSO_SERVICE, safe='')}"
+    r = cas.get(login_url, timeout=25, allow_redirects=False)
+    loc = r.headers.get("Location")
+    if not loc:
+        raise JwLoginError(f"取不到签章系统 SSO ticket：HTTP {r.status_code}")
+    final = _follow(pt, loc)
+    if "ptwork" not in final:
+        raise JwLoginError(f"SSO 未进入签章系统，落点 {final}")
+    if not any(c.name == "sid" for c in pt.cookies):
+        raise JwLoginError(f"签章系统没发 sid cookie，落点 {final}")
+    print("[2'] 签章系统 SSO OK ->", final)
+    return pt
 
 
 def login(cred: dict[str, str] | None = None) -> requests.Session:

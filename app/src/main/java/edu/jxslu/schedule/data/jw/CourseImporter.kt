@@ -113,6 +113,13 @@ object JwUrls {
     /** 成绩数据接口。 */
     const val SCORE_LIST_API = "$XSD_BASE/jsxsd/kscj/cjcx_list"
 
+    /**
+     * 学籍卡片查看（学籍毕业 → 学籍管理 → 学籍卡片查看）。
+     * 正文有「姓名 / 班级 / 学号」明文标签与结构化 form，可正则直读；
+     * 个人资料头像不落盘——「我的」账号条只用向量图标。
+     */
+    const val STUDENT_CARD = "$XSD_BASE/jsxsd/grxx/xsxx"
+
     /** 主页（SSO 落地） */
     const val STUDENT_HOME = "$XSD_BASE/jsxsd/framework/xsMainV.htmlx"
 

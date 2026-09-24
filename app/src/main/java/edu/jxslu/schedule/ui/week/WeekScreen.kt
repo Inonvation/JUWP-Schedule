@@ -33,8 +33,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -76,7 +74,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.data.jw.JwDetectRunner
 import edu.jxslu.schedule.data.repo.ImportPreview
 import edu.jxslu.schedule.data.repo.ImportResult
 import edu.jxslu.schedule.domain.Course
@@ -105,8 +102,6 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
-import edu.jxslu.schedule.ui.detect.DetectNotice
-import edu.jxslu.schedule.ui.detect.detectOutcomeNotice
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
 import kotlinx.coroutines.delay
@@ -139,8 +134,6 @@ private val TopBarHeight = 56.dp
 fun WeekScreen(
     onOpenJwImport: () -> Unit = {},
     onOpenTimetableManage: () -> Unit = {},
-    /** 有未处理调课提醒时点导入图标直达「更新课表」（DESIGN §4.17） */
-    onOpenScheduleUpdate: () -> Unit = {},
     /** 某课程的笔记·课件（课程详情弹窗入口，DESIGN §3.11） */
     onOpenCourseNotes: (Course) -> Unit = {},
     /** 某课程的作业（课程详情弹窗入口，DESIGN §3.11） */
@@ -170,13 +163,6 @@ fun WeekScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val repo = remember { Graph.repository(context) }
-    // 调课检测（DESIGN §4.17）：未处理的差异报告驱动导入图标的气泡（null = 无提醒）
-    val pendingDetect by remember { repo.pendingDetectReport }
-        .collectAsStateWithLifecycle(initialValue = null)
-    // 手动检测进行中态：导入弹层里「检测课表更新」一行的文案与防重复点击
-    var detectChecking by remember { mutableStateOf(false) }
-    // 上一次手动检测的结果，内联显示在导入弹层里（弹层窗口盖住 Snackbar，见该处注释）
-    var detectNotice by remember { mutableStateOf<DetectNotice?>(null) }
     var pendingJsonText by remember { mutableStateOf<String?>(null) }
     var jsonPreview by remember { mutableStateOf<ImportPreview.Ok?>(null) }
 
@@ -415,8 +401,6 @@ fun WeekScreen(
                     onOpenTimetables = { switchOpen = true },
                     onOpenImport = { importOpen = true },
                     onOpenShare = { shareOpen = true },
-                    hasDetectAlert = pendingDetect != null,
-                    onOpenScheduleUpdate = onOpenScheduleUpdate,
                 )
             }
         },
@@ -630,38 +614,8 @@ fun WeekScreen(
                 importOpen = false
                 onOpenJwImport()
             },
-            // 手动检测（DESIGN §4.17）：检测中行内文案切换；结果**内联在弹层里**
-            //（弹层是独立窗口，Snackbar 会被它盖住），有差异才关弹层进「更新课表」。
-            // 弹层保持打开——检测 1–3 秒，关掉会让用户以为已开始跳转；
-            // 无差异留在弹层让用户接着选别的，结果就显示在刚才点的那一行下面。
-            onDetectUpdate = {
-                if (!detectChecking) {
-                    detectChecking = true
-                    detectNotice = null
-                    scope.launch {
-                        // finally 复位：JwDetectRunner.run() 已约定不抛异常，
-                        // 这里再兜一层——busy 卡住就是「导入弹层永远显示正在检测…」。
-                        try {
-                            val outcome = JwDetectRunner(context.applicationContext)
-                                .run(JwDetectRunner.Trigger.Manual)
-                            if (outcome is JwDetectRunner.Outcome.DiffFound) {
-                                importOpen = false
-                                onOpenScheduleUpdate()
-                            } else {
-                                detectNotice = detectOutcomeNotice(outcome)
-                            }
-                        } finally {
-                            detectChecking = false
-                        }
-                    }
-                }
-            },
-            detectChecking = detectChecking,
-            detectNotice = detectNotice,
             onDismiss = {
                 importOpen = false
-                // 关掉弹层就把结果丢掉：下次打开不该还挂着上次的旧结论
-                detectNotice = null
             },
         )
     }
@@ -813,9 +767,6 @@ private fun WeekTopBar(
     onOpenTimetables: () -> Unit,
     onOpenImport: () -> Unit,
     onOpenShare: () -> Unit,
-    /** 有未处理的调课差异报告（DESIGN §4.17）：导入图标挂气泡，点击直达更新课表 */
-    hasDetectAlert: Boolean = false,
-    onOpenScheduleUpdate: () -> Unit = {},
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val haptics = rememberAppHaptics()
@@ -891,33 +842,13 @@ private fun WeekTopBar(
                 modifier = Modifier.size(20.dp),
             )
         }
-        // 导入图标双语义（DESIGN §4.17）：有未处理调课提醒时挂气泡、点击进「更新课表」；
-        // 无提醒时保持原行为（打开教务导入弹层）。
-        IconButton(onClick = {
-            haptics.tap()
-            if (hasDetectAlert) onOpenScheduleUpdate() else onOpenImport()
-        }) {
-            if (hasDetectAlert) {
-                BadgedBox(
-                    badge = {
-                        Badge(containerColor = MaterialTheme.colorScheme.error)
-                    },
-                ) {
-                    Icon(
-                        HugeIcons.Import,
-                        contentDescription = "有调课提醒，点击查看更新",
-                        tint = onSurface.copy(alpha = 0.75f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            } else {
-                Icon(
-                    HugeIcons.Import,
-                    contentDescription = "导入课表",
-                    tint = onSurface.copy(alpha = 0.75f),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+        IconButton(onClick = { haptics.tap(); onOpenImport() }) {
+            Icon(
+                HugeIcons.Import,
+                contentDescription = "导入课表",
+                tint = onSurface.copy(alpha = 0.75f),
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }

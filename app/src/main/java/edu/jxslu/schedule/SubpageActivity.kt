@@ -14,13 +14,18 @@ import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.ShortcutSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
 import edu.jxslu.schedule.ui.me.WidgetSettingsScreen
+import edu.jxslu.schedule.ui.me.hub.AboutScreen
+import edu.jxslu.schedule.ui.me.hub.ExtensionServicesHubScreen
+import edu.jxslu.schedule.ui.me.hub.GeneralSettingsScreen
+import edu.jxslu.schedule.ui.me.hub.LearningHubScreen
+import edu.jxslu.schedule.ui.me.hub.TimetableHubScreen
+import edu.jxslu.schedule.ui.me.hub.WidgetCalendarHubScreen
 import edu.jxslu.schedule.ui.campus.CampusCardSettingsScreen
 import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
-import edu.jxslu.schedule.ui.detect.ScheduleUpdateScreen
-import edu.jxslu.schedule.ui.detect.TweakDetectScreen
 import edu.jxslu.schedule.ui.ebike.EbikeQrScreen
 import edu.jxslu.schedule.ui.ebike.BikeMapScreen
+import edu.jxslu.schedule.ui.life.PowerBillScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
 import edu.jxslu.schedule.ui.homework.HomeworkLibraryScreen
@@ -57,20 +62,30 @@ enum class SubpageScreen {
     SHORTCUTS,
     /** 我的 → 成绩查询（按学期存储，DESIGN §4.15） */
     SCORES,
-    /** 我的 → 调课自动检测（开关 · 周期 · 凭证，DESIGN §4.17） */
-    TWEAK_DETECT,
-    /** 调课检测的「更新课表」页（差异勾选合并流程，DESIGN §4.17；通知与气泡直达） */
-    SCHEDULE_UPDATE,
     /** 今日 → 共享单车出码（DESIGN §3.9；独立窗口承载二维码展示） */
     EBIKE,
     /** 今日 → 附近单车地图（DESIGN §3.9；从出码页进，选中的车号回填出码页） */
     EBIKE_MAP,
     /** 我的 → 校园卡付款码设置（开关 · 凭证，DESIGN §3.10） */
     CAMPUS_CARD_SETTINGS,
+    /** 我的 → 通用设置汇总页（主题 · 触感 · 布局 · 权限入口，DESIGN §3.3） */
+    GENERAL_SETTINGS,
+    /** 我的 → 课表汇总页（配置 · 使用 · 数据，DESIGN §3.3） */
+    TIMETABLE_HUB,
+    /** 我的 → 学习汇总页（笔记·课件 / 作业，DESIGN §3.3） */
+    LEARNING_HUB,
+    /** 我的 → 小组件与日历汇总页（DESIGN §3.3） */
+    WIDGET_CALENDAR_HUB,
+    /** 我的 → 扩展服务汇总页（第三方服务，DESIGN §3.3） */
+    EXT_SERVICES_HUB,
+    /** 我的 → 关于页（版本 · 免责 · 仓库 · 权限入口，DESIGN §3.3） */
+    ABOUT,
     /** 今日 → 校园卡付款码展示页（DESIGN §3.10；FLAG_SECURE 独立窗口） */
     PAY_CODE,
     /** 付款码/设置 → 消费流水（月汇总 + 分页列表，DESIGN §4.19 B4） */
     CAMPUS_STATEMENT,
+    /** 生活页 → 缴费账单（寝室电费充值/退款，按月汇总 + 明细，DESIGN §3.13） */
+    POWER_BILL,
     /** 我的 → 笔记·课件库（按课程分组，DESIGN §3.11） */
     NOTES,
     /** 某课程的笔记列表（需 `courseName`，DESIGN §3.11） */
@@ -164,12 +179,9 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SHORTCUTS ->
                 ShortcutSettingsScreen(onBack = onBack, focusItemId = focusItemId)
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
-            SubpageScreen.TWEAK_DETECT -> TweakDetectScreen(
-                onBack = onBack,
-                onOpenScheduleUpdate = { SubpageActivity.start(this, SubpageScreen.SCHEDULE_UPDATE) },
-            )
-            SubpageScreen.SCHEDULE_UPDATE -> ScheduleUpdateScreen(onBack = onBack)
-            SubpageScreen.EBIKE -> EbikeQrScreen(onBack = onBack)
+            // focusItemId 对 EBIKE 复用为「进页即出码的车号」：今日页地图选车链路
+            // 把选中车号带进出码页直接生成（2026-09-24，DESIGN §3.9）
+            SubpageScreen.EBIKE -> EbikeQrScreen(onBack = onBack, initialCarNum = focusItemId)
             SubpageScreen.EBIKE_MAP -> BikeMapScreen(
                 onBack = onBack,
                 onPicked = { carNum ->
@@ -188,11 +200,62 @@ class SubpageActivity : ComponentActivity() {
                 onOpenStatement = { SubpageActivity.start(this, SubpageScreen.CAMPUS_STATEMENT) },
                 onOpenPayCode = { SubpageActivity.start(this, SubpageScreen.PAY_CODE) },
             )
+            SubpageScreen.LEARNING_HUB -> LearningHubScreen(
+                onBack = onBack,
+                onOpenNotes = { SubpageActivity.start(this, SubpageScreen.NOTES) },
+                onOpenHomework = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
+                onOpenScores = { SubpageActivity.start(this, SubpageScreen.SCORES) },
+            )
+            SubpageScreen.TIMETABLE_HUB -> TimetableHubScreen(
+                onBack = onBack,
+                onOpenJwImport = { JwImportActivity.start(this) },
+                onOpenTimetableManage = {
+                    SubpageActivity.start(this, SubpageScreen.TIMETABLE_MANAGE)
+                },
+                onOpenTimetableSettings = {
+                    SubpageActivity.start(this, SubpageScreen.TIMETABLE_SETTINGS)
+                },
+                onOpenDataSettings = { SubpageActivity.start(this, SubpageScreen.DATA_SETTINGS) },
+                onOpenCourseTweak = { SubpageActivity.start(this, SubpageScreen.COURSE_TWEAK) },
+                onOpenReminderSettings = {
+                    SubpageActivity.start(this, SubpageScreen.REMINDER_SETTINGS)
+                },
+            )
+            SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(onBack = onBack)
+            SubpageScreen.WIDGET_CALENDAR_HUB -> WidgetCalendarHubScreen(
+                onBack = onBack,
+                onOpenWidgetSettings = {
+                    SubpageActivity.start(this, SubpageScreen.WIDGET_SETTINGS)
+                },
+                onOpenCalendarSettings = {
+                    SubpageActivity.start(this, SubpageScreen.CALENDAR_SETTINGS)
+                },
+            )
+            SubpageScreen.EXT_SERVICES_HUB -> ExtensionServicesHubScreen(
+                onBack = onBack,
+                onOpenShortcuts = { SubpageActivity.start(this, SubpageScreen.SHORTCUTS) },
+                onOpenCampusCard = {
+                    SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS)
+                },
+                onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
+                // 宿舍报修走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
+                onOpenDormRepair = { DormRepairActivity.start(this) },
+            )
+            SubpageScreen.ABOUT -> AboutScreen(
+                onBack = onBack,
+                onOpenPermissionSettings = {
+                    SubpageActivity.start(this, SubpageScreen.PERMISSION_SETTINGS)
+                },
+            )
             SubpageScreen.PAY_CODE -> PayCodeScreen(
                 onBack = onBack,
                 onOpenStatement = { SubpageActivity.start(this, SubpageScreen.CAMPUS_STATEMENT) },
             )
             SubpageScreen.CAMPUS_STATEMENT -> StatementScreen(
+                onBack = onBack,
+                onOpenSettings = { SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS) },
+            )
+            SubpageScreen.POWER_BILL -> PowerBillScreen(
                 onBack = onBack,
                 onOpenSettings = { SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS) },
             )

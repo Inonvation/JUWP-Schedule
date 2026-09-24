@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.power
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -21,9 +22,13 @@ class PowerPayTest {
 
     private val challengeJson = """
         {"code":200,"success":true,"data":{"paystep":2,"accountno":null,
-         "ccctype":[{"balance":0,"ccctype":"000"}],
-         "uuid":null,"passwordMap":{"3744728e574c4058bc65e124b9bae043":"3512079864"},"payList":null},"msg":"操作成功"}
+         "ccctype":[{"balance":1,"ccctype":"000"}],
+         "uuid":null,"passwordMap":{"3744728e574c4058bc65e124b9bae043":"3512079864"},
+         "payList":null,"orderid":null},"msg":"操作成功"}
     """.trimIndent()
+
+    /** 下单时拿到的真实订单号（paystep=2 响应里不会回传，必须由调用方带过去）。 */
+    private val requestedOrderId = "1790249804015241"
 
     @Test
     fun orderParsing() {
@@ -45,28 +50,55 @@ class PowerPayTest {
     }
 
     /**
-     * paystep=2 的真实响应（2026-09-23）：没有 orderid 字段、uuid 为 null、
-     * ccctype 是数组 [{balance, ccctype}]。解析层按 passwordMap 键兜底订单号，
-     * 电子账户余额与类型从数组首项取。
+     * paystep=2 的真实响应（2026-09-24 复测）：`orderid` 恒为 **null**、`uuid` 为 null、
+     * `ccctype` 是数组 `[{balance:1, ccctype:"000"}]`（balance 单位是**元**）。
+     *
+     * 订单号只能取调用方传进来的那一个——旧代码用 `passwordMap` 的键（uuid）兜底，
+     * 支付时把 uuid 当 orderid 发出去，服务端回「订单不存在，请重新预定」。
      */
     @Test
     fun challengeParsing() {
-        val c = PowerPayModels.challengeFrom(challengeJson)
+        val c = PowerPayModels.challengeFrom(challengeJson, requestedOrderId)
         assertNotNull(c)
-        assertEquals("3744728e574c4058bc65e124b9bae043", c!!.orderId)
+        // 订单号 = 下单那个，绝不是 uuid
+        assertEquals(requestedOrderId, c!!.orderId)
+        assertTrue(c.orderId != c.uuid)
         assertEquals(mapOf("3744728e574c4058bc65e124b9bae043" to "3512079864"), c.passwordMap)
         assertEquals("000", c.accountType)
-        assertEquals(0L, c.accountBalanceFen)
+        // ccctype.balance=1 元 → 100 分（按分渲染会变成 ¥0.01，就是用户报的那条）
+        assertEquals(100L, c.accountBalanceFen)
     }
 
-    /** 密文换算：用户数字 d → 乱序表 table[d]（一卡通登录同协议）。 */
+    /**
+     * 密文换算（2026-09-24 按官方前端修正）：数字 d → 在乱序表里的**下标**。
+     * 官方键盘第 i 个键显示 `table[i]`，提交的是 `String(i)`——上一版
+     * 「d → table[d]」方向反了，正确密码也报错。
+     */
     @Test
     fun cipherMapping() {
-        val c = PowerPayModels.challengeFrom(challengeJson)!!
+        val c = PowerPayModels.challengeFrom(challengeJson, requestedOrderId)!!
         // 表 "3512079864"：数字 0→'3', 1→'5', 2→'1', 3→'2', 4→'0', 5→'7', 6→'9', 7→'8', 8→'6', 9→'4'
         assertEquals("3512079864", c.passwordMap[c.uuid])
-        // 数字 1,2,5,6 → 表位 5,1,7,9
-        assertEquals("5179", c.cipherOf("1256"))
+        // 提交的是「该数字在乱序表里的下标」：1→2、2→3、5→1、6→8
+        assertEquals("2318", c.cipherOf("1256"))
+        // 边界：表首字符 '3' 的下标 0、表尾字符 '4' 的下标 9
+        assertEquals("09", c.cipherOf("34"))
+        // 坏表兜底：表不是 0-9 双射（有重复字符）→ 整体拒绝，不猜
+        val bad = PowerPayChallenge(
+            orderId = "o",
+            passwordMap = mapOf("u" to "1122334455"),
+            accountType = null,
+            accountBalanceFen = null,
+        )
+        assertNull(bad.cipherOf("1"))
+        // 表里没有的字符（表短一位）→ 拒绝
+        val short = PowerPayChallenge(
+            orderId = "o",
+            passwordMap = mapOf("u" to "123456789"),
+            accountType = null,
+            accountBalanceFen = null,
+        )
+        assertNull(short.cipherOf("9"))
         assertNull(c.cipherOf("")) // 空串
         assertNull(c.cipherOf("1234567")) // 超长
         assertNull(c.cipherOf("12345a")) // 非数字
@@ -76,7 +108,18 @@ class PowerPayTest {
     @Test
     fun challengePrefersExplicitOrderId() {
         val raw = """{"code":200,"data":{"orderid":"999","passwordMap":{"k1":"123456"}}}"""
-        assertEquals("999", PowerPayModels.challengeFrom(raw)!!.orderId)
+        assertEquals("999", PowerPayModels.challengeFrom(raw, "REQUESTED")!!.orderId)
+    }
+
+    /** 订单过期 / 已失效 / 不存在要认得出：UI 据此回金额步重下单，而不是让人反复重输密码。 */
+    @Test
+    fun orderGoneMessages() {
+        assertTrue(PowerPayModels.isOrderGone("订单不存在，请重新预定"))
+        assertTrue(PowerPayModels.isOrderGone("订单已过期，请重新提交"))
+        assertTrue(PowerPayModels.isOrderGone("支付会话已失效"))
+        assertFalse(PowerPayModels.isOrderGone("密码错误，请重新输入"))
+        assertFalse(PowerPayModels.isOrderGone("余额不足"))
+        assertFalse(PowerPayModels.isOrderGone(null))
     }
 
     @Test

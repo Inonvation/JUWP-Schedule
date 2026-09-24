@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.JwImportActivity
+import edu.jxslu.schedule.TranscriptActivity
 import edu.jxslu.schedule.domain.ScoreCalculator
 import edu.jxslu.schedule.domain.ScoreGroups
 import edu.jxslu.schedule.domain.ScoreRecord
@@ -63,6 +65,7 @@ import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.TermSummary
 import edu.jxslu.schedule.domain.YearGroup
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import kotlinx.coroutines.launch
@@ -78,6 +81,9 @@ private const val SCOPE_ALL = "\u0000all"
  * 「删除」清空当前学期（带确认，仅按学期视图提供——按学年是聚合视图，删除以学期为单位）。
  * 评教未完成（pendingReview）的课程不显示分数也不进统计，单独呈现「待评教」标记，
  * 避免用户误以为成绩丢失。
+ *
+ * 顶部「导出带章成绩单」（DESIGN §3.14）是另一个数据源：出的是教务处签章系统生成的正式单据，
+ * 与本页的本地成绩库无关，所以放在学期/学年分组之外（不随 chip 变化）。
  *
  * 列表排序（DESIGN §4.15）：顶栏菜单三档——默认/成绩/绩点，只作用于学期分组内部；
  * 加权平均分与平均绩点不计任选课（通识任选、专业任选等），汇总卡展示计算公式并标注「仅供参考」。
@@ -211,6 +217,12 @@ fun ScoreScreen(onBack: () -> Unit) {
                             JwImportActivity.start(context, JwImportMode.Scores)
                         },
                     )
+                    Spacer(Modifier.height(8.dp))
+                    // 本地没导入过成绩，也照样能从教务处签章系统导出正式单据（两边数据源不同）
+                    ExportTranscriptCard(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        onClick = { TranscriptActivity.start(context) },
+                    )
                 }
             }
             else -> {
@@ -241,6 +253,12 @@ fun ScoreScreen(onBack: () -> Unit) {
                     ),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    item {
+                        // 入口在分组开关之外：导的是教务处正式单据，与本页选中的学期/学年无关
+                        ExportTranscriptCard(
+                            onClick = { TranscriptActivity.start(context) },
+                        )
+                    }
                     item {
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             SegmentedButton(
@@ -587,6 +605,40 @@ private fun ScoreCard(record: ScoreRecord) {
                 }
             }
         }
+    }
+}
+
+/**
+ * 「导出带章成绩单」入口卡（DESIGN §3.14）。
+ *
+ * 与「从教务导入」并列但不同源：导入读的是强智成绩接口（本地按学期存），
+ * 导出拿的是签章系统生成的正式 PDF。文案里把「教务处电子签章」写出来，
+ * 因为这个入口的实际用途就是评优评先要交的那张单据。
+ */
+@Composable
+private fun ExportTranscriptCard(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AppCardRow(modifier = modifier, onClick = onClick) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "导出带章成绩单",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "教务处电子签章 PDF · 可选学期 · 评优评先可用",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+        Icon(
+            Icons.Filled.FileDownload,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

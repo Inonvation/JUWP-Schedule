@@ -117,6 +117,8 @@ class PayCodeViewModel(
         val accountFen: Long,
         /** 兼容字段：此前「水电账户」口径（queryCard 的 elec_accamt），与 accountFen 不同源。 */
         val elecFen: Long,
+        /** 快照生成时刻（生活页卡片更新时间行用，2026-09-24）。 */
+        val fetchedAtMs: Long = System.currentTimeMillis(),
     )
 
     private val _balance = MutableStateFlow<BalanceSnapshot?>(null)
@@ -289,9 +291,14 @@ class PayCodeViewModel(
         }
     }
 
-    /** 同步一页流水；失败下一轮再试（返回是否成功，不阻断循环）。 */
+    /**
+     * 同步一页流水；失败下一轮再试（返回是否成功，不阻断循环）。
+     *
+     * force = true：这是**扫码消费检测**，每一轮都在问「刚才有没有扣款」，
+     * 被 `YktSyncGate` 挡掉就等于「扫码后自动退出」失效。
+     */
     private suspend fun syncTurnovers(username: String, password: String): Boolean = try {
-        syncer.sync(username, password, maxPages = 1)
+        syncer.sync(username, password, maxPages = 1, force = true)
         true
     } catch (e: CancellationException) {
         throw e

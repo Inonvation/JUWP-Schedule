@@ -113,6 +113,12 @@ import me.rerere.hugeicons.stroke.ScooterElectric
 @Composable
 fun EbikeQrScreen(
     onBack: () -> Unit = {},
+    /**
+     * 进页即出码的车号（2026-09-24 加）：今日页快趣出行码卡「附近单车 ›」选车后的链路
+     * ——地图页收起、车号经 `SubpageRequest.focusItemId` 带到这里，回填并直接生成二维码
+     * （与从地图页选中后经 Activity Result 回传同走 [EbikeViewModel.onPickCarNum]）。
+     */
+    initialCarNum: String? = null,
     viewModel: EbikeViewModel = viewModel(
         factory = EbikeViewModel.Factory(Graph.displayPrefs(LocalContext.current)),
     ),
@@ -125,30 +131,42 @@ fun EbikeQrScreen(
     val haptics = rememberAppHaptics()
     // 「结束骑行」二次确认弹窗（2026-09-22 用户口径：误触代价是提醒失效）
     var showEndConfirm by remember { mutableStateOf(false) }
+    // 「通知使用权」是否已授予（DESIGN §3.9 精确倒计时）：进页读一次，从系统设置返回时
+    // 再读一次——用户刚勾选完回来，未授权的提示行要立刻消失。
+    var listenerGranted by remember {
+        mutableStateOf(AppPermissions.notificationListenerGranted(context))
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    // 免费时长提醒走系统日历（DESIGN §3.9）：开开关 / 点扫一扫那一刻申请日历读写权限。
-    // 拒绝也照样续跑——计时与开关状态本身不依赖日历权限，只是写不进日历（提示由 VM 给）。
+    // 免费时长提醒走 App 通知（DESIGN §3.9，2026-09-24 由系统日历改回）：开开关 /
+    // 点扫一扫那一刻申请通知权限（API 33+）。拒绝也照样续跑——计时与开关状态本身
+    // 不依赖通知权限，只是提醒发不出来（提示由 VM 给）。
     var resumeAfterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { _ ->
         val resume = resumeAfterPermission
         resumeAfterPermission = null
         resume?.invoke()
     }
-    // 有权限直接跑，缺权限先申请、授予后跑（与 WeekScreen 的日历同步同口径）
-    fun withCalendarPermission(action: () -> Unit) {
-        val needed = AppPermissions.missing(context, AppPermissions.calendar)
+    // 有权限直接跑，缺权限先申请、授予后跑（与上课提醒同口径）
+    fun withNotificationPermission(action: () -> Unit) {
+        val needed = AppPermissions.missingNotification(context)
         if (needed.isEmpty()) {
             action()
         } else {
             resumeAfterPermission = action
-            calendarPermissionLauncher.launch(needed.toTypedArray())
+            notificationPermissionLauncher.launch(needed.toTypedArray())
         }
     }
     LaunchedEffect(Unit) {
+        // 进页核对一次：计时中缺服务/闹钟就补上，过期状态就清干净（幂等）
         EbikeFreeRideReminder.check(context)
+    }
+
+    // 带车号进页（今日页地图选车链路）：立即回填并出码；车号非法时 onPickCarNum 静默忽略
+    LaunchedEffect(initialCarNum) {
+        if (!initialCarNum.isNullOrBlank()) viewModel.onPickCarNum(initialCarNum)
     }
 
     LaunchedEffect(Unit) {
@@ -178,7 +196,11 @@ fun EbikeQrScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.burnPending()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.burnPending()
+                // 从「通知使用权」设置页回来：刷新授权状态
+                listenerGranted = AppPermissions.notificationListenerGranted(context)
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
@@ -311,7 +333,7 @@ fun EbikeQrScreen(
                 Button(
                     onClick = {
                         haptics.tap()
-                        withCalendarPermission {
+                        withNotificationPermission {
                             viewModel.onWechatScanClicked()
                             openWechatScan(context) { message ->
                                 scope.launch {
@@ -411,17 +433,18 @@ fun EbikeQrScreen(
             }
 
             // 免费时长提醒（DESIGN §3.9）：独立开关 + 提前量 1~5 分钟（用户拍板默认 3）。
-            // 2026-09-23 起提醒写在系统日历里，App 自己的通知链整套删除
+            // 2026-09-24 起提醒走 App 通知（前台服务常驻倒计时 + 两个精确闹钟），
+            // 系统日历那条链路已整套删除
             var freeEnabled by remember(prefs.freeReminderEnabled) {
                 mutableStateOf(prefs.freeReminderEnabled)
             }
             SettingsSection(
                 title = "免费时长提醒",
-                subtitle = "扫码开车后按 15 分钟计，写入系统日历，由日历提醒换车或还车。",
+                subtitle = "扫码开车后按 15 分钟计，通知栏常驻倒计时，结束前与结束那一刻各提醒一次。",
             ) {
                 SettingSwitchRow(
                     title = "开启免费时长提醒",
-                    subtitle = "点「打开微信扫一扫」后在系统日历建一条倒计时提醒",
+                    subtitle = "点「打开微信扫一扫」后起常驻倒计时，到点发通知提醒",
                     checked = freeEnabled,
                     onCheckedChange = { checked ->
                         freeEnabled = checked
@@ -429,9 +452,9 @@ fun EbikeQrScreen(
                             Graph.displayPrefs(context).setEbikeFreeReminderEnabled(checked)
                             viewModel.onFreeReminderChanged()
                         }
-                        // 只有开启才要权限：关闭是「删事件」，不需要任何权限
+                        // 只有开启才要权限：关闭是「撤掉提醒」，不需要任何权限
                         if (checked) {
-                            withCalendarPermission { viewModel.onCalendarPermissionGranted() }
+                            withNotificationPermission { viewModel.onReminderPermissionGranted() }
                         }
                     },
                 )
@@ -449,6 +472,42 @@ fun EbikeQrScreen(
                             }
                         },
                     )
+
+                    // 「精确倒计时」（DESIGN §3.9，2026-09-24）：默认关，开启后要「通知使用权」。
+                    // 计时起点原本只能取「点打开微信扫一扫」的时刻（比真正开车早 1~2 分钟），
+                    // 开了它就能拿微信的租车成功通知把起点校准到真正开始计费那一刻。
+                    var preciseEnabled by remember(prefs.preciseCountdownEnabled) {
+                        mutableStateOf(prefs.preciseCountdownEnabled)
+                    }
+                    SettingSwitchRow(
+                        title = "精确倒计时",
+                        subtitle = "识别微信的租车成功通知，把计时起点校准到真正开始计费那一刻",
+                        checked = preciseEnabled,
+                        onCheckedChange = { checked ->
+                            preciseEnabled = checked
+                            scope.launch {
+                                Graph.displayPrefs(context).setEbikePreciseCountdownEnabled(checked)
+                            }
+                            // 只有开启才要授权：关闭是「不再校准」，不需要任何权限。
+                            // 通知使用权只能由用户去系统设置里勾选，没有弹框可申请。
+                            if (checked && !AppPermissions.notificationListenerGranted(context)) {
+                                AppPermissions.jumpNotificationListenerSettings(context)
+                            }
+                        },
+                    )
+                    // 开关开着但还没授权：功能不会生效，得让用户看得见（并且点得到设置页）
+                    if (preciseEnabled && !listenerGranted) {
+                        InlineNoticeRow(
+                            message = "还没授予通知使用权，精确倒计时不会生效",
+                            tone = NoticeTone.Warning,
+                        )
+                        TextButton(onClick = {
+                            haptics.tap()
+                            AppPermissions.jumpNotificationListenerSettings(context)
+                        }) {
+                            Text("去开启通知使用权")
+                        }
+                    }
                 }
             }
 
@@ -484,7 +543,7 @@ fun EbikeQrScreen(
         AlertDialog(
             onDismissRequest = { showEndConfirm = false },
             title = { Text("结束骑行？") },
-            text = { Text("结束后将清空免费时长计时，并删除系统日历里的提醒。") },
+            text = { Text("结束后将清空免费时长计时，并撤掉通知栏上的倒计时与提醒。") },
             confirmButton = {
                 TextButton(onClick = {
                     showEndConfirm = false

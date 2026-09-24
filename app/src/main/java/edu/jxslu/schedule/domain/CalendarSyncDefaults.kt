@@ -33,4 +33,17 @@ object CalendarSyncDefaults {
     /** 存储值 → 展示文案：0 = 不提醒，其余「提前 N 分钟」。 */
     fun reminderLabel(minutes: Int): String =
         if (coerceReminderMinutes(minutes) <= 0) "不提醒" else "提前 ${coerceReminderMinutes(minutes)} 分钟"
+
+    /**
+     * 同步成功的提示文案（分享弹层与「我的 → 日历同步」共用一份口径）。
+     *
+     * [reminderMissing] 是回读 Reminders 表后确认没能落库的条数——非 0 说明手机日历
+     * 把第三方写下的提醒吞了，这种情况不能报「已同步」了事（DESIGN §4.12）。
+     */
+    fun syncSuccessMessage(count: Int, reminderMinutes: Int, reminderMissing: Int): String =
+        if (reminderMissing > 0) {
+            "已同步 $count 条课程到手机日历，其中 $reminderMissing 条没写上提醒，手机日历可能不提醒"
+        } else {
+            "已同步 $count 条课程到手机日历（${reminderLabel(reminderMinutes)}）"
+        }
 }

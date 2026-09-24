@@ -31,4 +31,20 @@ object YktArrival {
         val now = cardBalances[account] ?: cardBalances.values.singleOrNull() ?: return null
         return if (now >= balanceBeforeFen + orderFen) now else null
     }
+
+    /**
+     * 电子账户（钱包）口径：目标 = `accinfo` 的 `<account>-000` 行。
+     *
+     * 2026-09-24 用户实测：充电子账户后卡余额不动、一直「正在确认到账」——旧逻辑只查
+     * 卡余额，钱包进账看不见。电子账户充值**必须走本口径**（[balanceArrival] 的
+     * `singleOrNull` 兜底对 `-000` 目标是错的，调用方要跳过）。
+     */
+    fun walletArrival(
+        balanceBeforeFen: Long?,
+        orderFen: Long,
+        currentFen: Long?,
+    ): Long? {
+        if (balanceBeforeFen == null || orderFen <= 0L || currentFen == null) return null
+        return if (currentFen >= balanceBeforeFen + orderFen) currentFen else null
+    }
 }

@@ -2,13 +2,9 @@ package edu.jxslu.schedule.ui.life
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,7 +16,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -31,19 +26,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 
 /**
  * 电费充值弹层（DESIGN §4.24）：金额 → 密码 → 受理。
  *
  * - **无状态组件**：流程状态在 [LifeViewModel.powerRecharge]（VM 持有，转屏不丢）；
  * - 电子账户余额与说明常驻（「仅支持电子账户缴费」，用户拍板口径）；
- * - 「去充值电子账户」由 [onOpenCampusRecharge] 承接（打开一卡通充值并预选电子账户）。
+ * - 「去充值电子账户」由 [onOpenCampusRecharge] 承接（打开一卡通充值并预选电子账户）；
+ * - 键盘遮挡与退场时序走 [ImeAwareModalBottomSheet]（`skipPartiallyExpanded = true` + 「先收
+ *   键盘、键盘收完再滑走」两段退场）：金额步与密码步都有输入框，键盘弹起后 M3 会把弹层改判
+ *   到半高锚点、底部按钮被盖住——与校园卡充值弹层同一坑（定位过程见 DESIGN §4.19）。
+ *   不要自己再垫键盘高度。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,13 +58,12 @@ fun PowerRechargeSheet(
     onLoadChallenge: () -> Unit,
     onSubmitPassword: (cipher: String) -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        val scrollState = rememberScrollState()
-        val sheetScope = rememberCoroutineScope()
+    // 键盘遮挡与退场时序都在 ImeAwareModalBottomSheet 里（`skipPartiallyExpanded = true`；
+    // 退场「先收键盘、键盘收完再滑走」两段，见 ui/common/SheetDismissIme.kt）
+    ImeAwareModalBottomSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -88,6 +86,15 @@ fun PowerRechargeSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
+            // 打开弹层时清掉的未支付单（平台不自动清，堆积会让新下单 500）。
+            // 提示落在弹层里：页面 Scaffold 的 Snackbar 会被这个独立窗口盖住。
+            if (state.cleanedOrders > 0) {
+                Text(
+                    text = "已清理 ${state.cleanedOrders} 笔未支付订单",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
 
             when (state.step) {
                 LifeViewModel.PowerRechargeUi.Step.Amount -> AmountStep(
@@ -240,7 +247,9 @@ private fun PasswordStep(
             if (digits.length <= 6) cipher = digits
         },
         label = { Text("6 位消费密码") },
-        supportingText = { Text("6 位数字支付密码，与登录密码相互独立；仅用于本次支付，不保存") },
+        // 密码口径（2026-09-24 用户纠正 + 实测）：缴费平台登录用的就是这个 6 位密码，
+        // 不存在「另一套支付密码」。之前「与登录密码相互独立」的说法是错的。
+        supportingText = { Text("登录缴费平台用的那个 6 位密码；仅用于本次支付，不保存") },
         visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
         singleLine = true,

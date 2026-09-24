@@ -36,10 +36,10 @@ import java.util.concurrent.TimeUnit
  * 关闭，组合里无法起常驻协程（见 [ScheduleWidget] 的说明）。系统级闹钟与 WorkManager 不依赖
  * App 存活，才能真正做到后台更新。
  *
- * **精度说明**：这里用 `setAndAllowWhileIdle`（不需要 `SCHEDULE_EXACT_ALARM` 权限，
- * 也不会因缺权限抛异常），在 Doze 下可能被推迟到下一个维护窗口。这是刻意的取舍：
- * 课表小组件不需要秒级准确，而精确闹钟权限会被应用商店与用户视为敏感权限。
- * 设置页的「忽略电池优化」引导能显著降低被推迟的概率。
+ * **精度说明**：2026-09-24 自 `setAndAllowWhileIdle` 改用 `setAlarmClock`——
+ * 非精确闹钟在 Redmi K70 真机上被 ROM 省电策略推迟几分钟，用户报
+ * 「上下课了小组件还不换」。`setAlarmClock` 是系统级精确闹钟（上课提醒同一手法），
+ * 到点即触发且无需任何特殊权限；代价仅是触发时状态栏短暂显示闹钟图标。
  *
  * 文件名保留 `TodayWidget*`（改版只改了条目结构与渲染，刷新链路一行未动）——
  * 重命名会牵动 `JuwApplication` 与 Manifest，收益为零。
@@ -103,9 +103,6 @@ internal object TodayWidgetRefresh {
             triggerAtMillis = today.plusDays(1).atStartOfDay(zone).plusMinutes(5).toInstant().toEpochMilli()
         }
 
-        // 边界已过（闹钟被延迟、设备刚唤醒）时不排过去时刻，直接顺延 1 分钟立即刷
-        val safeTrigger = triggerAtMillis.coerceAtLeast(System.currentTimeMillis() + 60_000L)
-
         val manager = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, WidgetBoundaryReceiver::class.java)
         val pending = PendingIntent.getBroadcast(
@@ -114,8 +111,24 @@ internal object TodayWidgetRefresh {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        // setAndAllowWhileIdle：Doze 下仍会触发（可能被推迟），且不需要精确闹钟权限
-        runCatching { manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, safeTrigger, pending) }
+        // 系统级精确闹钟：到点即触发，不受 Doze/省电推迟，无需任何特殊权限。
+        // 2026-09-24 自 setAndAllowWhileIdle 改：非精确闹钟在 Redmi K70 真机上被 ROM
+        // 省电策略推迟几分钟，用户报「上下课了小组件还不换」——与上课提醒同一手法。
+        // 代价仅是触发时状态栏短暂显示闹钟图标，对「课程到点」语义贴切。
+        // 已过期的 triggerAt（设备刚唤醒/闹钟被延迟）不排过去时刻，直接触发立即刷。
+        val safeTrigger = triggerAtMillis.coerceAtLeast(System.currentTimeMillis())
+        // showIntent 与上课提醒同一落点（系统时钟的闹钟列表页）：那枚图标只表示
+        // 「有个闹钟排着」，不是提醒本身
+        val clockPending = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        runCatching {
+            manager.setAlarmClock(AlarmManager.AlarmClockInfo(safeTrigger, clockPending), pending)
+        }
     }
 }
 

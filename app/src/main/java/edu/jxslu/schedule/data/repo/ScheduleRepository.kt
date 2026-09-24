@@ -2,8 +2,6 @@ package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
-import edu.jxslu.schedule.data.local.DetectBaselineEntity
-import edu.jxslu.schedule.data.local.DetectReportEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.ScoreEntity
 import edu.jxslu.schedule.data.local.SemesterConfigEntity
@@ -14,14 +12,13 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.prefs.ReminderKeyKind
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.BalanceAlert
+import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.courseRemarksCarriedOver
 import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
-import edu.jxslu.schedule.domain.DetectGroup
-import edu.jxslu.schedule.domain.DetectReportPayload
-import edu.jxslu.schedule.domain.DetectSnapshotPayload
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.ScheduleBackground
@@ -31,6 +28,7 @@ import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
+import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
@@ -246,11 +244,12 @@ class ScheduleRepository(
         val recentIds: List<String>,
     )
 
-    /** 页面外壳类偏好的收拢切片：底栏形态（DESIGN §4.22）与今日页抽屉（§3.3）。 */
+    /** 页面外壳类偏好的收拢切片：底栏形态（§4.22）、今日页抽屉（§3.3）、生活页与启动页（§3.13/§3.3）。 */
     private data class ShellPrefs(
         val floatingNavBar: Boolean,
         val todayDockExpanded: Boolean,
         val lifeTabEnabled: Boolean,
+        val startPage: StartPage,
     )
 
     // ------------------------------------------------------------------
@@ -322,6 +321,7 @@ class ScheduleRepository(
             prefs.floatingNavBar,
             prefs.todayDockExpanded,
             prefs.lifeTabEnabled,
+            prefs.startPage,
             ::ShellPrefs,
         ),
     ) { global, ebike, campusCard, p, shell ->
@@ -339,6 +339,7 @@ class ScheduleRepository(
             floatingNavBar = shell.floatingNavBar,
             todayDockExpanded = shell.todayDockExpanded,
             lifeTabEnabled = shell.lifeTabEnabled,
+            startPage = shell.startPage,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
             showSaturday = p.showSaturday,
@@ -524,6 +525,9 @@ class ScheduleRepository(
     /** 生活页开关（DESIGN §3.13）。 */
     suspend fun setLifeTabEnabled(value: Boolean) = prefs.setLifeTabEnabled(value)
 
+    /** 启动页（DESIGN §3.3）。重启应用后生效（读口径见 MainActivity 的启动期冻结）。 */
+    suspend fun setStartPage(value: StartPage) = prefs.setStartPage(value)
+
     /** 触感反馈开关（全局）。 */
     suspend fun setHapticsEnabled(value: Boolean) = prefs.setHapticsEnabled(value)
 
@@ -559,6 +563,39 @@ class ScheduleRepository(
     suspend fun homeworkRemindedKeys(): Set<String> = prefs.homeworkRemindedKeys()
 
     suspend fun addHomeworkRemindedKey(key: String) = prefs.addHomeworkRemindedKey(key)
+
+    // ---- 余额提醒（全局，DESIGN §3.10 / §3.13；调度在 ui/reminder/BalanceAlertReminder） ----
+
+    /** 寝室电费提醒开关（默认关：通知是打扰型能力，用户显式开启）。 */
+    val powerAlertEnabled: Flow<Boolean> = prefs.powerAlertEnabled
+
+    /** 寝室电费提醒阈值（元，10–80 步长 5）。 */
+    val powerAlertYuan: Flow<Int> = prefs.powerAlertYuan
+
+    /** 一卡通余额提醒开关（默认关）。 */
+    val yktAlertEnabled: Flow<Boolean> = prefs.yktAlertEnabled
+
+    /** 一卡通余额提醒阈值（元，10–50 步长 5）。 */
+    val yktAlertYuan: Flow<Int> = prefs.yktAlertYuan
+
+    suspend fun setPowerAlertEnabled(value: Boolean) = prefs.setPowerAlertEnabled(value)
+
+    suspend fun setPowerAlertYuan(value: Int) = prefs.setPowerAlertYuan(value)
+
+    suspend fun setYktAlertEnabled(value: Boolean) = prefs.setYktAlertEnabled(value)
+
+    suspend fun setYktAlertYuan(value: Int) = prefs.setYktAlertYuan(value)
+
+    /** 上次**成功**检查日期（ISO `yyyy-MM-dd`；null = 从未成功）——每日闸门见 [BalanceAlert]。 */
+    suspend fun alertLastCheckDate(source: BalanceAlertSource): String? =
+        prefs.alertLastCheckDate(source)
+
+    suspend fun setAlertLastCheckDate(source: BalanceAlertSource, date: String) =
+        prefs.setAlertLastCheckDate(source, date)
+
+    /** 清掉某来源的当日节奏（开关打开 / 阈值变更后调用，让新规则立即生效）。 */
+    suspend fun clearAlertLastCheckDate(source: BalanceAlertSource) =
+        prefs.clearAlertLastCheckDate(source)
 
     suspend fun setCurrentTimetable(id: Long) = prefs.setCurrentTimetable(id)
 
@@ -848,99 +885,8 @@ class ScheduleRepository(
         return courses.size
     }
 
-    // ------------------------------------------------------------------
-    // 调课自动检测（DESIGN §4.17）：基线 / 报告的读写与应用
-    // ------------------------------------------------------------------
-
-    /** 待处理的差异报告（unread）；课表页气泡、导入弹层的「检测课表更新」与通知都读它。 */
-    val pendingDetectReport: Flow<DetectReportPayload?> =
-        currentTimetableId.flatMapLatest { id ->
-            db.detectReportDao().observe(id).map { e ->
-                e?.takeIf { it.unread }?.let { DetectReportPayload.decode(it.payload) }
-            }
-        }.distinctUntilChanged()
-
-    suspend fun detectBaseline(timetableId: Long): DetectSnapshotPayload? =
-        db.detectBaselineDao().get(timetableId)?.let { DetectSnapshotPayload.decode(it.payload) }
-
-    /** 检测的本地侧：当前课表全量（含考试与自定义条目——三方合并按 kind+课程名配对，天然不受影响）。 */
-    suspend fun detectLocalCourses(timetableId: Long): List<Course> = getTimetableCourses(timetableId)
-
-    suspend fun saveDetectBaseline(timetableId: Long, payload: DetectSnapshotPayload) {
-        db.detectBaselineDao().upsert(
-            DetectBaselineEntity(
-                timetableId = timetableId,
-                term = payload.term ?: "",
-                payload = payload.encode(),
-                updatedAt = System.currentTimeMillis(),
-            ),
-        )
-    }
-
-    /**
-     * 教务导入确认落库后刷新基线（§4.4/§4.8 的确认弹窗路径都要调）：
-     * 「教务数据成为本地数据」就是基线的定义。考试与 JSON 导入不进来——
-     * 前者不参与检测，后者不是教务数据。
-     */
-    suspend fun refreshBaselineFromJwImport(timetableId: Long?, courses: List<Course>, term: String?) {
-        val ttId = timetableId ?: currentTimetableId.first()
-        val theory = courses.filter { it.kind == CourseKind.Theory }
-        val lab = courses.filter { it.kind == CourseKind.Lab }
-        if (theory.isEmpty() && lab.isEmpty()) return
-        saveDetectBaseline(ttId, DetectSnapshotPayload.fromCourses(term, theory, lab))
-    }
-
-    suspend fun saveDetectReport(timetableId: Long, payload: DetectReportPayload) {
-        db.detectReportDao().upsert(
-            DetectReportEntity.unread(timetableId, payload.encode(), System.currentTimeMillis()),
-        )
-    }
-
-    /** 应用/忽略报告后清气泡：内容保留，设置页状态区仍可回看。 */
-    suspend fun markDetectReportRead() {
-        db.detectReportDao().markRead(currentTimetableId.first())
-    }
-
-    /** 清掉当前课表的检测数据（关闭功能/删除课表时；基线一并清，下次开启重建）。 */
-    suspend fun clearDetectData(timetableId: Long? = null) {
-        val ttId = timetableId ?: currentTimetableId.first()
-        db.detectBaselineDao().delete(ttId)
-        db.detectReportDao().delete(ttId)
-    }
-
-    /**
-     * 应用「更新课表」页勾选的差异（DESIGN §4.17）。一个事务内完成：
-     * 每个勾选组删掉本地该 (kind, 课程名) 的全部行 → 插入教务侧行
-     * （沿用被替换第一行的配色，纯新增课走 nextColorIndex；教务停课组只删不插），
-     * 并把基线**整体推进**为报告里的教务全量快照——只勾一部分时，未勾选的组
-     * 视为用户默许忽略，下次检测不再报；「忽略本次」整个不动（见 UI 层）。
-     */
-    suspend fun applyDetectGroups(groups: List<DetectGroup>, report: DetectReportPayload) {
-        if (groups.isEmpty()) return
-        val ttId = currentTimetableId.first()
-        db.withTransaction {
-            val all = getTimetableCourses(ttId)
-            val used = all.map { it.colorIndex }.toMutableList()
-            val deleteIds = mutableListOf<Long>()
-            val inserts = mutableListOf<CourseEntity>()
-            for (group in groups) {
-                val replaced = all.filter { it.kind == group.kind && it.name == group.name }
-                deleteIds += replaced.map { it.id }
-                val color = replaced.firstOrNull()?.colorIndex
-                    ?: ScheduleCalculator.nextColorIndex(used)
-                used += color
-                // 整组重建同样会把备注带走：按 mergeKey 搬回来（DESIGN §4.3「备注的存活口径」）
-                val remote = courseRemarksCarriedOver(replaced, group.remoteCourses)
-                inserts += remote.map {
-                    CourseEntity.fromDomain(it.copy(id = 0, colorIndex = color)).copy(timetableId = ttId)
-                }
-            }
-            if (deleteIds.isNotEmpty()) db.courseDao().deleteByIds(deleteIds)
-            if (inserts.isNotEmpty()) db.courseDao().insertAll(inserts)
-            saveDetectBaseline(ttId, report.snapshot)
-            db.detectReportDao().markRead(ttId)
-        }
-    }
+    // 调课自动检测（DESIGN §4.17）的基线/报告读写与应用已随功能移除（2026-09-24，
+    // 见 JuwDatabase.MIGRATION_9_10）；detect_baselines / detect_reports 两表一并 DROP。
 
     /**
      * 调课（DESIGN §4.11）：把 [fromWeek] 周 [fromDay] 的课按 [mode] 调整到 [toWeek] 周 [toDay]。

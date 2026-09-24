@@ -12,10 +12,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import edu.jxslu.schedule.domain.BgScale
+import edu.jxslu.schedule.domain.BalanceAlert
+import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.BikeMapViewport
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
-import edu.jxslu.schedule.domain.DetectFailurePolicy
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.ReminderDefaults
@@ -23,6 +24,7 @@ import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.Shortcuts
+import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimetablePrefs
 import kotlinx.coroutines.flow.Flow
@@ -63,6 +65,13 @@ data class DisplayPrefs(
      * 关 = 底栏回到 3 项（今日 · 课表 · 我的），二级页入口不受影响。
      */
     val lifeTabEnabled: Boolean = true,
+    /**
+     * 启动页（DESIGN §3.1 / §3.3）。全局项，**默认 [StartPage.Today]**：主窗口每次
+     * 新建时落的那个 Tab。生活页关掉时「生活」这一项在设置里同步消失，存着的旧值
+     * 由 [StartPage.effectivePage] 落回今日页（不写回存储，生活页开回来时旧选择还在）。
+     * 生效时机同悬浮导航栏：启动期读死，**重启应用后生效**（理由见 DESIGN §3.3）。
+     */
+    val startPage: StartPage = StartPage.Today,
     /**
      * 触感反馈开关。全局项（交互手感不随课表变）。
      * 默认开：点击类操作给轻触感是系统应用的普遍预期，嫌吵的人再关。
@@ -161,13 +170,13 @@ data class DisplayPrefs(
     val ebikeRecentIds: List<String> = emptyList(),
     /**
      * 今日页校园卡付款码卡开关（DESIGN §3.10）。**默认关**：涉及凭证与资金等价物，
-     * 用户显式开启；关 = 整卡不占位（即「不在今日页显示」）。凭证本身不在这里——
-     * 存 `ykt_credentials.xml`（EncryptedSharedPreferences），有没有凭证读 store 即知。
+     * 用户显式开启。**2026-09-24 起今日页不再展示一卡通卡**（能力收进生活页，§3.13），
+     * 值仅作历史偏好保留，UI 不再消费。
      */
     val campusCardEnabled: Boolean = false,
     /**
      * 今日页底部抽屉是否展开（DESIGN §3.3，2026-09-22 加）：快捷方式网格、快趣出行码、
-     * 水宝宝一卡通、胖乖生活开水**整块**折进一行把手之下。
+     * 胖乖生活开水**整块**折进一行把手之下。
      *
      * **默认展开**：与加抽屉之前的表现一致（这些入口常驻可见）——用户开着某个开关
      * 本就是要用它，默认收起等于把入口藏起来。
@@ -176,37 +185,9 @@ data class DisplayPrefs(
     val todayDockExpanded: Boolean = true,
 )
 
-/**
- * 调课自动检测的配置与运行状态（DESIGN §4.17）。功能默认关闭。
- * 凭证本身不在这里——存 `jw_credentials.xml`（EncryptedSharedPreferences），
- * 这里只存「有没有可用的凭证态」无关的配置与上次运行结果。
- */
-data class DetectSettings(
-    /** 总开关；关闭 = 不检测、气泡与周期任务一并停。 */
-    val enabled: Boolean = false,
-    /** 检测周期（小时）。档位见 [DetectDefaults.PERIOD_HOURS]，默认 24 = 每天一次。 */
-    val periodHours: Int = 24,
-    /** 上次成功完成检测（含建基线）的时刻；0 = 从未。 */
-    val lastCheckedAt: Long = 0L,
-    /** 上次失败的说明；空串 = 无。 */
-    val lastError: String = "",
-    /** 连续凭证失败计数（登录成功即清零）；达上限触发 [disabled]。 */
-    val credentialFailures: Int = 0,
-    /** 连续凭证失败触发的自动停用；用户重新开启时清零。 */
-    val disabled: Boolean = false,
-)
-
-/** 检测周期档位与文案的单一来源（DESIGN §4.17：每天 / 每 3 天 / 每周）。 */
-object DetectDefaults {
-    val PERIOD_HOURS = listOf(24, 72, 168)
-
-    fun label(hours: Int): String = when (hours) {
-        24 -> "每天"
-        72 -> "每 3 天"
-        168 -> "每周"
-        else -> "每 $hours 小时"
-    }
-}
+// 调课自动检测的 DetectSettings / DetectDefaults 与相关键、方法已随功能移除
+// （2026-09-24）。DataStore 里的历史键（tweak_detect_*）不主动清理——
+// 无人再读，留着无害；逐键 remove 反而要为「清偏好」单独加一次写盘。
 
 // preferencesDataStore 是属性委托，必须用 by；一个文件只能声明一份，重复实例化同一文件会崩溃。
 private val Context.displayDataStore: DataStore<Preferences> by
@@ -229,6 +210,13 @@ data class PendingRecharge(
     val balanceBeforeFen: Long?,
     /** 付款卡账户（6 位卡号）；缺失为 null。 */
     val cardAccount: String?,
+    /**
+     * 充值目标（DESIGN §3.10）：`<account>-000` = 电子账户；null = 正式卡。
+     * 到账判定按目标分两路（卡余额 / 钱包余额），2026-09-24 补。
+     */
+    val targetAccount: String?,
+    /** 充电子账户时：付款前目标钱包余额（分）；null = 未取到。 */
+    val walletBalanceBeforeFen: Long?,
     /** 「正在确认到账」弹窗是否已提示过（每次充值只弹一次）。 */
     val confirmShown: Boolean,
 )
@@ -301,6 +289,13 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_LIFE_TAB_ENABLED] ?: true
     }
 
+    /**
+     * 启动页（DESIGN §3.3）。默认今日页；认不出的存储值一律退回今日页（[StartPage.fromName]）。
+     */
+    val startPage: Flow<StartPage> = context.displayDataStore.data.map { p ->
+        StartPage.fromName(p[KEY_START_PAGE])
+    }
+
     /** 「我的」账号条：姓名（教务学籍卡导入）。null/空 = 未导入过，退回学号显示。 */
     val profileName: Flow<String> = context.displayDataStore.data.map { p ->
         p[KEY_PROFILE_NAME].orEmpty()
@@ -342,7 +337,7 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_HOMEWORK_REMINDER_ENABLED] ?: false
     }
 
-    /** 共享单车免费时长日历提醒开关（DESIGN §3.9）。默认关：往用户日历里写东西属打扰型能力。 */
+    /** 共享单车免费时长提醒开关（DESIGN §3.9）。默认关：通知是打扰型能力，用户显式开启。 */
     val ebikeFreeReminderEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_FREE_REMINDER_ENABLED] ?: false
     }
@@ -357,9 +352,33 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_EBIKE_RIDE_START_AT] ?: 0L
     }
 
-    /** 当前骑行在系统日历里的事件 id（DESIGN §3.9）；0 = 没有在案事件。 */
-    val ebikeFreeEventId: Flow<Long> = context.displayDataStore.data.map { p ->
-        p[KEY_EBIKE_FREE_EVENT_ID] ?: 0L
+    /**
+     * 免费时长提醒的「已发键」集合（DESIGN §3.9）：键形如 `lead|<起点>` / `end|<起点>`，
+     * 唯一实现在 [EbikeFreeRide.leadDedupKey] / [EbikeFreeRide.endDedupKey]。
+     * 闹钟与周期核对共用，保证同一条提醒只发一次；换车重新计时时整集清空。
+     */
+    val ebikeFreeNotifiedKeys: Flow<Set<String>> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_FREE_NOTIFIED_KEYS] ?: emptySet()
+    }
+
+    /**
+     * 「精确倒计时」开关（DESIGN §3.9，2026-09-24）。**默认关**：它需要「通知使用权」
+     * ——读取用户**全部**通知，是 Android 上隐私敏感度最高的一类权限，必须用户自己
+     * 去系统设置里开。开了之后由 `WechatRentListener` 识别微信的租车成功通知，
+     * 把计时起点从「点扫一扫的时刻」校准到「真正开始计费的那一刻」。
+     */
+    val ebikePreciseCountdownEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_PRECISE_COUNTDOWN] ?: false
+    }
+
+    /**
+     * 本轮骑行已按微信通知校准到的起点（epoch 毫秒）；0 = 没校准过。
+     *
+     * 值等于当前 `ebikeRideStartAt` 时说明**这一轮已经校准过**，不再接受第二次
+     * ——微信对同一笔支付可能重复推送，重复校准会把计时一直往后推。
+     */
+    val ebikePreciseCalibratedAt: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_PRECISE_CALIBRATED_AT] ?: 0L
     }
 
     /**
@@ -370,6 +389,30 @@ class DisplayPrefsStore(private val context: Context) {
         CalendarSyncDefaults.coerceReminderMinutes(
             p[KEY_CALENDAR_REMINDER_MINUTES] ?: CalendarSyncDefaults.DEFAULT_REMINDER_MINUTES,
         )
+    }
+
+    // ---- 余额提醒（DESIGN §3.10 / §3.13）----
+    // 两个来源各一套「开关 + 阈值 + 上次成功检查日期」。不进 [DisplayPrefs] 合并视图：
+    // 与上课/作业提醒同口径（走 repo 的独立流），也免得去动那个已满员的 combine。
+
+    /** 寝室电费提醒开关。默认关：通知是打扰型能力，用户显式开启。 */
+    val powerAlertEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_POWER_ALERT_ENABLED] ?: false
+    }
+
+    /** 寝室电费提醒阈值（元）。读路径吸附到候选档，防线脏数据。 */
+    val powerAlertYuan: Flow<Int> = context.displayDataStore.data.map { p ->
+        BalanceAlert.coercePowerYuan(p[KEY_POWER_ALERT_YUAN] ?: BalanceAlert.DEFAULT_POWER_YUAN)
+    }
+
+    /** 一卡通余额提醒开关。默认关。 */
+    val yktAlertEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_YKT_ALERT_ENABLED] ?: false
+    }
+
+    /** 一卡通余额提醒阈值（元）。 */
+    val yktAlertYuan: Flow<Int> = context.displayDataStore.data.map { p ->
+        BalanceAlert.coerceYktYuan(p[KEY_YKT_ALERT_YUAN] ?: BalanceAlert.DEFAULT_YKT_YUAN)
     }
 
     /** 今日页快捷方式开关（DESIGN §3.8）。全局项，默认开：这是展示型入口，不打扰人。 */
@@ -409,6 +452,16 @@ class DisplayPrefsStore(private val context: Context) {
      */
     val ebikeLocationAsked: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_LOCATION_ASKED] ?: false
+    }.distinctUntilChanged()
+
+    /**
+     * 附近单车地图「只看可用」筛选的记住开关（DESIGN §3.9）。
+     *
+     * 默认开（2026-09-24 用户拍板）：这个筛选本身就是想找能骑的车，列表与地图标记
+     * 都按它过滤；关掉 = 看到离线与电量低的车。用户改过后落 DataStore，下次进页保持。
+     */
+    val ebikeMapOnlyAvailable: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_MAP_ONLY_AVAILABLE] ?: true
     }.distinctUntilChanged()
 
     /**
@@ -475,6 +528,8 @@ class DisplayPrefsStore(private val context: Context) {
                 startedAt = at,
                 balanceBeforeFen = p[KEY_PENDING_RECHARGE_BASE_FEN],
                 cardAccount = p[KEY_PENDING_RECHARGE_ACCOUNT],
+                targetAccount = p[KEY_PENDING_RECHARGE_TARGET],
+                walletBalanceBeforeFen = p[KEY_PENDING_RECHARGE_WALLET_BASE_FEN],
                 confirmShown = p[KEY_PENDING_RECHARGE_CONFIRM_SHOWN] ?: false,
             )
         }
@@ -487,6 +542,10 @@ class DisplayPrefsStore(private val context: Context) {
         balanceBeforeFen: Long?,
         /** 付款卡账户（6 位卡号）。 */
         cardAccount: String?,
+        /** 充值目标：`<account>-000` = 电子账户；null = 正式卡。 */
+        targetAccount: String?,
+        /** 充电子账户时：付款前目标钱包余额（分）；取不到传 null（退流水口径）。 */
+        walletBalanceBeforeFen: Long?,
     ) {
         context.displayDataStore.edit {
             it[KEY_PENDING_RECHARGE_FEN] = fen
@@ -500,6 +559,16 @@ class DisplayPrefsStore(private val context: Context) {
                 it[KEY_PENDING_RECHARGE_ACCOUNT] = cardAccount
             } else {
                 it.remove(KEY_PENDING_RECHARGE_ACCOUNT)
+            }
+            if (targetAccount != null) {
+                it[KEY_PENDING_RECHARGE_TARGET] = targetAccount
+            } else {
+                it.remove(KEY_PENDING_RECHARGE_TARGET)
+            }
+            if (walletBalanceBeforeFen != null) {
+                it[KEY_PENDING_RECHARGE_WALLET_BASE_FEN] = walletBalanceBeforeFen
+            } else {
+                it.remove(KEY_PENDING_RECHARGE_WALLET_BASE_FEN)
             }
             it[KEY_PENDING_RECHARGE_CONFIRM_SHOWN] = false
         }
@@ -519,6 +588,8 @@ class DisplayPrefsStore(private val context: Context) {
             it.remove(KEY_PENDING_RECHARGE_AT)
             it.remove(KEY_PENDING_RECHARGE_BASE_FEN)
             it.remove(KEY_PENDING_RECHARGE_ACCOUNT)
+            it.remove(KEY_PENDING_RECHARGE_TARGET)
+            it.remove(KEY_PENDING_RECHARGE_WALLET_BASE_FEN)
             it.remove(KEY_PENDING_RECHARGE_CONFIRM_SHOWN)
         }
     }
@@ -587,6 +658,11 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_LIFE_TAB_ENABLED] = value }
     }
 
+    /** 启动页（DESIGN §3.3）。写的是用户的选择本身，不因为生活页此刻关着就改写它。 */
+    suspend fun setStartPage(value: StartPage) {
+        context.displayDataStore.edit { it[KEY_START_PAGE] = value.name }
+    }
+
     suspend fun setWaterRequireDoubleClick(value: Boolean) {
         context.displayDataStore.edit { it[KEY_WATER_REQUIRE_DOUBLE_CLICK] = value }
     }
@@ -607,7 +683,7 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_HOMEWORK_REMINDER_ENABLED] = value }
     }
 
-    /** 共享单车免费时长日历提醒开关（DESIGN §3.9）。默认关：往用户日历里写东西属打扰型能力。 */
+    /** 共享单车免费时长提醒开关（DESIGN §3.9）。默认关：通知是打扰型能力，用户显式开启。 */
     suspend fun setEbikeFreeReminderEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_FREE_REMINDER_ENABLED] = value }
     }
@@ -627,9 +703,32 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_RIDE_START_AT] = value }
     }
 
-    /** 当前骑行在系统日历里的事件 id（0 = 没有在案事件）。 */
-    suspend fun setEbikeFreeEventId(value: Long) {
-        context.displayDataStore.edit { it[KEY_EBIKE_FREE_EVENT_ID] = value }
+    /** 「精确倒计时」开关（DESIGN §3.9）。 */
+    suspend fun setEbikePreciseCountdownEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_PRECISE_COUNTDOWN] = value }
+    }
+
+    /** 记录本轮已校准到的起点（0 = 清除校准标记，换车/结束骑行时调）。 */
+    suspend fun setEbikePreciseCalibratedAt(value: Long) {
+        context.displayDataStore.edit { it[KEY_EBIKE_PRECISE_CALIBRATED_AT] = value }
+    }
+
+    /**
+     * 免费时长提醒已发键的统一写入口（DESIGN §3.9）：读-改-写整个集合，同值跳写
+     * （口径同 [updateEbikePendingDelete]）。清空用 `{ emptySet() }`。
+     */
+    suspend fun updateEbikeFreeNotifiedKeys(transform: (Set<String>) -> Set<String>) {
+        context.displayDataStore.edit { p ->
+            val current = p[KEY_EBIKE_FREE_NOTIFIED_KEYS] ?: emptySet()
+            val next = transform(current)
+            if (next != current) {
+                if (next.isEmpty()) {
+                    p.remove(KEY_EBIKE_FREE_NOTIFIED_KEYS)
+                } else {
+                    p[KEY_EBIKE_FREE_NOTIFIED_KEYS] = next
+                }
+            }
+        }
     }
 
     suspend fun setReminderLeadMinutes(value: Int) {
@@ -657,6 +756,54 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_CAMPUS_CARD_ENABLED] = value }
     }
 
+    /** 寝室电费提醒开关（DESIGN §3.13）。 */
+    suspend fun setPowerAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_POWER_ALERT_ENABLED] = value }
+    }
+
+    /** 寝室电费提醒阈值（元）；夹取到候选表值域。 */
+    suspend fun setPowerAlertYuan(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_POWER_ALERT_YUAN] = BalanceAlert.coercePowerYuan(value)
+        }
+    }
+
+    /** 一卡通余额提醒开关（DESIGN §3.10）。 */
+    suspend fun setYktAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_YKT_ALERT_ENABLED] = value }
+    }
+
+    /** 一卡通余额提醒阈值（元）；夹取到候选表值域。 */
+    suspend fun setYktAlertYuan(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_YKT_ALERT_YUAN] = BalanceAlert.coerceYktYuan(value)
+        }
+    }
+
+    /**
+     * 余额提醒的「上次**成功**检查日期」（DESIGN §3.10 / §3.13）：ISO `yyyy-MM-dd`，
+     * null = 从未成功过。
+     *
+     * 它是两道闸门：当天的通知闸门（每天最多一条）与冷启动补查的闸门
+     * （今天查过就不重复打第三方接口）。取数失败**不落日期**，所以当天还有补查机会。
+     */
+    suspend fun alertLastCheckDate(source: BalanceAlertSource): String? =
+        context.displayDataStore.data.first()[alertLastCheckKey(source)]
+
+    suspend fun setAlertLastCheckDate(source: BalanceAlertSource, date: String) {
+        context.displayDataStore.edit { it[alertLastCheckKey(source)] = date }
+    }
+
+    /** 清掉某来源的当日节奏（开关打开 / 阈值变更时调用）：新规则立即重新评估一次。 */
+    suspend fun clearAlertLastCheckDate(source: BalanceAlertSource) {
+        context.displayDataStore.edit { it.remove(alertLastCheckKey(source)) }
+    }
+
+    private fun alertLastCheckKey(source: BalanceAlertSource) = when (source) {
+        BalanceAlertSource.Power -> KEY_POWER_ALERT_LAST_CHECK
+        BalanceAlertSource.Ykt -> KEY_YKT_ALERT_LAST_CHECK
+    }
+
     /** 今日页底部抽屉展开态（DESIGN §3.3）。 */
     suspend fun setTodayDockExpanded(value: Boolean) {
         context.displayDataStore.edit { it[KEY_TODAY_DOCK_EXPANDED] = value }
@@ -675,6 +822,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 标记「已自动申请过定位权限」（DESIGN §3.9），见 [ebikeLocationAsked]。 */
     suspend fun setEbikeLocationAsked(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_LOCATION_ASKED] = value }
+    }
+
+    /** 记住附近单车地图「只看可用」筛选（DESIGN §3.9），见 [ebikeMapOnlyAvailable]。 */
+    suspend fun setEbikeMapOnlyAvailable(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_MAP_ONLY_AVAILABLE] = value }
     }
 
     /** 记住附近单车地图的最后视野（DESIGN §3.9），见 [ebikeMapViewport]。 */
@@ -731,73 +883,6 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setScoreSortMode(value: ScoreSortMode) {
         context.displayDataStore.edit { it[KEY_SCORE_SORT_MODE] = value.name }
-    }
-
-    // ---- 调课自动检测（DESIGN §4.17） ----
-
-    val detectSettings: Flow<DetectSettings> = context.displayDataStore.data.map { p ->
-        DetectSettings(
-            enabled = p[KEY_DETECT_ENABLED] ?: false,
-            periodHours = p[KEY_DETECT_PERIOD_HOURS] ?: 24,
-            lastCheckedAt = p[KEY_DETECT_LAST_CHECKED_AT] ?: 0L,
-            lastError = p[KEY_DETECT_LAST_ERROR] ?: "",
-            credentialFailures = p[KEY_DETECT_CREDENTIAL_FAILURES] ?: 0,
-            disabled = p[KEY_DETECT_DISABLED] ?: false,
-        )
-    }
-
-    /** 开关总入口：重新开启时清掉自动停用标记与失败计数（DESIGN §4.17）。 */
-    suspend fun setDetectEnabled(value: Boolean) {
-        context.displayDataStore.edit {
-            it[KEY_DETECT_ENABLED] = value
-            if (value) {
-                it[KEY_DETECT_DISABLED] = false
-                it[KEY_DETECT_CREDENTIAL_FAILURES] = 0
-            }
-        }
-    }
-
-    suspend fun setDetectPeriodHours(hours: Int) {
-        context.displayDataStore.edit {
-            it[KEY_DETECT_PERIOD_HOURS] = DetectDefaults.PERIOD_HOURS
-                .minByOrNull { h -> kotlin.math.abs(h - hours) } ?: 24
-        }
-    }
-
-    /** 检测走完一次（建基线 / 无差异 / 出报告都算）：时间落库、错误与失败计数清零。 */
-    suspend fun recordDetectSuccess(at: Long) {
-        context.displayDataStore.edit {
-            it[KEY_DETECT_LAST_CHECKED_AT] = at
-            it[KEY_DETECT_LAST_ERROR] = ""
-            it[KEY_DETECT_CREDENTIAL_FAILURES] = 0
-        }
-    }
-
-    /** 检测完成了但有需要用户知情的事（如教务换学期）：时间推进，说明落 [lastError] 位展示。 */
-    suspend fun recordDetectNotice(at: Long, message: String) {
-        context.displayDataStore.edit {
-            it[KEY_DETECT_LAST_CHECKED_AT] = at
-            it[KEY_DETECT_LAST_ERROR] = message.take(200)
-            it[KEY_DETECT_CREDENTIAL_FAILURES] = 0
-        }
-    }
-
-    /**
-     * 检测失败落库。[credentialFailed] 为 true 时累加连续凭证失败计数，
-     * 达到 `DetectFailurePolicy.MAX_CREDENTIAL_FAILURES` 自动停用（防触发验证码锁号）。
-     */
-    suspend fun recordDetectFailure(message: String, credentialFailed: Boolean) {
-        context.displayDataStore.edit {
-            it[KEY_DETECT_LAST_ERROR] = message.take(200)
-            if (credentialFailed) {
-                val next = (it[KEY_DETECT_CREDENTIAL_FAILURES] ?: 0) + 1
-                it[KEY_DETECT_CREDENTIAL_FAILURES] = next
-                if (DetectFailurePolicy.shouldDisableAfterCredentialFailure(next)) {
-                    it[KEY_DETECT_DISABLED] = true
-                    it[KEY_DETECT_ENABLED] = false
-                }
-            }
-        }
     }
 
     /**
@@ -970,6 +1055,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
         val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")
         val KEY_LIFE_TAB_ENABLED = booleanPreferencesKey("life_tab_enabled")
+        val KEY_START_PAGE = stringPreferencesKey("start_page")
         val KEY_WATER_REQUIRE_DOUBLE_CLICK = booleanPreferencesKey("water_require_double_click")
         val KEY_CALENDAR_REMINDER_MINUTES = intPreferencesKey("calendar_reminder_minutes")
         val KEY_REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")
@@ -980,7 +1066,14 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_FREE_REMINDER_ENABLED = booleanPreferencesKey("ebike_free_reminder_enabled")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
-        val KEY_EBIKE_FREE_EVENT_ID = longPreferencesKey("ebike_free_event_id")
+
+        // 2026-09-24 提醒改回 App 通知：日历事件 id（ebike_free_event_id）随之停用，
+        // 键定义一并删掉——旧设备上的残留值没人读，也不会自己消失，但无害。
+        val KEY_EBIKE_FREE_NOTIFIED_KEYS = stringSetPreferencesKey("ebike_free_notified_keys")
+
+        // 「精确倒计时」（2026-09-24）：开关 + 本轮校准到的起点
+        val KEY_EBIKE_PRECISE_COUNTDOWN = booleanPreferencesKey("ebike_precise_countdown_enabled")
+        val KEY_EBIKE_PRECISE_CALIBRATED_AT = longPreferencesKey("ebike_precise_calibrated_at")
         val KEY_CURRENT_TIMETABLE = longPreferencesKey("current_timetable_id")
         val KEY_DEFAULT_CONFIG_SOURCE = longPreferencesKey("default_config_source_id")
         val KEY_SLOT_SCHEMA = intPreferencesKey("slot_schema_version")
@@ -992,6 +1085,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
         val KEY_EBIKE_LOCATION_ASKED = booleanPreferencesKey("ebike_location_asked")
+        val KEY_EBIKE_MAP_ONLY_AVAILABLE = booleanPreferencesKey("ebike_map_only_available")
         val KEY_EBIKE_VIEW_LAT = floatPreferencesKey("ebike_view_lat")
         val KEY_EBIKE_VIEW_LNG = floatPreferencesKey("ebike_view_lng")
         val KEY_EBIKE_VIEW_ZOOM = floatPreferencesKey("ebike_view_zoom")
@@ -1003,11 +1097,20 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_PENDING_DELETE = stringSetPreferencesKey("ebike_pending_delete")
         val KEY_EBIKE_RECENT_IDS = stringPreferencesKey("ebike_recent_ids")
         val KEY_CAMPUS_CARD_ENABLED = booleanPreferencesKey("campus_card_enabled")
+        // 余额提醒（DESIGN §3.10 / §3.13）：两个来源各一套开关 / 阈值 / 上次成功检查日期
+        val KEY_POWER_ALERT_ENABLED = booleanPreferencesKey("power_alert_enabled")
+        val KEY_POWER_ALERT_YUAN = intPreferencesKey("power_alert_yuan")
+        val KEY_POWER_ALERT_LAST_CHECK = stringPreferencesKey("power_alert_last_check")
+        val KEY_YKT_ALERT_ENABLED = booleanPreferencesKey("ykt_alert_enabled")
+        val KEY_YKT_ALERT_YUAN = intPreferencesKey("ykt_alert_yuan")
+        val KEY_YKT_ALERT_LAST_CHECK = stringPreferencesKey("ykt_alert_last_check")
         val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
         val KEY_PENDING_RECHARGE_FEN = longPreferencesKey("pending_recharge_fen")
         val KEY_PENDING_RECHARGE_AT = longPreferencesKey("pending_recharge_at")
         val KEY_PENDING_RECHARGE_BASE_FEN = longPreferencesKey("pending_recharge_base_fen")
         val KEY_PENDING_RECHARGE_ACCOUNT = stringPreferencesKey("pending_recharge_account")
+        val KEY_PENDING_RECHARGE_TARGET = stringPreferencesKey("pending_recharge_target")
+        val KEY_PENDING_RECHARGE_WALLET_BASE_FEN = longPreferencesKey("pending_recharge_wallet_base_fen")
         val KEY_PENDING_RECHARGE_CONFIRM_SHOWN = booleanPreferencesKey("pending_recharge_confirm_shown")
         val KEY_SHORTCUTS_JSON = stringPreferencesKey("shortcuts_json")
         val KEY_SCORE_INCLUDE_FREE_ELECTIVES = booleanPreferencesKey("score_include_free_electives")
@@ -1015,14 +1118,6 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCORE_SORT_MODE = stringPreferencesKey("score_sort_mode")
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_CLASS = stringPreferencesKey("profile_class")
-
-        // ---- 调课自动检测（DESIGN §4.17；凭证不在这里，见 JwCredentialStore） ----
-        val KEY_DETECT_ENABLED = booleanPreferencesKey("tweak_detect_enabled")
-        val KEY_DETECT_PERIOD_HOURS = intPreferencesKey("tweak_detect_period_hours")
-        val KEY_DETECT_LAST_CHECKED_AT = longPreferencesKey("tweak_detect_last_checked_at")
-        val KEY_DETECT_LAST_ERROR = stringPreferencesKey("tweak_detect_last_error")
-        val KEY_DETECT_CREDENTIAL_FAILURES = intPreferencesKey("tweak_detect_credential_failures")
-        val KEY_DETECT_DISABLED = booleanPreferencesKey("tweak_detect_disabled")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

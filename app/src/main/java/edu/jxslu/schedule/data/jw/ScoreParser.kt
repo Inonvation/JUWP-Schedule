@@ -102,4 +102,42 @@ object ScoreParser {
     } catch (_: Exception) {
         null
     }
+
+    /**
+     * 学籍卡片解析（「我的」账号条数据源，DESIGN §3.3）。
+     *
+     * 姓名走 form 的 `<label>姓名</label>…<input value="…">`（form 里没有班级/学号两项）；
+     * 班级与学号走顶栏 `detiailtextItem` 明文标签（`班级：xxx` / `学号：xxx`）。
+     * 标签与值的顺序按页面结构写死，解析失败返回 null 不抛。
+     * 任何字段解析失败都返回 null，**不抛**——账号条只是锦上添花，绝不能挡成绩导入。
+     */
+    fun parseStudentCard(html: String): StudentCard? {
+        fun inputAfter(label: String): String? {
+            val escaped = Regex.escape(label)
+            val re = Regex(
+                "(?is)<label[^>]*>\\s*$escaped\\s*</label>[\\s\\S]{0,400}?value\\s*=\\s*\"([^\"]*)\"",
+            )
+            return re.find(html)?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+        }
+
+        fun detailItem(label: String): String? {
+            val escaped = Regex.escape(label)
+            val re = Regex(
+                "(?is)detiailtextItem[^>]*>\\s*$escaped\\s*[：:]\\s*([^<]+?)\\s*<",
+            )
+            return re.find(html)?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+        }
+
+        val name = inputAfter("姓名") ?: return null
+        val studentClass = detailItem("班级") ?: return null
+        val studentId = detailItem("学号") ?: return null
+        return StudentCard(name = name, studentClass = studentClass, studentId = studentId)
+    }
 }
+
+/** 学籍卡片里账号条需要的三个字段（DESIGN §3.3）。 */
+data class StudentCard(
+    val name: String,
+    val studentClass: String,
+    val studentId: String,
+)

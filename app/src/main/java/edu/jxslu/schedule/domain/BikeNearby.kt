@@ -68,6 +68,10 @@ data class NearbyBike(
      */
     val batteryLow: Boolean
         get() = batteryPercent?.let { it < BikeNearby.LOW_BATTERY_HINT_PERCENT } ?: false
+
+    /** 电量低于强提示档位（< [BikeNearby.LOW_BATTERY_BADGE_PERCENT]），列表里加图标标注。 */
+    val batteryLowBadge: Boolean
+        get() = batteryPercent?.let { it < BikeNearby.LOW_BATTERY_BADGE_PERCENT } ?: false
 }
 
 /**
@@ -136,6 +140,15 @@ object BikeNearby {
 
     /** 电量低于这个百分比就把数字标成警告色（纯展示阈值，与运营方的 lowBattery 无关）。 */
     const val LOW_BATTERY_HINT_PERCENT = 30.0
+
+    /**
+     * 「电量低」特殊标注的阈值（2026-09-24 用户需求）。
+     *
+     * 与 [LOW_BATTERY_HINT_PERCENT] 的分工：30% 只决定百分比数字的着色（弱提示），
+     * 低于 20% 的车在展开列表里加图标 + 标签（强提示）——低于这个数的车多半骑不到
+     * 目的地，不值得专门走过去。
+     */
+    const val LOW_BATTERY_BADGE_PERCENT = 20.0
 
     /** 采样环半径（米），见 [samplePoints]。 */
     const val SAMPLE_RADIUS_METERS = 700.0

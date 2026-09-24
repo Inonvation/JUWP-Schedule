@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 12+ 备份/迁移规则：与 backup_rules.xml 同语义，排除胖乖 token、教务凭证与校园卡凭证。 -->
+<!-- Android 12+ 备份/迁移规则：与 backup_rules.xml 同语义，排除胖乖 token 与校园卡凭证
+     （jw_credentials 的排除保留，理由见 backup_rules.xml 注释——升级用户设备上文件还在）。 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secure_token.xml" />

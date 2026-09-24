@@ -118,6 +118,9 @@ class TodayViewModel(
     /**
      * 今日页校园卡付款码卡开关（DESIGN §3.10）。默认关（涉及凭证与资金），
      * 「我的 → 校园卡」子页控制；同样单独订阅不掺课表状态。
+     *
+     * 2026-09-24 起今日页不再展示一卡通卡（能力收进生活页，DESIGN §3.13），
+     * 该开关仅剩历史偏好值；保留 Flow 以免清理旧偏好数据。
      */
     val campusCardEnabled: StateFlow<Boolean> = repo.displayPrefs
         .map { it.campusCardEnabled }
@@ -125,7 +128,7 @@ class TodayViewModel(
 
     /**
      * 今日页底部抽屉展开态（DESIGN §3.3，2026-09-22）：快捷方式网格、快趣出行码、
-     * 水宝宝一卡通、胖乖生活开水整块折进一行把手之下，展开态持久化。
+     * 胖乖生活开水整块折进一行把手之下，展开态持久化。
      * 同 [waterCardEnabled] 口径：纯设置值，单独订阅不掺课表状态。
      *
      * **可空**：null = DataStore 还没读出。UI 拿 null 时不渲染 dock，就绪后一次按终态渲染。

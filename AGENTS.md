@@ -94,6 +94,8 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `ScheduleDetectTest`（调课检测三方合并：归因/冲突/调课不误报/序列化 roundtrip）、
 `JwHttpSessionTest`（检测登录链路：重定向解析参数顺序、IPv4 优先 DNS）、
 `EbikeQrTest`（共享单车出码：URL 拼装/车号校验/BitMatrix 参数/最近车号序列化）、
+`EbikeFreeRideTest`（免费时长提醒：提醒点/下一个未过点/迟到窗口/去重键带起点/通知 id 不撞号）、
+`WechatRentNoticeTest`（精确倒计时：只认微信包名/关键词命中先享后付/窗口两端与越界）、
 `YktKeyboardTest`（校园卡键盘：字形 MD5 表/双射硬校验/密文构造/协议自检）、
 `YktModelsTest`（一卡通响应解析：BOM 剥离/错误码/CARD 账户提取）、
 `MarkdownParserTest`（Markdown 子集：块/行内/嵌套/未闭合按字面回退/中文数字混排）、
@@ -113,14 +115,19 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `QiekjModelsTest`（胖乖响应包脏数据容错）、`YktPayCodeTest`（付款码矩阵参数）、
 `YktRechargeSignTest`（充值下单签名）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
 、`ScheduleBackgroundTest`（背景图：默认值/模糊档位到解码尺寸/文件名白名单）
+、`XgUrlsTest`（学工：域判定不退化成子串匹配/状态条三档/统一认证入口钉子）
 、`BikeNearbyTest`（附近单车：响应容错/聚簇/距离/状态推导）、
 `KqcxBikeClientTest`（失败分类：超时与网络不可达不能混）、
 `Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）、
 `PowerModelsTest`（电费响应解析：项目/读数/流水 + 500 与 401 外壳 + 剩余电量键回退）、
 `LifeFeedTest`（一卡通与电费流水混排：排序/限量/同刻稳定/解析失败沉底）、
 `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
-`PowerClientUrlTest`（缴费页/账单页深链形态与 feeitemid 钉子）
-等 57 个测试类。
+`StartPageTest`（启动页：显示名/选项顺序/生活页关掉时不列/落回今日/脏值回退）、
+`PowerClientUrlTest`（缴费页/账单页深链形态与 feeitemid 钉子）、
+`BalanceAlertTest`（余额提醒：档位表/夹取/下标/文案、电费元换算三态、阈值边界、每日闸门）
+、`TranscriptParsingTest`（盖章成绩单：应答解析与脏数据容错/学期归并/分页换算/魔数/失败归类/表单字段/文件命名）
+、`TranscriptClientTest`（导出编排：翻页收学期/MAX_PAGES 兜底/令牌回传/三条失败路径/网络错分类）
+等 69 个测试类（707 个用例，2026-09-24 现数）。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
@@ -132,13 +139,42 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   同一节课不得两处出现；节次号只在焦点卡出现一次。改版前先读 DESIGN §3.3。
 - 可见星期序列以 `ScheduleCalculator.visibleDays` 为唯一来源、`columnOf` 取列下标；
   不要用 `day - 1` 当列号（隐藏周六但显示周日时会错位）。
-- 今日页底部固定区（快捷方式网格 → **服务格一行两列** → 开水卡）是 `TodayBottomDock`，
+- 今日页底部固定区（快捷方式网格 → **快趣出行码整行卡** → 开水卡）是 `TodayBottomDock`，
   **钉在滚动区下方**、不进 `LazyColumn`；三态（加载/空/有课）共用同一份，别只改一处。
-  开水卡不并进服务格（卡内要放小票余额与流程简报；开水按钮在点余额弹出的
-  `WaterEntrySheet` 里）。整块内容可折叠（把手「江水生活」，
+  **水宝宝一卡通卡已于 2026-09-24 自今日页移除**（能力收进生活页，DESIGN §3.13）——
+  别按旧描述把它加回来；出行卡右侧「附近单车 ›」直达 `EBIKE_MAP`，右侧动作文本走
+  `CardSideActionText`（与开水卡右侧余额同一组件）。整块内容可折叠（把手「江水生活」，
   展开态存 `DisplayPrefs.todayDockExpanded`，默认展开），**折叠动画只做高度、锚点必须选 Top**
   ——锚 Bottom 或再叠一层 slide 都会变形，两个失败版本记在 DESIGN §3.3，别重复试。
   改版前先读 DESIGN §3.3。
+- **含输入框的弹层一律用 `ui/common/SheetDismissIme.kt` 的 `ImeAwareModalBottomSheet`**
+  （**不要自己拼 `ModalBottomSheet` + `rememberModalBottomSheetState`**：`skipPartiallyExpanded = true`
+  与退场时序都收在它里面，2026-09-24 两次修订后的唯一口径）。
+  `skipPartiallyExpanded` 的根因（2026-09-24 真机定位「充值弹层下一步被键盘挡住」；**别再往
+  insets 方向查**）：键盘弹起后弹层可用高度腰斩，内容高于一半时 M3 会造出
+  `PartiallyExpanded = fullHeight/2` 锚点，并在锚点更新时把 target 从 Expanded **改判**成
+  PartiallyExpanded → 弹层停在半高，最底部的按钮被键盘盖住。Redmi K70 实测：可用高度
+  2400→1604px、内容 986px → 停在 802px 而不是 Expanded 的 618px，差 184px 正好盖住 126px
+  高的「下一步」；手动上划 = 拖回 Expanded，所以表现是「划一下才看得见」。跳过该锚点后只剩
+  Hidden/Expanded，键盘弹起时 target 保持 Expanded（实测 618px，按钮落在键盘上缘之上）。
+  **内容固定不可滚**（用户拍板）：勿加 `verticalScroll` 再滚到底——首次点击时 maxValue
+  未更新会滚不到位，滚动方案已弃用。**也不要自己垫键盘高度**：M3 已经把弹层底边
+  （`Box(fillMaxSize().imePadding())`）与内容底（`contentWindowInsets = safeDrawing.only(Bottom)`）
+  垫到键盘上缘，多垫一份会把内容挤出可视区——旧 `ui/common/ImeSheetGuard.kt` 就是这么错的，
+  已删。
+  **退场与键盘必须分两段、不能并行收**（2026-09-24 用户二次反馈「点弹窗其余地方 → 先键盘
+  收回、弹窗延迟收回、收回动画诡异」）：M3 的退场是一条 `tween(300ms)`，锚点由**容器高度**
+  算出（父 Box 是 `imePadding()`，键盘一收 1604→2400px）——并行收键盘时键盘动画每帧改高度
+  → 每帧 `updateAnchors()` → 动画中被**取消重启**（foundation `restartable{}`），而 tween
+  每次重启都从缓动曲线 0 点重新计时、不吸收初速度，终点每帧又下移 → 弹层每帧只推进剩余距离
+  的不到 1%，几乎停在原地，键盘收完才一口气滑完。现在由
+  `confirmValueChange`（M3 询问「能不能去 Hidden」的钩子，点遮罩 `animateToDismiss` 与下滑
+  `settle` 都走它）在键盘还起着时**否决 Hidden**，宿主先交还焦点收键盘（弹层跟着键盘逐帧
+  下移），`WindowInsets.ime` 归零（逐帧回调，收到 0 = 键盘动画结束）后再 `hide()`；超时 450ms
+  兜底。宿主**必须组合在弹层内容里**：写在 `ModalBottomSheet { … }` 外面拿到的是 Activity
+  窗口的 `LocalFocusManager` / `LocalSoftwareKeyboardController` / insets，收不动弹窗里的
+  键盘（第一版实测无效）。校园卡充值、电费充值、快捷方式表单三个弹层已接；新弹层照抄
+  `ImeAwareModalBottomSheet`。
 - 卡片观感**只有一处定义**：`ui/common/AppCard.kt` 的 `AppCard` / `AppCardRow`
   （14dp 圆角 + 1dp `outlineVariant` 描边 + surface 底）。新卡片一律走它，
   **不要**再私写 `RoundedCornerShape` + `border`（2026-09-22 之前 12dp/14dp 两套并存）；
@@ -165,6 +201,17 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   在组件内部统一带（调用点不用管）。
   胶囊底色用 `surfaceContainer`（`surface` 与页面底色同色，会读成一条白底栏）；
   选中态只改图标与文字颜色，不加底色块。
+- **启动页**（2026-09-24，DESIGN §3.3）：我的 → 通用 → 启动页，默认今日，选项 = 底栏
+  Tab 集（今日/课表/生活/我的），存 `DisplayPrefs.startPage`（键 `start_page`）。
+  三条别改坏：① **生活页关掉时「生活」不出现在选项里**，且存着的旧值落回今日页
+  （`domain/StartPage.kt` 的 `visiblePages` / `effectivePage`，设置页选中态与
+  `MainActivity.resolveStartRouteBlocking` 共用同一口径；不把存储值改写成今日——
+  生活页开回来旧选择要还在）；② **重启生效**，调用点 `remember { resolveStartRouteBlocking() }`
+  按窗口读死一次（比悬浮导航栏的进程级 `floatingNavBarEffective` 细一档），**不要**让
+  `startDestination` 跟 Flow 变——Compose Navigation 会按
+  `remember(route, startDestination, builder)` 重建整张导航图，用户被弹回起点；
+  ③ `StartPage` 只带显示名，`StartPage → Routes.*` 的映射留在
+  `MainActivity`（路由字符串的唯一来源仍是 `Routes`，别在 domain 里复制字面量）。
 - **从桌面图标回到 App 要落在离开时那一页**（2026-09-23，DESIGN §3.1）：`MainActivity` 保持
   standard + `alwaysRetainTaskState="true"`，**不要**改回 `singleTask`（它 clearTop，会把二级页
   销毁，用户只能落到今日页）。桌面点击时系统会多压一个实例，由 `MainActivity.onCreate` 那条
@@ -186,6 +233,9 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   `widget_info_*`**（旧版三条目内容重复，用户明确要求合并）。改渲染前先读 DESIGN §3.6；
   刷新机制（边界闹钟 + WorkManager + 冷启动）与「写状态 + `update()`」双步**不许动**
   （理由见 `ScheduleWidget` 类 KDoc：Glance 会话的两条硬约束是不可绕过的）。
+  边界闹钟 2026-09-24 起用 **`setAlarmClock` 精确闹钟**（此前 `setAndAllowWhileIdle` 被
+  Redmi K70 推迟几分钟，用户报「上下课了小组件还不换」）——**别改回**非精确闹钟；
+  无特殊权限，代价仅是触发时状态栏短暂显示闹钟图标（上课提醒同一手法）。
 - 小组件周网格的列取 `ScheduleCalculator.visibleDays`，与课表页同一口径（不要 `day - 1`）；
   高亮列规则是「今天还有课 → 今天，否则明天」，改这条前先读 DESIGN §3.6 的「明日接棒」。
 - 澎湃OS / MIUI 的负一屏只收录「小米小部件」（需开放平台审核），**原生小组件进不去**；
@@ -230,14 +280,66 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   唯一实现在 `EbikeQr.resolveCarNum`，`bikeUrl` 只认完整车号。地图选中的车走完整车号
   那条路（别的车队前缀是 `300000…`，靠尾部三位拼不出正确链接），
   **不要再按 `EbikeQr.TEMPLATE + 尾部` 拼 URL**。
-- 免费时长提醒（DESIGN §3.9）：**写的是系统日历，不是 App 通知**（2026-09-23 改）。
-  日历事件锚在**免费结束那一刻**（`DTSTART == DTEND`，0 时长），挂两条提醒：
-  `MINUTES = 提前量` 与 `MINUTES = 0`。理由：`Reminders.MINUTES` 只能表达
-  「事件开始前 N 分钟」且非负，锚在扫码时刻会让「提前 3 分钟」落到扫码之前。
-  事件 description 用独立标记 `水贝贝骑行提醒`（课表同步只认自己的 `水贝贝课表同步`），
-  删除按 DataStore 的 `ebikeFreeEventId`。**不要再把 `setAlarmClock`、通知 channel、
-  `EbikeFreeRideReceiver` 加回来**；`EbikeFreeRideCheckWorker` 的类名也别改
-  （老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排，兜底会永久消失）。
+- 免费时长提醒（DESIGN §3.9）：**走 App 通知 + 前台服务常驻倒计时，不写系统日历**
+  （2026-09-24 用户拍板改回；2026-09-23 那次「改系统日历」已作废）。
+  两个提醒点（提前量点、免费结束）由 `AlarmManager.setAlarmClock` **精确**触发：
+  系统级闹钟，到点唤醒设备、不受 Doze/省电推迟、**不需要任何特殊权限**
+  （与上课提醒同一手法，requestCode 4003 与上课的 4002 错开）。
+  **通知栏常驻倒计时**由 `EbikeFreeRideService` 承载（`specialUse` 类型；
+  `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE`）。剩余时间**由服务每秒
+  重发一次通知文案**（`EbikeFreeRide.countdownText`，每秒一次是系统允许的上限），
+  但**只在亮屏时刷**：灭屏一个 notify 都不发（协程阻塞等屏幕亮，点亮补刷一次）——
+  这是省电的主要来源，别改回「不分屏幕状态一律每秒刷」；
+  **不要**改用系统 chronometer（`setUsesChronometer` / `setChronometerCountDown`）——
+  2026-09-24 在 Redmi K70 / 澎湃OS 实测：面板静止时系统不主动重绘，数字不动，
+  用户报「通知栏没有秒」。到点提醒**不要**改由服务里的协程 `delay` 负责——
+  屏幕关闭后 CPU 挂起，会迟到几分钟；服务只管展示与保活。
+  channel 用新 id（`ebike_free_ride_countdown` / `ebike_free_ride_alert_v2`），提醒那个
+  **带震动**（双震 pattern）且 category 用 `EVENT`（对齐上课提醒）；**不要复用首版的
+  `ebike_free_ride`**——已存在 channel 的 importance 与震动都改不动，且「删掉重建」也无效
+  （delete 是异步的，紧接着 create 会被当成更新，实测震动没生效），只能换 id；
+  通知 id 1000/1005/1006，与上课（1001/1004）、作业（1002/1003）错开。
+  迟到窗口（用户拍板）：提前量那条只要免费时段没结束就补发，结束那条结束后
+  5 分钟内仍发（`EbikeFreeRide.END_WINDOW_MS`）；去重键带计时起点，落
+  `ebike_free_notified_keys`。`EbikeFreeRideCheckWorker` 的类名也别改
+  （老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排，兜底会永久消失），
+  但它的**周期任务只在计时期间排**（15 分钟 = WorkManager 最小周期，`cancelAll` 里撤）：
+  别改回「冷启动无条件常排」——那会让没骑车的用户每 15 分钟被冷启动一次进程。
+  系统日历那条链路（`data/calendar/EbikeCalendarEvents.kt`、`ebikeFreeEventId`、
+  `水贝贝骑行提醒` 标记、日历权限申请）已整套删除，**别加回来**。
+- 「精确倒计时」（DESIGN §3.9，2026-09-24，**默认关**）：`ui/ebike/WechatRentListener.kt`
+  （`NotificationListenerService`）识别微信的租车成功通知（关键词「先享后付」），
+  把计时起点从「点扫一扫」校准到真正开始计费那一刻。**它要「通知使用权」**——读用户全部
+  通知，只能用户去系统设置手动勾选（应用没有 API 能申请），所以默认关、开关旁给未授权提示；
+  匹配与窗口口径在 `domain/WechatRentNotice.kt`（四道闸见 DESIGN §3.9）。
+  **隐私红线**：只读包名与文本用于当次匹配，**不落盘、不上传**；命中原文的日志只在
+  `BuildConfig.DEBUG` 下打（抓真实文案用），**release 一行都不许打**。
+  常驻倒计时的起停判据是**起点是否变化**（`EbikeFreeRideService.start`）：起点变了就重新
+  `onStartCommand` 重建 tick，起点没变才跳过。**别退回「服务在跑就跳过」**——上一轮没结束
+  就换车时 tick 循环握着旧起点，倒计时不会重置（2026-09-24 用户报的 bug，当时是我加的
+   `running` 幂等标记惹的）。换车（`startRide`）还要顺手清掉上一轮挂在通知栏的提醒与校准标记。
+- **导出盖章成绩单走的是签章管理系统，不是强智教务**（DESIGN §4.25）：
+  CAS service = `http://jwxyxx.juwp.edu.cn/ptwork/cas`，落地拿 `sid`，再
+  `POST /ptwork/DzqzController/ddqzcjList` 取 `pagePri`、`POST …/printStartCj` 回传它拿 PDF。
+  四条不许按直觉改的口径：**`dysj`（pagePri）是权威条件、`xnxq` 被服务端忽略**；
+  列表分页不影响出单（token 编码查询条件而非当页数据）；`limit` 无效、固定 15 行一页；
+  **令牌存在不等于有数据**——无成绩学期照样给 token，解不开时服务端返回**空白却带章**的模板 PDF，
+  所以出单前必须用 `total>0` 当闸门，响应必须过 `%PDF` 魔数。
+  会话只从 WebView 的 `CookieManager` 现取（不存账号密码，与「不要写死密码」同一条纪律）；
+  学期清单从接口取，**不要解析页面下拉**——「后台首页」那份模板的下拉最高只到 2022-2023-2
+  且 37 个旧学期重复，是坏的。成绩单 PDF 的章是**注释 + 数字签名**（`/FT /Sig`，Rect 压在
+  「学校盖章：」上），PDFium 系渲染器（含 pypdfium2）不画注释，用它截图自检会误判「没盖章」。
+  签章系统只有 HTTP 明文，成绩单与 CAS 票据都明文回传，这句实话要留在导出页上。
+
+- **宿舍报修是 WebView，不是原生表单**（2026-09-24，DESIGN §3.15 / §4.26）：
+  `DormRepairActivity`（第三个「因为窗口里有统一认证表单而锁竖屏」的窗口，前两个是教务导入
+  与成绩单导出）进页打开 `XgUrls.SSO_LOGIN`（`/sfrz/login343962`）→ 302 到 `eapp2` 的 CAS。
+  学工与教务**共用同一套统一身份认证**，所以教务导入登录过一次这边就免登，App 不存密码。
+  **别换成**超星的 `/passport/mlogin`（手机号 + 学习通密码，是另一套账号，学校没配它）；
+  **也别去复刻** `/office/...` 的表单提交：请求里那批 `pageEnc` / `traceId` / `nodeUniqueId`
+  由服务端每次下发，复刻出来的实现必然随官方改版失效。附件上传靠
+  `WebChromeClient.onShowFileChooser`（漏了它 = 点上传没反应），状态条按域分档的判据
+  唯一实现在 `data/xg/XgUrls.kt`。
 
 ## 装真机
 
@@ -265,7 +367,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 
 ## 爬虫脚本（scripts/）
 
-正式脚本 6 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 7 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
@@ -275,6 +377,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 | `fetch_exams.py` | 考试安排（`--term` 可选，缺省取教务当前学期；JSON 接口） | `scripts/out/exams.json` |
 | `fetch_scores.py` | 课程成绩（`--term` 可选，缺省全部学期；JSON 接口） | `scripts/out/scores.json` |
 | `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9A101`） | `scripts/out/power.json` |
+| `fetch_transcript.py` | 教务处**盖章成绩单**（金格签章系统 `jwxyxx.juwp.edu.cn`，**非强智教务**；`--list` / `--term` 可多个 / `--out`） | `scripts/out/transcript_<标签>.pdf` |
 
 所有脚本输出 JSON 顶层 `term` = **实际爬到的学期**（如 `2026-2027-1`），App 导入确认弹窗据此展示；
 带 `--term` 时脚本会校验「请求学期 = 教务返回学期」，不一致直接报错而不是静默爬错学期。
@@ -285,6 +388,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history
+.\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py --list   # 出单：--term 2025-2026-2
 ```
 
 - **寝室电费是另一套系统**（新开普「移动服务平台」缴费，`charge.juwp.edu.cn`，与教务无关）：
@@ -362,19 +466,51 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
 ## 生活页（一卡通 · 寝室电费，DESIGN §3.13/§4.24）
 
 - 底栏第三项「生活」，开关 `DisplayPrefs.lifeTabEnabled` **默认开**（我的 → 通用 → 生活页）；
-  关掉后底栏回到 3 项，页内关掉时自动退回今日页。今日页那张「水宝宝一卡通卡」**暂时保留**
-  （付款码最短路径），是否合并待用户拍板。
+  关掉后底栏回到 3 项，页内关掉时自动退回今日页。**今日页的「水宝宝一卡通卡」已于
+  2026-09-24 删除**（用户拍板，生活页承接付款码最短路径），别按旧描述加回来。
 - **码不预取**：`PayCodeViewModel` 初值 `Idle`（占位条），点击才 `load()`，收起调 `collapse()`
   （丢码 + 回收位图 + 停消费检测）。展开期间 `FLAG_SECURE` + 亮度拉满，收起即恢复。
   付款码页与生活页共用这一份 VM，别再写第二套取码逻辑。
+  取码骨架与成功态**同几何**（码位 `aspectRatio` 占死 + 按钮占位行），改布局两边同步改，
+  否则取码完成时卡片跳动（2026-09-24 收口口径）。余额卡与电费卡靠
+  `IntrinsicSize.Min` + 卡内 `weight` 空隙恒等高，改动别绕开它。
 - **一处凭证**：电费登录 = 一卡通的学号 + 查询密码（`YktCredentialStore`，2026-09-23 实测
   两个平台同一密码）。一关了之：凭证清掉时电费卡同样显示「未开启凭证」。
 - **读表参数缺一不可**：`feeitemid=181` / `type=IEC` / `level=3` / campus+building+room；
   少一个平台只回 `code=500「未知异常」`（HTTP 200），**业务码 401 也藏在 HTTP 200 里**，
   必须读 body 的 `code` 才能触发重登。
-- **电费充值一期只跳网页**：`PowerClient.pageUrl` 把现登 token 放进 URL（前端按 `token`
-  直接登录），`#/pays?id=181` 缴费页、`#/bill` 账单页；App 内下单（`thirdOrder`）留二期。
-  无效路由会被前端打回首页，新增深链前先实测。
+- **电费充值已 App 内完成**（2026-09-24 实测收口）：下单 = `POST /blade-pay/pay`
+  `paystep=0`（`feeitemid=181 + tranamt + flag=choose`，签名 `PowerPaySign`）；
+  支付 = `paystep=2 + paytype=ACCOUNT + paytypeid=59` 拿 `passwordMap` 乱序表，
+  `PowerPayChallenge.cipherOf` 是密文换算唯一口径（用户数字 d → **d 在乱序表里的
+  下标**；官方键盘第 i 个键显示 `table[i]` 但提交 `String(i)`，2026-09-24 读前端
+  `app.7abec7aa…js` 修正——此前 `d → table[d]` 方向反了，正确密码也报「密码错误」），
+  6 位消费密码 = **登录缴费平台用的那个 6 位密码**（2026-09-24 用户纠正：学校就一套
+  6 位密码，不存在独立的「支付密码」）。测试单用完就 `deleteOrder`（JSON body），别留未支付单——堆积会让
+  新下单 500。服务时间闸门等业务拒绝原样透传，不降级跳网页；深链 `#/pays?id=181`
+  保留作兜底，无效路由会被前端打回首页，新增深链前先实测。
+  三条一改就坏的钉子：**订单号只能用下单响应里那一个**（`paystep=2` 的 `orderid` 恒为
+  null，别拿 `passwordMap` 的键——那是 uuid，发出去服务端回「订单不存在，请重新预定」）；
+  **`ccctype[0].balance` 单位是元**（同一时刻一卡通 `accinfo[].balance=100` 分对照确认，
+  按分渲染会把 1 元显示成 ¥0.01）；服务端拒绝含「订单不存在/已过期/已失效」时回金额步
+  重新下单（`PowerPayModels.isOrderGone`），别让人在密码步反复重输。
+- **余额提醒**（2026-09-24，DESIGN §3.13「余额提醒」）：设置项在「我的 → 校园卡」页
+  （寝室电费 10–80 元 / 一卡通余额 10–50 元，步长 5）。口径单一来源 `domain/BalanceAlert.kt`：
+  电费「元」= 剩余电量 × 单价（**唯一换算处**，生活页电费卡也走它，别再内联乘一次）、
+  阈值是**严格小于**、档位表/夹取/文案都在这里。调度在 `ui/reminder/BalanceAlertReminder.kt`：
+  每天一次 + 冷启动补查 + 设置变更后立即评估，闸门是「上次**成功**检查日期」
+  （同一天每个来源最多一条；**取数失败不落日期**，当天还能补查）。
+  四条不许动：**失败不重试**（防撞风控）、一卡通只算**正式卡余额**（不含电子账户）、
+  `balance_alert_periodic` / `BalanceAlertCheckWorker` 的名字（`KEEP` 下改名 = 每日兜底永久消失）、
+  通知 id/tag 与落点（电费 1005 / 一卡通 1006，`EXTRA_ROUTE=ROUTE_LIFE` 落生活页；
+  生活页开关关掉时不带 extra 落今日页）。关凭证时两个开关一并回落（都靠那份凭证）。
+  **PendingIntent requestCode（3005/3006）与通知 id 分离**：骑行提醒的通知 id 也是
+  1005/1006，两边落点 intent 都指向 MainActivity 无 action，filterEquals 相同——
+  requestCode 撞了会被 `FLAG_UPDATE_CURRENT` 改写落点（2026-09-24 修的真 bug）。
+  **给通知加落点前先全局 grep 现有 requestCode**（上课 0、作业 1002/1003、
+  骑行 2000/2005/2006、余额 3005/3006），撞了就是静默的点击错页。
+- 一卡通设置页的学号输入框**明文回填**已保存的学号（2026-09-24 用户拍板）；
+  改回空框 = 不显示，会被用户当成「凭证丢了」，别当隐私优化删掉。
 
 ## 沟通与 DoD
 
@@ -389,13 +525,21 @@ P6 打磨 — **进行中**（2026-09-21：笔记·课件与作业落地，含�
 作业截止提醒，见 DESIGN §3.11/§4.20；真机已验证 Room v6→v7 迁移与各新页面不崩，
 图片编辑与提醒弹出需人工点验。2026-09-22：课表页自定义背景图，见 DESIGN §4.21，
 选图与滑块调参需真机点验。2026-09-23：免费时长提醒由 App 通知改系统日历，
-见 DESIGN §3.9，已在 Redmi K70 的小米日历验证事件与两条提醒落库；同日修复
+见 DESIGN §3.9，已在 Redmi K70 的小米日历验证事件与两条提醒落库
+（**该口径已于 2026-09-24 反转**，见本段末）；同日修复
 「进二级页后挂后台、从桌面图标回来落到今日页」的导航错乱，见 DESIGN §3.1，
 已在 Redmi K70 验证：二级页实例 id 不变、录屏无今日页中间帧。2026-09-23（同日）：
 生活页落地（底栏第 4 项 + 寝室电费），见 DESIGN §3.13/§4.24，脚本侧电费链路已实测、
 App 侧 615 条单测全绿，Redmi K70 实测：底栏 4 项、电费读数 55.37 度（9A101）、
 点占位条取码成功且展开期间 FLAG_SECURE 生效（截图为全黑）、收起后恢复、
-生活页开关关掉后底栏回 3 项；**电费充值/缴费账单深链（跳浏览器）与消费流水页待人工点验**）
+生活页开关关掉后底栏回 3 项；**电费充值/缴费账单深链（跳浏览器）与消费流水页待人工点验**。2026-09-24：免费时长提醒由系统日历改回 App 通知（`setAlarmClock` 精确闹钟 + 前台服务
+常驻倒计时），见 DESIGN §3.9，日历链路整套删除；真机（Redmi K70）已验证：
+前台服务 `specialUse` 起得来、通知 id 1000 常驻、精确闹钟按「起点 + 提前量」落点、
+通知文案每秒跳秒（**弃用系统 chronometer**：面板静止时不重绘，用户报「没有秒」）；
+同日省电口径：灭屏不刷通知、周期兜底只在计时期间排、提醒 channel 加震动 + category 对齐上课提醒；
+639 条单测全绿；同日修「上一轮倒计时没结束就换车、倒计时不重置」（服务起停判据改成
+「起点是否变化」，见 DESIGN §3.9 与下方行为约定）；
+**两个到点提醒（提前量 / 结束）待人工点验**）
 
 ## 仓库与发版
 

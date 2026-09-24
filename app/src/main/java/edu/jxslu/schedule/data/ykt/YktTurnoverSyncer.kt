@@ -6,6 +6,36 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 /**
+ * 流水同步的频率闸门（DESIGN §4.24「请求节流」）。
+ *
+ * 进程级、只在内存：生活页与消费流水页各自建一个 [YktTurnoverSyncer]，
+ * 闸门放在同步器实例里就各算各的，等于没闸；放在这里才能让「刚在生活页同步过」
+ * 对消费流水页也生效。进程重启后重新计时，那是可接受的（用户不会一天重启几十次 App）。
+ */
+object YktSyncGate {
+
+    /** 自动同步的最小间隔：10 分钟。用户主动刷新不受限。 */
+    const val MIN_INTERVAL_MS = 10 * 60 * 1000L
+
+    @Volatile
+    private var lastSyncedAtMs = 0L
+
+    /** 这次要不要真的同步。 */
+    fun shouldSync(force: Boolean): Boolean =
+        force || System.currentTimeMillis() - lastSyncedAtMs >= MIN_INTERVAL_MS
+
+    /** 同步成功后记账（失败不记：下次进页还有机会补上）。 */
+    fun markSynced() {
+        lastSyncedAtMs = System.currentTimeMillis()
+    }
+
+    /** 清掉闸门（测试用）。 */
+    fun reset() {
+        lastSyncedAtMs = 0L
+    }
+}
+
+/**
  * 消费流水增量同步器（DESIGN §4.19 L3）。
  *
  * 策略：时间倒序翻页，**遇到已入库 `orderId` 即停**——本地已有近月数据时通常 1 页
@@ -25,12 +55,19 @@ class YktTurnoverSyncer(
     /**
      * 执行一次增量同步。[maxPages] 限制单轮页数（默认全量拉完；进页刷新可传小值）。
      * 凭证缺失返回 null（调用方静默）；网络/协议异常向上抛，由 UI 层给文案。
+     *
+     * **频率闸门（DESIGN §4.24「请求节流」）**：[force] 为 false 时，距上次成功同步不足
+     * [YktSyncGate.MIN_INTERVAL_MS] 就直接返回 null（不请求、也不改本地库）。
+     * 进页那条路传 false；用户主动刷新、到账核对、扫码消费检测一律传 true——
+     * 那几处要的就是「刚刚发生了什么」，被闸门挡掉会变成功能坏掉。
      */
     suspend fun sync(
         username: String,
         password: String,
         maxPages: Int = Int.MAX_VALUE,
+        force: Boolean = false,
     ): Result? {
+        if (!YktSyncGate.shouldSync(force)) return null
         val dao = db.yktTurnoverDao()
         val knownIds = dao.allOrderIds().toHashSet()
         var page = 1
@@ -53,6 +90,7 @@ class YktTurnoverSyncer(
             if (page >= data.pages) break // 全量拉完
             page++
         }
+        YktSyncGate.markSynced()
         return Result(fetchedPages = pages, fetchedRecords = records, stoppedEarly = stoppedEarly)
     }
 

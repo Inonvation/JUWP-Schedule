@@ -8,6 +8,7 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 /**
@@ -53,6 +54,21 @@ object AppPermissions {
     fun albumWriteGranted(context: Context): Boolean =
         albumWritePermission?.let { granted(context, it) } ?: true
 
+    /**
+     * 通知（DESIGN §3.7 上课提醒、§3.9 免费时长提醒）。**API 33+ 才有这个运行时权限**：
+     * 更低版本装上即视为已授予，对它调 `checkSelfPermission` 没有意义——所以申请方一律用
+     * [missingNotification]，别直接把它塞进 `RequestMultiplePermissions`。
+     */
+    val notification: List<String> = listOf(Manifest.permission.POST_NOTIFICATIONS)
+
+    /** 还没拿到的通知权限；API 33 以下（那时没有这个权限）恒为空表。 */
+    fun missingNotification(context: Context): List<String> =
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            emptyList()
+        } else {
+            missing(context, notification)
+        }
+
     /** 单个权限是否已授予。 */
     fun granted(context: Context, permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -93,6 +109,29 @@ object AppPermissions {
             context.startActivity(
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                     .setData(Uri.parse("package:${context.packageName}")),
+            )
+        }
+    }
+
+    /**
+     * 「通知使用权」（`NotificationListenerService`）是否已授予本应用（DESIGN §3.9 精确倒计时）。
+     *
+     * 与 [notification] 是两个完全不同的东西：那个是「本应用能不能发通知」，
+     * 这个是「本应用能不能读**别人的**通知」——后者隐私敏感度高得多，只能由用户在
+     * 系统设置里手动勾选，应用没有任何 API 能主动申请（`RequestPermission` 那种弹框不存在）。
+     */
+    fun notificationListenerGranted(context: Context): Boolean =
+        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+    /**
+     * 跳系统的「通知使用权」列表页。它是标准 Settings action，没有厂商私有坑；
+     * 用户在这一页里勾选本应用后才生效。跳不出去时静默（与 [jumpAppDetails] 同口径）。
+     */
+    fun jumpNotificationListenerSettings(context: Context) {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
     }

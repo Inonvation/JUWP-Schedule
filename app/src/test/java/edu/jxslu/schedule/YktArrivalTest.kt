@@ -88,4 +88,29 @@ class YktArrivalTest {
     fun `订单金额为 0 时不判定`() {
         assertNull(YktArrival.balanceArrival(account, 10_000L, 0L, mapOf(account to 20_000L)))
     }
+
+    // ---- 电子账户（钱包）口径（2026-09-24 补，YktArrival.walletArrival） ----
+
+    @Test
+    fun `钱包余额涨满订单金额即到账`() {
+        assertEquals(
+            15_00L,
+            YktArrival.walletArrival(balanceBeforeFen = 1_400L, orderFen = 100L, currentFen = 15_00L),
+        )
+    }
+
+    @Test
+    fun `钱包余额没动不到账`() {
+        assertNull(YktArrival.walletArrival(balanceBeforeFen = 1_400L, orderFen = 100L, currentFen = 1_400L))
+    }
+
+    @Test
+    fun `钱包余额基线缺失不判定（旧记录退流水口径）`() {
+        assertNull(YktArrival.walletArrival(balanceBeforeFen = null, orderFen = 100L, currentFen = 15_00L))
+    }
+
+    @Test
+    fun `钱包当前余额缺失不判定`() {
+        assertNull(YktArrival.walletArrival(balanceBeforeFen = 1_400L, orderFen = 100L, currentFen = null))
+    }
 }

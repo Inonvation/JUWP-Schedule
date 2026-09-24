@@ -16,16 +16,21 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -54,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -62,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.R
+import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.LifeFeedItem
 import edu.jxslu.schedule.domain.LifeFeedKind
 import edu.jxslu.schedule.ui.campus.CampusArrivalDialog
@@ -89,7 +96,6 @@ import me.rerere.hugeicons.stroke.MoneyAdd01
 import me.rerere.hugeicons.stroke.Receipt
 import me.rerere.hugeicons.stroke.Refresh01
 import me.rerere.hugeicons.stroke.Settings01
-import me.rerere.hugeicons.stroke.Exchange01
 
 /**
  * 生活页（DESIGN §3.13）：一卡通余额 / 付款码 / 寝室电费 / 充值入口 / 最近流水。
@@ -104,6 +110,8 @@ import me.rerere.hugeicons.stroke.Exchange01
 fun LifeScreen(
     /** 消费流水页（消费明细 + 月度统计） */
     onOpenStatement: () -> Unit = {},
+    /** 缴费账单页（寝室电费充值/退款按月汇总，DESIGN §3.13） */
+    onOpenPowerBill: () -> Unit = {},
     /** 全屏付款码页（付款码卡的「全屏出示」） */
     onOpenPayCode: () -> Unit = {},
     /** 一卡通设置页（凭证未开启时的「去设置开启」） */
@@ -124,6 +132,7 @@ fun LifeScreen(
     val campusEnabled by campusViewModel.enabled.collectAsStateWithLifecycle()
     val balance by campusViewModel.balance.collectAsStateWithLifecycle()
     val balanceLoaded by campusViewModel.balanceLoaded.collectAsStateWithLifecycle()
+    val balanceRefreshing by campusViewModel.balanceRefreshing.collectAsStateWithLifecycle()
     val arrival by campusViewModel.arrivalState.collectAsStateWithLifecycle()
 
     val payCodeViewModel: PayCodeViewModel = viewModel(factory = PayCodeViewModel.Factory(context))
@@ -132,17 +141,17 @@ fun LifeScreen(
     val detectedPayment by payCodeViewModel.detectedPayment.collectAsStateWithLifecycle()
 
     var showRechargeSheet by remember { mutableStateOf(false) }
-    /** 余额卡当前展示哪个钱包（DESIGN §3.10）：false = 正式卡（默认），true = 电子账户。 */
-    var showElectricBalance by rememberSaveable { mutableStateOf(false) }
     var showPowerRecharge by remember { mutableStateOf(false) }
     val powerRecharge by viewModel.powerRecharge.collectAsStateWithLifecycle()
     // 「去充值电子账户」联动：打开一卡通充值时预选电子账户（DESIGN §4.24）
     var campusRechargePreferElectric by rememberSaveable { mutableStateOf(false) }
 
-    // 进页刷新一次：电费读数 + 一卡通流水增量同步 + 一卡通余额（开关关时各自短路）
+    // 进页刷新一次：电费读数 + 一卡通流水增量同步 + 一卡通余额（开关关时各自短路）。
+    // force = false = 走缓存/闸门（DESIGN §4.24「请求节流」）：切 Tab 来回不重复打平台，
+    // 用户要看最新就点顶栏刷新或点卡片（那两处传 force = true）。
     LaunchedEffect(Unit) {
-        viewModel.refreshAll()
-        campusViewModel.refreshBalance()
+        viewModel.refreshAll(force = false)
+        campusViewModel.refreshBalance(force = false)
     }
 
     // 付款码展开期间才防截屏 + 拉满亮度：收起或离开页面立即恢复（同 §3.10 口径）
@@ -260,27 +269,31 @@ fun LifeScreen(
                 onOpenSettings = onOpenCampusSettings,
             )
 
+            // IntrinsicSize.Min：两张并排卡取较大者的内容高，矮的一张用内部 weight 弹性
+            // 补齐并把底行钉到卡片底——两卡恒等高（2026-09-24 用户反馈「高度不一样」）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
                     .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 CampusBalanceCard(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
                     enabled = campusEnabled,
                     balanceFen = balance?.cardFen,
                     accountFen = balance?.accountFen,
                     balanceLoaded = balanceLoaded,
-                    showElectric = showElectricBalance,
-                    onToggleAccount = { showElectricBalance = !showElectricBalance },
+                    balanceRefreshing = balanceRefreshing,
+                    arrivalWatching = arrival is CampusCardViewModel.ArrivalState.Watching,
+                    balance = balance,
                     onRefresh = {
                         haptics.tap()
                         campusViewModel.refreshBalance()
                     },
                 )
                 PowerCard(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
                     power = state.power,
                     onRefresh = {
                         haptics.tap()
@@ -297,7 +310,6 @@ fun LifeScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 LifeTool(Modifier.weight(1f), HugeIcons.MoneyAdd01, "一卡通充值") {
-                    haptics.tap()
                     if (campusEnabled) {
                         showRechargeSheet = true
                     } else {
@@ -305,20 +317,19 @@ fun LifeScreen(
                     }
                 }
                 LifeTool(Modifier.weight(1f), HugeIcons.Bolt, "电费充值") {
-                    haptics.tap()
                     if (campusEnabled) {
+                        // 打开弹层即重置流程并清一遍未支付单（平台不自动清，堆积会让新下单 500）
+                        viewModel.preparePowerRecharge()
                         showPowerRecharge = true
                     } else {
                         showNotice("先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning)
                     }
                 }
                 LifeTool(Modifier.weight(1f), HugeIcons.Receipt, "消费流水") {
-                    haptics.tap()
                     onOpenStatement()
                 }
                 LifeTool(Modifier.weight(1f), HugeIcons.Invoice01, "缴费账单") {
-                    haptics.tap()
-                    viewModel.openPowerBillPage { url -> openExternal(context, url, showNotice) }
+                    onOpenPowerBill()
                 }
             }
 
@@ -401,8 +412,8 @@ fun LifeScreen(
     }
 }
 
-/** 打开站外链接（缴费平台网页）；失败给一次性提示。 */
-private fun openExternal(
+/** 打开站外链接（缴费平台网页）；失败给一次性提示。同包内（缴费账单页页脚）共用。 */
+internal fun openExternal(
     context: android.content.Context,
     url: String,
     onError: (String, NoticeTone) -> Unit,
@@ -417,10 +428,12 @@ private fun openExternal(
 }
 
 /**
- * 付款码卡：**占位 → 点击取码**（DESIGN §3.13）。
+ * 付款码卡：**码位常驻、状态原地替换**（DESIGN §3.13，2026-09-24 二改）。
  *
- * 展开态与全屏付款码页同一套渲染（QR + Code128 + 信息行），只是内嵌在卡片里；
- * 折叠/离开页面即丢码，窗口里不留付款码。
+ * Idle/取码中/成功/失败四态共用同一套码位几何（[CodeSlots]，参考快趣出行码页出码位的
+ * 「固定方形占位」）：空着是描边空框 + 提示，取码是呼吸色块，出码原地换图——
+ * 任何状态切换下方内容零位移。展开态与全屏付款码页同一套渲染（QR + Code128 + 信息行），
+ * 只是内嵌在卡片里；折叠/离开页面即丢码，窗口里不留付款码。
  */
 @Composable
 private fun PaymentCodeCard(
@@ -479,82 +492,123 @@ private fun PaymentCodeCard(
                 }
             }
 
-            state is PayCodeUiState.Idle -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                        .clickable(onClick = onExpand)
-                        .padding(vertical = 26.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text("点击显示付款码", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = "出示后扫码消费",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
-            }
+            else -> {
+                // 四态（Idle/取码中/成功/失败）**共用同一套码位几何**（2026-09-24 二改，
+                // 用户反馈「预设占用位置太低」）：参考快趣出行码页出码位的口径——
+                // 码位常驻、尺寸用 aspectRatio 占死，空着时是描边空框，出码原地替换，
+                // 任何状态切换下面的卡片都不动。按钮行常显，不可用即置灰（同出码页）。
+                CodeSlots(
+                    qrContent = {
+                        when {
+                            state is PayCodeUiState.Success && bitmaps != null ->
+                                Image(
+                                    bitmap = bitmaps.qr.asImageBitmap(),
+                                    contentDescription = "校园卡付款码二维码",
+                                    modifier = Modifier.fillMaxSize(),
+                                )
 
-            state is PayCodeUiState.Loading -> CodeSkeleton()
+                            state is PayCodeUiState.Loading ||
+                                (state is PayCodeUiState.Success && bitmaps == null) -> ShimmerBox(
+                                RoundedCornerShape(12.dp),
+                            )
 
-            state is PayCodeUiState.Error -> Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = state.message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
-                )
-                if (state.canRetry) OutlinedButton(onClick = onExpand) { Text("重试") }
-            }
+                            state is PayCodeUiState.Error -> Text(
+                                text = state.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp)
+                                    .wrapContentSize(Alignment.Center),
+                            )
 
-            state is PayCodeUiState.Success -> {
-                if (bitmaps == null) {
-                    CodeSkeleton()
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Image(
-                            bitmap = bitmaps.qr.asImageBitmap(),
-                            contentDescription = "校园卡付款码二维码",
-                            modifier = Modifier
-                                .fillMaxWidth(0.62f)
-                                .clip(RoundedCornerShape(12.dp)),
-                        )
-                        Image(
-                            bitmap = bitmaps.barcode.asImageBitmap(),
-                            contentDescription = "校园卡付款码条形码",
-                            modifier = Modifier
-                                .fillMaxWidth(0.62f)
-                                .clip(RoundedCornerShape(6.dp)),
-                        )
-                        Text(
-                            text = "${state.accountMasked} · 第 ${state.index + 1}/${state.codes.size} 个 · " +
-                                "约 ${state.expiresSeconds / 3600} 小时内有效",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = onNext) { Text("换下一个") }
-                            OutlinedButton(onClick = onFullScreen) { Text("全屏出示") }
-                            OutlinedButton(onClick = onCollapse) { Text("收起") }
+                            else -> Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Icon(
+                                    HugeIcons.CreditCard,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "点击显示付款码",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "出示后扫码消费",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                )
+                            }
                         }
-                    }
-                }
+                    },
+                    barcodeContent = {
+                        when {
+                            state is PayCodeUiState.Success && bitmaps != null ->
+                                Image(
+                                    bitmap = bitmaps.barcode.asImageBitmap(),
+                                    contentDescription = "校园卡付款码条形码",
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+
+                            state is PayCodeUiState.Loading ||
+                                (state is PayCodeUiState.Success && bitmaps == null) -> ShimmerBox(
+                                RoundedCornerShape(6.dp),
+                            )
+
+                            else -> Box(Modifier.fillMaxSize())
+                        }
+                    },
+                    infoText = when {
+                        state is PayCodeUiState.Success ->
+                            "${state.accountMasked} · 第 ${state.index + 1}/${state.codes.size} 个 · " +
+                                "约 ${state.expiresSeconds / 3600} 小时内有效"
+                        state is PayCodeUiState.Loading -> "正在登录一卡通并取码…"
+                        state is PayCodeUiState.Error -> "出码失败"
+                        else -> "出示后扫码消费"
+                    },
+                    infoShimmer = state is PayCodeUiState.Loading ||
+                        (state is PayCodeUiState.Success && bitmaps == null),
+                    // 空框在 Idle 态整块可点；错误态点框重试（canRetry 时），其余不响应
+                    onSlotClick = when {
+                        state is PayCodeUiState.Idle -> onExpand
+                        state is PayCodeUiState.Error && state.canRetry -> onExpand
+                        else -> null
+                    },
+                    buttons = {
+                        when {
+                            state is PayCodeUiState.Success -> {
+                                OutlinedButton(onClick = onNext) { Text("换下一个") }
+                                OutlinedButton(onClick = onFullScreen) { Text("全屏出示") }
+                                OutlinedButton(onClick = onCollapse) { Text("收起") }
+                            }
+
+                            state is PayCodeUiState.Error && state.canRetry -> {
+                                OutlinedButton(onClick = onExpand) { Text("重试") }
+                                OutlinedButton(enabled = false, onClick = {}) { Text("全屏出示") }
+                                OutlinedButton(enabled = false, onClick = {}) { Text("收起") }
+                            }
+
+                            state is PayCodeUiState.Loading ||
+                                (state is PayCodeUiState.Success && bitmaps == null) -> {
+                                OutlinedButton(enabled = false, onClick = {}) { Text("换下一个") }
+                                OutlinedButton(enabled = false, onClick = {}) { Text("全屏出示") }
+                                OutlinedButton(enabled = false, onClick = {}) { Text("收起") }
+                            }
+
+                            else -> {
+                                OutlinedButton(enabled = false, onClick = {}) { Text("换下一个") }
+                                OutlinedButton(onClick = onFullScreen) { Text("全屏出示") }
+                                OutlinedButton(enabled = false, onClick = {}) { Text("收起") }
+                            }
+                        }
+                    },
+                )
             }
         }
 
@@ -572,9 +626,88 @@ private fun PaymentCodeCard(
     }
 }
 
-/** 取码骨架：与成功态同布局（方图 + 条码条 + 文本行），渲染完成零位移替换。 */
+/**
+ * 码位四件套（QR 空框/码图 + 条码 + 信息行 + 按钮行）：**全状态共用，几何恒定**。
+ *
+ * QR 位 = `aspectRatio(1f)`（码图 720×720）、条码位 = `aspectRatio(6f)`（720×120），
+ * 空态是描边空框 + 提示，出码原地替换——参考快趣出行码页出码位的「固定方形占位」口径，
+ * 状态切换时下方内容零位移（2026-09-24 用户反馈「预设占用位置太低」的根治）。
+ *
+ * [onSlotClick] 非 null 时两个码位 + 信息行整体可点（Idle 展开 / 失败重试）。
+ * [buttons] 恒渲染三枚按钮位（不足的用置灰按钮占位），行高不变。
+ */
 @Composable
-private fun CodeSkeleton() {
+private fun CodeSlots(
+    qrContent: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
+    barcodeContent: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
+    infoText: String,
+    infoShimmer: Boolean,
+    onSlotClick: (() -> Unit)?,
+    buttons: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    val haptics = rememberAppHaptics()
+    val clickable = if (onSlotClick == null) {
+        Modifier
+    } else {
+        Modifier.clickable(onClickLabel = "出示付款码") {
+            haptics.tap()
+            onSlotClick()
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .then(clickable),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.62f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant,
+                    RoundedCornerShape(12.dp),
+                ),
+            content = qrContent,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.62f)
+                .aspectRatio(6f)
+                .clip(RoundedCornerShape(6.dp))
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant,
+                    RoundedCornerShape(6.dp),
+                ),
+            content = barcodeContent,
+        )
+        if (infoShimmer) {
+            ShimmerBox(
+                RoundedCornerShape(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth(0.5f)
+                    .height(16.dp),
+            )
+        } else {
+            Text(
+                text = infoText,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = buttons)
+    }
+}
+
+/** 取码加载中的呼吸色块（配合 [CodeSlots] 占位，颜色随主题前景色呼吸）。 */
+@Composable
+private fun ShimmerBox(shape: RoundedCornerShape, modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "lifeCodeSkeleton")
     val alpha by transition.animateFloat(
         initialValue = 0.25f,
@@ -582,48 +715,19 @@ private fun CodeSkeleton() {
         animationSpec = infiniteRepeatable(tween(durationMillis = 700), RepeatMode.Reverse),
         label = "lifeCodeSkeletonAlpha",
     )
-    val shimmer = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.62f)
-                .height(180.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(shimmer),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.62f)
-                .height(46.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(shimmer),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.5f)
-                .height(12.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(shimmer),
-        )
-        Text(
-            text = "正在登录一卡通并取码…",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        )
-    }
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)),
+    )
 }
 
 /**
  * 一卡通余额卡：点卡片刷新；未开启凭证时给缺口文案。
  *
- * 流水入口只在「常用」格里留一个（2026-09-23 收口）：这一页原先有余额卡「流水 ›」、
- * 常用格「消费流水」、列表尾「全部流水 ›」三处入口，用户明确要求只留一个。
+ * 底行（2026-09-24 改）：余额下写「电子账户余额」；有更新时刻时底行显示
+ * 「HH:mm 更新 · 实际费用更新有延迟」，无时刻回退状态文字。
+ * 卡片本体可点刷新不变；流水入口只在「常用」格里留一个（2026-09-23 收口）。
  */
 @Composable
 private fun CampusBalanceCard(
@@ -632,9 +736,12 @@ private fun CampusBalanceCard(
     balanceFen: Long?,
     accountFen: Long?,
     balanceLoaded: Boolean,
-    /** true = 当前展示电子账户（点卡片标签切换；展示不影响点卡片刷新）。 */
-    showElectric: Boolean,
-    onToggleAccount: () -> Unit,
+    /** 余额查询进行中（点卡片 / 进页 / 下拉刷新）。 */
+    balanceRefreshing: Boolean,
+    /** 有充值订单在等待确认到账（[CampusCardViewModel.ArrivalState.Watching]）。 */
+    arrivalWatching: Boolean,
+    /** 余额快照（取 fetchedAtMs 当更新时间；null = 还没取到）。 */
+    balance: PayCodeViewModel.BalanceSnapshot?,
     onRefresh: () -> Unit,
 ) {
     AppCard(modifier = modifier, onClick = onRefresh) {
@@ -647,13 +754,12 @@ private fun CampusBalanceCard(
             )
             Spacer(Modifier.size(6.dp))
             Text(
-                text = if (showElectric) "电子账户" else "一卡通",
+                text = "一卡通",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             )
         }
         Spacer(Modifier.height(6.dp))
-        val shownFen = if (showElectric) accountFen else balanceFen
         when {
             !enabled -> {
                 Text("—", style = MaterialTheme.typography.headlineSmall)
@@ -664,10 +770,10 @@ private fun CampusBalanceCard(
                 )
             }
 
-            shownFen == null -> {
+            balanceFen == null -> {
                 Text("—", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    text = if (balanceLoaded) "点卡片刷新" else "读取中…",
+                    text = if (balanceLoaded) "余额暂不可用" else "读取中…",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
@@ -675,37 +781,32 @@ private fun CampusBalanceCard(
 
             else -> {
                 Text(
-                    text = "¥%.2f".format(shownFen / 100.0),
+                    text = "¥%.2f".format(balanceFen / 100.0),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (showElectric) "用于电费等线上缴费" else "食堂 · 门禁 · 消费",
+                    text = "电子账户 ¥%.2f".format((accountFen ?: 0L) / 100.0),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = if (enabled) "点卡片刷新" else "去设置开启",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.weight(1f),
-            )
-            // 钱包切换（DESIGN §3.10）：右下角切换图标，点它换显示正式卡/电子账户
-            if (enabled && accountFen != null) {
-                Icon(
-                    imageVector = HugeIcons.Exchange01,
-                    contentDescription = if (showElectric) "切换到一卡通余额" else "切换到电子账户余额",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .clickable(onClick = onToggleAccount),
-                )
-            }
-        }
+        // 弹性空隙：卡片被旁边更高的电费卡拉高时，把底行钉到卡片底
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = when {
+                !enabled -> "去设置开启"
+                arrivalWatching -> "有充值正在确认到账…"
+                balanceRefreshing -> "正在查询余额…"
+                balance != null -> "%s 更新 · 实际费用更新有延迟".format(formatTime(balance.fetchedAtMs))
+                else -> ""
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -763,9 +864,13 @@ private fun PowerCard(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
+                // 「元」的换算只有一处口径（domain/BalanceAlert.remainingYuan，余额提醒共用）：
+                // 电量或单价缺失就只报电量字段，不折算金额
+                val unitPrice = pricePerUnit
+                val remainYuan = BalanceAlert.remainingYuan(meter.remain, unitPrice)
                 Text(
-                    text = if (pricePerUnit != null) {
-                        "≈ ¥%.2f · %.2f 元/度".format(meter.remain * pricePerUnit, pricePerUnit)
+                    text = if (remainYuan != null && unitPrice != null) {
+                        "≈ ¥%.2f · %.2f 元/度".format(remainYuan, unitPrice)
                     } else {
                         meter.remainField.orEmpty()
                     },
@@ -800,13 +905,14 @@ private fun PowerCard(
                 )
             }
         }
-        Spacer(Modifier.height(6.dp))
+        // 弹性空隙：与旁边的一卡通余额卡等高时，把底行钉到卡片底（同 IntrinsicSize 方案）
+        Spacer(Modifier.weight(1f))
         Text(
             text = when {
                 power.noCredentials -> "去设置开启"
                 power.error != null && meter != null ->
                     "上次 %.2f 度 · %s".format(meter.remain ?: 0.0, formatTime(meter.fetchedAtMs))
-                meter != null -> "%s 更新".format(formatTime(meter.fetchedAtMs))
+                meter != null -> "%s 更新 · 实际费用更新有延迟".format(formatTime(meter.fetchedAtMs))
                 else -> "点卡片刷新"
             },
             style = MaterialTheme.typography.labelSmall,

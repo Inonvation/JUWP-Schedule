@@ -50,6 +50,8 @@ data class EbikePrefsSnapshot(
     val freeLeadMinutes: Int = EbikeFreeRide.DEFAULT_LEAD_MINUTES,
     /** 本次骑行计时起点（epoch 毫秒）；0 = 无进行中计时。 */
     val rideStartAt: Long = 0L,
+    /** 「精确倒计时」开关（DESIGN §3.9）：识别微信租车成功通知校准起点，默认关。 */
+    val preciseCountdownEnabled: Boolean = false,
 )
 
 sealed interface EbikeEvent {
@@ -74,7 +76,7 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
     private val _events = Channel<EbikeEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    /** 骑行相关偏好（卡开关不归本页管，其余在本页用）。免费提醒三个流合进快照。 */
+    /** 骑行相关偏好（卡开关不归本页管，其余在本页用）。免费提醒四个流合进快照。 */
     val ebikePrefs: StateFlow<EbikePrefsSnapshot> = combine(
         prefs.ebikeAutoSave,
         prefs.ebikeBurnAfterScan,
@@ -83,6 +85,7 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
         prefs.ebikeFreeReminderEnabled,
         prefs.ebikeFreeLeadMinutes,
         prefs.ebikeRideStartAt,
+        prefs.ebikePreciseCountdownEnabled,
     ) { array ->
         val autoSave = array[0] as Boolean
         val burnAfterScan = array[1] as Boolean
@@ -92,6 +95,7 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
         val freeEnabled = array[4] as Boolean
         val freeLead = array[5] as Int
         val rideStartAt = array[6] as Long
+        val preciseEnabled = array[7] as Boolean
         EbikePrefsSnapshot(
             autoSave = autoSave,
             burnAfterScan = burnAfterScan,
@@ -100,24 +104,25 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
             freeReminderEnabled = freeEnabled,
             freeLeadMinutes = freeLead,
             rideStartAt = rideStartAt,
+            preciseCountdownEnabled = preciseEnabled,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, EbikePrefsSnapshot())
 
-    /** 免费提醒设置变更（开关/提前量）→ 重建或撤销日历事件。 */
+    /** 免费提醒设置变更（开关/提前量）→ 重算：补发该发的、重排闹钟、起停服务。 */
     fun onFreeReminderChanged() {
         viewModelScope.launch {
-            emitCalendarNotice(EbikeFreeRideReminder.reschedule(Graph.appContext))
+            emitReminderNotice(EbikeFreeRideReminder.check(Graph.appContext))
         }
     }
 
-    /** 日历权限授予后的续跑：把进行中的计时补写进日历（开关开着才写）。 */
-    fun onCalendarPermissionGranted() {
+    /** 通知权限授予后的续跑：把进行中的计时的常驻倒计时与提醒补上（开关开着才做）。 */
+    fun onReminderPermissionGranted() {
         viewModelScope.launch {
-            emitCalendarNotice(EbikeFreeRideReminder.check(Graph.appContext))
+            emitReminderNotice(EbikeFreeRideReminder.check(Graph.appContext))
         }
     }
 
-    /** 点「打开微信扫一扫」：记起点 + 写日历提醒（换车再点一次 = 重新计时）。 */
+    /** 点「打开微信扫一扫」：记起点 + 起常驻倒计时 + 排两个精确提醒（换车再点 = 重新计时）。 */
     fun onWechatScanClicked() {
         viewModelScope.launch {
             val outcome = EbikeFreeRideReminder.startRide(
@@ -126,53 +131,49 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
             )
             _events.send(
                 when (outcome) {
-                    EbikeFreeRideReminder.Outcome.Written ->
-                        EbikeEvent.Notice("已开始计时，日历提醒已写入", NoticeTone.Success)
-                    EbikeFreeRideReminder.Outcome.NoPermission ->
-                        EbikeEvent.Notice("已开始计时；没有日历权限，这次不会提醒", NoticeTone.Warning)
-                    EbikeFreeRideReminder.Outcome.NoCalendarAccount ->
-                        EbikeEvent.Notice("已开始计时；手机上没有可写日历账户，这次不会提醒", NoticeTone.Warning)
-                    is EbikeFreeRideReminder.Outcome.Failed ->
-                        EbikeEvent.Notice("已开始计时；写日历失败：${outcome.message}", NoticeTone.Warning)
-                    else ->
+                    EbikeFreeRideReminder.Outcome.Started ->
+                        EbikeEvent.Notice("已开始计时，通知栏已显示倒计时", NoticeTone.Success)
+                    EbikeFreeRideReminder.Outcome.StartedNoNotification ->
+                        EbikeEvent.Notice("已开始计时；通知被关闭，提醒发不出来，请到系统设置打开", NoticeTone.Warning)
+                    EbikeFreeRideReminder.Outcome.StartedSilent ->
                         EbikeEvent.Notice("已开始计时（免费时长提醒未开启）", NoticeTone.Info)
+                    is EbikeFreeRideReminder.Outcome.Failed ->
+                        EbikeEvent.Notice("已开始计时；提醒排程失败：${outcome.message}", NoticeTone.Warning)
+                    else ->
+                        EbikeEvent.Notice("已开始计时", NoticeTone.Info)
                 },
             )
         }
     }
 
-    /** 结束骑行：清起点、删日历事件。 */
+    /** 结束骑行：清起点、撤闹钟、停常驻倒计时、清通知栏上的提醒。 */
     fun onEndRide() {
         viewModelScope.launch {
             val outcome = EbikeFreeRideReminder.endRide(Graph.appContext)
             _events.send(
                 when (outcome) {
-                    EbikeFreeRideReminder.Outcome.Removed ->
-                        EbikeEvent.Notice("已结束骑行，日历提醒已删除", NoticeTone.Info)
-                    EbikeFreeRideReminder.Outcome.NoPermission ->
-                        EbikeEvent.Notice("已结束骑行；没有日历权限，日历里的提醒没能删掉", NoticeTone.Warning)
                     is EbikeFreeRideReminder.Outcome.Failed ->
-                        EbikeEvent.Notice("已结束骑行；删日历提醒失败：${outcome.message}", NoticeTone.Warning)
+                        EbikeEvent.Notice("已结束骑行；提醒清理失败：${outcome.message}", NoticeTone.Warning)
                     else -> EbikeEvent.Notice("已结束骑行", NoticeTone.Info)
                 },
             )
         }
     }
 
-    /** 日历类动作的结果 → 一次性提示；[EbikeFreeRideReminder.Outcome.None] 不出声。 */
-    private suspend fun emitCalendarNotice(outcome: EbikeFreeRideReminder.Outcome) {
+    /** 提醒类动作的结果 → 一次性提示；[EbikeFreeRideReminder.Outcome.Nothing] 不出声。 */
+    private suspend fun emitReminderNotice(outcome: EbikeFreeRideReminder.Outcome) {
         val notice = when (outcome) {
-            EbikeFreeRideReminder.Outcome.Written ->
-                EbikeEvent.Notice("日历提醒已写入", NoticeTone.Success)
-            EbikeFreeRideReminder.Outcome.Removed ->
-                EbikeEvent.Notice("日历里的免费时长提醒已删除", NoticeTone.Info)
-            EbikeFreeRideReminder.Outcome.NoPermission ->
-                EbikeEvent.Notice("没有日历权限，未写入日历提醒", NoticeTone.Warning)
-            EbikeFreeRideReminder.Outcome.NoCalendarAccount ->
-                EbikeEvent.Notice("手机上没有可写日历账户，未写入日历提醒", NoticeTone.Warning)
+            EbikeFreeRideReminder.Outcome.Started ->
+                EbikeEvent.Notice("免费时长提醒已生效", NoticeTone.Success)
+            EbikeFreeRideReminder.Outcome.StartedNoNotification ->
+                EbikeEvent.Notice("通知被关闭，免费时长提醒发不出来", NoticeTone.Warning)
+            EbikeFreeRideReminder.Outcome.StartedSilent ->
+                EbikeEvent.Notice("免费时长提醒已关闭", NoticeTone.Info)
+            EbikeFreeRideReminder.Outcome.Ended ->
+                EbikeEvent.Notice("已清空免费时长提醒", NoticeTone.Info)
             is EbikeFreeRideReminder.Outcome.Failed ->
-                EbikeEvent.Notice("写系统日历失败：${outcome.message}", NoticeTone.Warning)
-            EbikeFreeRideReminder.Outcome.None -> null
+                EbikeEvent.Notice("提醒排程失败：${outcome.message}", NoticeTone.Warning)
+            EbikeFreeRideReminder.Outcome.Nothing -> null
         }
         notice?.let { _events.send(it) }
     }

@@ -2,7 +2,6 @@ package edu.jxslu.schedule
 
 import android.content.Context
 import edu.jxslu.schedule.data.local.JuwDatabase
-import edu.jxslu.schedule.data.jw.JwCredentialStore
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
 import edu.jxslu.schedule.data.power.PowerClient
 import edu.jxslu.schedule.data.power.PowerRepository
@@ -16,6 +15,8 @@ import edu.jxslu.schedule.data.repo.NoteRepository
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.repo.ScoreRepository
+import edu.jxslu.schedule.data.jw.TranscriptClient
+import edu.jxslu.schedule.data.repo.TranscriptStore
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktRepository
@@ -46,9 +47,6 @@ object Graph {
     private var scheduleBackgroundStore: ScheduleBackgroundStore? = null
 
     @Volatile
-    private var jwCredentialStore: JwCredentialStore? = null
-
-    @Volatile
     private var yktCredentialStore: YktCredentialStore? = null
 
     @Volatile
@@ -60,17 +58,17 @@ object Graph {
     @Volatile
     private var powerRepository: PowerRepository? = null
 
+    @Volatile
+    private var transcriptClient: TranscriptClient? = null
+
+    @Volatile
+    private var transcriptStore: TranscriptStore? = null
+
     /** 进程级 applicationContext（后台协程里落盘等场景复用，免 Activity 引用泄漏）。 */
     val appContext: Context by lazy { contextProvider() }
 
     /** 由 [JuwApplication.onCreate] 注入；首次访问早于注入说明时序有问题，直接抛错暴露。 */
     internal lateinit var contextProvider: () -> Context
-
-    /** 教务登录凭证存储单例（DESIGN §4.17）：EncryptedSharedPreferences 创建有开销，进程内一份。 */
-    fun jwCredentialStore(context: Context): JwCredentialStore =
-        jwCredentialStore ?: synchronized(this) {
-            jwCredentialStore ?: JwCredentialStore(context.applicationContext).also { jwCredentialStore = it }
-        }
 
     /** 显示偏好用 applicationContext 建，保证与 Activity 生命周期无关。 */
     fun displayPrefs(context: Context): DisplayPrefsStore =
@@ -157,5 +155,23 @@ object Graph {
     fun powerRepository(context: Context): PowerRepository =
         powerRepository ?: synchronized(this) {
             powerRepository ?: PowerRepository(PowerClient.create()).also { powerRepository = it }
+        }
+
+    /**
+     * 成绩单导出客户端单例（DESIGN §4.25）：OkHttp 连接池只建一次。
+     *
+     * 不需要 Context，也没有凭证字段——会话 Cookie 每次由调用方从 WebView 的
+     * CookieManager 现取（[edu.jxslu.schedule.data.jw.TranscriptCookies]），
+     * 这个单例里不驻留任何用户身份。
+     */
+    fun transcriptClient(): TranscriptClient =
+        transcriptClient ?: synchronized(this) {
+            transcriptClient ?: TranscriptClient().also { transcriptClient = it }
+        }
+
+    /** 导出成绩单的落盘单例（DESIGN §4.25）：应用私有目录 transcripts，只留最近 10 份。 */
+    fun transcriptStore(context: Context): TranscriptStore =
+        transcriptStore ?: synchronized(this) {
+            transcriptStore ?: TranscriptStore(context.applicationContext).also { transcriptStore = it }
         }
 }

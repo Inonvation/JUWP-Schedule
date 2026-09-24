@@ -163,7 +163,7 @@ fun SettingsScreen(
                 )
                 SettingItem(
                     title = "扩展服务",
-                    subtitle = "快捷方式 · 出行码 · 一卡通 · 开水",
+                    subtitle = "宿舍报修 · 快捷方式 · 出行码 · 一卡通 · 开水",
                     icon = HugeIcons.CreditCard,
                     onClick = onOpenExtensionServices,
                 )

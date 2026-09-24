@@ -172,6 +172,20 @@ object PowerModels {
     }
 
     /**
+     * 未支付订单（`GET /charge/order/personal_data?paystatus=0` 的 `orderList`，
+     * 2026-09-24 实测）→ 订单号列表。只留删除所需字段；脏数据静默跳过。
+     */
+    fun parsePendingOrderIds(raw: String): List<String> {
+        val list = root(raw)?.get("orderList")?.jsonArrayOrNull().orEmpty()
+        return list.mapNotNull { element ->
+            val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
+            val id = asString(obj["orderid"]) ?: return@mapNotNull null
+            val status = obj["status"]?.let { asInt(it) } ?: return@mapNotNull null
+            if (status == 0) id else null
+        }
+    }
+
+    /**
      * `sceneinfo` 解析：`campus:0#南昌工程学院;building:0#9A;room:14600#9A101`。
      * 名字里的校区是学校旧名（南昌工程学院），房间名以读数返回的 `data` 为准。
      */

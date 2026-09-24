@@ -154,39 +154,10 @@ data class SemesterConfigEntity(
 }
 
 /**
- * 调课自动检测的教务基线快照（DESIGN §4.17）：每课表一份。
- *
- * 基线 = 上次「教务数据成为本地数据」时刻的教务原始数据（理论 + 实验全量 JSON）。
- * 刷新时机只有两个：教务导入确认落库后、应用检测报告后——用户调课/编辑**不**刷新，
- * 这是三方合并能区分「教务改课」与「用户自己调课」的全部前提。
+ * 调课自动检测的两张表（`detect_baselines`/`detect_reports`）已随功能移除（2026-09-24，
+ * v10 迁移 DROP TABLE）。实体与 DAO 一并删除；`MIGRATION_4_5` 的建表语句保留——
+ * 迁移链不可断，v4 用户仍需先建表再被 v10 删掉。
  */
-@Entity(tableName = "detect_baselines", primaryKeys = ["timetableId"])
-data class DetectBaselineEntity(
-    val timetableId: Long,
-    /** 建基线时的教务学期（xnxq01id 口径）；检测时与教务当前学期比对，换学期提示重建。 */
-    val term: String,
-    /** [edu.jxslu.schedule.domain.DetectSnapshotPayload] 的 JSON。 */
-    val payload: String,
-    val updatedAt: Long,
-)
-
-/**
- * 调课自动检测的最新差异报告（DESIGN §4.17）：每课表只留一份。
- * `unread` 驱动课表页导入图标的气泡与导入弹层里的「检测课表更新」；应用/忽略后置 0。
- */
-@Entity(tableName = "detect_reports", primaryKeys = ["timetableId"])
-data class DetectReportEntity(
-    val timetableId: Long,
-    /** [edu.jxslu.schedule.domain.DetectReportPayload] 的 JSON（含差异组与教务全量快照）。 */
-    val payload: String,
-    val unread: Boolean,
-    val updatedAt: Long,
-) {
-    companion object {
-        fun unread(timetableId: Long, payload: String, now: Long) =
-            DetectReportEntity(timetableId, payload, unread = true, updatedAt = now)
-    }
-}
 
 class Converters {
     @TypeConverter

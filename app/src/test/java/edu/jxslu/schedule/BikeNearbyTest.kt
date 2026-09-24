@@ -335,6 +335,23 @@ class BikeNearbyTest {
     }
 
     @Test
+    fun `电量低于20才算特殊标注档`() {
+        assertTrue(ok(response(car(battery = "19.9"))).first().batteryLowBadge)
+        assertFalse(ok(response(car(battery = "20.0"))).first().batteryLowBadge)
+        // 30 档只管数字着色，不带图标标签
+        val twentyFive = ok(response(car(battery = "25.0"))).first()
+        assertTrue(twentyFive.batteryLow)
+        assertFalse(twentyFive.batteryLowBadge)
+        // 缺电量数据不标：缺数据不该变成警告（与 batteryLow 同一容错口径）
+        val raw = """{"errorCode":0,"result":{"carList":[
+            {"carNum":"100000652","lat":28.6883209,"lng":116.0284657,
+             "onlineStatus":1,"status":1}
+        ]}}"""
+        val unknown = ok(raw).first()
+        assertFalse(unknown.batteryLowBadge)
+    }
+
+    @Test
     fun `电量未知不算偏低`() {
         val raw = """{"errorCode":0,"result":{"carList":[
             {"carNum":"100000652","lat":28.6883209,"lng":116.0284657,

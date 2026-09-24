@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 暴露范围（DESIGN §4.25）。
+     只开导出成绩单的目录：成绩单含姓名学号证件照，分享/打开都走临时授权的内容 Uri，
+     不给 FileProvider 任何多余的根（多一个根就多一份被别的应用读到的可能）。 -->
+<paths>
+    <files-path
+        name="transcripts"
+        path="transcripts/" />
+</paths>

@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.ui.widget
 
 import android.content.Context
+import android.content.Intent
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 
@@ -22,5 +23,20 @@ class ScheduleWidgetReceiver : GlanceAppWidgetReceiver() {
         super.onEnabled(context)
         TodayWidgetRefresh.ensurePeriodicWork(context)
         TodayWidgetRefresh.enqueueRefresh(context)
+    }
+
+    /**
+     * 开机补排：重启后 AlarmManager 排的边界闹钟全部丢失，WorkManager 的周期任务还在
+     * 但最长要 15 分钟才把进程拉起来，期间小组件不按上下课时刻精确换。这里补一次刷新
+     * （refreshNow 内部会重排边界闹钟 + 重建周期任务），与上课提醒的
+     * `ReminderBootReceiver` 同一手法。没有实例绑在桌面时是廉价空跑（getGlanceIds 为空
+     * 直接 return）。
+     */
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            TodayWidgetRefresh.enqueueRefresh(context)
+        } else {
+            super.onReceive(context, intent)
+        }
     }
 }

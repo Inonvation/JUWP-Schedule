@@ -3,8 +3,10 @@ package edu.jxslu.schedule
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.AnimatedVisibility
@@ -57,6 +59,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -73,6 +77,7 @@ import edu.jxslu.schedule.ui.water.WaterViewModel
 import edu.jxslu.schedule.ui.week.WeekScreen
 import edu.jxslu.schedule.ui.week.ScheduleBackgroundLayer
 import edu.jxslu.schedule.domain.BgScale
+import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Calendar01
@@ -174,6 +179,9 @@ internal const val EXTRA_ROUTE = "edu.jxslu.schedule.extra.ROUTE"
 /** [EXTRA_ROUTE] 的取值：课表 Tab。 */
 internal const val ROUTE_WEEK = "week"
 
+/** [EXTRA_ROUTE] 的取值：生活 Tab（余额提醒通知的落点，DESIGN §3.10 / §3.13）。 */
+internal const val ROUTE_LIFE = "life"
+
 /**
  * 主题在根上解析：深浅色由显示偏好里的 [ThemeMode] 决定（默认跟随系统），
  * 强制浅/深时忽略系统设置。放在 setContent 最外层，全 App（含弹层）统一生效。
@@ -192,6 +200,48 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
     JuwTheme(darkTheme = darkTheme, dynamicColor = prefs?.dynamicColor ?: true) {
         content()
     }
+}
+
+/**
+ * 启动期冻结的底栏形态（悬浮导航栏开关，DESIGN §4.22）。
+ *
+ * 首帧前同步读 DataStore 一次并缓存为进程常量：悬浮/普通两套底栏的
+ * Scaffold 几何完全不同，跟着 Flow 在启动中变会让用户先看到普通底栏
+ * 再跳成悬浮（2026-09-24 用户反馈的割裂感）。因此形态**重启生效**：
+ * 运行中切开关只写偏好，当前会话不再改 UI，通用设置页会提示重启。
+ */
+private var floatingNavBarEffective: Boolean? = null
+
+private fun resolveFloatingNavBarBlocking(): Boolean = runBlocking {
+    Graph.displayPrefs(Graph.appContext).floatingNavBar.first()
+}
+
+/**
+ * 解析启动页（通用设置 → 启动页，DESIGN §3.3）。
+ *
+ * 调用点用 `remember {}` 把它按**窗口**读死一次（不是进程级 var）：`NavHost` 的
+ * `startDestination` 跟着 Flow 中途变，Compose Navigation 会重建整张导航图
+ * （`remember(route, startDestination, builder)` 的 key 变了），用户会被弹回起点；
+ * 而挂 `remember` 的好处是重开窗口就取当时的偏好，进程还活着但窗口被重建的情况
+ * （退回桌面再来、从最近任务划掉重进）也能立刻生效——比悬浮导航栏那个进程级
+ * [floatingNavBarEffective] 更贴合「启动页」的语义。
+ *
+ * 生活页关掉时落回今日页：那一项在设置里已经不显示（§3.13），再落在没有入口的
+ * Tab 上用户连怎么返回都找不到。判据与设置页选中态共用 [StartPage.effectivePage]。
+ */
+private fun resolveStartRouteBlocking(): String = runBlocking {
+    val store = Graph.displayPrefs(Graph.appContext)
+    val stored = store.startPage.first()
+    val lifeTabEnabled = store.lifeTabEnabled.first()
+    StartPage.effectivePage(stored, lifeTabEnabled).route()
+}
+
+/** [StartPage] → 导航路由。路由字符串仍只由 [Routes] 定义，这里不重复字面量。 */
+private fun StartPage.route(): String = when (this) {
+    StartPage.Today -> Routes.TODAY
+    StartPage.Week -> Routes.WEEK
+    StartPage.Life -> Routes.LIFE
+    StartPage.Me -> Routes.ME
 }
 
 private data class BottomTab(
@@ -377,12 +427,17 @@ internal fun JuwApp(
     val navController = rememberNavController()
     val haptics = rememberAppHaptics()
 
-    // 小组件网格区点击 → 切到课表 Tab（DESIGN §3.6）。跳转后消费掉 extra，
-    // 否则每次重组/返回都会把用户弹回课表。
+    // 小组件网格区点击 → 切到课表 Tab；余额提醒通知 → 切到生活 Tab（DESIGN §3.6 / §3.10）。
+    // 跳转后消费掉 extra，否则每次重组/返回都会把用户弹回那个 Tab。
+    //
+    // 判据写成「route 等于某个非空常量」而不是先算出目标再判空：Kotlin 的智能转换
+    // 只有在这种形态下才认得出 `pendingRoute` 非空（`pendingRoute?.value` 非空 ⇒ 它非空），
+    // 换成 `val target = when(route){…}` 再判 target 就会编译不过（2026-09-24 实测）。
     val route = pendingRoute?.value
     LaunchedEffect(route) {
-        if (route == ROUTE_WEEK) {
-            navController.navigate(Routes.WEEK) {
+        if (route == ROUTE_WEEK || route == ROUTE_LIFE) {
+            val target = if (route == ROUTE_WEEK) Routes.WEEK else Routes.LIFE
+            navController.navigate(target) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
                 restoreState = true
@@ -420,11 +475,31 @@ internal fun JuwApp(
     // 同一个 DataStore 流多一个订阅者只是多一次 map，不产生额外磁盘读。
     val displayPrefs by remember { Graph.repository(context).displayPrefs }
         .collectAsStateWithLifecycle(initialValue = null)
-    val floatingNavBar = displayPrefs?.floatingNavBar == true
+
+    // 悬浮导航栏：只用启动期冻结的那份（见 floatingNavBarEffective 的 KDoc）。
+    // displayPrefs 流仍订阅着背景图/生活页开关等运行时可变项，别顺手把这里改回它。
+    val floatingNavBar = floatingNavBarEffective ?: resolveFloatingNavBarBlocking()
+        .also { floatingNavBarEffective = it }
+
+    // 启动页（DESIGN §3.3）：按窗口读死一次（见 resolveStartRouteBlocking 的 KDoc）——
+    // NavHost 的 startDestination 中途变会把用户弹回起点，改完由设置页提示重启生效。
+    val startRoute = remember { resolveStartRouteBlocking() }
 
     // 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。
     // 未读出（首帧 null）按开处理——宁可先显示再收起，也别让底栏先少一项再补上。
     val lifeTabEnabled = displayPrefs?.lifeTabEnabled ?: true
+
+    // 今日页 → 附近单车地图（2026-09-24）：要拿「选中的车号」回传——地图选车后先收起，
+    // 这里接住车号再开出码页（车号走 SubpageRequest.focusItemId，进页即出码）。
+    // 普通 startActivity 收不到结果，必须走 launcher（openSubpageForResult 只补转场）。
+    val ebikeMapLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val carNum = result.data?.getStringExtra(SubpageActivity.EXTRA_PICKED_CAR_NUM)
+        if (!carNum.isNullOrBlank()) {
+            SubpageActivity.start(context, SubpageScreen.EBIKE, focusItemId = carNum)
+        }
+    }
 
     // 底栏四项：今日 · 课表 · 生活 · 我的（生活页在课表右侧）
     val tabs = buildList {
@@ -530,7 +605,9 @@ internal fun JuwApp(
             ) {
                 NavHost(
                     navController = navController,
-                    startDestination = Routes.TODAY,
+                    // 启动页（DESIGN §3.3）：默认今日，可在「我的 → 通用 → 启动页」改，
+                    // 生活页关掉时那项不可选、落点由 resolveStartRouteBlocking 兜回今日。
+                    startDestination = startRoute,
                     // 悬浮形态：内容铺到窗口底，被胶囊压住一部分——留出底栏槽位的话，
                     // 内容会在胶囊上方被截断，看着仍是「一条白色底栏 + 一个胶囊」。
                     // 普通形态照旧吃 Scaffold 的 padding（不透明底栏必须让位）。
@@ -553,12 +630,16 @@ internal fun JuwApp(
                             // 一键开水卡常显（未登录给未登录态，显示设置可关，DESIGN §3.3）；
                             // 登录态由 WaterViewModel 自带，外层不再按登录与否隐藏整卡
                             onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
-                            // 共享单车出码页（DESIGN §3.9）：今日页卡片直达，独立窗口
+                            // 共享单车出码页（DESIGN §3.9）：今日页卡片直达，独立窗口；
+                            // 卡片右侧「附近单车 ›」进地图（带返回值：选车后开出码页自动出码）
                             onOpenEbike = { SubpageActivity.start(context, SubpageScreen.EBIKE) },
-                            // 校园卡付款码页（DESIGN §3.10）：开关开时今日页卡片直达
-                            onOpenPayCode = { SubpageActivity.start(context, SubpageScreen.PAY_CODE) },
-                            // 校园卡消费流水页（DESIGN §4.19）：今日页余额弹窗入口
-                            onOpenStatement = { SubpageActivity.start(context, SubpageScreen.CAMPUS_STATEMENT) },
+                            onOpenEbikeMap = {
+                                openSubpageForResult(
+                                    context,
+                                    ebikeMapLauncher::launch,
+                                    SubpageRequest(SubpageScreen.EBIKE_MAP),
+                                )
+                            },
                             // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
                             // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
                             onOpenShortcuts = { focusItemId ->
@@ -587,10 +668,6 @@ internal fun JuwApp(
                             onOpenTimetableManage = {
                                 SubpageActivity.start(context, SubpageScreen.TIMETABLE_MANAGE)
                             },
-                            // 导入图标有调课提醒气泡时（DESIGN §4.17），点击直达「更新课表」
-                            onOpenScheduleUpdate = {
-                                SubpageActivity.start(context, SubpageScreen.SCHEDULE_UPDATE)
-                            },
                             // 课程详情弹窗的「笔记·课件 / 作业」（DESIGN §3.11）
                             onOpenCourseNotes = { course ->
                                 SubpageActivity.start(context, SubpageScreen.NOTES_COURSE, courseName = course.name)
@@ -606,6 +683,9 @@ internal fun JuwApp(
                         LifeScreen(
                             onOpenStatement = {
                                 SubpageActivity.start(context, SubpageScreen.CAMPUS_STATEMENT)
+                            },
+                            onOpenPowerBill = {
+                                SubpageActivity.start(context, SubpageScreen.POWER_BILL)
                             },
                             onOpenPayCode = {
                                 SubpageActivity.start(context, SubpageScreen.PAY_CODE)

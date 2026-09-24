@@ -1,9 +1,11 @@
 package edu.jxslu.schedule
 
 import android.app.Application
-import edu.jxslu.schedule.data.jw.JwDetectScheduler
+import android.app.NotificationManager
+import android.content.Context
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
+import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
@@ -33,26 +35,22 @@ class JuwApplication : Application() {
             // 提醒关/无课时 scheduleNext 内部是撤销闹钟的空跑，很廉价。
             ClassReminder.scheduleNext(this@JuwApplication)
             ClassReminder.ensurePeriodicWork(this@JuwApplication)
-            // 共享单车免费时长日历提醒（DESIGN §3.9）：排周期兜底核对（10 分钟，
-            // 覆盖到期清理任务被 ROM 推迟、或事件在日历里被删掉的场景）。
+            // 共享单车免费时长提醒（DESIGN §3.9，2026-09-24 起走 App 通知）：冷启动核一次
+            // ——计时中缺常驻倒计时 / 闹钟就补上，过期的清干净。**周期兜底由 check 按需排**
+            // （只在计时期间存在，平时零唤醒）；老版本排下的周期任务也会在这一步被撤掉。
             // 无进行中计时 / 开关关时 check 是空跑，很廉价。
-            EbikeFreeRideReminder.ensurePeriodicWork(this@JuwApplication)
-            // 冷启动核一次：计时已过期就删掉日历里的残留事件，计时中缺事件就补写
             EbikeFreeRideReminder.check(this@JuwApplication)
-            // 首版通知 channel 的清理（改成系统日历后不再发通知，channel 得自己删）
+            // 首版（2026-09-22）通知 channel 的清理：新 channel 用别的 id，
+            // 老 channel 一旦建出来就常驻系统，代码不再用它也不会自己消失
             EbikeFreeRideReminder.deleteLegacyChannel(this@JuwApplication)
-            // 调课自动检测（DESIGN §4.17）：周期任务按当前设置重排（开→排/关→撤），
-            // 距上次检测超过一个周期时冷启动立即补测一次（兜 WorkManager 被 ROM 推迟）。
-            // 功能默认关闭，关闭态下这两步都是零成本空跑。
-            val detectPrefs = Graph.displayPrefs(this@JuwApplication)
-            val detectSettings = detectPrefs.detectSettings.first()
-            JwDetectScheduler.ensurePeriodicWork(this@JuwApplication, detectSettings)
-            val detectOverdue = detectSettings.lastCheckedAt == 0L ||
-                System.currentTimeMillis() - detectSettings.lastCheckedAt >
-                detectSettings.periodHours * 3_600_000L
-            if (detectSettings.enabled && !detectSettings.disabled && detectOverdue) {
-                JwDetectScheduler.enqueueOneTime(this@JuwApplication)
-            }
+            // 调课检测 channel 的清理（功能已移除，2026-09-24）：
+            // 老版本升级用户设备上留着「调课检测」channel，删掉避免设置页残留死通道
+            deleteLegacyDetectChannel(this@JuwApplication)
+            // 余额提醒（DESIGN §3.10 / §3.13）：排每日核对（09:00 前后一次），两个开关都关时
+            // 内部会撤销任务；冷启动再补核一次，兜住「周期任务今天还没跑」的当天提醒。
+            // 已成功检查过的来源当天不会重复打第三方接口（闸门在 check 内部）。
+            BalanceAlertReminder.ensurePeriodicWork(this@JuwApplication)
+            BalanceAlertReminder.enqueueCheck(this@JuwApplication)
         }
         // 课表数据一变就推给桌面：用户在 App 里改完课，回桌面立刻是新内容，
         // 不必等下一个 15 分钟兜底。flows 本身是 Room 驱动，只在真实写库时发射，无轮询。
@@ -92,6 +90,24 @@ class JuwApplication : Application() {
                     warmScheduleBackground(this@JuwApplication, name, displayPrefs.bgImageBlur)
                 }
             }.onFailure { android.util.Log.w("JuwApplication", "background warmup failed", it) }
+        }
+        // 调课检测功能已移除（2026-09-24）：老版本排下的 WorkManager 周期/一次性任务
+        // 按类名实例化 `JwDetectWorker`，类删了会实例化失败——按名字显式取消，彻底清干净。
+        // 与 EbikeFreeRideCheckWorker 的「KEEP 保留」不同：这里没有任何要保的兜底，取消即净。
+        appScope.launch {
+            runCatching {
+                val wm = androidx.work.WorkManager.getInstance(this@JuwApplication)
+                wm.cancelUniqueWork("tweak_detect_periodic")
+                wm.cancelUniqueWork("tweak_detect_onetime")
+            }.onFailure { android.util.Log.w("JuwApplication", "detect work cancel failed", it) }
+        }
+    }
+
+    /** 删掉调课检测的通知 channel（功能已移除；已存在才删，幂等）。 */
+    private fun deleteLegacyDetectChannel(context: Context) {
+        runCatching {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager?.deleteNotificationChannel("jw_detect")
         }
     }
 }

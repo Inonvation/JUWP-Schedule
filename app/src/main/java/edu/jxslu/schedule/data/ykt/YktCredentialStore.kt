@@ -8,7 +8,7 @@ import androidx.security.crypto.MasterKey
  * 校园卡登录凭证加密存储（DESIGN §4.19）。
  *
  * 「校园卡付款码」开启时才写入：用户显式录入学号 + 密码，仅用于本机向一卡通平台登录。
- * 方案与 [edu.jxslu.schedule.data.jw.JwCredentialStore] 同款（EncryptedSharedPreferences，
+ * 方案与已移除的教务凭证存储同款（EncryptedSharedPreferences，
  * 密钥在 Android Keystore），`backup_rules` / `data_extraction_rules` 把本文件排除出
  * 云备份与设备迁移——凭证不随备份体系走。
  */

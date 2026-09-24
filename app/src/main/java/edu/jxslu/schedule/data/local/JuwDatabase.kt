@@ -16,13 +16,11 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         TimeSlotEntity::class,
         SemesterConfigEntity::class,
         ScoreEntity::class,
-        DetectBaselineEntity::class,
-        DetectReportEntity::class,
         YktTurnoverEntity::class,
         NoteEntity::class,
         HomeworkEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -32,8 +30,6 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun timeSlotDao(): TimeSlotDao
     abstract fun semesterConfigDao(): SemesterConfigDao
     abstract fun scoreDao(): ScoreDao
-    abstract fun detectBaselineDao(): DetectBaselineDao
-    abstract fun detectReportDao(): DetectReportDao
     abstract fun yktTurnoverDao(): YktTurnoverDao
     abstract fun noteDao(): NoteDao
     abstract fun homeworkDao(): HomeworkDao
@@ -287,6 +283,18 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9 → v10：调课自动检测功能移除（2026-09-24）。
+         * DROP 两张专属表 `detect_baselines`/`detect_reports`（其余数据零触碰，非 destructive）；
+         * `MIGRATION_4_5` 的建表语句保留——迁移链不可断，v4 用户先建表、到这里再删。
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS detect_baselines")
+                db.execSQL("DROP TABLE IF EXISTS detect_reports")
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -306,6 +314,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
+                        MIGRATION_9_10,
                     )
                     .build()
                     .also { instance = it }

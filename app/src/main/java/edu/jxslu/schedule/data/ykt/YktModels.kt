@@ -67,6 +67,8 @@ data class YktBarcodeData(
 /** 单张卡余额（`queryCard` 的 `data.card[]` 元素，只建模展示所需子集）。 */
 data class YktCard(
     val cardName: String,
+    /** 持卡人姓名（接口原生返回；「我的」账号条姓名数据源，DESIGN §3.3）。 */
+    val ownerName: String = "",
     val account: String,
     /** 卡账户余额（分）= db_balance + unsettle_amount。 */
     val cardBalanceFen: Long,
@@ -112,6 +114,13 @@ data class YktRechargeStart(
     val cardBalanceBeforeFen: Long,
     /** 付款卡账户（6 位卡号）：到账判定按账户取该卡当前余额。 */
     val cardAccount: String,
+    /**
+     * 充值目标（DESIGN §3.10）：`<account>-000` = 电子账户；null = 正式卡。
+     * 到账判定按目标分两路：正式卡走卡余额，电子账户走钱包余额。
+     */
+    val targetAccount: String? = null,
+    /** 充电子账户时：付款前目标钱包余额（分）；null = 未取到（退流水口径）。 */
+    val walletBalanceBeforeFen: Long? = null,
 )
 
 /** 单条消费流水（`personal/turnover` 的 records 元素，只建模展示所需子集）。 */
@@ -284,6 +293,7 @@ object YktModels {
             val unsettle = jsonToFen(obj["unsettle_amount"]) ?: 0L
             YktCard(
                 cardName = jsonToStr(obj["card_name"] ?: obj["cardname"]) ?: "校园卡",
+                ownerName = jsonToStr(obj["name"]).orEmpty(),
                 account = jsonToStr(obj["account"]) ?: "",
                 cardBalanceFen = db + unsettle,
                 elecBalanceFen = jsonToFen(obj["elec_accamt"]) ?: 0L,

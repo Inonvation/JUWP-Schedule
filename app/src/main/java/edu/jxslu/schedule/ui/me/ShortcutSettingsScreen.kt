@@ -36,7 +36,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -77,6 +76,7 @@ import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsDivider
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.ShortcutIcon
+import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.shortcutIconChoices
 import kotlinx.coroutines.Dispatchers
@@ -490,7 +490,10 @@ private fun ShortcutEditSheet(
         ).toItem()
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 表单弹层（4 个输入框 + 预设列表）：键盘遮挡与退场时序都收在 ImeAwareModalBottomSheet 里
+    // （键盘弹起后 M3 会把弹层改判到半高锚点；退场走「先收键盘、键盘收完再滑走」两段，
+    // 理由与实测见 ui/common/SheetDismissIme.kt）。
+    ImeAwareModalBottomSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

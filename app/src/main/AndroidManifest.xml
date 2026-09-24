@@ -21,6 +21,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 共享单车免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务。
+         类型选 specialUse —— 它不属于任何一种既有分类（不是同步、不是播放、不是定位），
+         且不受 Android 15 对 dataSync/mediaProcessing 的 6 小时限制；
+         shortService 只有 3 分钟，装不下 15 分钟的倒计时。
+         FOREGROUND_SERVICE_SPECIAL_USE 是普通权限（安装即授予），无运行时申请。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 共享单车出码自动保存（DESIGN §3.9）：API 29+ 走 MediaStore 免权限；
          仅 26–28 的 legacy 公共目录直写需要，且 maxSdkVersion 限定，29 起失效 -->
     <uses-permission
@@ -103,10 +110,24 @@
             </intent-filter>
         </activity>
         <!-- 教务导入独立窗口：adjustResize 保证登录表单不被键盘遮住。
-             锁竖屏（DESIGN §4.4）：转屏会销毁 WebView 丢掉登录进度、并取消导入协程；
-             全 App 唯一锁方向的窗口。 -->
+             锁竖屏（DESIGN §4.4）：转屏会销毁 WebView 丢掉登录进度、并取消导入协程。
+             App 里锁方向的窗口只有这一个和下面的成绩单导出窗口，两者都因为同一个原因
+             （窗口里有统一认证的 WebView 表单）。 -->
         <activity
             android:name=".JwImportActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- 成绩单导出独立窗口（DESIGN §3.14）：同样含统一认证 WebView，故同样锁竖屏 -->
+        <activity
+            android:name=".TranscriptActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- 宿舍报修独立窗口（DESIGN §3.15）：第三个「因为窗口里有统一认证表单而锁竖屏」
+             的窗口，理由与上面两个相同。App 里锁方向的只有这三个。 -->
+        <activity
+            android:name=".DormRepairActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
@@ -127,6 +148,10 @@
             android:label="@string/widget_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <!-- 开机补排边界闹钟：重启后 AlarmManager 的闹钟全丢，WorkManager
+                     周期兜底最长要 15 分钟才拉起进程，期间小组件不按上下课时刻换。
+                     RECEIVE_BOOT_COMPLETED 权限已为上课提醒声明，这里无需新增。 -->
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
@@ -150,6 +175,53 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- 免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务，只在「开关开 + 计时中」
+             这 15 分钟里存在。倒计时数字由系统 chronometer 渲染，服务本身不周期干活。
+             specialUse 的 use case 必须写在 <property> 里（系统按它审核用途）。 -->
+        <service
+            android:name=".ui.ebike.EbikeFreeRideService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="共享单车免费时长倒计时：在通知栏常驻显示免费剩余时间，超时前提醒用户还车" />
+        </service>
+
+        <!-- 免费时长提醒的精确闹钟落点（显式 PendingIntent，无需 intent-filter）：
+             只把核对排进协程，发提醒并重排下一个闹钟 -->
+        <receiver
+            android:name=".ui.ebike.EbikeFreeRideAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 「精确倒计时」（DESIGN §3.9，2026-09-24）：读微信的租车成功通知，把计时起点
+             校准到真正开始计费那一刻。**默认关**——它要「通知使用权」（读取全部通知），
+             用户在系统设置里手动开启后系统才会绑定本服务，未授权时一个回调都收不到。
+             BIND_NOTIFICATION_LISTENER_SERVICE 是系统要求的签名级权限，缺了服务起不来。
+             label 会显示在系统「通知使用权」列表里。 -->
+        <service
+            android:name=".ui.ebike.WechatRentListener"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- 导出成绩单的分享/打开通道（DESIGN §4.25）：成绩单落在应用私有目录，
+             系统 PDF 阅读器与分享目标靠临时授权的内容 Uri 读取，不写公共目录、不申请存储权限。
+             authority 带 applicationId 后缀 —— debug 包的包名带 .debug，两者互不影响。
+             暴露范围只开 transcripts/（见 res/xml/file_paths.xml）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 

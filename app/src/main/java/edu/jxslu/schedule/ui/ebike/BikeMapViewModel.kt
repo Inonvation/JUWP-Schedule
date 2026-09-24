@@ -62,8 +62,11 @@ data class BikeMapUiState(
     /** 已取到的用户位置（GCJ-02）；null = 还没定位过。 */
     val userLat: Double? = null,
     val userLng: Double? = null,
-    /** 只看可用的车（离线、电量低于运营方阈值的都不显示）。 */
-    val onlyAvailable: Boolean = false,
+    /**
+     * 只看可用的车（离线、电量低于运营方阈值的都不显示）。
+     * 默认开（2026-09-24 用户拍板）：找车就是要找能骑的；开关态进 DataStore，下次进页保持。
+     */
+    val onlyAvailable: Boolean = true,
     /**
      * 需要在列表里定位过去的停车点；[focusNonce] 递增用来区分"又点了一次同一个点"。
      *
@@ -136,10 +139,13 @@ class BikeMapViewModel(
     private var locatedOnce = false
 
     init {
-        // 面板高度先读回来：首帧就用上用户上次拖出来的高度，否则进页面会先按默认高度
-        // 画一帧再跳一下（用户明确说过面板不要跳）
+        // 面板高度与「只看可用」先读回来：首帧就用上用户上次的值，否则进页面会先按
+        // 默认值画一帧再跳一下（用户明确说过面板不要跳，筛选同理）
         viewModelScope.launch {
             prefs.ebikePanelHeightDp.first()?.let(::setPanelHeight)
+        }
+        viewModelScope.launch {
+            setOnlyAvailable(prefs.ebikeMapOnlyAvailable.first())
         }
         viewModelScope.launch {
             val saved = prefs.ebikeMapViewport.first()
@@ -234,11 +240,17 @@ class BikeMapViewModel(
         }
     }
 
-    /** 只看可用的车。不重新请求接口——数据已经在手上，重算一遍簇即可。 */
+    /**
+     * 只看可用的车。不重新请求接口——数据已经在手上，重算一遍簇即可。
+     *
+     * 进页时也会拿它同步 DataStore 存的值（读回来的就是存的，写回等于空操作），
+     * 这样 UI 只需要一条口径，不必区分「用户点的」与「进页恢复的」。
+     */
     fun setOnlyAvailable(value: Boolean) {
         if (_uiState.value.onlyAvailable == value) return
         _uiState.update { it.copy(onlyAvailable = value) }
         rebuildClusters()
+        viewModelScope.launch { prefs.setEbikeMapOnlyAvailable(value) }
     }
 
     /**

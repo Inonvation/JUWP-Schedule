@@ -16,6 +16,7 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.SemesterConfig
+import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TimeSlotRules
@@ -364,6 +365,15 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     /** 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。 */
     fun setLifeTabEnabled(value: Boolean) {
         viewModelScope.launch { repo.setLifeTabEnabled(value) }
+    }
+
+    /**
+     * 启动页（DESIGN §3.3）：写入用户的选择本身——生活页关着时也不把它改写成今日，
+     * 生活页开回来旧选择还在（生效页由 `StartPage.effectivePage` 算）。
+     * 重启应用后生效，调用点负责提示。
+     */
+    fun setStartPage(page: StartPage) {
+        viewModelScope.launch { repo.setStartPage(page) }
     }
 
     /** 开水双击确认（全局；默认双击防误触）。 */

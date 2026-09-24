@@ -130,8 +130,9 @@ class StatementViewModel(
     private val syncer = YktTurnoverSyncer(repo, db)
 
     init {
-        // 进页即增量同步（凭证缺失走 UI 引导；失败保持本地数据并给一次性提示）
-        viewModelScope.launch { syncInBackground() }
+        // 进页即增量同步（凭证缺失走 UI 引导；失败保持本地数据并给一次性提示）。
+        // force = false：受 YktSyncGate 的 10 分钟闸门管，刚在生活页同步过就不再拉。
+        viewModelScope.launch { syncInBackground(force = false) }
     }
 
     /** 切换月份；未来月禁用由 UI 控制，这里兜底拦截。 */
@@ -143,16 +144,16 @@ class StatementViewModel(
 
     /** 重试同步（失败后）。 */
     fun retry() {
-        viewModelScope.launch { syncInBackground() }
+        viewModelScope.launch { syncInBackground(force = true) }
     }
 
     /** 下拉/手动刷新 = 再跑一次增量同步。 */
     fun refresh() {
-        viewModelScope.launch { syncInBackground() }
+        viewModelScope.launch { syncInBackground(force = true) }
     }
 
     /** 后台增量同步：凭证缺失置引导态；失败保持本地数据并给一次性提示。 */
-    private suspend fun syncInBackground() {
+    private suspend fun syncInBackground(force: Boolean) {
         val credentials = credentialStore.read()
         if (credentials == null) {
             _uiState.update { it.copy(noCredentials = true, canRetry = false, syncing = false) }
@@ -161,7 +162,7 @@ class StatementViewModel(
         _uiState.update { it.copy(syncing = true, error = null, noCredentials = false) }
         try {
             withContext(kotlinx.coroutines.Dispatchers.IO) {
-                syncer.sync(credentials.username, credentials.password)
+                syncer.sync(credentials.username, credentials.password, force = force)
             }
             // 同步后重查年视图（suspend 查询不随表自动刷新）
             _monthlyExpenses.value = db.yktTurnoverDao()

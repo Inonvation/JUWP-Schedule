@@ -9,6 +9,7 @@ import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.YktTurnoverEntity
 import edu.jxslu.schedule.data.power.PowerException
 import edu.jxslu.schedule.data.power.PowerPayChallenge
+import edu.jxslu.schedule.data.power.PowerPayModels
 import edu.jxslu.schedule.data.power.PowerPayResult
 import edu.jxslu.schedule.data.power.PowerModels
 import edu.jxslu.schedule.data.power.PowerRepository
@@ -22,6 +23,7 @@ import edu.jxslu.schedule.domain.LifeFeedItem
 import edu.jxslu.schedule.domain.LifeFeedKind
 import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -91,14 +93,24 @@ class LifeViewModel(
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LifeUiState())
 
-    /** 进页刷新：电费读数 + 一卡通流水增量同步（互不牵连，各自失败各自提示）。 */
-    fun refreshAll() {
-        refreshPower()
-        syncTurnovers()
+    /**
+     * 进页刷新：电费读数 + 一卡通流水增量同步（互不牵连，各自失败各自提示）。
+     *
+     * [force] = false 是**进页**那条路：电费走仓库内存缓存，一卡通流水走 10 分钟闸门，
+     * 切 Tab 来回不重复打平台（DESIGN §4.24「请求节流」）。
+     * 顶栏刷新按钮传 true（用户主动要看最新）。
+     */
+    fun refreshAll(force: Boolean = true) {
+        refreshPower(force = force)
+        syncTurnovers(force = force)
     }
 
-    /** 电费读数 + 电费流水（点卡片、右上刷新、进页都走它）。 */
-    fun refreshPower() {
+    /**
+     * 电费读数 + 电费流水（点卡片、右上刷新、充值成功后都走它）。
+     *
+     * [force] = true 时绕过仓库内存缓存并重取；进页那条路传 false。
+     */
+    fun refreshPower(force: Boolean = true) {
         val credentials = credentialStore.read()
         if (credentials == null) {
             _power.value = PowerCardState(noCredentials = true)
@@ -108,7 +120,7 @@ class LifeViewModel(
         _power.update { it.copy(loading = true, error = null, noCredentials = false) }
         viewModelScope.launch {
             try {
-                val snapshot = powerRepo.snapshot(credentials.username, credentials.password)
+                val snapshot = powerRepo.snapshot(credentials.username, credentials.password, force = force)
                 _power.update { it.copy(loading = false, snapshot = snapshot, error = null) }
             } catch (e: CancellationException) {
                 throw e
@@ -122,17 +134,22 @@ class LifeViewModel(
                 _power.update { it.copy(loading = false, error = "电费读取失败：${e.message ?: "未知错误"}") }
             }
             // 流水是附加信息：取不到不影响读数，也不额外打扰用户
-            runCatching { powerRepo.history(credentials.username, credentials.password) }
+            runCatching { powerRepo.history(credentials.username, credentials.password, force = force) }
                 .onSuccess { _powerTurnovers.value = it }
         }
     }
 
-    /** 一卡通流水增量同步（同步成功即由 Room 流刷新列表）。 */
-    fun syncTurnovers() {
+    /**
+     * 一卡通流水增量同步（同步成功即由 Room 流刷新列表）。
+     *
+     * [force] = false 是**进页**那条路，受 `YktSyncGate` 的 10 分钟闸门管，
+     * 切 Tab 来回不会重复拉；用户要看最新就点刷新或下拉（那条路传 true）。
+     */
+    fun syncTurnovers(force: Boolean = false) {
         val credentials = credentialStore.read() ?: return
         viewModelScope.launch {
             try {
-                syncer.sync(credentials.username, credentials.password, maxPages = 1)
+                syncer.sync(credentials.username, credentials.password, maxPages = 1, force = force)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -150,13 +167,6 @@ class LifeViewModel(
         onReady = onReady,
     )
 
-    /** 「缴费账单」：同一平台的账单页深链。 */
-fun openPowerBillPage(onReady: (String) -> Unit) = openPlatformPage(
-        what = "缴费账单",
-        url = { user, pwd -> powerRepo.billPageUrl(user, pwd) },
-        onReady = onReady,
-    )
-
     // ------------------------------------------------------------------
     // 电费充值（DESIGN §4.24：App 内下单 + 安全键盘密码，2026-09-23 打通）
     // ------------------------------------------------------------------
@@ -170,6 +180,13 @@ fun openPowerBillPage(onReady: (String) -> Unit) = openPlatformPage(
         val challenge: PowerPayChallenge? = null,
         val busy: Boolean = false,
         val error: String? = null,
+        /**
+         * 打开弹层时清掉的未支付订单数（>0 才展示）。
+         *
+         * 平台不自动清过期单、堆积会让新下单 500，所以每次点开都清一次；清了几笔
+         * 直接写在弹层里（这条提示落在弹层这个独立窗口内，Snackbar 会被弹层盖住）。
+         */
+        val cleanedOrders: Int = 0,
     ) {
         enum class Step { Amount, Password, Accepted }
     }
@@ -177,14 +194,57 @@ fun openPowerBillPage(onReady: (String) -> Unit) = openPlatformPage(
     private val _powerRecharge = MutableStateFlow(PowerRechargeUi())
     val powerRecharge: StateFlow<PowerRechargeUi> = _powerRecharge.asStateFlow()
 
+    /**
+     * 「点开充值弹层」时挂的清理任务（见 [preparePowerRecharge]）。
+     * [placePowerOrder] 下单前会 `join()` 它——清理与下单抢跑就白清了：平台侧未支付单
+     * 还没删掉，新下单照样回 500「未知异常」。
+     */
+    private var pendingOrderCleanup: Job? = null
+
+    /**
+     * 打开电费充值弹层时调用（DESIGN §4.24）：重置流程状态 + 清一遍未支付订单。
+     *
+     * 为什么在这里清：未支付单只可能由本流程产生（下单后没付完就退出），而堆积会让
+     * 新下单 500。放在这个点，既是用户主动动作，又正好在真正需要之前——生活页刷新
+     * 不必再为它多打 1 + N 条请求。失败静默：清不掉不该挡用户看弹层，下单失败时
+     * 服务端原话会照实显示。
+     */
+    fun preparePowerRecharge() {
+        _powerRecharge.value = PowerRechargeUi()
+        val credentials = credentialStore.read() ?: return
+        pendingOrderCleanup?.cancel()
+        pendingOrderCleanup = viewModelScope.launch {
+            val cleaned = try {
+                powerRepo.cancelAllPendingOrders(credentials.username, credentials.password)
+            } catch (e: CancellationException) {
+                // 连点两次「电费充值」会取消上一条，取消不算失败——照项目口径重新抛出
+                throw e
+            } catch (e: Exception) {
+                0
+            }
+            if (cleaned > 0) _powerRecharge.update { it.copy(cleanedOrders = cleaned) }
+        }
+    }
+
     /** 下单（金额已由弹层校验过）。 */
     fun placePowerOrder(yuan: String) {
         val credentials = credentialStore.read() ?: run {
             _events.trySend(LifeEvent.Notice("请先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning))
             return
         }
-        _powerRecharge.value = PowerRechargeUi(step = PowerRechargeUi.Step.Amount, busy = true)
+        // 保留 cleanedOrders（那条提示在弹层里，下单时不该被抹掉），其余字段回到干净起点
+        _powerRecharge.update {
+            it.copy(
+                step = PowerRechargeUi.Step.Amount,
+                orderId = null,
+                challenge = null,
+                busy = true,
+                error = null,
+            )
+        }
         viewModelScope.launch {
+            // 等弹层打开时那次清理跑完再下单（见 pendingOrderCleanup）
+            pendingOrderCleanup?.join()
             try {
                 val order = powerRepo.createOrder(credentials.username, credentials.password, yuan)
                 _powerRecharge.value = _powerRecharge.value.copy(orderId = order.orderId, busy = false)
@@ -245,7 +305,14 @@ fun openPowerBillPage(onReady: (String) -> Unit) = openPlatformPage(
         _powerRecharge.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             val result = runCatching {
-                powerRepo.payConfirm(credentials.username, credentials.password, challenge, cipher)
+                // orderId 传 VM 手上那个：它是下单时服务端给的，比 challenge 里的可信
+                powerRepo.payConfirm(
+                    credentials.username,
+                    credentials.password,
+                    challenge,
+                    cipher,
+                    orderId = _powerRecharge.value.orderId,
+                )
             }.getOrElse { e -> PowerPayResult.Rejected(e.message ?: "支付失败") }
             when (result) {
                 is PowerPayResult.Accepted -> {
@@ -253,8 +320,23 @@ fun openPowerBillPage(onReady: (String) -> Unit) = openPlatformPage(
                     refreshPower()
                 }
 
-                is PowerPayResult.Rejected -> _powerRecharge.update {
-                    it.copy(busy = false, error = result.message ?: "支付失败，请重试")
+                is PowerPayResult.Rejected -> {
+                    val message = result.message ?: "支付失败，请重试"
+                    if (PowerPayModels.isOrderGone(message)) {
+                        // 订单没了（过期 / 已被清）：回金额步重新下单。
+                        // 停在密码步让用户反复重输没有意义——单子已经不在服务端了。
+                        _powerRecharge.update {
+                            it.copy(
+                                step = PowerRechargeUi.Step.Amount,
+                                orderId = null,
+                                challenge = null,
+                                busy = false,
+                                error = "$message（请重新下单）",
+                            )
+                        }
+                    } else {
+                        _powerRecharge.update { it.copy(busy = false, error = message) }
+                    }
                 }
             }
         }

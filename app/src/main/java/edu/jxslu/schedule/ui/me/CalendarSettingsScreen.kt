@@ -354,7 +354,11 @@ class CalendarSettingsViewModel(
                 }
                 _message.value = when (val r = CalendarSyncer.sync(context, events, reminderMinutes.value)) {
                     is CalendarSyncer.CalendarSyncResult.Success ->
-                        "已同步 ${r.count} 条课程到手机日历（${CalendarSyncDefaults.reminderLabel(reminderMinutes.value)}）"
+                        CalendarSyncDefaults.syncSuccessMessage(
+                            r.count,
+                            reminderMinutes.value,
+                            r.reminderMissing,
+                        )
                     is CalendarSyncer.CalendarSyncResult.Deleted ->
                         "已删除 ${r.count} 条课程日历"
                     is CalendarSyncer.CalendarSyncResult.NoCalendarAccount ->

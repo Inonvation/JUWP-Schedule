@@ -48,4 +48,21 @@ class CalendarSyncDefaultsTest {
         assertEquals("提前 20 分钟", CalendarSyncDefaults.reminderLabel(20))
         assertEquals("不提醒", CalendarSyncDefaults.reminderLabel(-3)) // 夹取后为 0
     }
+
+    @Test
+    fun `同步成功文案提醒齐了才报成功`() {
+        assertEquals(
+            "已同步 42 条课程到手机日历（提前 20 分钟）",
+            CalendarSyncDefaults.syncSuccessMessage(count = 42, reminderMinutes = 20, reminderMissing = 0),
+        )
+        assertEquals(
+            "已同步 42 条课程到手机日历（不提醒）",
+            CalendarSyncDefaults.syncSuccessMessage(count = 42, reminderMinutes = 0, reminderMissing = 0),
+        )
+        // 提醒被 ROM 吞掉时如实说，不报「已同步」了事
+        assertEquals(
+            "已同步 42 条课程到手机日历，其中 3 条没写上提醒，手机日历可能不提醒",
+            CalendarSyncDefaults.syncSuccessMessage(count = 42, reminderMinutes = 20, reminderMissing = 3),
+        )
+    }
 }

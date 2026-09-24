@@ -86,30 +86,42 @@ data class PowerPayChannel(val payId: String, val name: String, val code: String
 /**
  * `paystep=2` 拿到的支付参数（DESIGN §4.24，2026-09-23 实测口径）。
  *
- * - [passwordMap]：键 = uuid，值 = **乱序数字字符表**（10 位）。用户按数字 `d` 时，
- *   提交的密文字符是 `table[d]`（不是键位下标！）——与一卡通登录键盘同一协议，
+ * - [passwordMap]：键 = uuid，值 = **乱序数字字符表**（10 位）。官方缴费页键盘的
+ *   第 i 个按键**显示** `table[i]`，但提交的是**键位下标 i**（2026-09-24 读前端
+ *   `app.7abec7aa…js` 的 `keyUpHandle`/渲染模板钉死：`push(String(i))`）——服务端拿
+ *   uuid 找回乱序表按下标还原。此前「数字 d → table[d]」方向反了，正确密码也报错。
  *   `cipherOf` 是唯一换算点。
- * - [accountBalanceFen]：电子账户余额（`ccctype[0].balance`，单位分，平台侧实时值）。
+ * - [accountBalanceFen]：电子账户余额（`ccctype[0].balance`）。**实测单位是「元」**，
+ *   不是分：2026-09-24 同一时刻对同一个电子账户取两个来源，`ccctype[0].balance=1` 而
+ *   一卡通 `accinfo[].balance=100`（1 元 = 100 分）——按分渲染会把 1 元显示成 ¥0.01。
+ *   解析时已按 `元 × 100` 折成分，全项目内部统一用分。
  */
 data class PowerPayChallenge(
     val orderId: String,
     val passwordMap: Map<String, String>,
     /** 电子账户类型值（`000`，来自 `ccctype[0].ccctype`；支付回传要用）。 */
     val accountType: String?,
-    /** 电子账户余额（分；`ccctype[0].balance`）。 */
+    /** 电子账户余额（**分**；由 `ccctype[0].balance` 的元值折分而来）。 */
     val accountBalanceFen: Long?,
 ) {
     /** 提交用的 uuid（passwordMap 唯一键；服务端还有顶层 uuid 字段但实测为 null）。 */
     val uuid: String? get() = passwordMap.keys.firstOrNull()
 
-    /** 用户输入的数字串 → 提交密文。表缺失/数字越界返回 null（上层拦截，绝不瞎猜）。 */
+    /**
+     * 用户输入的数字串 → 提交密文（数字 d 在乱序表里的下标）。
+     * 表缺失 / 表不是 0-9 双射 / 字符不在表里一律返回 null（上层拦截，绝不瞎猜——
+     * 与 `YktKeyboard` 的「未知字形/非双射即报错」同一纪律）。
+     */
     fun cipherOf(digits: String): String? {
         val table = passwordMap[uuid] ?: return null
         if (digits.length !in 1..6) return null
+        if (table.length != 10 || table.toSet().size != 10 || !table.all { it.isDigit() }) return null
         val sb = StringBuilder()
         for (c in digits) {
             if (!c.isDigit()) return null
-            sb.append(table[c - '0'])
+            val idx = table.indexOf(c)
+            if (idx < 0) return null
+            sb.append(idx)
         }
         return sb.toString()
     }
@@ -141,6 +153,18 @@ object PowerPayModels {
             ?: (obj["message"] as? JsonPrimitive)?.contentOrNull
     }.getOrNull()
 
+    /**
+     * 服务端是不是在说「这一单没了」（订单不存在 / 已过期 / 已失效）。
+     *
+     * 含义与密码错完全不同：前者要回到金额步重新下单，后者留在密码步重输。
+     * 文案取自实测与官方前端（`订单不存在，请重新预定`、`订单已过期，请重新提交`）。
+     */
+    fun isOrderGone(message: String?): Boolean {
+        val text = message.orEmpty()
+        return text.contains("订单不存在") || text.contains("不存在") ||
+            text.contains("过期") || text.contains("已失效")
+    }
+
     fun orderFrom(raw: String): PowerOrder? = runCatching {
         val data = dataOf(raw) ?: return@runCatching null
         val orderId = (data["orderid"] as? JsonPrimitive)?.contentOrNull
@@ -166,16 +190,24 @@ object PowerPayModels {
         }
     }.getOrDefault(emptyList())
 
-    fun challengeFrom(raw: String): PowerPayChallenge? = runCatching {
+    /**
+     * 解析 `paystep=2` 响应。
+     *
+     * [requestedOrderId] 是下单时拿到的**真实订单号**，必填。2026-09-24 实测：
+     * `paystep=2` 响应的 `orderid` **恒为 null**，而 `passwordMap` 的键是 uuid（32 位十六
+     * 进制）——旧代码拿这个键当订单号兜底，支付时把 uuid 当 `orderid` 发出去，服务端回
+     * 「订单不存在，请重新预定」。订单号绝不能从这段响应里猜。
+     */
+    fun challengeFrom(raw: String, requestedOrderId: String): PowerPayChallenge? = runCatching {
         val data = dataOf(raw) ?: return@runCatching null
         val mapObj = data["passwordMap"] as? JsonObject ?: return@runCatching null
         val map = mapObj.entries.associate { (k, v) -> k to (v as? JsonPrimitive)?.contentOrNull.orEmpty() }
-        val orderId = (data["orderid"] as? JsonPrimitive)?.contentOrNull
-            ?: (data["orderId"] as? JsonPrimitive)?.contentOrNull
-            ?: mapObj.keys.firstOrNull()
-            ?: return@runCatching null
-        // ccctype 实测是数组 [{balance:0, ccctype:"000"}]（balance 单位分）；
-        // 兼容旧字符串形态
+        val orderId = (data["orderid"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: (data["orderId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: requestedOrderId
+        // ccctype 实测是数组 [{balance:1, ccctype:"000"}]；**balance 单位是元**
+        // （2026-09-24 与一卡通 accinfo 的 100 分对照确认），这里折成分存。
+        // 兼容旧字符串形态。
         val cccEl = data["ccctype"]
         var accountType: String? = null
         var balanceFen: Long? = null
@@ -183,8 +215,9 @@ object PowerPayModels {
             is kotlinx.serialization.json.JsonArray -> {
                 val first = cccEl.firstOrNull() as? JsonObject
                 accountType = (first?.get("ccctype") as? JsonPrimitive)?.contentOrNull
-                balanceFen = (first?.get("balance") as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
-                    ?: (first?.get("balance") as? JsonPrimitive)?.content?.toDoubleOrNull()?.toLong()
+                balanceFen = (first?.get("balance") as? JsonPrimitive)?.contentOrNull
+                    ?.toDoubleOrNull()
+                    ?.let { kotlin.math.round(it * 100).toLong() }
             }
 
             is JsonPrimitive -> accountType = cccEl.contentOrNull
