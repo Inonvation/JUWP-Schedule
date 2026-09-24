@@ -186,7 +186,9 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
 - 禁止刷积分、绕过付费、伪造官方身份
 - 禁止把学号/密码/token 写进 git（`scripts/credentials.local.json`、`local.properties`、`release.jks`、`keystore.properties` 已 ignore）
 - **本仓库为公开仓库**：写文档/注释/示例时不得出现真实学号、姓名、手机号、token；新增抓取产物目录前先确认 `.gitignore` 已覆盖
-- 禁止未改 `DESIGN.md` 就改导航或课表领域模型
+- **提交不带个人信息**：提交信息、代码、注释、测试 fixture 里不出现真实学号、姓名、手机号、寝室房号、真实邮箱；作者身份用 noreply 邮箱
+- **提交信息精简**：标题一行说清改了什么，正文只写必要的理由与影响面。细则见 `.agents/rules/build-release.md`
+- 禁止改导航或课表领域模型时不同步 `DESIGN.md`（同步排在编译/装机之后，见「怎么用这份文件」的收尾顺序）
 - 禁止 emoji 当功能图标；HugeIcons 查名用本地 JAR，勿猜
 - 禁止把「能编译」当完成；禁止故意压制编译错误
 

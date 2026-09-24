@@ -29,6 +29,11 @@ jobs:
       - name: 组装 Debug APK
         run: ./gradlew :app:assembleDebug
 
+      # R8 的问题不在编译期暴露（AGENTS.md 记了三个坑），只跑 debug 挡不住整类问题。
+      # CI 上没有 keystore.properties，build.gradle.kts 会回退 debug 签名并打一条 warning，构建照样过。
+      - name: 组装 Release APK（R8 冒烟）
+        run: ./gradlew :app:assembleRelease
+
       - name: 上传测试报告（失败时定位用）
         if: failure()
         uses: actions/upload-artifact@v4
