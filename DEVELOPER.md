@@ -4,8 +4,9 @@
 「从教务系统拿到课表/考试/成绩」完整数据链路的实现细节，以及换校适配的动手步骤。
 应用功能与界面规格见 [DESIGN.md](DESIGN.md)，爬虫脚本速查见 [scripts/README.md](scripts/README.md)。
 
-> 快照：v1.2.0（2026-09-22，Room v8）。工程实况（依赖版本、数据库版本、口径清单）
-> 以 [AGENTS.md](AGENTS.md) 为准，本文只讲「为什么这么设计、换校要动哪里」。
+> 快照：v1.2.0（2026-09-24，Room v11）。工程实况（依赖版本、数据库版本）以
+> [AGENTS.md](AGENTS.md) 为准，领域口径清单按主题拆在 [`.agents/rules/`](.agents/rules/)，
+> 本文只讲「为什么这么设计、换校要动哪里」。
 
 > 本项目是**江西水利电力大学的非官方学生项目**，仅供学习交流。
 > 换校适配时请同样遵守：模拟正常客户端操作、凭证不入代码仓库、不刷积分、不伪造官方身份。
@@ -92,9 +93,9 @@ SubpageActivity.kt     二级页容器（成绩查询、笔记/作业 7 个二�
 JwImportActivity.kt    教务导入独立窗口（独立 Activity，见 §5）
 Graph.kt               手写单例装配：Repository / 数据库 / 偏好
 domain/                纯 Kotlin：Course、ScheduleCalculator、ExamMapper、ScheduleExporter、
-                       ScheduleDetect、CourseTweak、ReminderPlanner、Markdown/MathTex、
+                       CourseTweak、ReminderPlanner、Markdown/MathTex、
                        Shortcuts …… 不依赖 Android，可 JVM 测
-data/local/            Room v8：Entities / Daos / JuwDatabase（含 v1→v8 逐级迁移）
+data/local/            Room v11：Entities / Daos / JuwDatabase（含 v1→v11 逐级迁移）
 data/repo/             ScheduleRepository（课表读写 + 导入校验）、ScoreRepository、
                        NoteRepository / HomeworkRepository、AttachmentStore（笔记图片）
 data/prefs/            DataStore 显示偏好与全局开关（含 slotSchemaVersion）
@@ -154,8 +155,7 @@ data class SemesterConfig(
 2. **行号 = 小节号**。本校作息是 11 小节、每节 40 分钟（大节内歇 5 分钟、
    大节之间 20 分钟换教室）。网格第 N 行就是第 N 小节，与教务返回的
    `startSection/endSection` 直接对齐，不做任何折算。详见 DESIGN §3.5。
-3. **课程行的身份不靠 `id`**——行 id 在覆盖导入（清表重建）与调课检测应用（整组重建）
-   里会被换掉，稳定键只有两个：
+3. **课程行的身份不靠 `id`**——行 id 在覆盖导入（清表重建）里会被换掉，稳定键只有两个：
    - 课程之间的同一性用 `Course.mergeKey()`（名称+星期+节次+教师+kind）：
      导入去重、导入统计与**备注搬运**共用这一把钥匙，唯一实现在 `domain/Models.kt`，
      不要再写第二份；
@@ -163,7 +163,7 @@ data class SemesterConfig(
      （DESIGN §4.20）：换课表/换学期后旧内容仍可查，代价是同名课程跨学期共用一个抽屉。
    加字段可以，任何新功能绑行 id 必丢数据。
 
-### 3.2 Room schema（`data/local/JuwDatabase.kt`，当前 v8）
+### 3.2 Room schema（`data/local/JuwDatabase.kt`，当前 v11）
 
 | 表 | 主键 | 说明 |
 |----|------|------|
@@ -172,15 +172,15 @@ data class SemesterConfig(
 | `time_slots` | `(timetableId, number)` | 每张课表一份作息表（小节号 1–11） |
 | `semester_config` | `timetableId` | 每张课表一份开学日/总周数 |
 | `scores` | `id`（+ `term` 索引） | 成绩全局归属学生、不挂课表；按学期整体替换 |
-| `detect_baselines` | `timetableId` | 调课检测的教务基线快照（每课表一份） |
-| `detect_reports` | `timetableId` | 最新差异报告 + `unread` 未读标记（每课表一份） |
 | `ykt_turnovers` | `orderId`（+ `jndatetime` 索引） | 一卡通流水；按服务端订单号去重 |
 | `notes` | `id`（+ `courseName` / `updatedAt` 索引） | 笔记·课件，按课程名归属（§3.1 决策 3） |
 | `homework` | `id`（+ `courseName` / `done` / `dueDate` 索引） | 作业，按课程名归属；`dueDate` 存 `yyyy-MM-dd` 文本（字典序即时间序） |
+| `power_readings` | `(epochMs, roomId)` 唯一 | 电表读数本机记录，用电量差分靠它（DESIGN §4.24） |
 
-版本史（v1→v8 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
+版本史（v1→v11 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
 （`timetables` + `courses.timetableId`）→ v4 成绩表 → v5 调课检测两表 →
-v6 一卡通流水 → v7 笔记/作业 → v8 `courses.remark`。
+v6 一卡通流水 → v7 笔记/作业 → v8 `courses.remark` → v9 `homework` 去 `title` →
+v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings`。
 
 迁移纪律两条：
 
@@ -482,8 +482,8 @@ suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
    用户自定义过（`slotsCustomized`）则永不覆盖。
 6. **课程行的稳定身份与搬运纪律**（细节见 §3.1 决策 3）：`Course.mergeKey()` 唯一实现在
    `domain/Models.kt`（导入去重、导入统计、备注搬运共用同一把钥匙）；覆盖导入
-   （`replaceAllCourses`）与调课检测应用（`applyDetectGroups`）**必须**经
-   `domain/courseRemarksCarriedOver` 把课程备注搬回来，少了这一步的表现是
+   （`replaceAllCourses`）**必须**经 `domain/courseRemarksCarriedOver` 把课程备注搬回来，
+   少了这一步的表现是
    「导入一次备注全没了」。
 7. **提示只有一条通道**：页面级提示统一走 Scaffold 的 `AppSnackbarHost`
    （`ui/common/AppNotice.kt`），语气四档 `NoticeTone`；不要新引入 `android.widget.Toast`。
@@ -580,7 +580,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
   `TimeSlotRulesTest` / `TimeSlotScheduleTest`（作息不变量）、`WeekGridLayoutTest`（网格几何）、
   `TodayStateTest` / `TodayBoundaryTest`、`ExamMapperTest`（含历史学期开学日估算）、
   `ScoreCalculatorTest` / `ScoreGroupsTest`、`CourseTweakTest`（调课规划）、
-  `ScheduleDetectTest`（三方合并：归因/冲突/不误报）、`ScheduleExporterTest`（日历/CSV 展开）、
+  `ScheduleExporterTest`（日历/CSV 展开）、
   `ReminderPlannerTest`（提醒时刻与窗口）、`CalendarSyncDefaultsTest`、
   `TimetablePrefsDefaultsTest`、`ScheduleBackgroundTest`（背景图：参数夹取 / 模糊档位到解码尺寸 /
   文件名白名单）、`ShortcutsTest`、`GridFontDecouplingTest`；
@@ -660,6 +660,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 
 - [scripts/README.md](scripts/README.md) —— 爬虫速查：登录链路、DOM 规则、排错表（比本文更细）
 - [DESIGN.md](DESIGN.md) —— 产品与界面规格（§3 UI、§4 技术架构逐模块决策记录；
-  与本文互补：§4.17 调课检测、§3.11/§4.20 笔记·作业与作业提醒）
-- [AGENTS.md](AGENTS.md) —— 给 AI 结对工具的工程约定（版本实况、口径清单）
+  与本文互补：§3.11/§4.20 笔记·作业与作业提醒）
+- [AGENTS.md](AGENTS.md) —— 给 AI 结对工具的工程约定（版本实况 + 任务路由表），
+  领域口径清单在 [`.agents/rules/`](.agents/rules/)
 - [拾光课程表](https://github.com/XingHeYuZhuan/shiguangschedule) —— JSON 互通格式参照
