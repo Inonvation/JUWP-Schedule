@@ -46,3 +46,7 @@ captures/
 *.db-wal
 _*.txt
 build_*.txt
+
+# ============ 本地发布产物 ============
+# 正式包发布在 GitHub Release 上；本地副本统一放 dist/，不入库
+dist/
