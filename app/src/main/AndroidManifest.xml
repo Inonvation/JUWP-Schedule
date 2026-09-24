@@ -124,10 +124,18 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
-        <!-- 宿舍报修独立窗口（DESIGN §3.15）：第三个「因为窗口里有统一认证表单而锁竖屏」
-             的窗口，理由与上面两个相同。App 里锁方向的只有这三个。 -->
+        <!-- 学工表单独立窗口（DESIGN §3.15）：宿舍报修、请假等共用这一个（表单标识走
+             extra）。第三个「因为窗口里有统一认证表单而锁竖屏」的窗口，理由与上面两个
+             相同。App 里锁方向的只有这三个。 -->
         <activity
-            android:name=".DormRepairActivity"
+            android:name=".XgFormActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- 首次配置引导窗口（DESIGN §3.16）：由 MainActivity 在首启时拉起，
+             同样含统一认证表单，故同样锁竖屏。 -->
+        <activity
+            android:name=".OnboardingActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />

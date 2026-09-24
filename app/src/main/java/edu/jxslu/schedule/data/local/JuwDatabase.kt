@@ -19,8 +19,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         YktTurnoverEntity::class,
         NoteEntity::class,
         HomeworkEntity::class,
+        PowerReadingEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -33,6 +34,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun yktTurnoverDao(): YktTurnoverDao
     abstract fun noteDao(): NoteDao
     abstract fun homeworkDao(): HomeworkDao
+    abstract fun powerReadingDao(): PowerReadingDao
 
     companion object {
 
@@ -295,6 +297,34 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v10 → v11：电表读数本机记录（DESIGN §3.13「用电统计」，2026-09-24）。
+         * 新表 `power_readings`，CREATE TABLE / CREATE INDEX 非 destructive；
+         * 索引名与 [PowerReadingEntity] 的 `@Index` 声明逐字对齐
+         * （`index_power_readings_epochMs_roomId` 是唯一索引，漏写 unique 会被迁移校验判不一致）。
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS power_readings (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "epochMs INTEGER NOT NULL, " +
+                        "remainKwh REAL NOT NULL, " +
+                        "priceYuan REAL NOT NULL, " +
+                        "roomId TEXT NOT NULL, " +
+                        "source TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_power_readings_epochMs_roomId " +
+                        "ON power_readings(epochMs, roomId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_power_readings_roomId " +
+                        "ON power_readings(roomId)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -315,6 +345,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_7_8,
                         MIGRATION_8_9,
                         MIGRATION_9_10,
+                        MIGRATION_10_11,
                     )
                     .build()
                     .also { instance = it }

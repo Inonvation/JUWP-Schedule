@@ -304,6 +304,8 @@ def to_payload(
         },
     }
     if history is not None:
+        # 方向只看 tranamt 的符号：refund_flag 在真实流水上恒为 1（2026-09-24 实测 11/11，
+        # 含 50 元农行支付那几笔），而且 Python 里 bool("0") 也是 True——两条都会把充值判成退款。
         records = [
             {
                 "turnoverId": row.get("turnoverid"),
@@ -312,7 +314,7 @@ def to_payload(
                 "amount": _to_float(row.get("tranamt")),
                 "room": row.get("abstracts"),
                 "payId": row.get("payid"),
-                "refund": bool(row.get("refund_flag")),
+                "refund": (_to_float(row.get("tranamt")) or 0.0) < 0,
             }
             for row in history
         ]

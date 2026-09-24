@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,34 +36,55 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwAutoLogin
 import edu.jxslu.schedule.data.jw.JwUrls
+import edu.jxslu.schedule.data.jw.unwrapJsString
+import edu.jxslu.schedule.data.session.CasEnsureResult
+import edu.jxslu.schedule.data.xg.XgForm
 import edu.jxslu.schedule.data.xg.XgUrls
+import kotlinx.coroutines.launch
 
-private const val TAG = "DormRepair"
+private const val TAG = "XgForm"
 
 /**
- * 宿舍报修（DESIGN §3.15 / §4.26）：把学工系统的官方移动页装进一个窗口。
+ * 学工表单窗口（DESIGN §3.15 / §4.26）：把学工系统的官方移动页装进一个窗口。
  *
- * 页面从统一认证入口进（[XgUrls.SSO_LOGIN]）——CAS 那边已有会话就直接落到学工，
- * 没有就地登录。填表、传附件、提交、查流程都由官方页面自己完成，App 不代劳：
- * 报修的提交请求里带着一组服务端下发的动态值（pageEnc / traceId / nodeUniqueId 等），
- * 复刻一遍的代价和失效风险都远大于收益，理由写在 DESIGN §4.26。
+ * 报修、请假共用这一页，差别只有 [form] 里的表单标识。填表、传附件、提交、查流程
+ * 都由官方页面自己完成，App 不代劳：申请请求里带着一组服务端下发的动态值
+ * （`pageEnc` / `traceId` / `nodeUniqueId`），复刻一遍的代价与失效风险都远大于收益。
+ *
+ * 起点是统一认证入口而不是表单页本身，顺序不能反：表单页匿名可访问，它的登录引导
+ * 指向超星 passport（手机号 + 学习通密码），先开表单会把人带到一套他从没用过的账号上。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DormRepairScreen(onBack: () -> Unit) {
+fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // 会话层单例（DESIGN §4.27）：打开前准备好 CAS 会话，学工那一跳就是免密的
+    val cas = remember { Graph.casSession(context) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
     var progress by remember { mutableIntStateOf(0) }
-    var statusNote by remember { mutableStateOf(XgUrls.statusHint(null)) }
+    var statusNote by remember { mutableStateOf(XgUrls.statusHint(null, form.title)) }
+    // 落在统一认证登录页时用保存的凭证自动登一次（DESIGN §4.4.1）。只试一次：
+    // 失败（结构变了 / 有验证码）就交给用户手登，反复试只会撞风控。
+    val savedCas = remember { Graph.credentialVault(context).readCas() }
+    var autoLoginTried by remember { mutableStateOf(false) }
+    // 直达表单页只尝试一次：落到学工首页之后还要再跳一层。只在「第一次落到学工域」时跳，
+    // 之后用户点右上角回首页不会再被弹进表单。
+    var directAttempted by remember { mutableStateOf(false) }
 
     // 网页里点「上传附件」时，WebView 会把文件选择回调交出来，等系统选择器的结果。
     // 期间必须一直握着它：提前丢掉页面会永远停在「上传中」；而结果回来后又必须立刻
-    // 清掉——同一个 callback 消费两次会抛 IllegalStateException，且只清一处容易漏。
+    // 清掉——同一个 callback 消费两次会抛 IllegalStateException。
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -74,18 +96,24 @@ fun DormRepairScreen(onBack: () -> Unit) {
         )
     }
 
-    // 与左上角箭头同语义：网页能后退就先回退，退不动了才关窗口。
-    // 报修要连着走「首页 → 宿管服务 → 列表 → 表单」好几层，直接关窗口会让用户
-    // 以为自己的操作丢了。
+    // 与左上角箭头同语义：网页能后退就先回退，退不动了才关窗口。表单流程要连着走
+    // 「首页 → 服务 → 列表 → 表单」好几层，直接关窗口会让用户以为自己的操作丢了。
     BackHandler(enabled = canGoBack) { webView?.goBack() }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("宿舍报修") },
+                title = { Text(form.title) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    // 直达就没有网页历史可退。这张表单若被管理员改过（页面会提示
+                    // 「表单信息不存在」），或者用户要去看已提交的流程，得有路回学工首页。
+                    IconButton(onClick = { webView?.loadUrl(XgUrls.HOME) }) {
+                        Icon(Icons.Filled.Home, contentDescription = "学工首页")
                     }
                 },
             )
@@ -133,12 +161,37 @@ fun DormRepairScreen(onBack: () -> Unit) {
                                 ) {
                                     progress = 0
                                     canGoBack = view?.canGoBack() ?: false
-                                    statusNote = XgUrls.statusHint(url)
+                                    statusNote = XgUrls.statusHint(url, form.title)
                                 }
 
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     canGoBack = view?.canGoBack() ?: false
-                                    statusNote = XgUrls.statusHint(url)
+                                    statusNote = XgUrls.statusHint(url, form.title)
+                                    // 停在统一认证登录页 → 用保存的凭证自动登一次。
+                                    // 走「WebView 自己填表提交」而不是注入 cookie：注入的
+                                    // cookie 在真机上不被采用（属性缺 SameSite，跨站跳转不带，
+                                    // DESIGN §4.4.1），而填表提交的 cookie 由 CAS 亲自下发。
+                                    if (!autoLoginTried && XgUrls.isCasHost(url)) {
+                                        savedCas?.let { cred ->
+                                            autoLoginTried = true
+                                            view?.evaluateJavascript(
+                                                JwAutoLogin.fillJs(cred.username, cred.password),
+                                            ) { raw ->
+                                                val r = unwrapJsString(raw)
+                                                Log.d(TAG, "auto-login on CAS page: $r")
+                                                if (r?.startsWith(JwAutoLogin.OK_PREFIX) != true) {
+                                                    statusNote = "自动登录没走通，请在下方页面手动登录一次"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // 报修单/请假单本身匿名可访问，它的登录引导指向超星 passport，
+                                    // 不是学校统一认证。所以顺序必须是：先走 /sfrz/ 让学工把
+                                    // office 的会话 cookie 写好，再进表单页。
+                                    if (!directAttempted && XgUrls.shouldEnterForm(url)) {
+                                        directAttempted = true
+                                        view?.loadUrl(form.applyUrl)
+                                    }
                                 }
 
                                 override fun onReceivedSslError(
@@ -181,15 +234,40 @@ fun DormRepairScreen(onBack: () -> Unit) {
                                         filePicker.launch(fileChooserParams.createIntent())
                                         true
                                     } catch (e: Exception) {
-                                        // 设备上没有能处理该 Intent 的选择器时，退回 false，
-                                        // 让页面自己报「不支持上传」，而不是卡在一个打不开的选择器上
+                                        // 设备上没有能处理该 Intent 的选择器时退回 false，
+                                        // 让页面自己报「不支持上传」，而不是卡在打不开的选择器上
                                         Log.w(TAG, "file chooser unavailable", e)
                                         fileCallback = null
                                         false
                                     }
                                 }
                             }
-                            loadUrl(XgUrls.SSO_LOGIN)
+                            // 起点必须是统一认证入口，不能直接开表单页（理由见上面 onPageFinished）。
+                            // 未登录时停在 CAS 登录页，登录完自动落到学工，再自动进表单。
+                            //
+                            // 会话准备放在 loadUrl 之前（DESIGN §4.27）：存过凭证时会把 CAS 登录
+                            // 做完、cookie 注入 CookieManager；没凭证时什么都不做，退化成旧行为。
+                            scope.launch {
+                                // 与教务导入同一套快 / 慢路径（DESIGN §4.27）：有现成会话就本地注入后
+                                // 直接加载；没有就先加载（不能白屏等登录），后台补完再重载一次。
+                                if (cas.cookies().isNotEmpty()) {
+                                    runCatching { cas.injectToWebView() }
+                                    loadUrl(XgUrls.SSO_LOGIN)
+                                    return@launch
+                                }
+                                loadUrl(XgUrls.SSO_LOGIN)
+                                val outcome = runCatching { cas.prepareWebView() }.getOrNull()
+                                when {
+                                    outcome is CasEnsureResult.Ready && outcome.loggedInNow ->
+                                        loadUrl(XgUrls.SSO_LOGIN)
+
+                                    outcome is CasEnsureResult.Failed -> statusNote = outcome.message
+                                    outcome == CasEnsureResult.Suspended ->
+                                        statusNote = "教务登录已停用，请在「我的」页更新账号密码"
+
+                                    else -> Unit
+                                }
+                            }
                         }
                         addView(
                             wv,

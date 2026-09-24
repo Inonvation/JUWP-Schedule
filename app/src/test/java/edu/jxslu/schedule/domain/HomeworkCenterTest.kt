@@ -64,6 +64,30 @@ class HomeworkCenterTest {
         assertEquals("未命名作业", homeworkDisplayTitle("**"))
     }
 
+    /**
+     * 图片引用不进摘要（2026-09-24）：此前只剥前缀与包边，正文首行是图片时
+     * 列表行把 `![](img:20260924_…jpg)` 原样显示出来。
+     */
+    @Test
+    fun displayTitle_skipsImageOnlyLines() {
+        assertEquals("拍张照片", homeworkDisplayTitle("![](img:a.jpg)\n拍张照片"))
+        assertEquals("现场图", homeworkDisplayTitle("![现场图](img:a.jpg)\n\n现场图"))
+        assertEquals("外链也算", homeworkDisplayTitle("![](https://example.com/a.png)\n外链也算"))
+    }
+
+    @Test
+    fun displayTitle_stripsImageRefsInsideLine() {
+        assertEquals("完成实验", homeworkDisplayTitle("完成实验![](img:a.jpg)"))
+        assertEquals("完成实验", homeworkDisplayTitle("- [ ] 完成实验 ![](img:a.jpg)"))
+        assertEquals("打卡", homeworkDisplayTitle("## 打卡 ![图](img:a.jpg)"))
+    }
+
+    @Test
+    fun displayTitle_imageOnlyBodyFallsBack() {
+        assertEquals("未命名作业", homeworkDisplayTitle("![](img:a.jpg)"))
+        assertEquals("未命名作业", homeworkDisplayTitle("![](img:a.jpg)\n\n![](img:b.jpg)"))
+    }
+
     /** 逾期（降序：最近过期在前）→ 今天 → 未来（升序）→ 无截止（创建倒序） */
     @Test
     fun pendingOrder_overdueThenTodayThenFutureThenNoDue() {

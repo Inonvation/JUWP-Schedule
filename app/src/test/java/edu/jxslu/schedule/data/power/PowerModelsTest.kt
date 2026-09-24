@@ -30,9 +30,14 @@ class PowerModelsTest {
     private val turnoverJson = """
         {"msg":"success","code":200,"list":[
           {"turnoverid":4964633,"feeitemid":181,"payid":4,"feerange":"202608","tranamt":20,
-           "createdate":"2026-08-25 12:20:23","abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
+           "createdate":"2026-08-25 12:20:23","refund_flag":1,
+           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
           {"turnoverid":3955331,"feeitemid":181,"payid":4,"feerange":"202507","tranamt":50,
-           "createdate":"2025-07-03 13:08:57","abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"}]}
+           "createdate":"2025-07-03 13:08:57","refund_flag":1,
+           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
+          {"turnoverid":3955332,"feeitemid":181,"payid":4,"feerange":"202507","tranamt":-10,
+           "createdate":"2025-07-04 09:00:00","refund_flag":1,
+           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"}]}
     """.trimIndent()
 
     @Test
@@ -75,14 +80,43 @@ class PowerModelsTest {
     @Test
     fun turnoverParsesAmountsAndRoomLabel() {
         val rows = PowerModels.parseTurnovers(turnoverJson)
-        assertEquals(2, rows.size)
+        assertEquals(3, rows.size)
         // 升序：早的在前
         assertEquals("2025-07-03 13:08:57", rows[0].dateText)
         assertEquals(5000L, rows[0].amountFen)
         assertEquals("9A101", PowerModels.roomLabelOf(rows[0].room))
-        assertEquals(2000L, rows[1].amountFen)
-        assertEquals("202608", rows[1].month)
-        assertTrue("充值时间应能解析成 epoch 毫秒", rows[1].epochMs > 0L)
+        assertEquals(2000L, rows[2].amountFen)
+        assertEquals("202608", rows[2].month)
+        assertTrue("充值时间应能解析成 epoch 毫秒", rows[2].epochMs > 0L)
+    }
+
+    /**
+     * 2026-09-24 实测：`refund_flag` 在 11 条真实流水上恒为 1（其中 9 条是明显的充值），
+     * 平台自己的 H5 也从不读它——判方向只能看 `tranamt` 的符号。
+     * 这条断言就是「充值不再被显示成退款」的回归钉子。
+     */
+    @Test
+    fun turnoverDirectionComesFromAmountSignNotRefundFlag() {
+        val rows = PowerModels.parseTurnovers(turnoverJson)
+        // 三条都是 refund_flag=1，但只有 tranamt 为负的那条是退款
+        assertEquals(listOf(false, true, false), rows.map { it.refund })
+        assertEquals("2025-07-04 09:00:00", rows[1].dateText)
+        // 金额统一取绝对值（退款也不例外）
+        assertTrue(rows.all { it.amountFen >= 0 })
+
+        val withRefund = """
+            {"code":200,"list":[{"turnoverid":9,"tranamt":-10,"createdate":"2026-09-24 14:00:00",
+             "refund_flag":1}]}
+        """.trimIndent()
+        val refund = PowerModels.parseTurnovers(withRefund).single()
+        assertTrue(refund.refund)
+        assertEquals(1000L, refund.amountFen)
+
+        // 金额是字符串形态（平台两种都用过）时同样按符号判
+        val stringAmount = """{"code":200,"list":[{"turnoverid":10,"tranamt":"-0.5"}]}"""
+        val small = PowerModels.parseTurnovers(stringAmount).single()
+        assertTrue(small.refund)
+        assertEquals(50L, small.amountFen)
     }
 
     @Test

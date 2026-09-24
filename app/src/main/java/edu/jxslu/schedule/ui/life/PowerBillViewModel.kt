@@ -8,11 +8,19 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.power.PowerBill
 import edu.jxslu.schedule.data.power.PowerBillMonth
 import edu.jxslu.schedule.data.power.PowerException
+import edu.jxslu.schedule.data.power.PowerReadingSource
+import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerRepository
 import edu.jxslu.schedule.data.power.PowerTurnover
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
+import edu.jxslu.schedule.domain.PowerReading
+import edu.jxslu.schedule.domain.PowerRechargePoint
+import edu.jxslu.schedule.domain.PowerUsage
+import edu.jxslu.schedule.domain.PowerUsageRange
+import edu.jxslu.schedule.domain.PowerUsageSummary
 import edu.jxslu.schedule.ui.common.NoticeTone
 import java.time.YearMonth
+import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +32,13 @@ import kotlinx.coroutines.launch
 
 /** 账单页的月份窗口（进页算一次，页面存活期间不变）。 */
 private val BILL_MONTH_KEYS: List<String> = PowerBill.recentMonthKeys(YearMonth.now())
+
+/** 用电统计的档位状态。 */
+data class PowerUsageUiState(
+    val range: PowerUsageRange = PowerUsageRange.Day,
+    /** 统计结果；本机没有读数时为 null（页面给「还没攒到读数」的空态）。 */
+    val summary: PowerUsageSummary? = null,
+)
 
 /** 缴费账单页状态（DESIGN §3.13）。 */
 data class PowerBillUiState(
@@ -41,6 +56,8 @@ data class PowerBillUiState(
     val noCredentials: Boolean = false,
     /** 至少跑完过一次取数（含失败）；false = 首屏还在加载。 */
     val loaded: Boolean = false,
+    /** 用电统计（同一页第二个分页，DESIGN §3.13「用电统计」）。 */
+    val usage: PowerUsageUiState = PowerUsageUiState(),
 ) {
     /** 当前月的汇总；该月没有记录时为 null。 */
     val month: PowerBillMonth? get() = months.firstOrNull { it.key == monthKey }
@@ -69,11 +86,15 @@ sealed interface PowerBillEvent {
  * 数据来自 `PowerRepository.history`（与生活页「最近流水」同一份，仓库内存缓存 2 分钟）：
  * 从生活页点进来时通常**一次请求都不发**。月切换、汇总、柱状全在本地算，零网络。
  *
- * 不落库：电费流水条数少、平台随时可查；落库要处理增量与冲突，而这一页没有离线需求。
+ * 第二个分页「用电统计」的数据源完全不同：本机的电表读数（`power_readings`，Room 响应式）
+ * + 同一份流水（用来把充值加进去的电扣掉）。读数落库、流水不落库——流水条数少、
+ * 平台随时可查，本地存一份反而要处理增量与冲突（一卡通流水落库是因为它同时是
+ * 「消费流水」页的数据源，电费没有这个需求）。
  */
 class PowerBillViewModel(
     private val repo: PowerRepository,
     private val credentialStore: YktCredentialStore,
+    private val readingStore: PowerReadingStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PowerBillUiState())
@@ -82,9 +103,18 @@ class PowerBillViewModel(
     private val _events = Channel<PowerBillEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
+    /** 本机记录的电表读数（Room 响应式：生活页记下一条，这里立刻重算）。 */
+    private val readings = MutableStateFlow<List<PowerReading>>(emptyList())
+
     init {
         // 进页走缓存：从生活页过来时那份数据刚取过，不重复打平台（DESIGN §4.24「请求节流」）
         load(force = false)
+        viewModelScope.launch {
+            readingStore.observeAll().collect { rows ->
+                readings.value = rows
+                recomputeUsage()
+            }
+        }
     }
 
     /** 取一次流水。[force] = true 绕过仓库缓存（下拉刷新用）。 */
@@ -94,6 +124,8 @@ class PowerBillViewModel(
             _uiState.update {
                 it.copy(loading = false, loaded = true, noCredentials = true, error = null)
             }
+            // 取数没跑，但本机攒的读数照样能出曲线（只是没有充值流水可扣）
+            recomputeUsage()
             return
         }
         _uiState.update { it.copy(loading = true, error = null, noCredentials = false) }
@@ -109,6 +141,7 @@ class PowerBillViewModel(
                         error = null,
                     )
                 }
+                recomputeUsage()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PowerException.Credential) {
@@ -119,6 +152,7 @@ class PowerBillViewModel(
                         error = "${e.message}。若密码已改，请在「我的 → 校园卡」重新验证",
                     )
                 }
+                recomputeUsage()
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -127,12 +161,71 @@ class PowerBillViewModel(
                         error = e.message ?: "账单读取失败",
                     )
                 }
+                recomputeUsage()
             }
         }
     }
 
-    /** 下拉刷新 = 绕过缓存重取。 */
-    fun refresh() = load(force = true)
+    /**
+     * 下拉刷新 = 绕过缓存重取。
+     *
+     * 顺带**真的读一次电表**（三个来源里唯一由用户主动触发的那个）：读数要落库才有
+     * 用电统计，而统计的密度就等于读数的密度，所以下拉刷新这个动作顺便记一笔；
+     * 读表失败不影响账单（用量少一段而已，下一次读数会补上）。
+     */
+    fun refresh() {
+        load(force = true)
+        val credentials = credentialStore.read() ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.snapshot(
+                    credentials.username,
+                    credentials.password,
+                    force = true,
+                    source = PowerReadingSource.BILL,
+                )
+            }
+        }
+    }
+
+    /** 切统计粒度（日 / 周 / 月）；窗口长度在 `PowerUsage.windowOf`，本地重算零网络。 */
+    fun selectUsageRange(range: PowerUsageRange) {
+        if (_uiState.value.usage.range == range) return
+        _uiState.update { it.copy(usage = it.usage.copy(range = range)) }
+        recomputeUsage()
+    }
+
+    /**
+     * 重算用电统计：本机读数（`PowerUsage`）+ 本次取到的充值流水。
+     *
+     * 流水里**退款按负数**喂给 [PowerRechargePoint]：退款会把度数从电表里扣回去，
+     * 与充值同一个公式。买入的度数按单价折算，单价缺失的那一段 `PowerUsage` 会自己跳过。
+     */
+    private fun recomputeUsage() {
+        val state = _uiState.value
+        val recharges = state.rows.mapNotNull { row ->
+            if (row.epochMs <= 0L) {
+                null
+            } else {
+                PowerRechargePoint(
+                    epochMs = row.epochMs,
+                    amountFen = if (row.refund) -row.amountFen else row.amountFen,
+                )
+            }
+        }
+        val summary = if (readings.value.isEmpty()) {
+            null
+        } else {
+            PowerUsage.summarize(
+                readings = readings.value,
+                recharges = recharges,
+                range = state.usage.range,
+                nowMs = System.currentTimeMillis(),
+                zone = ZoneId.systemDefault(),
+            )
+        }
+        _uiState.update { it.copy(usage = it.usage.copy(summary = summary)) }
+    }
 
     /** 切到窗口内的某个月（窗口外的键直接忽略）。 */
     fun selectMonth(key: String) {
@@ -185,6 +278,7 @@ class PowerBillViewModel(
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PowerBillViewModel(
                 Graph.powerRepository(context.applicationContext),
                 Graph.yktCredentialStore(context.applicationContext),
+                Graph.powerReadingStore(context.applicationContext),
             ) as T
         }
     }

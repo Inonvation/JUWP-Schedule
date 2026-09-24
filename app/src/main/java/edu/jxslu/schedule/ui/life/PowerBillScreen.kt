@@ -20,6 +20,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,8 +31,10 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -64,6 +69,9 @@ import me.rerere.hugeicons.stroke.Bolt
  * 现在在 App 内看：月切换 + 当月汇总 + 近 12 个月柱状 + 该月明细。
  * 数据来自与生活页「最近流水」同一条流水接口（仓库内存缓存 2 分钟，从生活页点进来通常不发请求）。
  *
+ * 两个分页（2026-09-24 加入第二个）：**充值账单**（本文件，平台流水）与**用电统计**
+ * （`PowerUsagePanel.kt`，本机读数差分）。两者数据源完全不同，所以分页而不是混成一条列表。
+ *
  * 页脚留一个「在缴费平台打开」的兜底入口：平台改版或要看别的收费项目时还有一条路。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,6 +89,8 @@ fun PowerBillScreen(
     val haptics = rememberAppHaptics()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    // 分页选择是页面局部状态：离开页面就回到默认的「充值账单」，不值得持久化
+    var showUsage by remember { mutableStateOf(false) }
 
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
         scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
@@ -108,77 +118,114 @@ fun PowerBillScreen(
             )
         },
     ) { padding ->
-        PullToRefreshBox(
-            // 首屏加载不用下拉指示器（列表还在「正在读取」态），只有刷新时才转
-            isRefreshing = state.loading && state.loaded,
-            onRefresh = {
-                haptics.tap()
-                viewModel.refresh()
-            },
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            // 两个分页：充值账单（平台流水）与用电统计（本机读数差分）——数据源完全不同，
+            // 所以分页而不是同一条列表里换口径
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
             ) {
-                item {
-                    MonthCard(
-                        state = state,
-                        onPrev = {
+                listOf("充值账单", "用电统计").forEachIndexed { index, label ->
+                    SegmentedButton(
+                        selected = showUsage == (index == 1),
+                        onClick = {
                             haptics.tap()
-                            viewModel.prevMonth()
+                            showUsage = index == 1
                         },
-                        onNext = {
-                            haptics.tap()
-                            viewModel.nextMonth()
-                        },
+                        // 不显示选中对勾：选中段自带填充色（与设置页分段控件同口径）
+                        icon = {},
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+                        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                        modifier = Modifier.height(36.dp),
                     )
                 }
+            }
 
-                when {
-                    state.noCredentials -> item {
-                        NoticeBlock(
-                            message = "凭证未配置或已清除，请先在「我的 → 校园卡」开启并验证",
-                            actionLabel = "去设置",
-                            onAction = onOpenSettings,
+            PullToRefreshBox(
+                // 首屏加载不用下拉指示器（列表还在「正在读取」态），只有刷新时才转
+                isRefreshing = state.loading && state.loaded,
+                onRefresh = {
+                    haptics.tap()
+                    viewModel.refresh()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (showUsage) {
+                        powerUsageItems(
+                            state = state.usage,
+                            onSelectRange = { range -> viewModel.selectUsageRange(range) },
+                        )
+                        return@LazyColumn
+                    }
+
+                    item {
+                        MonthCard(
+                            state = state,
+                            onPrev = {
+                                haptics.tap()
+                                viewModel.prevMonth()
+                            },
+                            onNext = {
+                                haptics.tap()
+                                viewModel.nextMonth()
+                            },
                         )
                     }
 
-                    state.error != null && state.rows.isEmpty() -> item {
-                        NoticeBlock(
-                            message = state.error.orEmpty(),
-                            actionLabel = "重试",
-                            onAction = { viewModel.refresh() },
+                    when {
+                        state.noCredentials -> item {
+                            NoticeBlock(
+                                message = "凭证未配置或已清除，请先在「我的 → 校园卡」开启并验证",
+                                actionLabel = "去设置",
+                                onAction = onOpenSettings,
+                            )
+                        }
+
+                        state.error != null && state.rows.isEmpty() -> item {
+                            NoticeBlock(
+                                message = state.error.orEmpty(),
+                                actionLabel = "重试",
+                                onAction = { viewModel.refresh() },
+                            )
+                        }
+
+                        else -> {
+                            // 有数据时失败提示不挡列表：留着上次取到的账单，配一条提示
+                            state.error?.let { message ->
+                                item {
+                                    InlineNoticeRow(message = message, tone = NoticeTone.Warning)
+                                }
+                            }
+                            if (state.visibleRows.isEmpty()) {
+                                item { EmptyMonth(loading = !state.loaded) }
+                            } else {
+                                items(state.visibleRows, key = { row -> rowKey(row) }) { row ->
+                                    BillRow(row)
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Footer(
+                            onOpenPlatform = {
+                                haptics.tap()
+                                viewModel.openPlatformPage { url -> openExternal(context, url, showNotice) }
+                            },
                         )
                     }
-
-                    else -> {
-                        // 有数据时失败提示不挡列表：留着上次取到的账单，配一条提示
-                        state.error?.let { message ->
-                            item {
-                                InlineNoticeRow(message = message, tone = NoticeTone.Warning)
-                            }
-                        }
-                        if (state.visibleRows.isEmpty()) {
-                            item { EmptyMonth(loading = !state.loaded) }
-                        } else {
-                            items(state.visibleRows, key = { row -> rowKey(row) }) { row ->
-                                BillRow(row)
-                            }
-                        }
-                    }
-                }
-
-                item {
-                    Footer(
-                        onOpenPlatform = {
-                            haptics.tap()
-                            viewModel.openPlatformPage { url -> openExternal(context, url, showNotice) }
-                        },
-                    )
                 }
             }
         }

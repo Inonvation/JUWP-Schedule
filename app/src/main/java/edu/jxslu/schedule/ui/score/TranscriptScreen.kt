@@ -18,6 +18,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,10 +67,12 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.jw.JwUrls
+import edu.jxslu.schedule.data.jw.JwAutoLogin
 import edu.jxslu.schedule.data.jw.PtworkTranscript
 import edu.jxslu.schedule.data.jw.TranscriptCookies
 import edu.jxslu.schedule.data.jw.TranscriptException
 import edu.jxslu.schedule.data.jw.TranscriptTerm
+import edu.jxslu.schedule.data.jw.unwrapJsString
 import edu.jxslu.schedule.domain.TranscriptHistory
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -111,11 +114,28 @@ fun TranscriptScreen(onBack: () -> Unit) {
     var terms by remember { mutableStateOf<List<TranscriptTerm>>(emptyList()) }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var authVisible by remember { mutableStateOf(false) }
+    /** 会话不可用时只自动开一次授权层，避免「授权 → 立刻又失效 → 再授权」空转。 */
+    var autoAuthTried by remember { mutableStateOf(false) }
     var savedFile by remember { mutableStateOf<File?>(null) }
     var savedTerms by remember { mutableStateOf<List<String>>(emptyList()) }
 
     fun notify(message: String, tone: NoticeTone) {
         scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+    }
+
+    /**
+     * 会话不可用 → **自动开一次授权层**（里面有自动填表登录），不再把用户丢在
+     * 「点去登录」上等他自己点。
+     *
+     * 只自动一次：授权回来仍然不可用就停在 `NeedLogin`，由用户决定要不要再来一遍
+     * （反复自动重试等于拿错误密码一直撞，会触发风控）。
+     */
+    fun requireReauth(message: String) {
+        stage = TxStage.NeedLogin(message)
+        if (!autoAuthTried) {
+            autoAuthTried = true
+            authVisible = true
+        }
     }
 
     /**
@@ -137,7 +157,7 @@ fun TranscriptScreen(onBack: () -> Unit) {
             stage = TxStage.Checking
             val cookie = TranscriptCookies.sessionHeader()
             if (cookie == null) {
-                stage = TxStage.NeedLogin("还没登录学校统一认证")
+                requireReauth("还没登录学校统一认证")
                 return@launch
             }
             try {
@@ -147,7 +167,7 @@ fun TranscriptScreen(onBack: () -> Unit) {
                 selected = list.map { it.term }.toSet()
                 stage = if (list.isEmpty()) TxStage.Empty else TxStage.Ready
             } catch (e: TranscriptException.SessionExpired) {
-                stage = TxStage.NeedLogin("统一认证会话已过期")
+                requireReauth("统一认证会话已过期")
             } catch (e: CancellationException) {
                 // 取消（用户返回关窗口）必须原样抛：被下面那条 catch 吃掉会变成「导出失败」，
                 // 还会在已经销毁的组合上写状态（同 JwHttpSession 的教训）
@@ -177,7 +197,7 @@ fun TranscriptScreen(onBack: () -> Unit) {
                 savedTerms = picked
                 stage = TxStage.Done
             } catch (e: TranscriptException.SessionExpired) {
-                stage = TxStage.NeedLogin("统一认证会话已过期")
+                requireReauth("统一认证会话已过期")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -338,7 +358,8 @@ private fun NeedLoginContent(
         Spacer(Modifier.height(8.dp))
         Text(
             "成绩单由教务处签章系统出具，需要一次统一认证登录。\n" +
-                "登录只在校内网页里进行，App 不保存账号密码。",
+                "已保存的账号密码会自动用于登录，失败时也能在这个网页里手动登录；" +
+                "要撤销保存，去「我的」→ 教务 退出登录。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         )
@@ -533,6 +554,9 @@ private fun FailedContent(
  * 「签章系统域且不是它自己的登录页」就自动回调（判定见 [PtworkTranscript.isAuthorizedLanding]）。
  * 底部留一个手动「继续」按钮：自动识别万一失灵（页面结构变化），用户仍能往下走。
  */
+/** 自动登录结果只在 logcat 里看，方便下次排查；不写 UI、不含凭证。 */
+private const val AUTH_TAG = "PtworkAuth"
+
 @Composable
 private fun AuthorizationOverlay(
     modifier: Modifier = Modifier,
@@ -541,6 +565,12 @@ private fun AuthorizationOverlay(
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    // 停在统一认证登录页时用保存的凭证自动登一次（DESIGN §4.25）。只试一次：
+    // 失败（结构变了 / 有验证码）就交给用户手登，反复试只会撞风控。
+    val context = LocalContext.current
+    val savedCas = remember { Graph.credentialVault(context).readCas() }
+    var autoLoginTried by remember { mutableStateOf(false) }
 
     // 自动识别会连着触发多次（落地后还有后续页面加载与非主框架回调），只认第一次
     var fired by remember { mutableStateOf(false) }
@@ -599,6 +629,23 @@ private fun AuthorizationOverlay(
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
+                                // 与教务导入 / 学工表单同一手法（DESIGN §4.4.1）：让 WebView 自己
+                                // 填表提交，cookie 由 CAS 亲自 Set-Cookie——把 OkHttp 拿到的 cookie
+                                // 注入 CookieManager 那条路在真机走不通（属性缺 SameSite）。
+                                if (!autoLoginTried && JwUrls.isCasHost(url)) {
+                                    savedCas?.let { cred ->
+                                        autoLoginTried = true
+                                        view?.evaluateJavascript(
+                                            JwAutoLogin.fillJs(cred.username, cred.password),
+                                        ) { raw ->
+                                            val r = unwrapJsString(raw)
+                                            Log.d(AUTH_TAG, "auto-login on CAS page: $r")
+                                            if (r?.startsWith(JwAutoLogin.OK_PREFIX) != true) {
+                                                problem = "自动登录没走通，请在下方页面手动登录一次"
+                                            }
+                                        }
+                                    }
+                                }
                                 if (PtworkTranscript.isAuthorizedLanding(url)) authorizeOnce()
                             }
 
@@ -630,7 +677,13 @@ private fun AuthorizationOverlay(
                             }
                         }
                         webChromeClient = WebChromeClient()
-                        loadUrl(PtworkTranscript.CAS_ENTRY)
+                        // 会话先准备好（DESIGN §4.27）：存过凭证时 CAS 登录在这里完成、cookie
+                        // 注入 CookieManager，窗口打开后多半已经自动落到签章系统。
+                        // 没存凭证时什么都不做，行为与旧版一致（显示统一认证登录页）。
+                        scope.launch {
+                            runCatching { Graph.casSession(ctx).prepareWebView() }
+                            loadUrl(PtworkTranscript.CAS_ENTRY)
+                        }
                     }
                     webView = view
                     addView(

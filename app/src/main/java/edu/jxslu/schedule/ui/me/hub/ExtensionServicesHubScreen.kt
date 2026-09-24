@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -29,11 +30,15 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.xg.XgForm
+import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.me.MeViewModel
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Calendar01
+import me.rerere.hugeicons.stroke.ClipboardList
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Flash
@@ -53,7 +58,7 @@ fun ExtensionServicesHubScreen(
     onOpenShortcuts: () -> Unit,
     onOpenCampusCard: () -> Unit,
     onOpenWater: () -> Unit,
-    onOpenDormRepair: () -> Unit,
+    onOpenXgForm: (XgForm) -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -98,12 +103,15 @@ fun ExtensionServicesHubScreen(
                 title = "学校系统",
                 subtitle = "江西水利电力大学 · 统一身份认证登录",
             ) {
-                SettingItem(
-                    title = "宿舍报修",
-                    subtitle = "宿管服务 · 填表 / 上传附件 / 提交 / 查进度",
-                    icon = HugeIcons.Repair,
-                    onClick = onOpenDormRepair,
-                )
+                // 清单来自 XgUrls.FORMS：加一个新表单只需在那边加一条，入口自动出现
+                XgUrls.FORMS.forEach { form ->
+                    SettingItem(
+                        title = form.title,
+                        subtitle = form.subtitle,
+                        icon = form.icon,
+                        onClick = { onOpenXgForm(form) },
+                    )
+                }
             }
 
             SettingsSection(
@@ -142,3 +150,16 @@ fun ExtensionServicesHubScreen(
         }
     }
 }
+
+/**
+ * 学工表单的入口图标。
+ *
+ * 映射放在 UI 层，不塞进 [XgForm]：data 层不该出现 Compose 的 ImageVector。
+ * 每加一个表单在这里补一条，没补的落默认图标。
+ */
+private val XgForm.icon: ImageVector
+    get() = when (id) {
+        XgUrls.REPAIR.id -> HugeIcons.Repair
+        XgUrls.LEAVE.id -> HugeIcons.Calendar01
+        else -> HugeIcons.ClipboardList
+    }

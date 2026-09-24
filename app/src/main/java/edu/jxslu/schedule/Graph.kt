@@ -4,6 +4,7 @@ import android.content.Context
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
 import edu.jxslu.schedule.data.power.PowerClient
+import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerRepository
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
@@ -11,12 +12,16 @@ import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.QiekjTokenStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.HomeworkRepository
+import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.jw.TranscriptClient
+import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.repo.TranscriptStore
+import edu.jxslu.schedule.data.session.CasSession
+import edu.jxslu.schedule.data.session.CredentialVault
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktRepository
@@ -50,6 +55,15 @@ object Graph {
     private var yktCredentialStore: YktCredentialStore? = null
 
     @Volatile
+    private var credentialVault: CredentialVault? = null
+
+    @Volatile
+    private var casSession: CasSession? = null
+
+    @Volatile
+    private var profileSync: ProfileSync? = null
+
+    @Volatile
     private var yktRepository: YktRepository? = null
 
     @Volatile
@@ -57,6 +71,9 @@ object Graph {
 
     @Volatile
     private var powerRepository: PowerRepository? = null
+
+    @Volatile
+    private var powerReadingStore: PowerReadingStore? = null
 
     @Volatile
     private var transcriptClient: TranscriptClient? = null
@@ -127,16 +144,55 @@ object Graph {
             ).also { qiekjRepository = it }
         }
 
-    /** 校园卡凭证存储单例（DESIGN §4.19）：EncryptedSharedPreferences，进程内一份。 */
+    /**
+     * 凭据与登录闸门的唯一读写口（DESIGN §4.27）：进程内一份，两套凭证都由它管。
+     *
+     * 必须是单例：`EncryptedSharedPreferences` 每次 `create` 都是新实例、各持一份内存缓存，
+     * 多份实例会出现「一处写、另一处读不到」。
+     */
+    fun credentialVault(context: Context): CredentialVault =
+        credentialVault ?: synchronized(this) {
+            credentialVault ?: CredentialVault(context.applicationContext).also { credentialVault = it }
+        }
+
+    /** 校园卡凭证存储单例（DESIGN §4.19）：薄适配器，读写全部委托 [credentialVault]。 */
     fun yktCredentialStore(context: Context): YktCredentialStore =
         yktCredentialStore ?: synchronized(this) {
-            yktCredentialStore ?: YktCredentialStore(context.applicationContext).also { yktCredentialStore = it }
+            yktCredentialStore ?: YktCredentialStore(credentialVault(context))
+                .also { yktCredentialStore = it }
+        }
+
+    /**
+     * 学校统一认证会话单例（DESIGN §4.27）：教务 / 学工 / 签章共用这一份 CAS 会话。
+     *
+     * OkHttp client 与 cookie jar 都挂在这个实例上、进程存活期内复用——不再是旧的
+     * 「每次任务全量重登、用完即弃」。
+     */
+    fun casSession(context: Context): CasSession =
+        casSession ?: synchronized(this) {
+            casSession ?: CasSession(
+                vault = credentialVault(context),
+                // 代理/VPN 开着时登录必然失败（学校对代理出口超时或 500，DESIGN §4.27），
+                // 先拦下并点名提示，省一次必然失败的往返、也免得把锅记到凭证上
+                isProxyActive = { JwVpnDetector.isVpnActive(context.applicationContext) },
+            ).also { casSession = it }
+        }
+
+    /**
+     * 学籍卡补抓（DESIGN §3.3）：会话可用时把姓名 / 班级补上，不用等一次成绩导入。
+     * 无状态（闸门在 DataStore 里），但仍做成单例——省一次构造、也便于将来加内存缓存。
+     */
+    fun profileSync(context: Context): ProfileSync =
+        profileSync ?: synchronized(this) {
+            profileSync ?: ProfileSync(casSession(context), displayPrefs(context))
+                .also { profileSync = it }
         }
 
     /** 校园卡仓库单例（DESIGN §4.19）：OkHttp client 只建一次；token 只在仓库内存里。 */
     fun yktRepository(context: Context): YktRepository =
         yktRepository ?: synchronized(this) {
-            yktRepository ?: YktRepository(YktClient.create()).also { yktRepository = it }
+            yktRepository ?: YktRepository(YktClient.create(), credentialVault(context))
+                .also { yktRepository = it }
         }
 
     /**
@@ -154,7 +210,17 @@ object Graph {
      */
     fun powerRepository(context: Context): PowerRepository =
         powerRepository ?: synchronized(this) {
-            powerRepository ?: PowerRepository(PowerClient.create()).also { powerRepository = it }
+            powerRepository ?: PowerRepository(
+                PowerClient.create(),
+                powerReadingStore(context),
+            ).also { powerRepository = it }
+        }
+
+    /** 电表读数本机记录（DESIGN §3.13「用电统计」）：仓库写入、账单页读取共用一份。 */
+    fun powerReadingStore(context: Context): PowerReadingStore =
+        powerReadingStore ?: synchronized(this) {
+            powerReadingStore ?: PowerReadingStore(JuwDatabase.get(context.applicationContext).powerReadingDao())
+                .also { powerReadingStore = it }
         }
 
     /**

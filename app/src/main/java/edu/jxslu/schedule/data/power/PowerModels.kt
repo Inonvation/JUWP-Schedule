@@ -2,6 +2,7 @@ package edu.jxslu.schedule.data.power
 
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -78,14 +79,21 @@ data class PowerMeter(
     val fetchedAtMs: Long,
 )
 
-/** 电费流水一条（充值/退款；金额按分存）。 */
+/**
+ * 电费流水一条（充值/退款；[amountFen] 恒为非负，方向看 [refund]）。
+ *
+ * **方向只认 `tranamt` 的正负，不认 `refund_flag`**（2026-09-24 实测，见
+ * [parseTurnovers] 的 KDoc）。
+ */
 data class PowerTurnover(
     val turnoverId: Long?,
     val dateText: String,
     val epochMs: Long,
     val month: String?,
+    /** 金额绝对值（分）。 */
     val amountFen: Long,
     val room: String?,
+    /** true = 退款（`tranamt` 为负）；false = 充值。 */
     val refund: Boolean,
 )
 
@@ -153,20 +161,31 @@ object PowerModels {
         )
     }
 
-    /** 电费流水（`GET /charge/turnover/personal_data` 的 `list`），按时间升序。 */
+    /**
+     * 电费流水（`GET /charge/turnover/personal_data` 的 `list`），按时间升序。
+     *
+     * **退款判据是 `tranamt` 的符号，不是 `refund_flag`**（2026-09-24 实测）：
+     * `refund_flag` 在该账号 11 条记录上**恒为 1**，其中 9 条是明显的充值
+     * （2026-08-25 农行支付 20 元、2026-08-01 农行支付 50 元…），把它当退款判据
+     * 会让整页充值都显示成「电费退款」。平台自己的 H5 也从不读这个字段——
+     * 它判充值用的是 `list.filter(tranamt > 0)`，退款是另一条订单流程
+     * （`POST /order/addRefundOrder`，申请入口在「退费申请」页），不在这份列表里。
+     * 所以：`tranamt < 0` 才算退款，金额统一取绝对值存。
+     */
     fun parseTurnovers(raw: String): List<PowerTurnover> {
         val list = root(raw)?.get("list")?.jsonArrayOrNull().orEmpty()
         return list.mapNotNull { element ->
             val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
             val date = asString(obj["createdate"]).orEmpty()
+            val amountYuan = obj["tranamt"]?.let { asDouble(it) } ?: 0.0
             PowerTurnover(
                 turnoverId = obj["turnoverid"]?.let { asLong(it) },
                 dateText = date,
                 epochMs = parseTimeMs(date),
                 month = asString(obj["feerange"]),
-                amountFen = obj["tranamt"]?.let { asDouble(it) }?.let { fen(it) } ?: 0L,
+                amountFen = fen(abs(amountYuan)),
                 room = asString(obj["abstracts"]),
-                refund = asString(obj["refund_flag"]) == "1",
+                refund = amountYuan < 0,
             )
         }.sortedBy { it.epochMs }
     }

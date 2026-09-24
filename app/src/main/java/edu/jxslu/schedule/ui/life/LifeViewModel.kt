@@ -25,6 +25,7 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -98,7 +99,7 @@ class LifeViewModel(
      *
      * [force] = false 是**进页**那条路：电费走仓库内存缓存，一卡通流水走 10 分钟闸门，
      * 切 Tab 来回不重复打平台（DESIGN §4.24「请求节流」）。
-     * 顶栏刷新按钮传 true（用户主动要看最新）。
+     * 下拉刷新传 true（用户主动要看最新）。
      */
     fun refreshAll(force: Boolean = true) {
         refreshPower(force = force)
@@ -178,6 +179,17 @@ class LifeViewModel(
         val orderId: String? = null,
         /** 密码键盘挑战（paystep=2 的 passwordMap + ccctype）。 */
         val challenge: PowerPayChallenge? = null,
+        /** 本次充值金额（元，原样字符串）：密码步展示「本次充值 ¥X」用。 */
+        val amountYuan: String? = null,
+        /** 已受理之后的查单结果：1 = 平台确认已记账；null = 还没查到 / 查不到。 */
+        val paidStatus: Int? = null,
+        /**
+         * 被服务端拒绝的次数，每次拒绝自增。
+         *
+         * 给 UI 当「清空已输密码」的信号用。**不能用 error 文案当信号**：两次失败若
+         * 服务端给的是同一句话，`error` 前后相等、StateFlow 不发射，密码格就不会清空。
+         */
+        val rejectedCount: Int = 0,
         val busy: Boolean = false,
         val error: String? = null,
         /**
@@ -202,6 +214,18 @@ class LifeViewModel(
     private var pendingOrderCleanup: Job? = null
 
     /**
+     * 流程会话号：每次打开弹层（[preparePowerRecharge]）自增。
+     *
+     * 异步结果回来时若会话已变（用户关掉弹层又重开，或点了两次「电费充值」），整批丢弃——
+     * 否则上一轮的结果会写进新一轮界面：最典型的是「支付成功后马上重开弹层，新弹层直接
+     * 显示支付成功」。钱相关的流程，状态串台比多写几行判断更糟。
+     */
+    private var flowSession = 0
+
+    /** 结果是否仍属于当前这一轮流程。 */
+    private fun isCurrentSession(session: Int) = session == flowSession
+
+    /**
      * 打开电费充值弹层时调用（DESIGN §4.24）：重置流程状态 + 清一遍未支付订单。
      *
      * 为什么在这里清：未支付单只可能由本流程产生（下单后没付完就退出），而堆积会让
@@ -210,6 +234,7 @@ class LifeViewModel(
      * 服务端原话会照实显示。
      */
     fun preparePowerRecharge() {
+        flowSession++
         _powerRecharge.value = PowerRechargeUi()
         val credentials = credentialStore.read() ?: return
         pendingOrderCleanup?.cancel()
@@ -233,11 +258,13 @@ class LifeViewModel(
             return
         }
         // 保留 cleanedOrders（那条提示在弹层里，下单时不该被抹掉），其余字段回到干净起点
+        val session = flowSession
         _powerRecharge.update {
             it.copy(
                 step = PowerRechargeUi.Step.Amount,
                 orderId = null,
                 challenge = null,
+                amountYuan = yuan,
                 busy = true,
                 error = null,
             )
@@ -245,14 +272,18 @@ class LifeViewModel(
         viewModelScope.launch {
             // 等弹层打开时那次清理跑完再下单（见 pendingOrderCleanup）
             pendingOrderCleanup?.join()
+            if (!isCurrentSession(session)) return@launch
             try {
                 val order = powerRepo.createOrder(credentials.username, credentials.password, yuan)
+                if (!isCurrentSession(session)) return@launch
                 _powerRecharge.value = _powerRecharge.value.copy(orderId = order.orderId, busy = false)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PowerException) {
+                if (!isCurrentSession(session)) return@launch
                 _powerRecharge.value = _powerRecharge.value.copy(busy = false, error = e.message)
             } catch (e: Exception) {
+                if (!isCurrentSession(session)) return@launch
                 _powerRecharge.value = _powerRecharge.value.copy(
                     busy = false,
                     error = "下单失败：${e.message ?: "未知错误"}",
@@ -265,10 +296,12 @@ class LifeViewModel(
     fun loadPayChallenge() {
         val credentials = credentialStore.read() ?: return
         val orderId = _powerRecharge.value.orderId ?: return
+        val session = flowSession
         _powerRecharge.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             try {
                 val challenge = powerRepo.payChallenge(credentials.username, credentials.password, orderId)
+                if (!isCurrentSession(session)) return@launch
                 _powerRecharge.value = _powerRecharge.value.copy(
                     step = PowerRechargeUi.Step.Password,
                     challenge = challenge,
@@ -277,6 +310,7 @@ class LifeViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isCurrentSession(session)) return@launch
                 _powerRecharge.value = _powerRecharge.value.copy(
                     busy = false,
                     error = "发起支付失败：${e.message ?: "未知错误"}",
@@ -302,22 +336,35 @@ class LifeViewModel(
             _powerRecharge.update { it.copy(error = "键盘协议异常，请取消后重试") }
             return
         }
+        val session = flowSession
         _powerRecharge.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
-            val result = runCatching {
-                // orderId 传 VM 手上那个：它是下单时服务端给的，比 challenge 里的可信
+            // orderId 传 VM 手上那个：它是下单时服务端给的，比 challenge 里的可信
+            val orderId = _powerRecharge.value.orderId
+            val result = try {
                 powerRepo.payConfirm(
                     credentials.username,
                     credentials.password,
                     challenge,
                     cipher,
-                    orderId = _powerRecharge.value.orderId,
+                    orderId = orderId,
                 )
-            }.getOrElse { e -> PowerPayResult.Rejected(e.message ?: "支付失败") }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 网络类失败先查单：钱可能已经扣了、只是响应没回来。不查就报错，
+                // 用户以为没成功又付一次，就是重复扣款。
+                val paid = e is PowerException.Network && !orderId.isNullOrBlank() &&
+                    powerOrderStatus(credentials.username, credentials.password, orderId) == 1
+                if (paid) PowerPayResult.Accepted else PowerPayResult.Rejected(e.message ?: "支付失败")
+            }
+            if (!isCurrentSession(session)) return@launch
             when (result) {
                 is PowerPayResult.Accepted -> {
                     _powerRecharge.update { it.copy(step = PowerRechargeUi.Step.Accepted, busy = false) }
                     refreshPower()
+                    // 查一次单把「已受理」升级成「已扣款」；查不到就维持原话（见 confirmPowerPaid）
+                    confirmPowerPaid(credentials.username, credentials.password, orderId, session)
                 }
 
                 is PowerPayResult.Rejected -> {
@@ -330,17 +377,47 @@ class LifeViewModel(
                                 step = PowerRechargeUi.Step.Amount,
                                 orderId = null,
                                 challenge = null,
+                                paidStatus = null,
                                 busy = false,
                                 error = "$message（请重新下单）",
+                                rejectedCount = it.rejectedCount + 1,
                             )
                         }
                     } else {
-                        _powerRecharge.update { it.copy(busy = false, error = message) }
+                        _powerRecharge.update {
+                            it.copy(busy = false, error = message, rejectedCount = it.rejectedCount + 1)
+                        }
                     }
                 }
             }
         }
     }
+
+    /**
+     * 受理后的一次查单（不轮询）：`order.status = 1` 才是平台真把这笔记账了。
+     *
+     * 只把文案从「已受理」升级成「已扣款」，查不到（网络/平台改版）就保持「已受理」——
+     * 这一步是锦上添花，失败不该让用户看到任何异常。
+     */
+    private fun confirmPowerPaid(username: String, password: String, orderId: String?, session: Int) {
+        if (orderId.isNullOrBlank()) return
+        viewModelScope.launch {
+            delay(PAID_CONFIRM_DELAY_MS)
+            if (powerOrderStatus(username, password, orderId) == 1 && isCurrentSession(session)) {
+                _powerRecharge.update { it.copy(paidStatus = 1) }
+            }
+        }
+    }
+
+    /** 查单：`status == 1` = 平台已记账。失败按「不知道」返回 null（调用方不做任何推断）。 */
+    private suspend fun powerOrderStatus(username: String, password: String, orderId: String): Int? =
+        try {
+            powerRepo.orderStatus(username, password, orderId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
 
     /** 关闭/取消充值弹层（未支付订单 30 分钟自动失效，DESIGN §4.24）。 */
     fun dismissPowerRecharge() {
@@ -400,13 +477,20 @@ class LifeViewModel(
             subtitle = listOfNotNull(room, time.takeIf { it.isNotBlank() }).joinToString(" · ")
                 .ifBlank { "寝室电费" },
             amountFen = amountFen,
-            income = amountFen >= 0,
+            // 方向看 refund（`tranamt` 符号），不看金额大小——金额已统一取绝对值
+            income = !refund,
         )
     }
 
     companion object {
         /** 本地取几条用于混排：多取一条，防止电费与一卡通时间交织时最新一条被截掉。 */
         private const val RECENT_ROOM_ROWS = LifeFeed.DEFAULT_LIMIT + 1
+
+        /**
+         * 受理后等多久查一次单。记账是平台侧同步完成的，留一点余量避免查得太早拿到
+         * 还没落库的 `status=0`（查到 0 也不报错，只是文案停在「已受理」）。
+         */
+        private const val PAID_CONFIRM_DELAY_MS = 1_200L
 
         fun Factory(context: Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

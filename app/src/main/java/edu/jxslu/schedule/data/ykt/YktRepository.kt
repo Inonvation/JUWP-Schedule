@@ -1,6 +1,9 @@
 package edu.jxslu.schedule.data.ykt
 
 import edu.jxslu.schedule.domain.YktKeyboard
+import edu.jxslu.schedule.data.session.LoginTarget
+import edu.jxslu.schedule.data.session.SessionStatus
+import edu.jxslu.schedule.data.session.YktTokenCache
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -17,7 +20,17 @@ import kotlinx.serialization.json.jsonPrimitive
  * - 取码每次进页最多一批（反复调用由 UI 层节流，这里不拦）；
  * - 每次登录顺带跑 [YktKeyboard.looksLikeSampleInvariant] 协议自检。
  */
-class YktRepository(private val client: YktClient) {
+class YktRepository(
+    private val client: YktClient,
+    /**
+     * token 落盘缓存（DESIGN §4.27）。null = 不落盘（旧口径，单测与兜底用）。
+     *
+     * 落盘只为了「冷启动少登一次」，**不是授权依据**：服务端回 401 时既有的重登逻辑
+     * 照常接管，所以这里读到废 token 也不会造成错误状态。
+     */
+    private val tokenCache: YktTokenCache? = null,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
 
     companion object {
         /** 流水分页大小（服务端尊重 size；100/页时 726 条全量约 8 页，进页首屏 1 页覆盖近 2 个月）。 */
@@ -440,7 +453,7 @@ class YktRepository(private val client: YktClient) {
         val passwordField = try {
             YktKeyboard.buildPasswordField(password, mapping, kb.uuid)
         } catch (e: IllegalArgumentException) {
-            throw YktException.Credential("登录密码只支持数字（安全键盘仅映射 0-9）")
+            credentialFailure("登录密码只支持数字（安全键盘仅映射 0-9）")
         }
         val form = mapOf(
             "username" to username,
@@ -456,14 +469,12 @@ class YktRepository(private val client: YktClient) {
         val tokenEnv = runCatching { parse(tokenRaw) }.getOrElse { e ->
             // HTTP 400 + 非 JSON 体 = 凭证错（服务端返回 Bad credentials 文本页）
             if (tokenRaw.httpCode == 400) {
-                throw YktException.Credential("学号或密码错误")
+                credentialFailure("学号或密码错误")
             }
             throw e
         }
         if (tokenRaw.httpCode == 400) {
-            throw YktException.Credential(
-                tokenEnv.messageOrBlank.ifBlank { "学号或密码错误" },
-            )
+            credentialFailure(tokenEnv.messageOrBlank.ifBlank { "学号或密码错误" })
         }
         // OAuth2 成功响应的 token 字段在顶层而非 data 里
         val accessToken = YktModels.accessTokenFromTopLevel(tokenRaw.text)
@@ -474,18 +485,33 @@ class YktRepository(private val client: YktClient) {
                     tokenEnv.data?.toString(),
                 )
                 8002, 8003 -> throw YktException.NeedCaptcha(tokenEnv.code)
-                else -> throw YktException.Credential(
+                else -> credentialFailure(
                     tokenEnv.messageOrBlank.ifBlank { "登录失败（${tokenEnv.code}）" },
                 )
             }
         }
         cachedToken = accessToken
+        tokenCache?.saveToken(accessToken, clock())
+        // 登录成功 = 凭证有效，清掉「已失效」标记（用户改密码后状态卡自动恢复）
+        SessionStatus.clearSuspended(LoginTarget.Ykt)
         accessToken
     }
 
-    /** 内存 token 缓存（进程级；仅本类写）。 */
+    /**
+     * 凭证明确不对：标记该平台失效并抛出（DESIGN §3.16）。
+     *
+     * 只在**确实是凭证问题**的分支调：密码非数字、HTTP 400、明确的失败码。
+     * token 过期（401）那条**绝不能**走这里——它会重登一次，属于正常轮换，
+     * 标了状态卡就会在每次 token 过期时闪一下「登录状态已失效」。
+     */
+    private fun credentialFailure(message: String): Nothing {
+        SessionStatus.markSuspended(LoginTarget.Ykt)
+        throw YktException.Credential(message)
+    }
+
+    /** token 缓存：进程内一份，冷启动时先从落盘缓存恢复（见 [tokenCache]）。 */
     @Volatile
-    private var cachedToken: String? = null
+    private var cachedToken: String? = tokenCache?.readToken(clock())
 
     /**
      * 余额快照的内存缓存（DESIGN §4.24「请求节流」）。

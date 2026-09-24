@@ -136,6 +136,13 @@ class MainActivity : ComponentActivity() {
             pendingSubpages.value = SubpageRequest.from(intent)?.let { listOf(it) } ?: emptyList()
         }
         enableEdgeToEdge()
+        // 首次配置引导（DESIGN §3.16）：只服务新安装——老用户没有 onboarding_seen 键，
+        // 不弹引导，只在「我的」页显示登录状态卡。阻塞读一次，与 resolveStartRouteBlocking
+        // 同一模式（读一次就定，不让它跟 Flow 变）。引导是不透明全屏窗口，主界面照常
+        // setContent 也看不到底下，用户感知就是「打开就是引导」。
+        if (savedInstanceState == null && shouldShowOnboarding()) {
+            OnboardingActivity.start(this)
+        }
         setContent {
             JuwRoot {
                 JuwApp(pendingRoute = pendingRoute, pendingSubpages = pendingSubpages)
@@ -181,6 +188,9 @@ internal const val ROUTE_WEEK = "week"
 
 /** [EXTRA_ROUTE] 的取值：生活 Tab（余额提醒通知的落点，DESIGN §3.10 / §3.13）。 */
 internal const val ROUTE_LIFE = "life"
+
+/** [EXTRA_ROUTE] 的取值：我的 Tab（登录失效通知的落点，DESIGN §3.16）。 */
+internal const val ROUTE_ME = "me"
 
 /**
  * 主题在根上解析：深浅色由显示偏好里的 [ThemeMode] 决定（默认跟随系统），
@@ -235,6 +245,50 @@ private fun resolveStartRouteBlocking(): String = runBlocking {
     val lifeTabEnabled = store.lifeTabEnabled.first()
     StartPage.effectivePage(stored, lifeTabEnabled).route()
 }
+
+/**
+ * 首启引导是否已经走过（DESIGN §3.16）。
+ *
+ * 只认 `onboarding_seen` 这一个键，不认「有没有课表」——导入过课表又清空过的用户
+ * 不该被重新引导一遍。
+ */
+private fun onboardingSeenBlocking(): Boolean = runBlocking {
+    Graph.displayPrefs(Graph.appContext).onboardingSeen.first()
+}
+
+/**
+ * 这次启动要不要弹首启引导（DESIGN §3.16）。
+ *
+ * 两个条件：`onboarding_seen` 还没写过（没走完过），且**不是覆盖升级**。
+ *
+ * **debug 包只看前一个条件**：开发与验收时反复覆盖安装，`isFreshInstall` 永远是 false，
+ * 引导就再也弹不出来了，只能靠卸载重装——那是给自己找麻烦。release 才需要「老用户
+ * 不打扰」这条保护，所以只在那里判安装时间。
+ */
+private fun shouldShowOnboarding(): Boolean {
+    if (onboardingSeenBlocking()) return false
+    if (BuildConfig.DEBUG) return true
+    return isFreshInstall(Graph.appContext)
+}
+
+/**
+ * 是不是「新安装」，而不是「覆盖升级」（DESIGN §3.16）。
+ *
+ * **只看 `onboarding_seen` 键不够**：老用户设备上这个键同样不存在（它是新加的），
+ * 会被当成首次启动而弹引导——设计要求的是「老用户不打扰」。判据用安装时间：
+ * 新装时 `lastUpdateTime` 与 `firstInstallTime` 几乎相同，覆盖安装则后者明显更晚。
+ *
+ * 用「有没有课表」判不行：导入过课表又清空的用户会被误判成新安装。读不到安装信息时
+ * 保守返回 false——宁可不弹，也不要在老用户机器上凭空冒出一段引导。
+ */
+@Suppress("DEPRECATION")
+private fun isFreshInstall(context: android.content.Context): Boolean = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    info.lastUpdateTime - info.firstInstallTime < FRESH_INSTALL_WINDOW_MS
+}.getOrDefault(false)
+
+/** 安装与更新的时间差小于这个值就算同一次安装（真机实测覆盖安装会差好几天，取一分钟足够）。 */
+private const val FRESH_INSTALL_WINDOW_MS = 60_000L
 
 /** [StartPage] → 导航路由。路由字符串仍只由 [Routes] 定义，这里不重复字面量。 */
 private fun StartPage.route(): String = when (this) {
@@ -435,8 +489,10 @@ internal fun JuwApp(
     // 换成 `val target = when(route){…}` 再判 target 就会编译不过（2026-09-24 实测）。
     val route = pendingRoute?.value
     LaunchedEffect(route) {
-        if (route == ROUTE_WEEK || route == ROUTE_LIFE) {
-            val target = if (route == ROUTE_WEEK) Routes.WEEK else Routes.LIFE
+        if (route == ROUTE_WEEK || route == ROUTE_LIFE || route == ROUTE_ME) {
+            val target = if (route == ROUTE_WEEK) Routes.WEEK
+            else if (route == ROUTE_LIFE) Routes.LIFE
+            else Routes.ME
             navController.navigate(target) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
@@ -714,6 +770,19 @@ internal fun JuwApp(
                             },
                             onOpenAbout = {
                                 SubpageActivity.start(context, SubpageScreen.ABOUT)
+                            },
+                            // 账户卡三行的落点（DESIGN §3.16）：教务走导入窗口（那里能看
+                            // 到真实登录状态），一卡通与开水各自回设置页
+                            // 教务那一行改开原生账户页（DESIGN §3.3）：与「一卡通」一致，
+                            // 先看账号状态；要导入再从页里进（那里也有入口）
+                            onOpenJwLogin = {
+                                SubpageActivity.start(context, SubpageScreen.JW_ACCOUNT)
+                            },
+                            onOpenCampusCard = {
+                                SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
+                            },
+                            onOpenWater = {
+                                SubpageActivity.start(context, SubpageScreen.WATER)
                             },
                         )
                     }

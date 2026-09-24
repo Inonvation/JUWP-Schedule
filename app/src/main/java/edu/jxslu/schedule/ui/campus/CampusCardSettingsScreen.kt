@@ -69,6 +69,11 @@ import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktException
 import edu.jxslu.schedule.data.ykt.YktRechargeOrder
 import edu.jxslu.schedule.data.ykt.YktRepository
+import edu.jxslu.schedule.data.session.LoginState
+import edu.jxslu.schedule.data.session.LoginStateRules
+import edu.jxslu.schedule.data.session.LoginTarget
+import edu.jxslu.schedule.data.session.SessionStatus
+import edu.jxslu.schedule.ui.common.AccountCard
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeFeedback
@@ -224,6 +229,27 @@ fun CampusCardSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // 账户卡（DESIGN §3.3）：与教务账户页**同一形态**——同样一句「我是谁」，
+            // 两个页面长得一样。原先这一页只有开关和余额，看不出当前用的是哪个账号。
+            val savedUsername = remember { Graph.yktCredentialStore(context).read()?.username }
+            val profileName by remember { Graph.displayPrefs(context).profileName }
+                .collectAsStateWithLifecycle(initialValue = "")
+            val suspendedTargets by SessionStatus.suspended.collectAsStateWithLifecycle()
+            val yktState = LoginStateRules.derive(
+                credentialExists = savedUsername != null,
+                webSessionExists = false,
+                suspended = LoginTarget.Ykt in suspendedTargets,
+            )
+            AccountCard(
+                username = savedUsername.orEmpty(),
+                name = profileName,
+                statusText = when (yktState) {
+                    LoginState.Expired -> "登录状态已失效，请重新填写查询密码"
+                    LoginState.LoggedIn -> "已登录 · 余额、付款码、电费共用这一份凭证"
+                    LoginState.NotLoggedIn -> "未登录 · 填学号与查询密码后开启"
+                },
+                statusState = yktState,
+            )
             SettingsCard(
                 title = "水宝宝一卡通",
                 content = {
@@ -631,8 +657,21 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      */
     val savedUsername: String? get() = credentialStore.read()?.username
 
+    /**
+     * 一卡通开关（付款码卡与充值入口的总闸）。
+     *
+     * **初值不许写 false**（2026-09-24 修「冷启动首次切到生活页整页跳一下」）：`stateIn` 的初值
+     * 就是首帧读到的值，而 DataStore 的第一份数据必然晚于首帧。写 false 的话付款码卡先按
+     * 「未开启」渲染一次（矮一截的「去开启」块），真值到达后换成码位几何，下方内容整体下移。
+     * 实测 Redmi K70 冷启动首次进生活页：首帧「常用」标题在 y=1172，真值到达后跳到 y=1840，
+     * 一次位移 668px（≈243dp）——用户报的「页面跳动」。
+     *
+     * 初值取**凭证在不在**：开启 / 关闭与存 / 清凭证是同一次流程里的成对写入（设置页
+     * `enable` / `disable`、首启引导都是先写凭证再写开关），所以它是首帧能同步拿到的最准的值。
+     * 读加密存储在本类 `init` 里本来就有一次，这里多的一次读的是同一份内存缓存，不额外解密。
+     */
     val enabled: StateFlow<Boolean> = prefs.campusCardEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), hasSavedAccount)
 
     // ---- 余额提醒（DESIGN §3.13）：默认关；两个来源各自独立，但共用同一份凭证 ----
 
@@ -697,11 +736,11 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     val balanceLoaded: StateFlow<Boolean> = _balanceLoaded
 
     /**
-     * 刷新余额（生活页进页、点余额卡、顶栏刷新都走它）。无凭证/开关关时静默直返；
+ * 刷新余额（生活页进页、点余额卡、生活页下拉刷新都走它）。无凭证/开关关时静默直返；
      * 失败静默（与 init 的口径一致，卡片副行维持旧值或「暂不可用」）。
      *
      * [force] = false 只给**进页**那条路用：吃 `YktRepository` 的 60 秒余额缓存
-     * （DESIGN §4.24「请求节流」）。用户点卡片 / 顶栏刷新传 true，照旧拿实时值。
+ * （DESIGN §4.24「请求节流」）。用户点卡片 / 下拉刷新传 true，照旧拿实时值。
      */
     fun refreshBalance(force: Boolean = true) {
         viewModelScope.launch { fetchBalance(notify = false, force = force) }

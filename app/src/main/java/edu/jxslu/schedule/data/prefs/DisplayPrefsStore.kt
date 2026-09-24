@@ -296,6 +296,19 @@ class DisplayPrefsStore(private val context: Context) {
         StartPage.fromName(p[KEY_START_PAGE])
     }
 
+    /**
+     * 首启引导是否走完（DESIGN §3.16）。完成或跳过都算，默认 false。
+     *
+     * **只认这个键**，不认「有没有课表」——导入过课表又清空过的用户不该被重新引导一遍。
+     */
+    val onboardingSeen: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_ONBOARDING_SEEN] ?: false
+    }
+
+    suspend fun setOnboardingSeen() {
+        context.displayDataStore.edit { it[KEY_ONBOARDING_SEEN] = true }
+    }
+
     /** 「我的」账号条：姓名（教务学籍卡导入）。null/空 = 未导入过，退回学号显示。 */
     val profileName: Flow<String> = context.displayDataStore.data.map { p ->
         p[KEY_PROFILE_NAME].orEmpty()
@@ -312,6 +325,19 @@ class DisplayPrefsStore(private val context: Context) {
             if (!name.isNullOrBlank()) p[KEY_PROFILE_NAME] = name.trim()
             if (!className.isNullOrBlank()) p[KEY_PROFILE_CLASS] = className.trim()
         }
+    }
+
+    /**
+     * 「我的」页学籍卡补抓的日期闸门（DESIGN §3.3）。空 = 从没试过。
+     *
+     * 抓不到时不能每次进页都重试——那是白打教务。与余额提醒的 `alertLastCheckDate` 同款口径。
+     */
+    val profileSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_SYNC_DATE].orEmpty()
+    }
+
+    suspend fun setProfileSyncDate(dateKey: String) {
+        context.displayDataStore.edit { it[KEY_PROFILE_SYNC_DATE] = dateKey }
     }
 
     /** 开水双击确认。全局项，默认双击防误触。 */
@@ -1118,6 +1144,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCORE_SORT_MODE = stringPreferencesKey("score_sort_mode")
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_CLASS = stringPreferencesKey("profile_class")
+        val KEY_PROFILE_SYNC_DATE = stringPreferencesKey("profile_sync_date")
+        val KEY_ONBOARDING_SEEN = booleanPreferencesKey("onboarding_seen")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

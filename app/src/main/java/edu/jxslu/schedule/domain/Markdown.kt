@@ -484,3 +484,83 @@ fun plainExcerpt(body: String, max: Int = 80): String {
     val flat = source.replace(Regex("\\s+"), " ").trim()
     return if (flat.length <= max) flat else flat.take(max - 1).trimEnd() + "…"
 }
+
+// ---------------------------------------------------------------------------
+// 段落切分：独占一行的图片按块级渲染
+// ---------------------------------------------------------------------------
+
+/** [splitParagraph] 的切分结果（渲染层按类型分别处理）。 */
+sealed interface MdParagraphPart {
+    /** 独占一行的图片（[ref] 与 [MdInline.Image.ref] 同义：`img:文件名` 或外链）。 */
+    data class BlockImage(val ref: String) : MdParagraphPart
+
+    /** 行内段：与文字混排的图片/链接/公式都留在这里。 */
+    data class Inline(val content: List<MdInline>) : MdParagraphPart
+}
+
+/**
+ * 把段落内容切成「块级图片」与「行内段」（DESIGN §4.20「渲染子集」）。
+ *
+ * 判据 = 图片是不是**所在行的唯一实际内容**（同行其余节点都是空白文本）。
+ * 为什么不靠解析器分段：单换行不构成新段落（对齐 Obsidian），
+ * 于是「一次插两张图」或「图片紧跟文字后面」在 AST 里是同一个 Paragraph——
+ * 渲染层不切开就会退化成主色下划线的「[图片]」文字标签。
+ */
+fun splitParagraph(content: List<MdInline>): List<MdParagraphPart> {
+    val parts = mutableListOf<MdParagraphPart>()
+    var pending = mutableListOf<MdInline>()
+
+    fun flush() {
+        while (pending.isNotEmpty() && pending.first().isBlankText()) pending.removeAt(0)
+        while (pending.isNotEmpty() && pending.last().isBlankText()) pending.removeAt(pending.size - 1)
+        if (pending.isNotEmpty()) parts += MdParagraphPart.Inline(pending.toList())
+        pending = mutableListOf()
+    }
+
+    paragraphLines(content).forEach { line ->
+        val image = line.singleImageOrNull()
+        if (image != null) {
+            flush()
+            parts += MdParagraphPart.BlockImage(image.ref)
+        } else {
+            if (pending.isNotEmpty()) pending += MdInline.Text("\n")
+            pending += line
+        }
+    }
+    flush()
+    return parts
+}
+
+/** 段落内的文本节点按 `\n` 拆行，其余节点落在当前行。 */
+private fun paragraphLines(content: List<MdInline>): List<List<MdInline>> {
+    val lines = mutableListOf<MutableList<MdInline>>()
+    var current = mutableListOf<MdInline>().also { lines += it }
+    content.forEach { node ->
+        if (node is MdInline.Text && node.text.contains('\n')) {
+            node.text.split('\n').forEachIndexed { index, segment ->
+                if (index > 0) {
+                    current = mutableListOf<MdInline>().also { lines += it }
+                }
+                if (segment.isNotEmpty()) current += MdInline.Text(segment)
+            }
+        } else {
+            current += node
+        }
+    }
+    return lines
+}
+
+/** 行内只有一张图片（其余全是空白文本）→ 返回它；否则 null。 */
+private fun List<MdInline>.singleImageOrNull(): MdInline.Image? {
+    var image: MdInline.Image? = null
+    for (node in this) {
+        when {
+            node is MdInline.Image && image == null -> image = node
+            node.isBlankText() -> Unit
+            else -> return null
+        }
+    }
+    return image
+}
+
+private fun MdInline.isBlankText(): Boolean = this is MdInline.Text && text.isBlank()

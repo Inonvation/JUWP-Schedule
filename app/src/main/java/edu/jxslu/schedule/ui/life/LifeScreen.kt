@@ -32,8 +32,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -45,6 +47,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,6 +71,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.LifeFeedItem
@@ -74,6 +80,7 @@ import edu.jxslu.schedule.domain.LifeFeedKind
 import edu.jxslu.schedule.ui.campus.CampusArrivalDialog
 import edu.jxslu.schedule.ui.campus.CampusCardViewModel
 import edu.jxslu.schedule.ui.campus.CampusPaymentDialog
+import edu.jxslu.schedule.ui.campus.CampusPendingConfirmDialog
 import edu.jxslu.schedule.ui.campus.PayCodeBitmaps
 import edu.jxslu.schedule.ui.campus.PayCodeEvent
 import edu.jxslu.schedule.ui.campus.PayCodeResultBus
@@ -87,14 +94,15 @@ import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bolt
 import me.rerere.hugeicons.stroke.CreditCard
+import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Invoice01
 import me.rerere.hugeicons.stroke.MoneyAdd01
 import me.rerere.hugeicons.stroke.Receipt
-import me.rerere.hugeicons.stroke.Refresh01
 import me.rerere.hugeicons.stroke.Settings01
 
 /**
@@ -148,7 +156,7 @@ fun LifeScreen(
 
     // 进页刷新一次：电费读数 + 一卡通流水增量同步 + 一卡通余额（开关关时各自短路）。
     // force = false = 走缓存/闸门（DESIGN §4.24「请求节流」）：切 Tab 来回不重复打平台，
-    // 用户要看最新就点顶栏刷新或点卡片（那两处传 force = true）。
+    // 用户要看最新就下拉刷新（2026-09-24 起唯一入口），点卡片仍各刷各的那一张。
     LaunchedEffect(Unit) {
         viewModel.refreshAll(force = false)
         campusViewModel.refreshBalance(force = false)
@@ -185,6 +193,19 @@ fun LifeScreen(
     DisposableEffect(Unit) {
         onDispose { payCodeViewModel.collapse() }
     }
+
+    // 从微信/浏览器返回的瞬间立即补检一轮（不等 5 秒周期），并在未立即到账时弹
+    // 「正在确认充值结果」；进程被杀重启也能靠持久化的未确认充值记录恢复
+    // （与「我的 → 校园卡」同一份逻辑，DESIGN §4.19「充值」）。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, campusViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) campusViewModel.onHostResume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // 电费充值进入密码步骤：下单成功即取键盘挑战（passwordMap）
     LaunchedEffect(powerRecharge.orderId, powerRecharge.step) {
         if (powerRecharge.step == LifeViewModel.PowerRechargeUi.Step.Amount &&
@@ -219,14 +240,10 @@ fun LifeScreen(
             TopAppBar(
                 windowInsets = WindowInsets.statusBars,
                 title = { Text(stringResource(R.string.tab_life)) },
+                // 刷新只剩下拉一个入口（2026-09-24 用户要求，与其他页同款）：
+                // 顶栏那颗刷新图标删掉——「点卡片刷新」那两处还在，但它们各管一张卡，
+                // 「余额 + 电费 + 流水一次全刷」这个动作只留下拉。
                 actions = {
-                    IconButton(onClick = {
-                        haptics.tap()
-                        viewModel.refreshAll()
-                        campusViewModel.refreshBalance()
-                    }) {
-                        Icon(HugeIcons.Refresh01, contentDescription = "刷新")
-                    }
                     IconButton(onClick = {
                         haptics.tap()
                         onOpenCampusSettings()
@@ -239,103 +256,137 @@ fun LifeScreen(
         snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
         val bottomClearance = LocalBottomBarClearance.current
-        Column(
+        // 下拉刷新（2026-09-24）：与消费流水页 / 缴费账单页同一套 `PullToRefreshBox`。
+        // 一次刷三样：电费读数 + 一卡通流水增量同步 + 一卡通余额，全部 force = true
+        // （用户明确要看最新，不走缓存与 10 分钟闸门，DESIGN §4.24「请求节流」）。
+        //
+        // padding 收在刷新容器上（同今日页口径）：Scaffold 的内容从 (0,0) 铺满整屏、
+        // 顶栏压在它上面，指示器挂在容器顶边时整条滑入轨迹都在顶栏后面，得拖过阈值
+        // 一大截才露出半圈，读起来就是「拉了半天没反应」。
+        //
+        // 驻留兜底（同今日页）：M3 的 onRefresh 在松手那一下回调，而各路的 loading 标志
+        // 要等协程跑起来才置 true——直接拿它当 isRefreshing，指示器会在回调瞬间被收回，
+        // 体感是「拉下去又弹回去」。manualRefreshing 顶住回调瞬间，等标志归零再收；
+        // 650ms 既是最短驻留（网络快时也不闪一下），也是那段竞态的窗口。
+        // **不用 `manualRefreshing || busy`**：进页那次 refreshPower 也会把 loading 置 true，
+        // 那样一进页就转圈——指示器只认下拉这个动作。
+        var manualRefreshing by remember { mutableStateOf(false) }
+        val busy = state.power.loading || balanceRefreshing
+        LaunchedEffect(manualRefreshing, busy) {
+            if (!manualRefreshing) return@LaunchedEffect
+            if (busy) return@LaunchedEffect
+            delay(650)
+            if (!busy) manualRefreshing = false
+        }
+        PullToRefreshBox(
+            isRefreshing = manualRefreshing,
+            onRefresh = {
+                haptics.tap()
+                manualRefreshing = true
+                viewModel.refreshAll()
+                campusViewModel.refreshBalance()
+            },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = padding.calculateTopPadding())
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = if (bottomClearance > 0.dp) bottomClearance + 16.dp else 16.dp),
+                .padding(padding),
         ) {
-            PaymentCodeCard(
-                enabled = campusEnabled,
-                state = codeState,
-                bitmaps = bitmaps,
-                onExpand = {
-                    haptics.tap()
-                    payCodeViewModel.load()
-                },
-                onCollapse = {
-                    haptics.tap()
-                    payCodeViewModel.collapse()
-                },
-                onNext = {
-                    haptics.tap()
-                    payCodeViewModel.next()
-                },
-                onFullScreen = {
-                    haptics.tap()
-                    onOpenPayCode()
-                },
-                onOpenSettings = onOpenCampusSettings,
-            )
-
-            // IntrinsicSize.Min：两张并排卡取较大者的内容高，矮的一张用内部 weight 弹性
-            // 补齐并把底行钉到卡片底——两卡恒等高（2026-09-24 用户反馈「高度不一样」）
-            Row(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min)
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = if (bottomClearance > 0.dp) bottomClearance + 16.dp else 16.dp),
             ) {
-                CampusBalanceCard(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                PaymentCodeCard(
                     enabled = campusEnabled,
-                    balanceFen = balance?.cardFen,
-                    accountFen = balance?.accountFen,
-                    balanceLoaded = balanceLoaded,
-                    balanceRefreshing = balanceRefreshing,
-                    arrivalWatching = arrival is CampusCardViewModel.ArrivalState.Watching,
-                    balance = balance,
-                    onRefresh = {
+                    state = codeState,
+                    bitmaps = bitmaps,
+                    onExpand = {
                         haptics.tap()
-                        campusViewModel.refreshBalance()
+                        payCodeViewModel.load()
                     },
-                )
-                PowerCard(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    power = state.power,
-                    onRefresh = {
+                    onCollapse = {
                         haptics.tap()
-                        viewModel.refreshPower()
+                        payCodeViewModel.collapse()
                     },
+                    onNext = {
+                        haptics.tap()
+                        payCodeViewModel.next()
+                    },
+                    onFullScreen = {
+                        haptics.tap()
+                        onOpenPayCode()
+                    },
+                    onOpenSettings = onOpenCampusSettings,
                 )
-            }
 
-            SectionHeader(title = "常用")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                LifeTool(Modifier.weight(1f), HugeIcons.MoneyAdd01, "一卡通充值") {
-                    if (campusEnabled) {
-                        showRechargeSheet = true
-                    } else {
-                        showNotice("先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning)
+                // IntrinsicSize.Min：两张并排卡取较大者的内容高，矮的一张用内部 weight 弹性
+                // 补齐并把底行钉到卡片底——两卡恒等高（2026-09-24 用户反馈「高度不一样」）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CampusBalanceCard(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        enabled = campusEnabled,
+                        balanceFen = balance?.cardFen,
+                        accountFen = balance?.accountFen,
+                        balanceLoaded = balanceLoaded,
+                        balanceRefreshing = balanceRefreshing,
+                        arrivalWatching = arrival is CampusCardViewModel.ArrivalState.Watching,
+                        balance = balance,
+                        onRefresh = {
+                            haptics.tap()
+                            campusViewModel.refreshBalance()
+                        },
+                    )
+                    PowerCard(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        power = state.power,
+                        onRefresh = {
+                            haptics.tap()
+                            viewModel.refreshPower()
+                        },
+                    )
+                }
+
+                SectionHeader(title = "常用")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    LifeTool(Modifier.weight(1f), HugeIcons.MoneyAdd01, "一卡通充值") {
+                        if (campusEnabled) {
+                            showRechargeSheet = true
+                        } else {
+                            showNotice("先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning)
+                        }
+                    }
+                    LifeTool(Modifier.weight(1f), HugeIcons.Bolt, "电费充值") {
+                        if (campusEnabled) {
+                            // 打开弹层即重置流程并清一遍未支付单（平台不自动清，堆积会让新下单 500）
+                            viewModel.preparePowerRecharge()
+                            showPowerRecharge = true
+                        } else {
+                            showNotice("先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning)
+                        }
+                    }
+                    LifeTool(Modifier.weight(1f), HugeIcons.Receipt, "消费流水") {
+                        onOpenStatement()
+                    }
+                    LifeTool(Modifier.weight(1f), HugeIcons.Invoice01, "缴费账单") {
+                        onOpenPowerBill()
                     }
                 }
-                LifeTool(Modifier.weight(1f), HugeIcons.Bolt, "电费充值") {
-                    if (campusEnabled) {
-                        // 打开弹层即重置流程并清一遍未支付单（平台不自动清，堆积会让新下单 500）
-                        viewModel.preparePowerRecharge()
-                        showPowerRecharge = true
-                    } else {
-                        showNotice("先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning)
-                    }
-                }
-                LifeTool(Modifier.weight(1f), HugeIcons.Receipt, "消费流水") {
-                    onOpenStatement()
-                }
-                LifeTool(Modifier.weight(1f), HugeIcons.Invoice01, "缴费账单") {
-                    onOpenPowerBill()
-                }
-            }
 
-            SectionHeader(title = "最近流水")
-            FeedCard(items = state.feed)
-            Spacer(Modifier.height(8.dp))
+                SectionHeader(title = "最近流水")
+                FeedCard(items = state.feed)
+                Spacer(Modifier.height(8.dp))
+            }
         }
     }
 
@@ -395,6 +446,18 @@ fun LifeScreen(
             arrived = arrived,
             onDismiss = { campusViewModel.dismissArrival() },
             onOpenPayCode = onOpenPayCode,
+        )
+    }
+
+    // 「正在确认充值结果」：从微信返回且余额还没更新时给反馈（关闭不影响后台轮询）。
+    // 与成功弹窗互斥——到账那一刻 VM 会先把本弹窗撤下（markArrived），不会两张叠着。
+    val pendingConfirm by campusViewModel.pendingConfirmVisible.collectAsStateWithLifecycle()
+    val watchingArrival = arrival as? CampusCardViewModel.ArrivalState.Watching
+    if (pendingConfirm && watchingArrival != null) {
+        CampusPendingConfirmDialog(
+            orderFen = watchingArrival.orderFen,
+            onDismiss = { campusViewModel.dismissPendingConfirm() },
+            onNotPaid = { campusViewModel.notPaid() },
         )
     }
 
@@ -583,28 +646,66 @@ private fun PaymentCodeCard(
                     buttons = {
                         when {
                             state is PayCodeUiState.Success -> {
-                                OutlinedButton(onClick = onNext) { Text("换下一个") }
-                                OutlinedButton(onClick = onFullScreen) { Text("全屏出示") }
-                                OutlinedButton(onClick = onCollapse) { Text("收起") }
+                                OutlinedButton(onClick = onNext, modifier = Modifier.weight(1f)) {
+                                    Text("换下一个")
+                                }
+                                OutlinedButton(onClick = onFullScreen, modifier = Modifier.weight(1f)) {
+                                    Text("全屏出示")
+                                }
+                                OutlinedButton(onClick = onCollapse, modifier = Modifier.weight(1f)) {
+                                    Text("收起")
+                                }
                             }
 
                             state is PayCodeUiState.Error && state.canRetry -> {
-                                OutlinedButton(onClick = onExpand) { Text("重试") }
-                                OutlinedButton(enabled = false, onClick = {}) { Text("全屏出示") }
-                                OutlinedButton(enabled = false, onClick = {}) { Text("收起") }
+                                OutlinedButton(onClick = onExpand, modifier = Modifier.weight(1f)) {
+                                    Text("重试")
+                                }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("全屏出示") }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("收起") }
                             }
 
                             state is PayCodeUiState.Loading ||
                                 (state is PayCodeUiState.Success && bitmaps == null) -> {
-                                OutlinedButton(enabled = false, onClick = {}) { Text("换下一个") }
-                                OutlinedButton(enabled = false, onClick = {}) { Text("全屏出示") }
-                                OutlinedButton(enabled = false, onClick = {}) { Text("收起") }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("换下一个") }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("全屏出示") }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("收起") }
                             }
 
                             else -> {
-                                OutlinedButton(enabled = false, onClick = {}) { Text("换下一个") }
-                                OutlinedButton(onClick = onFullScreen) { Text("全屏出示") }
-                                OutlinedButton(enabled = false, onClick = {}) { Text("收起") }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("换下一个") }
+                                OutlinedButton(onClick = onFullScreen, modifier = Modifier.weight(1f)) {
+                                    Text("全屏出示")
+                                }
+                                OutlinedButton(
+                                    enabled = false,
+                                    onClick = {},
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("收起") }
                             }
                         }
                     },
@@ -725,8 +826,8 @@ private fun ShimmerBox(shape: RoundedCornerShape, modifier: Modifier = Modifier)
 /**
  * 一卡通余额卡：点卡片刷新；未开启凭证时给缺口文案。
  *
- * 底行（2026-09-24 改）：余额下写「电子账户余额」；有更新时刻时底行显示
- * 「HH:mm 更新 · 实际费用更新有延迟」，无时刻回退状态文字。
+ * 底行（2026-09-24 三改/四改）：余额下写「电子账户余额」；有更新时刻时底行只留「HH:mm 更新」，
+ * 延迟说明收进右侧圆圈说明图标（[CardFooter]），点击弹说明。无时刻时回退状态文字。
  * 卡片本体可点刷新不变；流水入口只在「常用」格里留一个（2026-09-23 收口）。
  */
 @Composable
@@ -745,6 +846,10 @@ private fun CampusBalanceCard(
     onRefresh: () -> Unit,
 ) {
     AppCard(modifier = modifier, onClick = onRefresh) {
+        // 上下各留一个弹性空隙（2026-09-24 四改）：卡片被旁边更高的那张撑开时，
+        // 多出来的高度上下均分，主内容块（标题 + 余额）在「卡片顶到脚注之间」居中，
+        // 不再全堆在余额下方（用户反馈「内容不居中、下方空白较多」）
+        Spacer(Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 HugeIcons.CreditCard,
@@ -792,25 +897,29 @@ private fun CampusBalanceCard(
                 )
             }
         }
-        // 弹性空隙：卡片被旁边更高的电费卡拉高时，把底行钉到卡片底
         Spacer(Modifier.weight(1f))
-        Text(
-            text = when {
-                !enabled -> "去设置开启"
-                arrivalWatching -> "有充值正在确认到账…"
-                balanceRefreshing -> "正在查询余额…"
-                balance != null -> "%s 更新 · 实际费用更新有延迟".format(formatTime(balance.fetchedAtMs))
-                else -> ""
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // 脚注钉在卡片底：两张并排卡的底行同一水平线（状态文字优先，其次是更新时刻）
+        when {
+            !enabled -> CardFooter("去设置开启")
+            arrivalWatching -> CardFooter("有充值正在确认到账…")
+            balanceRefreshing -> CardFooter("正在查询余额…")
+            balance != null -> CardFooter(
+                text = "%s 更新".format(formatTime(balance.fetchedAtMs)),
+                noteTitle = "余额说明",
+                noteText = "余额与流水都来自一卡通平台，服务端落账有延迟，" +
+                    "刚发生的消费或充值可能暂时不计入。",
+            )
+            else -> CardFooter("")
+        }
     }
 }
 
-/** 寝室电费卡：剩余电量 + 折算金额 + 房间 + 更新时刻；失败保留上次值并标注。 */
+/**
+ * 寝室电费卡：剩余电量 + 折算金额 + 房间 + 更新时刻；失败保留上次值并标注。
+ *
+ * 底行（2026-09-24 三改/四改）：更新时刻 + 右侧圆圈说明图标（[CardFooter]），
+ * 延迟与缴费提示收在图标里，不再占满半屏宽的底行。
+ */
 @Composable
 private fun PowerCard(
     modifier: Modifier,
@@ -822,6 +931,8 @@ private fun PowerCard(
     /** 单价（元/度），取不到就只报电量、不折算金额。 */
     val pricePerUnit = snapshot?.feeItem?.priceYuan
     AppCard(modifier = modifier, onClick = onRefresh) {
+        // 上下弹性空隙：与一卡通余额卡同一套居中方案（见那边的注释）
+        Spacer(Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 HugeIcons.Bolt,
@@ -905,18 +1016,92 @@ private fun PowerCard(
                 )
             }
         }
-        // 弹性空隙：与旁边的一卡通余额卡等高时，把底行钉到卡片底（同 IntrinsicSize 方案）
         Spacer(Modifier.weight(1f))
+        // 脚注钉在卡片底（与余额卡同一水平线）
+        when {
+            power.noCredentials -> CardFooter("去设置开启")
+            meter == null -> CardFooter("点卡片刷新")
+            power.error != null -> CardFooter(
+                text = "上次 %.2f 度 · %s".format(meter.remain ?: 0.0, formatTime(meter.fetchedAtMs)),
+                noteTitle = "电费说明",
+                noteText = ELECTRICITY_NOTE,
+            )
+            else -> CardFooter(
+                text = "%s 更新".format(formatTime(meter.fetchedAtMs)),
+                noteTitle = "电费说明",
+                noteText = ELECTRICITY_NOTE,
+            )
+        }
+    }
+}
+
+/**
+ * 卡片底行（2026-09-24 四改）：左边一行小字（更新时刻或状态文字），右边一枚圆圈说明图标，
+ * 点击弹说明弹窗（[noteTitle] / [noteText]）。
+ *
+ * 为什么收进图标：卡片只占半屏宽，原来「HH:mm 更新 · 实际费用更新有延迟」一行放不下，
+ * 时刻常被省略号吃掉；说明本身也不是每次都看。图标自占一格并**吃掉自己那块点击**，
+ * 不会连带触发卡片的「点卡片刷新」（父级 clickable 收不到已消费的事件）。
+ *
+ * 为什么图标是圆圈问号而不是感叹号（2026-09-24 用户反馈「看着像账号有风险」）：
+ * 这里补的是一句中性说明，不是告警；感叹号只留给真的出错（消息条 `NoticeTone.Warning` 用它）。
+ *
+ * **行高钉死 24dp、文字垂直居中**：带图标的「20:36 更新」和不带图标的「正在查询余额…」
+ * 两种内容切换时文字零位移（此前普通文字贴底、图标行被撑到 24dp，两种状态差 4dp）。
+ */
+@Composable
+private fun CardFooter(
+    text: String,
+    noteTitle: String? = null,
+    noteText: String? = null,
+) {
+    var showNote by remember { mutableStateOf(false) }
+    val haptics = rememberAppHaptics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
-            text = when {
-                power.noCredentials -> "去设置开启"
-                power.error != null && meter != null ->
-                    "上次 %.2f 度 · %s".format(meter.remain ?: 0.0, formatTime(meter.fetchedAtMs))
-                meter != null -> "%s 更新 · 实际费用更新有延迟".format(formatTime(meter.fetchedAtMs))
-                else -> "点卡片刷新"
-            },
+            text = text,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (noteTitle != null && noteText != null) {
+            // 24dp 触摸面：卡底行只有 24dp 高，图标用 IconButton（48dp）会把卡片顶高一截
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .clickable(onClickLabel = "查看说明") {
+                        haptics.tap()
+                        showNote = true
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    HugeIcons.InformationCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                )
+            }
+        }
+    }
+    val dialogTitle = noteTitle
+    val dialogText = noteText
+    if (showNote && dialogTitle != null && dialogText != null) {
+        AlertDialog(
+            onDismissRequest = { showNote = false },
+            title = { Text(dialogTitle) },
+            text = { Text(dialogText) },
+            confirmButton = {
+                TextButton(onClick = { showNote = false }) { Text("知道了") }
+            },
         )
     }
 }
@@ -1017,6 +1202,9 @@ private fun FeedCard(items: List<LifeFeedItem>) {
         }
     }
 }
+
+/** 电费说明（底行图标的弹窗文案，2026-09-24 用户给的原话；只有这一处口径）。 */
+private const val ELECTRICITY_NOTE = "受服务器影响，实际费用可能有延迟，电费不足时请及时缴费"
 
 private val TIME_FORMAT = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 

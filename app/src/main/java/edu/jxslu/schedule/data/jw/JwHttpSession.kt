@@ -2,8 +2,11 @@ package edu.jxslu.schedule.data.jw
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import edu.jxslu.schedule.data.session.CasLoginClassifier
+import edu.jxslu.schedule.data.session.CasLoginResult
+import edu.jxslu.schedule.data.session.CasTransport
+import edu.jxslu.schedule.data.session.MemoryCookieJar
 import okhttp3.Cookie
-import okhttp3.CookieJar
 import okhttp3.Dns
 import okhttp3.FormBody
 import okhttp3.HttpUrl
@@ -32,10 +35,11 @@ import java.util.concurrent.TimeUnit
  */
 class JwHttpSession private constructor(
     private val client: OkHttpClient,
-) {
+    private val jar: MemoryCookieJar,
+) : CasTransport {
 
     sealed class JwHttpException(message: String, cause: Throwable? = null) : Exception(message, cause) {
-        /** 账号或密码错误（CAS POST 后没有 302）。连续 3 次触发自动停用。 */
+        /** 账号或密码错误（CAS 应答明确指向凭证）。计数口径见 DESIGN §4.27。 */
         class Credential(message: String) : JwHttpException(message)
 
         /** 网络/超时/DNS。静默重试口径，不发通知。 */
@@ -43,6 +47,14 @@ class JwHttpSession private constructor(
 
         /** 链路异常：execution 缺失、落点不对、会话校验不过、页面结构变更。 */
         class Protocol(message: String) : JwHttpException(message)
+
+        /**
+         * 需要人工在网页里登录：命中验证码特征，或 CAS 返回了认不出的页面（§4.27）。
+         *
+         * **不计入失败计数**——成因不在密码上，计数只会把对的密码记成错的，
+         * 而那正是旧实现（无 Location 一律当凭证错）踩过的坑。
+         */
+        class Manual(message: String) : JwHttpException(message)
     }
 
     companion object {
@@ -63,20 +75,26 @@ class JwHttpSession private constructor(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
-        fun create(): JwHttpSession = JwHttpSession(
-            OkHttpClient.Builder()
-                .cookieJar(InMemoryCookieJar())
-                // 优先 IPv4：校园域名同时有 A 与 AAAA 记录，而校园 IPv6 在移动网络下
-                // 实测是黑（连接要等到 TCP 超时才落回 v4，单步就多等十几到三十秒，
-                // 表现为「开了检测一直转圈」）。IPv4 稳定可达，故显式把 v4 排前面。
-                .dns(Ipv4FirstDns)
-                // 教务链路大量 302，统一手动跟随以便诊断落点
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .build(),
-        )
+        fun create(): JwHttpSession {
+            // jar 单独持一份引用：会话要跨任务常驻（DESIGN §4.27），注入 WebView 与回灌
+            // 都要从它取快照，不能再让 client 独占。
+            val jar = MemoryCookieJar()
+            return JwHttpSession(
+                OkHttpClient.Builder()
+                    .cookieJar(jar)
+                    // 优先 IPv4：校园域名同时有 A 与 AAAA 记录，而校园 IPv6 在移动网络下
+                    // 实测是黑（连接要等到 TCP 超时才落回 v4，单步就多等十几到三十秒，
+                    // 表现为「开了检测一直转圈」）。IPv4 稳定可达，故显式把 v4 排前面。
+                    .dns(Ipv4FirstDns)
+                    // 教务链路大量 302，统一手动跟随以便诊断落点
+                    .followRedirects(false)
+                    .followSslRedirects(false)
+                    .connectTimeout(20, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build(),
+                jar,
+            )
+        }
 
         /**
          * IPv4 优先的 DNS：系统解析结果里只要有 A 记录，就把 v4 排到最前，
@@ -114,23 +132,20 @@ class JwHttpSession private constructor(
         }
     }
 
-    private class InMemoryCookieJar : CookieJar {
-        private val store = HashMap<String, HashMap<String, Cookie>>()
+    /** 当前会话里的 cookie 快照，用于注入 WebView（DESIGN §4.27）。 */
+    override fun cookies(): List<Cookie> = jar.snapshot()
 
-        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            synchronized(store) {
-                val bucket = store.getOrPut(url.host) { HashMap() }
-                cookies.forEach { bucket[it.name] = it }
-            }
-        }
+    /** 回灌：用户在 WebView 里手登之后，把 `CookieManager` 的 cookie 抄回会话。 */
+    override fun adoptCookies(cookies: List<Cookie>) = jar.adopt(cookies)
 
-        override fun loadForRequest(url: HttpUrl): List<Cookie> = synchronized(store) {
-            store[url.host]?.values?.filter { it.matches(url) } ?: emptyList()
-        }
-    }
+    /** 会话里有没有任何 cookie。判断「有没有可复用的登录态」用。 */
+    override fun hasCookies(): Boolean = !jar.isEmpty()
+
+    /** 清空会话（退出登录 / 用户更新密码后重登前调用）。 */
+    override fun clearCookies() = jar.clear()
 
     /** 登录 + 会话校验。任一环节失败抛 [JwHttpException]，session 状态不可再用于取数。 */
-    suspend fun login(username: String, password: String) = withContext(Dispatchers.IO) {
+    override suspend fun login(username: String, password: String) = withContext(Dispatchers.IO) {
         try {
             // [1][2] 门户落地（写 TGC）→ CAS 登录页拿 execution
             getFollowRedirects("$PORTAL/cas/login_portal")
@@ -139,7 +154,8 @@ class JwHttpSession private constructor(
             val execution = Regex("name=\"execution\" value=\"([^\"]+)\"").find(loginPage)?.groupValues?.get(1)
                 ?: throw JwHttpException.Protocol("CAS 登录页缺少 execution 字段（页面结构可能已变）")
 
-            // [3] 提交凭证。CAS 成功的应答是 302；没有 Location 一律按凭证错处理
+            // [3] 提交凭证。结果**必须分四类**（DESIGN §4.27）：旧实现把「没有 Location」
+            // 一律当凭证错，于是验证码页会把对的密码记成错的，累计到阈值还把账号停用。
             val postForm = FormBody.Builder()
                 .add("username", username)
                 .add("password", password)
@@ -155,9 +171,15 @@ class JwHttpSession private constructor(
                     .post(postForm)
                     .build(),
             ).execute().use { r ->
-                if (r.code >= 500) throw JwHttpException.Protocol("CAS 登录返回 HTTP ${r.code}")
-                r.header("Location")
-            } ?: throw JwHttpException.Credential("统一认证登录失败（账号或密码错误）")
+                val body = runCatching { r.body?.string() }.getOrNull()
+                when (val outcome = CasLoginClassifier.classify(r.code, r.header("Location"), body)) {
+                    is CasLoginResult.Success -> outcome.location
+                    is CasLoginResult.CredentialWrong -> throw JwHttpException.Credential(outcome.message)
+                    is CasLoginResult.NeedCaptcha -> throw JwHttpException.Manual(outcome.message)
+                    is CasLoginResult.Unknown -> throw JwHttpException.Manual(outcome.message)
+                    is CasLoginResult.ServerError -> throw JwHttpException.Protocol(outcome.message)
+                }
+            }
             getFollowRedirects(casLocation)
 
             // [4] 预热教务域，写 bzb_njw；[5] 拿 sso ticket
@@ -183,6 +205,21 @@ class JwHttpSession private constructor(
         }
     }
 
+    /**
+     * 只校验会话还活着：GET 学生主页，按**字节数阈值 + 未登录文案**判定（DESIGN §4.27）。
+     *
+     * 比拉一次课表页（约 150KB）便宜得多，是 `CasSession.ensureValid` 的探针。
+     * 网络层失败照抛 [JwHttpException.Network]，调用方据此区分「会话没了」与「网不通」。
+     */
+    override suspend fun verifySession(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val home = getFollowRedirects(STUDENT_HOME)
+            home.length >= HOME_MIN_BYTES && NOT_LOGGED !in home
+        } catch (e: IOException) {
+            throw JwHttpException.Network(e)
+        }
+    }
+
     /** 学期理论课表页（无参数 = 教务当前学期）。中途会话失效按 [JwHttpException.Protocol]。 */
     suspend fun fetchTheoryScheduleHtml(): String = fetchPage(THEORY_SCHEDULE, "个人课表")
 
@@ -192,6 +229,24 @@ class JwHttpSession private constructor(
             if (term == null) LAB_SCHEDULE else "$LAB_SCHEDULE?xnxq01id=${urlEncode(term)}",
             "实验课表",
         )
+
+    /**
+     * 带会话取任意教务页面（DESIGN §3.3）。
+     *
+     * 给学籍卡这类「一个 GET 就够」的页面用——不必为它开一个 WebView 走注入 fetch。
+     * 会话失效仍按 `Protocol` 抛（页面里出现未登录文案），网络层失败抛 `Network`。
+     */
+    override suspend fun fetchHtml(url: String): String = withContext(Dispatchers.IO) {
+        try {
+            val html = getFollowRedirects(url)
+            if (NOT_LOGGED in html) {
+                throw JwHttpException.Protocol("教务会话已失效（页面退回登录提示）")
+            }
+            html
+        } catch (e: IOException) {
+            throw JwHttpException.Network(e)
+        }
+    }
 
     private suspend fun fetchPage(url: String, mustContain: String): String = withContext(Dispatchers.IO) {
         try {
@@ -241,7 +296,7 @@ class JwHttpSession private constructor(
         }
 
     /** 检测是一次性短任务，用完即弃：释放连接池与线程池，不留常驻资源。 */
-    fun shutdown() {
+    override fun shutdown() {
         runCatching { client.dispatcher.executorService.shutdown() }
         runCatching { client.connectionPool.evictAll() }
     }

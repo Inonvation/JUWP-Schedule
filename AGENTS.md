@@ -31,6 +31,7 @@
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
 | Room DB | **v8**：v2 加 `courses.kind`（理论/实验），v3 加多课表（`timetables` 表 + `courses.timetableId`），v4 加成绩表 `scores`，v5 加调课检测（`detect_baselines`/`detect_reports`），v6 加一卡通流水（`ykt_turnovers`，orderId 主键 + jndatetime 索引），v7 加笔记·课件与作业（`notes`/`homework`，**按课程名归属、不带 timetableId**，DESIGN §4.20），v8 加 `courses.remark`（课程备注，DEFAULT ''，DESIGN §4.3）。实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；逐级 `ALTER TABLE`/`CREATE TABLE`，**禁止**改 destructive |
 | Room DB | **v9**（2026-09-23）：`homework` 去 `title` 列（重建表搬数据，DESIGN §4.20）；作业无标题，列表/通知文案用 `homeworkDisplayTitle`（正文第一行摘要，唯一口径在 `domain/Homework.kt`，勿在 UI 另写） |
+| Room DB | **v10 → v11**（2026-09-24）：v10 删掉调课检测的两张表（功能已移除）；v11 加 `power_readings`（电表读数本机记录，**`(epochMs, roomId)` 唯一索引**做去重——读数时刻用 `PowerMeter.fetchedAtMs`，仓库 2 分钟缓存重复交出的同一份快照会被 IGNORE 吞掉，见 DESIGN §4.24）。用电量没有平台接口，只能靠这张表差分，算法在 `domain/PowerUsage.kt` |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN 3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**） |
@@ -84,6 +85,12 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 
 单测覆盖：`ScheduleCalculatorTest`、`TimeSlotRulesTest`、`TimeSlotScheduleTest`（作息不变量）、
 `WeekGridLayoutTest`（网格几何）、`QiangzhiScheduleParserTest`、`SyjxScheduleParserTest`、
+`CasSessionTest`（会话编排：可信期/闸门/验证码不计数/并发只登一次/回灌续期）、
+`CasLoginClassifierTest`（CAS 应答四分类：302 成功/凭证错/验证码/认不出的 200 不当凭证错）、
+`LoginGateRulesTest`（防锁号闸门：窗口/计数/停用/可信期）、
+`LoginStateRulesTest`（状态卡三档：凭证/网页会话/停用优先级）、
+`CookieBridgeTest`（cookie 拼接：hostOnly 不写 Domain/Secure/HttpOnly/Path）、
+`MemoryCookieJarTest`（分桶/快照/回灌/路径匹配）、`ProfileSyncRulesTest`（学籍卡补抓闸门：班级空/今日试过/隔日重试）、`TokenFreshnessTest`（落盘 token 新鲜度：过期/时钟回拨）、
 `OneClickImportTest`（一键导入：页面形态判定/合成/警示文案/脏字段容错）、
 `ImportJsonShapeTest`、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest`、
 `CourseTweakTest`（调课规划：拆分/覆盖/交换/同格去重）、`TodayBoundaryTest`（小组件边界闹钟时刻）、
@@ -121,6 +128,7 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `KqcxBikeClientTest`（失败分类：超时与网络不可达不能混）、
 `Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）、
 `PowerModelsTest`（电费响应解析：项目/读数/流水 + 500 与 401 外壳 + 剩余电量键回退）、
+`PowerUsageTest`（用电统计：差分/充值折算/退款扣回/单价缺失两分支/算不出的段跳过/跨天均摊/周月桶/房间过滤）、
 `LifeFeedTest`（一卡通与电费流水混排：排序/限量/同刻稳定/解析失败沉底）、
 `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
 `StartPageTest`（启动页：显示名/选项顺序/生活页关掉时不列/落回今日/脏值回退）、
@@ -129,7 +137,7 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 、`TranscriptParsingTest`（盖章成绩单：应答解析与脏数据容错/学期归并/分页换算/魔数/失败归类/表单字段/文件命名）
 、`TranscriptClientTest`（导出编排：翻页收学期/MAX_PAGES 兜底/令牌回传/三条失败路径/网络错分类）
 、`TranscriptHistoryTest`（最近导出：`.part` 半成品不进列表/标签反推/同秒稳定排序/保留 10 份裁边/文案/文件名越界防护）
-等 72 个测试类（761 个用例，2026-09-24 现数）。
+等 80 个测试类（820 个用例，2026-09-24 现数）。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
@@ -264,6 +272,11 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   **不许**为了"好看"引入第三方渲染/公式库（体积与 `--offline` 构建是硬约束）。支持清单见 DESIGN §4.20。
 - 编辑器自动补全（列表续行 / `$` 补全 / 选区包裹）**只有一条口径**：`domain/MarkdownEdit.kt`
   纯函数，UI 只负责把结果应用回 `TextFieldValue`；不要在 Composable 里另写续行判断。
+- Markdown 段落的图片分块**只有一条口径**：`domain/Markdown.splitParagraph`——一行里除空白文本外
+  只有一张图片即按块级画真图，否则留行内（可点「[图片]」标签）。单换行不构成新段落，
+  「一次插两张图」与「图紧跟文字后面」在 AST 里都是同一个 `Paragraph`；**不要**只按
+  「整段唯一节点是图片」判断（2026-09-24 的 bug：那样连图会渲染成一串蓝标签）。
+  作业列表摘要（`homeworkDisplayTitle`）同口径：行内图片引用整条剥掉，剥完为空的图片行跳过。
 - 笔记/作业的图片只走系统 Photo Picker（`PickVisualMedia`）+ 应用私有目录，**不申请相册权限**；
   正文引用形如 `![](img:文件名)`，删引用要同时清理文件（`data/repo/AttachmentStore.kt`）。
 - 附近单车地图（DESIGN §3.9/§4.23）的坐标基准是 **GCJ-02**，与高德栅格瓦片同一基准：
@@ -328,7 +341,14 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   常驻倒计时的起停判据是**起点是否变化**（`EbikeFreeRideService.start`）：起点变了就重新
   `onStartCommand` 重建 tick，起点没变才跳过。**别退回「服务在跑就跳过」**——上一轮没结束
   就换车时 tick 循环握着旧起点，倒计时不会重置（2026-09-24 用户报的 bug，当时是我加的
-   `running` 幂等标记惹的）。换车（`startRide`）还要顺手清掉上一轮挂在通知栏的提醒与校准标记。
+  `running` 幂等标记惹的）。换车（`startRide`）还要顺手清掉上一轮挂在通知栏的提醒与校准标记。
+- **电费流水的方向只看 `tranamt` 符号**（负 = 退款），金额存绝对值——`refund_flag` 在真实
+  流水上**恒为 1**（2026-09-24 实测 11/11，含 50 元农行支付那几笔），拿它判退款会让整页充值
+  显示成「退款」；平台 H5 自己也是 `tranamt > 0` 判充值（DESIGN §4.24「退款判据」）。
+  用电量**没有平台接口**，靠本机读数表 `power_readings`（DB v11）差分：写入只有
+  `PowerRepository.snapshot()` 一处、去重靠 `(epochMs, roomId)` 唯一索引，公式/均摊/跳过规则
+  的唯一实现在 `domain/PowerUsage.kt`——别在 UI 或别处再算一遍，也别加后台轮询去采读数
+  （第三方平台，记录密度就等于用户打开 App 的密度，DESIGN §3.13「用电统计」）。
 - **导出盖章成绩单走的是签章管理系统，不是强智教务**（DESIGN §4.25）：
   CAS service = `http://jwxyxx.juwp.edu.cn/ptwork/cas`，落地拿 `sid`，再
   `POST /ptwork/DzqzController/ddqzcjList` 取 `pagePri`、`POST …/printStartCj` 回传它拿 PDF。
@@ -347,15 +367,85 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   会被当成一条记录列出来；打开/分享前必须用 `TranscriptStore.existingFile` 复核（新导出会触发
   保留策略删旧的，列表那一屏可能已经过期）。
 
-- **宿舍报修是 WebView，不是原生表单**（2026-09-24，DESIGN §3.15 / §4.26）：
-  `DormRepairActivity`（第三个「因为窗口里有统一认证表单而锁竖屏」的窗口，前两个是教务导入
-  与成绩单导出）进页打开 `XgUrls.SSO_LOGIN`（`/sfrz/login343962`）→ 302 到 `eapp2` 的 CAS。
-  学工与教务**共用同一套统一身份认证**，所以教务导入登录过一次这边就免登，App 不存密码。
+- **学工表单是 WebView，不是原生表单**（2026-09-24，DESIGN §3.15 / §4.26）：
+  `XgFormActivity` 承载全部学工表单（已登记：宿舍报修、请假），表单标识走 extra、
+  清单在 `XgUrls.FORMS`，加一个新的只需在清单里补一条 + 在扩展服务页的图标映射里补一条。
+  它是第三个「因为窗口里有统一认证表单而锁竖屏」的窗口（前两个是教务导入与成绩单导出），
+  进页打开 `XgUrls.SSO_LOGIN`（`/sfrz/login343962`）→ 302 到 `eapp2` 的 CAS。
+  学工与教务**共用同一套统一身份认证**，所以教务导入登录过一次这边就免登。学工自己的
+  token **App 不存**（它在 localStorage 里，取不出来也用不上）；两者共用的那一层 CAS 凭证
+  由 `data/session/CredentialVault` 管，口径见 DESIGN §4.27 与下面「登录态只有一条口径」。
   **别换成**超星的 `/passport/mlogin`（手机号 + 学习通密码，是另一套账号，学校没配它）；
   **也别去复刻** `/office/...` 的表单提交：请求里那批 `pageEnc` / `traceId` / `nodeUniqueId`
   由服务端每次下发，复刻出来的实现必然随官方改版失效。附件上传靠
   `WebChromeClient.onShowFileChooser`（漏了它 = 点上传没反应），状态条按域分档的判据
-  唯一实现在 `data/xg/XgUrls.kt`。
+  与直达闸门唯一实现在 `data/xg/XgUrls.kt`。直达的顺序是硬约束：**先 `/sfrz/`，
+  落到学工域后再进表单页**——表单页自己匿名可访问，先开它会把人引到超星 passport
+  那套账号上；而闸门必须排除 `/sfrz/`（它也在学工域），否则 CAS 回跳的一刻被截断。
+  直达地址**不带 `uuid`**：那是前端提交时现场生成的随机值，URL 上那个没有读取点。
+
+- **登录态只有一条口径**（2026-09-24，DESIGN §4.27）：`data/session/` 三个件——
+  `CredentialVault`（两份凭证加密存储的唯一读写口，文件仍是 `jw_credentials.xml` /
+  `ykt_credentials.xml`，备份排除规则已在）、`CasSession`（CAS 会话唯一持有者，教务 / 学工 /
+  签章共用，含 `ensureValid` / `tryLogin` / cookie 注入与回灌）、`SessionStatus`（运行时停用状态）。
+  四条别改坏：① **闸门只有「凭证错」计数**，验证码 / 网络 / 5xx 一律不计——旧实现把
+  「CAS 无 Location」一律当凭证错，会把对的密码记成错的、累计还把账号停用，所以
+  `CasLoginClassifier` 必须四分类（详情页 / 认不出的 200 走 `Manual`，转 WebView）；
+  ② `ensureValid` 有 10 分钟可信期、5 分钟重复窗口、`Mutex` 串行化，**别为了「实时」去掉**
+  （并发登录正是风控最敏感的形状）。但两条判据必须带上「会话还在不在」：**可信期要同时
+  要求 `http.hasCookies()`**——`last_success` 落盘、cookie 不落盘，进程重启后时间戳还在而
+  jar 已空，只看时间戳会把「空会话」当「可用会话」；**`canAttempt` 里
+  `lastAttemptMs <= lastSuccessMs` 要直接放行**——那是成功留下的时间戳不是失败，否则
+  冷启动后 5 分钟内既不信会话也不允许重登（2026-09-24 真机：引导登录 4.6 分钟后冷启动，
+  `last_attempt` 还停在成功那一刻，用户看到「明明登录了还要手动登」）；
+  ③ 注入 WebView **只要 `Ready` 就做**，且必须发生在
+  `loadUrl` **之前**。这一条踩过坑（2026-09-24 用户报「明明登录了，打开导入页 / 报修 /
+  请假还要再登一次」）：**别判「是不是刚登录」**——引导第 2 步是在原生表单里登的，cookie
+  只进了 OkHttp 的 jar，之后打开 WebView 走的是 10 分钟可信期、永远不满足「刚登录」，
+  于是永远不注入；也**别判「WebView 那边已经有会话就跳过」**——那份可能是失效的旧 cookie
+  （真机上实测 CookieManager 会一直压着它），正挡着新会话进去。WebView 用出来的新会话
+  由「落到教务域且非登录页」时 `adoptFromWebView` 回灌，两个方向都得同步。
+  **另外 `loadUrl` 绝不能被等会话的动作挡住**：注入是本地操作（读 jar + setCookie，
+  毫秒级），而登录 / 探会话要联网。三个 WebView 入口都是「jar 有会话 → 注入后立刻
+  `loadUrl`」的快路径 +「没有 → **先 `loadUrl`**，后台补完再重载一次」的慢路径。
+  把 `loadUrl` 写在 `await prepareWebView()` 之后会让 WebView 白屏几十秒——日志里连
+  一条 `onPageStarted` 都没有（2026-09-24 用户报的「还是要手动登」就是这个）。
+  ④ 两份凭证互不牵连：清一卡通不动教务，状态卡的「未开启凭证」按 ykt 判定、导入提示按 cas 判定。
+  `YktCredentialStore` 现在只是 `CredentialVault` 的薄适配器，**公开签名不要动**（8 个调用点，
+  改内部就够——构造点只有 `Graph` 一处）。
+- **首启引导只服务新安装**（2026-09-24，DESIGN §3.16）：`onboarding_seen` 为 false 时
+  `MainActivity` 拉起 `OnboardingActivity`（五屏：欢迎 → 学校统一认证 → 一卡通·电费 → 开水 →
+  完成，**每步可跳过**，跳过只丢那一步的凭据）。老用户没有这个键 ⇒ 不弹引导，只在「我的」页
+  看状态。**账户卡常显**（不再以「有没有一卡通凭证」为条件），三行状态由
+  `LoginStateRules.derive` 合成：凭证在不在是持久事实、停用是运行时事实，**别混成一个布尔**；
+  没请求过就是「未登录」，只有真撞上凭证错才转「失效」——**不做后台主动探测**。
+  「失效」的上报点都在仓库层：一卡通与电费走各自的 `credentialFailure(...)`（**只有
+  凭证错**，token 过期走 401 重登、**不标失效**），教务走 `CasSession` 的闸门。后台任务
+  （`BalanceAlertReminder`）调同一批方法，因此自动获得上报、不需要单独埋点。
+- **落在统一认证登录页时自动填表登录**（2026-09-24，DESIGN §4.4.1）：三个 WebView 入口
+  ——教务导入（`JwImportScreen`）、学工表单（`XgFormScreen`）、成绩单授权
+  （`TranscriptScreen`）——都在 `onPageFinished` 里判「在 CAS 域」，命中就用 `JwAutoLogin`
+  填 `username`/`password` 并**点提交按钮**，只试一次。四条别改坏：
+  ① **别再回去注入 cookie**：OkHttp 登录拿到的 cookie 注入 `CookieManager` 在真机上不被
+  采用（读回验证 7/7 条落位，85ms 后首跳仍然落到 CAS 登录页；差别是属性缺 `SameSite`，
+  跨站跳转不带），让 WebView 自己提交才是与用户手点完全一样的路径；
+  ② **提交要点按钮**：`form.submit()` 会绕过 `onsubmit` 与按钮上的点击处理（真机反馈
+  「能填入但没点登录」），按 `button/input[type=submit]` → `requestSubmit()` → `submit()`
+  的顺序退让；
+  ③ 值要用**原生 setter + `input`/`change` 事件**写（受控组件直接改 `.value` 框架状态不更新）；
+  ④ 只试一次，失败（`no-form` / `err:`）退回人工登录——反复试会撞风控。
+  「失效」之后怎么恢复：教务行的落点会**分流**——已登录去导入窗口，未登录/已失效直接进
+  `OnboardingActivity.start(startAtJw = true)` 改密码（导入页只能手登 WebView，改不了已存
+  的密码）；一卡通行去校园卡设置页。开水的 token 失效**本地判不出来**（无实测样本），
+  状态卡按「token 在不在」显示，真失效了在开水页报错——这是它的账号体系决定的，不是漏做。
+  **「我的」页的姓名 / 班级**（DESIGN §3.3）：姓名来自一卡通 `queryCard` 的持卡人；
+  班级来自教务学籍卡 `/jsxsd/grxx/xsxx`，由 `ProfileSync` 在**两处**补抓——引导第 2 步
+  登录成功后、以及「我的」页进页且班级为空时。闸门是 `ProfileSyncRules.shouldAttempt`
+  （班级为空 **且** 今天没试过），失败**静默**：别把它改成弹错误，也别去掉日期闸门
+  （那样抓不到时会每次进页都打一次教务）。
+  **首启判据是两个条件的与**：`onboarding_seen` 为 false **且** `isFreshInstall()`
+  （`lastUpdateTime - firstInstallTime < 60 秒`）。**别改成只看键**——老用户设备上这个键
+  同样不存在，升级后会被凭空弹一段引导；也别用「有没有课表」判（导入过又清空的会被误判）。
 
 ## 装真机
 
@@ -438,8 +528,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
                  + LifeFeed（一卡通与电费流水混排，§3.13）
-data/local/      Room v8：courses / time_slots / semester_config / timetables / scores
-                 / detect_baselines / detect_reports / ykt_turnovers / notes / homework
+data/local/      Room v11：courses / time_slots / semester_config / timetables / scores
+                 / ykt_turnovers / notes / homework / power_readings（v11）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
@@ -508,8 +598,11 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
   三条一改就坏的钉子：**订单号只能用下单响应里那一个**（`paystep=2` 的 `orderid` 恒为
   null，别拿 `passwordMap` 的键——那是 uuid，发出去服务端回「订单不存在，请重新预定」）；
   **`ccctype[0].balance` 单位是元**（同一时刻一卡通 `accinfo[].balance=100` 分对照确认，
-  按分渲染会把 1 元显示成 ¥0.01）；服务端拒绝含「订单不存在/已过期/已失效」时回金额步
-  重新下单（`PowerPayModels.isOrderGone`），别让人在密码步反复重输。
+ 按分渲染会把 1 元显示成 ¥0.01）；服务端拒绝含「订单不存在/已过期/已失效」时回金额步
+ 重新下单（`PowerPayModels.isOrderGone`），别让人在密码步反复重输。
+- **电费充值的密码步没有输入框**（2026-09-24 用户拍板）：6 格点阵就是输入位，键盘仍是
+  系统的（透明 `BasicTextField` 垫在点阵下面，点阵不拦触摸）。进步自动聚焦、失败自动清空、
+  受理后自动收键盘。别把 `OutlinedTextField` 加回来——用户明确否掉了那个矩形框。
 - **余额提醒**（2026-09-24，DESIGN §3.13「余额提醒」）：设置项在「我的 → 校园卡」页
   （寝室电费 10–80 元 / 一卡通余额 10–50 元，步长 5）。口径单一来源 `domain/BalanceAlert.kt`：
   电费「元」= 剩余电量 × 单价（**唯一换算处**，生活页电费卡也走它，别再内联乘一次）、

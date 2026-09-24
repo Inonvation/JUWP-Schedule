@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import edu.jxslu.schedule.ui.me.CalendarSettingsScreen
 import edu.jxslu.schedule.ui.me.DataSettingsScreen
+import edu.jxslu.schedule.ui.me.JwAccountScreen
 import edu.jxslu.schedule.ui.me.PermissionSettingsScreen
 import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.ShortcutSettingsScreen
@@ -71,6 +72,8 @@ enum class SubpageScreen {
     EBIKE_MAP,
     /** 我的 → 校园卡付款码设置（开关 · 凭证，DESIGN §3.10） */
     CAMPUS_CARD_SETTINGS,
+    /** 我的 → 教务账户（原生信息页，DESIGN §3.3；不再一点就开导入 WebView） */
+    JW_ACCOUNT,
     /** 我的 → 通用设置汇总页（主题 · 触感 · 布局 · 权限入口，DESIGN §3.3） */
     GENERAL_SETTINGS,
     /** 我的 → 课表汇总页（配置 · 使用 · 数据，DESIGN §3.3） */
@@ -204,6 +207,7 @@ class SubpageActivity : ComponentActivity() {
                 onOpenStatement = { SubpageActivity.start(this, SubpageScreen.CAMPUS_STATEMENT) },
                 onOpenPayCode = { SubpageActivity.start(this, SubpageScreen.PAY_CODE) },
             )
+            SubpageScreen.JW_ACCOUNT -> JwAccountScreen(onBack = onBack)
             SubpageScreen.LEARNING_HUB -> LearningHubScreen(
                 onBack = onBack,
                 onOpenNotes = { SubpageActivity.start(this, SubpageScreen.NOTES) },
@@ -242,8 +246,8 @@ class SubpageActivity : ComponentActivity() {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS)
                 },
                 onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
-                // 宿舍报修走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
-                onOpenDormRepair = { DormRepairActivity.start(this) },
+                // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
+                onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )
             SubpageScreen.ABOUT -> AboutScreen(
                 onBack = onBack,

@@ -22,6 +22,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.MainActivity
 import edu.jxslu.schedule.ROUTE_LIFE
 import edu.jxslu.schedule.R
+import edu.jxslu.schedule.data.power.PowerReadingSource
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.domain.BalanceAlert
@@ -168,7 +169,12 @@ object BalanceAlertReminder {
     ) {
         if (!BalanceAlert.isDueToday(prefs.alertLastCheckDate(BalanceAlertSource.Power), today)) return
         val snapshot = runCatching {
-            Graph.powerRepository(context).snapshot(credentials.username, credentials.password)
+            Graph.powerRepository(context).snapshot(
+                credentials.username,
+                credentials.password,
+                // 这一条读数是「用电统计」最稳定的采样点（每天一次，与开关联动）
+                source = PowerReadingSource.ALERT,
+            )
         }.getOrNull() ?: return // 失败不落日期：当天还能补查
         prefs.setAlertLastCheckDate(BalanceAlertSource.Power, BalanceAlert.dateKey(today))
 

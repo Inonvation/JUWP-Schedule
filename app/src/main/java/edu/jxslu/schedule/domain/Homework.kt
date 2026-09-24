@@ -24,25 +24,30 @@ data class Homework(
 /**
  * 作业列表行显示文本（2026-09-23 去标题后新增）：取**正文第一行**、剥掉 Markdown 符号。
  *
- * 剥的顺序（后写的先剥，配合末尾 trim）：
- * 1. 任务项前缀 `- [ ] ` / `- [x] `（x 大小写都认）；
- * 2. 列表 / 引用前缀 `- `、`* `、`+ `、`> `；
- * 3. 行首 `#`+空格（标题行）；
- * 4. 行内强调包边 `**` `*` `~~` `` ` ``（只剥成对的行首/行尾，不碰中间的）；
- * 5. 行内公式包边 `$…$`（剥 `$` 保留内容——正文里公式是内容，丢掉等于空行）。
+ * 每行剥的顺序：
+ * 1. 图片引用 `![](…)`（含 `img:` 与外链）整条剥掉——图片进不了摘要（与
+ *    [plainTextOf] 同口径），一行只剩图片时该行跳过，继续看下一行；
+ * 2. 任务项前缀 `- [ ] ` / `- [x] `（x 大小写都认）；
+ * 3. 列表 / 引用前缀 `- `、`* `、`+ `、`> `；
+ * 4. 行首 `#`+空格（标题行）；
+ * 5. 行内强调包边 `**` `*` `~~` `` ` ``（只剥成对的行首/行尾，不碰中间的）；
+ * 6. 行内公式包边 `$…$`（剥 `$` 保留内容——正文里公式是内容，丢掉等于空行）。
  *
- * 空行跳过；全部是空行或空串返回「未命名作业」（与旧 title.ifBlank 的兜底文案一致）。
+ * 空行跳过；全是空行、空串、或只有图片时返回「未命名作业」（与旧 title.ifBlank 的兜底文案一致）。
  */
 fun homeworkDisplayTitle(detail: String): String =
     detail.lineSequence()
+        .map { stripMarkdownLine(it) }
         .firstOrNull { it.isNotBlank() }
-        ?.trim()
-        ?.let(::stripMarkdownLine)
-        ?.takeIf { it.isNotBlank() }
         ?: "未命名作业"
+
+/** 行内图片语法（`![alt](目标)`）。收集 `img:` 引用的正则在 [MarkdownImages]，这里要连外链一起剥。 */
+private val INLINE_IMAGE = Regex("""!\[[^\]]*]\([^)\n]*\)""")
 
 private fun stripMarkdownLine(line: String): String {
     var s = line.trim()
+    s = INLINE_IMAGE.replace(s, "").trim()
+    if (s.isEmpty()) return s
     s = s.removePrefix("- [ ] ").removePrefix("- [X] ").removePrefix("- [x] ")
     s = s.removePrefix("- ").removePrefix("* ").removePrefix("+ ").removePrefix("> ")
     // 标题级从长到短剥：先剥 6 个 `#` 才轮到 5 个，避免 `######` 被 1 个 `#` 抢先剥成 `#####`

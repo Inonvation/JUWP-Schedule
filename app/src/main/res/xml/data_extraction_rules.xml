@@ -1,15 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 12+ 备份/迁移规则：与 backup_rules.xml 同语义，排除胖乖 token 与校园卡凭证
-     （jw_credentials 的排除保留，理由见 backup_rules.xml 注释——升级用户设备上文件还在）。 -->
+<!-- Android 12+ 备份/迁移规则：与 backup_rules.xml 同语义，排除四份凭据/令牌
+     （secure_token / jw_credentials / ykt_credentials / ykt_tokens，
+     各自用途见 backup_rules.xml 注释）。 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secure_token.xml" />
         <exclude domain="sharedpref" path="jw_credentials.xml" />
         <exclude domain="sharedpref" path="ykt_credentials.xml" />
+        <exclude domain="sharedpref" path="ykt_tokens.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="secure_token.xml" />
         <exclude domain="sharedpref" path="jw_credentials.xml" />
         <exclude domain="sharedpref" path="ykt_credentials.xml" />
+        <exclude domain="sharedpref" path="ykt_tokens.xml" />
     </device-transfer>
 </data-extraction-rules>

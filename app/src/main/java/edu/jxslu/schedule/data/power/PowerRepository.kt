@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.data.power
 
+import edu.jxslu.schedule.data.session.LoginTarget
+import edu.jxslu.schedule.data.session.SessionStatus
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -10,7 +12,15 @@ import kotlinx.serialization.json.buildJsonObject
  * - token **仅内存缓存**（3599 秒有效期也不落盘），业务码 401 时重登一次；
  * - 无自动重试：失败直接抛分类异常（[PowerException]），UI 给对应文案。
  */
-class PowerRepository(private val client: PowerClient) {
+class PowerRepository(
+    private val client: PowerClient,
+    /**
+     * 读数落库（DESIGN §3.13「用电统计」）。**这里是全 App 唯一的写入点**：
+     * 只有真的打了一次平台拿到新读数才记，走内存缓存的那次不记（同一份快照重复交出，
+     * 落库也会被 `(epochMs, roomId)` 唯一索引挡掉）。
+     */
+    private val readingStore: PowerReadingStore,
+) {
 
     private var cachedToken: String? = null
 
@@ -25,12 +35,23 @@ class PowerRepository(private val client: PowerClient) {
     /** 登录并换回 access_token（供深链复用）。 */
     suspend fun login(username: String, password: String): String {
         val raw = client.login(username, password)
-        if (raw.httpCode == 401) throw PowerException.Credential("学号或查询密码不对")
+        // 401 = 学号或查询密码不对 → 标记平台失效（DESIGN §3.16）。
+        // 与 token 过期区分开：那个在 [withToken] 里重登一次，属正常轮换，标了会让
+        // 状态卡在每次 token 过期时闪一下「已失效」。
+        if (raw.httpCode == 401) credentialFailure("学号或查询密码不对")
         if (raw.httpCode != 200) throw PowerException.Protocol("登录失败：HTTP ${raw.httpCode}")
         val token = PowerModels.parseToken(raw.text)
             ?: throw PowerException.Protocol("登录响应里没有 access_token")
         cachedToken = token
+        // 电费与一卡通共用一份凭证，所以清的是同一个平台的标记
+        SessionStatus.clearSuspended(LoginTarget.Ykt)
         return token
+    }
+
+    /** 凭证不对：标记失效并抛出。电费与一卡通是同一份凭证、同一个状态行。 */
+    private fun credentialFailure(message: String): Nothing {
+        SessionStatus.markSuspended(LoginTarget.Ykt)
+        throw PowerException.Credential(message)
     }
 
     /**
@@ -43,6 +64,7 @@ class PowerRepository(private val client: PowerClient) {
         username: String,
         password: String,
         force: Boolean = false,
+        source: String = PowerReadingSource.LIFE,
     ): PowerSnapshot {
         if (!force) {
             cachedSnapshot?.takeIf { isFresh(cachedSnapshotAtMs) }?.let { return it }
@@ -56,6 +78,8 @@ class PowerRepository(private val client: PowerClient) {
             val feeItem = PowerModels.parseFeeItem(expectOk(detail, "取电费项目详情"))
             PowerSnapshot(feeItem, readMeter(token, feeItem))
         }
+        // 读数落库失败不该影响页面（统计少一条而已，下一次读数会补上）
+        runCatching { readingStore.record(fresh.meter, fresh.feeItem.priceYuan, source) }
         cachedSnapshot = fresh
         cachedSnapshotAtMs = System.currentTimeMillis()
         return fresh
@@ -132,14 +156,6 @@ class PowerRepository(private val client: PowerClient) {
                 ?: throw PowerException.Protocol("下单响应里没有 orderid（平台可能已改版）")
         }
 
-    /** 渠道列表（`payList`；生活页用 `ACCOUNT` 行展示「电子账户」）。 */
-    suspend fun channels(username: String, password: String): List<PowerPayChannel> =
-        withToken(username, password) { token ->
-            val raw = client.postSigned("/blade-pay/pay", token, PowerPaySign.signed(channelProbeForm()))
-            expectOk(raw, "取支付渠道")
-            PowerPayModels.channelsFrom(raw.text)
-        }
-
     /**
      * 清理全部未支付订单（DESIGN §4.24，2026-09-24；2026-09-24 改为「打开充值弹层时」调用）。
      *
@@ -168,15 +184,6 @@ class PowerRepository(private val client: PowerClient) {
                 }.getOrDefault(false)
             }
         }
-
-    private fun channelProbeForm() = mapOf(
-        "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
-        "tranamt" to "0.01",
-        "flag" to "choose",
-        "source" to "app",
-        "paystep" to "0",
-        "synAccessSource" to "h5",
-    )
 
     /**
      * 第一步支付：`paystep=2` + 电子账户渠道 → 服务端返回 `passwordMap`

@@ -300,7 +300,7 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
 | 逐级取场景 | `feeitemid=181&type=select&level=<已选层数>` + 已选项（`campus`、`building`） | `map.total` = 层级定义（code/level/name），`map.data` = 该层候选 |
 | 读电表 | `feeitemid=181&type=IEC&level=3&campus=0&building=0&room=14600` | `map.showData` = 电表读数（中文键），`map.data` = 房间元信息 |
 
-四个坑：
+六个坑：
 
 1. **参数少一个就回 500**：`getThirdData` 缺 `feeitemid`，或只给场景三键却不给 `type=IEC`/`level`，
    一律返回 `{"code":500,"msg":"未知异常，请联系管理员"}`。别把它当成平台故障。
@@ -309,6 +309,12 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
 3. **读数在 `map.showData` 的中文键里**（`{"当前剩余电量":"55.57"}`），`map.data.remark` 是同一份
    JSON 字符串。平台加功能会加键，所以 `power.json` 除 typed 字段外还留了 `meter.fields` 原文。
 4. **`sceneinfo` 里的校区名是学校旧名**（南昌工程学院），房间名以 IEC 返回的 `map.data` 为准。
+5. **流水的方向只看 `tranamt` 的符号**（负 = 退款），`refund_flag` 恒为 1（2026-09-24 实测
+   11/11，含 50 元农行支付那几笔）——别拿它判退款；平台 H5 自己判充值用的是
+   `list.filter(tranamt > 0)`，退款是另一条订单流程（`/order/addRefundOrder`）。
+6. **平台没有用电量接口**（2026-09-24 逐个试过 H5 bundle 里的 `/turnover/*` 统计路径：月消费、
+   累计缴费、饼图数据都不是用电量，`appAccountDetail` 直接 500），只有「当前剩余电量」。
+   要用电量得自己按时间记读数再差分：App 侧落在 `power_readings` 表（DESIGN §3.13「用电统计」）。
 
 App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blade-pay` 下单 + 电子账户
 密码支付，DESIGN §4.24），脚本只产出 `scripts/out/power.json` 供本机查看。

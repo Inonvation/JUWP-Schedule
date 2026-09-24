@@ -187,4 +187,74 @@ class MarkdownParserTest {
     fun chineseWithNumbers_mixed() {
         assertEquals("第 3 章共 12 讲", firstParagraph("第 3 章共 12 讲"))
     }
+
+    // ---- 段落切分：独占一行的图片走块级（2026-09-24 修「作业预览图片显示为蓝链」） ----
+
+    private fun paragraphOf(text: String): MdBlock.Paragraph =
+        parseMarkdown(text).single() as MdBlock.Paragraph
+
+    /**
+     * 根因钉子：单换行不构成新段落，连插两张图在 AST 里是**同一个 Paragraph**，
+     * 渲染层必须自己切开（旧实现只认「整段唯一节点是图片」，于是退化成蓝标签）。
+     */
+    @Test
+    fun consecutiveImages_shareOneParagraph() {
+        val para = paragraphOf("![](img:a.jpg)\n![](img:b.jpg)")
+        assertEquals(
+            listOf("img:a.jpg", "img:b.jpg"),
+            para.content.filterIsInstance<MdInline.Image>().map { it.ref },
+        )
+    }
+
+    @Test
+    fun splitParagraph_consecutiveImagesBecomeBlocks() {
+        val parts = splitParagraph(paragraphOf("![](img:a.jpg)\n![](img:b.jpg)").content)
+        assertEquals(2, parts.size)
+        assertEquals("img:a.jpg", (parts[0] as MdParagraphPart.BlockImage).ref)
+        assertEquals("img:b.jpg", (parts[1] as MdParagraphPart.BlockImage).ref)
+    }
+
+    @Test
+    fun splitParagraph_textLineThenImage() {
+        val parts = splitParagraph(paragraphOf("作业要求\n![](img:a.jpg)").content)
+        assertEquals(2, parts.size)
+        assertEquals("作业要求", plainTextOf((parts[0] as MdParagraphPart.Inline).content))
+        assertEquals("img:a.jpg", (parts[1] as MdParagraphPart.BlockImage).ref)
+    }
+
+    @Test
+    fun splitParagraph_imageWithTextOnSameLineStaysInline() {
+        val parts = splitParagraph(paragraphOf("见下图 ![](img:a.jpg) 交作业").content)
+        assertEquals(1, parts.size)
+        assertTrue(parts[0] is MdParagraphPart.Inline)
+    }
+
+    @Test
+    fun splitParagraph_twoImagesOnOneLineStayInline() {
+        val parts = splitParagraph(paragraphOf("![](img:a.jpg)![](img:b.jpg)").content)
+        assertEquals(1, parts.size)
+        assertTrue(parts[0] is MdParagraphPart.Inline)
+    }
+
+    @Test
+    fun splitParagraph_blankEdgesDoNotLeakIntoInline() {
+        val parts = splitParagraph(
+            listOf(
+                MdInline.Text("\n"),
+                MdInline.Image(alt = "", ref = "img:a.jpg"),
+                MdInline.Text("\n  \n"),
+                MdInline.Text("后面还有话"),
+            ),
+        )
+        assertEquals(2, parts.size)
+        assertEquals("img:a.jpg", (parts[0] as MdParagraphPart.BlockImage).ref)
+        assertEquals("后面还有话", plainTextOf((parts[1] as MdParagraphPart.Inline).content))
+    }
+
+    @Test
+    fun splitParagraph_externalImageKeepsBlockForm() {
+        // 外链图片同样是块级（渲染层换成「外链图片不在本机显示」提示，不是蓝标签）
+        val parts = splitParagraph(paragraphOf("![](https://example.com/a.png)").content)
+        assertEquals("https://example.com/a.png", (parts.single() as MdParagraphPart.BlockImage).ref)
+    }
 }

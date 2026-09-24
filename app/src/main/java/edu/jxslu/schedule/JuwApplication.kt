@@ -7,6 +7,7 @@ import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
+import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
 import kotlinx.coroutines.CoroutineScope
@@ -52,6 +53,18 @@ class JuwApplication : Application() {
             BalanceAlertReminder.ensurePeriodicWork(this@JuwApplication)
             BalanceAlertReminder.enqueueCheck(this@JuwApplication)
         }
+        // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：导入页 / 学工表单 / 签章授权三个
+        // WebView 打开时就能走「jar 里已有会话」的快路径、直接本地注入，用户看不到登录页。
+        //
+        // 为什么可以放心每次都跑：`login_gate` 里的 `last_success` 是落盘的，10 分钟信任期
+        // 内直接返回不发请求；超出才探一次会话（一个轻量 GET）。失败静默——打开 WebView
+        // 时还会再试，而且用户在页面上手登永远可以。
+        appScope.launch {
+            runCatching { Graph.casSession(this@JuwApplication).ensureValid() }
+        }
+        // 登录失效提醒（DESIGN §3.16 / §4.27）：只在「转停用」那一刻发一条。
+        // 会话过期但凭证有效时不打扰用户——那时会自动续登，发通知只会制造噪音。
+        LoginStateNotifier.observe(this, appScope)
         // 课表数据一变就推给桌面：用户在 App 里改完课，回桌面立刻是新内容，
         // 不必等下一个 15 分钟兜底。flows 本身是 Room 驱动，只在真实写库时发射，无轮询。
         // 提醒也依赖这三份数据：同一处重排下一个提醒，改完课/换课表即刻生效。

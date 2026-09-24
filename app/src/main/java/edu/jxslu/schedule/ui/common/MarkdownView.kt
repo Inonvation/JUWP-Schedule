@@ -56,8 +56,10 @@ import androidx.compose.ui.unit.sp
 import edu.jxslu.schedule.domain.MdBlock
 import edu.jxslu.schedule.domain.MdInline
 import edu.jxslu.schedule.domain.MdItem
+import edu.jxslu.schedule.domain.MdParagraphPart
 import edu.jxslu.schedule.domain.MdStyle
 import edu.jxslu.schedule.domain.parseMarkdown
+import edu.jxslu.schedule.domain.splitParagraph
 
 /**
  * Markdown 子集的 Compose 渲染（DESIGN §4.20，支持清单以文档为准）。
@@ -68,7 +70,8 @@ import edu.jxslu.schedule.domain.parseMarkdown
  * 样式口径（与 §3.11 对齐）：H1 22 / H2 19 / H3 17 / H4-6 15 加粗，正文 bodyLarge 行高 1.5；
  * 代码块 surfaceVariant 底 + 等宽 + 12dp 圆角；引用左缘 3dp 竖线；列表缩进 20dp/级；
  * 分隔线 outline 30%。**行内图片**（与文字混排）渲染为可点的「[图片]」标签，
- * 真图走块级（独占一行的图片本就是编辑器插入的形态）。
+ * 真图走块级——段落内的切分判据只有 `domain/Markdown.splitParagraph` 一处
+ * （独占一行的图片，本就是编辑器插入的形态；连插多张时它们同属一个段落）。
  */
 @Composable
 fun MarkdownView(
@@ -114,21 +117,27 @@ private fun ColumnScope.MarkdownBlock(
         }
 
         is MdBlock.Paragraph -> {
-            val single = block.content.singleOrNull()
-            when {
-                single is MdInline.Image && isLocalImage(single.ref) -> {
-                    val name = localImageName(single.ref)
-                    AttachmentImage(fileName = name, onClick = onImageClick?.let { { it(name) } })
+            // 独占一行的图片按块级画真图；其余行合并成行内文本（连插两张图、图紧跟文字后
+            // 都落在同一段落里，不切开就会渲染成一串「[图片]」蓝标签，DESIGN §4.20）
+            val parts = remember(block.content) { splitParagraph(block.content) }
+            parts.forEach { part ->
+                when (part) {
+                    is MdParagraphPart.BlockImage -> {
+                        if (isLocalImage(part.ref)) {
+                            val name = localImageName(part.ref)
+                            AttachmentImage(fileName = name, onClick = onImageClick?.let { { it(name) } })
+                        } else {
+                            ExternalImageHint(part.ref)
+                        }
+                    }
+
+                    is MdParagraphPart.Inline -> InlineText(
+                        nodes = part.content,
+                        style = bodyStyle(),
+                        onImageClick = onImageClick,
+                        onLinkClick = onLinkClick,
+                    )
                 }
-
-                single is MdInline.Image -> ExternalImageHint(single.ref)
-
-                else -> InlineText(
-                    nodes = block.content,
-                    style = bodyStyle(),
-                    onImageClick = onImageClick,
-                    onLinkClick = onLinkClick,
-                )
             }
         }
 
