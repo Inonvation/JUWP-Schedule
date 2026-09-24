@@ -42,6 +42,35 @@ fun extractTermField(jsonText: String): String? = try {
 }
 
 /**
+ * 抽取结果的**页面形态**：回答「这张课表本来就空」还是「拿到的不是这张课表」。
+ *
+ * 一键导入必须区分这两者。实验课表在多数前期学期就是空的，把它当失败会让用户在
+ * 没排实验课的学期根本导不进来；反过来，页面结构变了却当成"空课表"，会静默地
+ * 只导一半数据。识别结果弹窗里的分项条数就是给用户的第二道防线。
+ *
+ * [cells] 是理论课表页 `td[name=kbDataTd]` 的个数（整屏网格恒在，实测 41），
+ * [container] 是实验课表页的课表 tbody 是否找到。两者由各自的 `EXTRACT_JS` 现算；
+ * 旧脚本不带这两个字段时按 0/false 处理——拿不到形态信息时宁可让弹窗多提示一句，
+ * 也不假装识别成功。
+ */
+data class ExtractMeta(
+    val ok: Boolean,
+    val cells: Int,
+    val container: Boolean,
+)
+
+fun readExtractMeta(jsonText: String): ExtractMeta = try {
+    val root = termExtractJson.parseToJsonElement(jsonText).jsonObject
+    ExtractMeta(
+        ok = root["ok"]?.let { runCatching { it.jsonPrimitive.content.toBoolean() }.getOrNull() } != false,
+        cells = root["cells"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+        container = root["container"]?.jsonPrimitive?.content?.toBoolean() ?: false,
+    )
+} catch (_: Exception) {
+    ExtractMeta(ok = false, cells = 0, container = false)
+}
+
+/**
  * 教务里可导入的课表页面。
  *
  * 根因：理论课表与实验课表是两套完全不同的页面（结构、字段、周次来源都不同），
@@ -94,6 +123,22 @@ object JwUrls {
      * 页面按「周次 × 节次」两级分组，解析见 [SyjxScheduleParser]。
      */
     const val LAB_SCHEDULE = "$XSD_BASE/jsxsd/syjx/toXskb.do"
+
+    /**
+     * 学期号白名单（如 2026-2027-1）。学期号会被拼进注入 JS 的单引号字符串与页面 URL，
+     * 非此格式一律拒绝，既防脏值落库，也从根上杜绝引号注入（与考试导入同一把尺子）。
+     */
+    val TERM_PATTERN = Regex("""\d{4}-\d{4}-\d""")
+
+    /**
+     * 实验课表页 + 指定学期。学期为空或格式不合法时退化为裸地址（页面按教务默认学期渲染）。
+     *
+     * 为什么要带学期：一键导入连着抽两张表，两页各有一套默认学期，默认学期不一致时
+     * 合并出来的课表会跨学期。带上理论页读到的学期号，两页看的就是同一份数据。
+     */
+    fun labScheduleUrl(term: String?): String =
+        if (term != null && TERM_PATTERN.matches(term)) "$LAB_SCHEDULE?xnxq01id=$term"
+        else LAB_SCHEDULE
 
     /**
      * 考试安排查询壳页（考试报名 → 我的考试 → 考试安排查询，DESIGN §4.14）。

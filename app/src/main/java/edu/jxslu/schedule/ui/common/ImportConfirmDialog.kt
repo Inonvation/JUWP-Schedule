@@ -64,6 +64,14 @@ fun ImportTargetDialogHost(
     term: String? = null,
     /** 需要确认前知情的补充说明（如估算周次口径）；空则不展示。 */
     note: String? = null,
+    /**
+     * 识别结果分项（如「理论课表 29 条」「实验课表 0 条」）。
+     *
+     * 一键导入传（DESIGN §4.4）：一次抽两张表，用户要在写库前看清每一张各自认出来多少，
+     * 尤其是**0 条的那一张**——弹窗里只写「共 N 门课」时，0 条的来源是隐形的。
+     * 其余调用点（JSON / 剪贴板 / 考试）不传，行为不变。
+     */
+    breakdown: List<Pair<String, Int>>? = null,
 ) {
     val timetables by repo.timetables.collectAsStateWithLifecycle(emptyList())
     val currentId by repo.currentTimetableId.collectAsStateWithLifecycle(0L)
@@ -92,6 +100,12 @@ fun ImportTargetDialogHost(
                         "数据学期：$term",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
+                    )
+                }
+                breakdown?.forEach { (label, count) ->
+                    Text(
+                        "$label $count 条",
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
                 if (!note.isNullOrBlank()) {

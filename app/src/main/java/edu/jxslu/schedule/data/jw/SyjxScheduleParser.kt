@@ -43,7 +43,14 @@ object SyjxScheduleParser {
         val endSection: Int,
     )
 
-    /** WebView 注入脚本：按行形态换算星期，并跨行记住当前周次。 */
+    /**
+     * WebView 注入脚本：按行形态换算星期，并跨行记住当前周次。
+     *
+     * 找不到课表容器**不当作异常**：返回 `ok:true, container:false` 的空结果，
+     * 让 Kotlin 侧能区分「本学期没有实验课」（容器在、课块 0 个）与
+     * 「拿到的不是这张课表」（容器都没有）——一键导入靠这个判断要不要给用户警示
+     * （[ExtractMeta]）。改成 ok:false 会让两种情形重新混在一起。
+     */
     const val EXTRACT_JS: String = """
 (function(){
   try {
@@ -56,7 +63,10 @@ object SyjxScheduleParser {
     }
     var tbody = document.querySelector('tbody.qz-weeklyTable-thbody')
              || document.querySelector('table.qz-weeklyTable tbody');
-    if (!tbody) return JSON.stringify({ ok:false, error:'未找到实验课表容器' });
+    if (!tbody) {
+      return JSON.stringify({ ok:true, items:[], term: term, container: false,
+        title: document.title || '', url: location.href });
+    }
     var BASE = 8;
     var rows = tbody.querySelectorAll('tr');
     var week = 0;
@@ -92,7 +102,8 @@ object SyjxScheduleParser {
         }
       }
     }
-    return JSON.stringify({ ok: true, items: out, term: term, title: document.title || '', url: location.href });
+    return JSON.stringify({ ok: true, items: out, term: term, container: true,
+      title: document.title || '', url: location.href });
   } catch (e) {
     return JSON.stringify({ ok: false, error: String(e) });
   }

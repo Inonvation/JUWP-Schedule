@@ -30,6 +30,9 @@ object QiangzhiScheduleParser {
      * 列号累加 `colspan`，并维护一张 rowspan 占用表：
      * 强智在「一天内连续两大节上同一门课」时会用 rowspan 合并单元格，
      * 被合并掉的列在后续行里不存在，不补偏移的话那一行之后的星期会整体前移。
+     *
+     * 输出里的 `cells` = 扫到的 `td[name=kbDataTd]` 个数（整屏网格恒在，实测 41），
+     * 供一键导入区分「这张课表本来就空」与「拿到的不是这张课表」（[ExtractMeta]）。
      */
     const val EXTRACT_JS: String = """
 (function(){
@@ -43,6 +46,7 @@ object QiangzhiScheduleParser {
     }
     var rows = document.querySelectorAll('tbody tr');
     var carry = {};
+    var cellCount = 0;
     for (var r = 0; r < rows.length; r++) {
       for (var key in carry) {
         var left = carry[key] - 1;
@@ -56,22 +60,25 @@ object QiangzhiScheduleParser {
         var colspan = parseInt(td.getAttribute('colspan') || '1', 10) || 1;
         var rowspan = parseInt(td.getAttribute('rowspan') || '1', 10) || 1;
         if (rowspan > 1) { carry[col] = rowspan; }
-        if (td.getAttribute('name') === 'kbDataTd' && col >= 1 && col <= 7) {
-          var day = col;
-          var items = td.querySelectorAll('li.courselists-item');
-          for (var i = 0; i < items.length; i++) {
-            var li = items[i];
-            var nameEl = li.querySelector('.qz-hasCourse-title');
-            var detailEl = li.querySelector('.qz-hasCourse-abbrinfo');
-            var name = nameEl ? (nameEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
-            var detail = detailEl ? (detailEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
-            if (name) { out.push({ name: name, detail: detail, day: day }); }
+        if (td.getAttribute('name') === 'kbDataTd') {
+          cellCount++;
+          if (col >= 1 && col <= 7) {
+            var day = col;
+            var items = td.querySelectorAll('li.courselists-item');
+            for (var i = 0; i < items.length; i++) {
+              var li = items[i];
+              var nameEl = li.querySelector('.qz-hasCourse-title');
+              var detailEl = li.querySelector('.qz-hasCourse-abbrinfo');
+              var name = nameEl ? (nameEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+              var detail = detailEl ? (detailEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+              if (name) { out.push({ name: name, detail: detail, day: day }); }
+            }
           }
         }
         col += colspan;
       }
     }
-    return JSON.stringify({ ok: true, items: out, term: term, title: document.title || '', url: location.href });
+    return JSON.stringify({ ok: true, items: out, term: term, cells: cellCount, title: document.title || '', url: location.href });
   } catch (e) {
     return JSON.stringify({ ok: false, error: String(e) });
   }

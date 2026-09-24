@@ -337,7 +337,8 @@ day = td 下标 - (本行 td 总数 - 8)      # 8 = 节次标签 + 7 天
 ## 5. 链路 B：App 端 WebView 导入（生产路径）
 
 实现集中在 `ui/jwvw/JwImportScreen.kt`（约 1200 行，导入全流程）+
-`data/jw/` 各解析器。流程：**用户登录 → 判页 → 注入抽取 → Kotlin 解析 → 确认 → 入库**。
+`data/jw/` 各解析器。课表（理论 + 实验）流程：**用户登录 → 一键导入依次打开两张课表页 →
+注入抽取 → 合成 → 确认 → 入库**；考试与成绩仍是「停在对应页再导入」。
 
 ### 5.1 入口与会话
 
@@ -358,20 +359,28 @@ day = td 下标 - (本行 td 总数 - 8)      # 8 = 节次标签 + 7 天
 
 ### 5.2 DOM 抽取：`evaluateJavascript` 注入
 
-点击导入时，按当前 URL 判定页面类型（`JwUrls.schedulePageKind`）选择注入脚本：
+课表导入只有一个入口（DESIGN §4.4.2）：点「一键导入课表」后，App 自己依次打开学期理论课表页
+与实验课表页，各注入一次抽取脚本。两张课表结构完全不同，脚本各自绑定页面，不靠"猜"：
 
 ```kotlin
-val extractJs = when (pageKind) {
-    JwSchedulePage.Theory -> QiangzhiScheduleParser.EXTRACT_JS
-    JwSchedulePage.Lab    -> SyjxScheduleParser.EXTRACT_JS
-    ...
-}
-webView.evaluateJavascript(extractJs) { raw -> ... }   // raw 是包了一层引号的 JSON 字符串
+openPageAndWait(JwUrls.SCHEDULE_LIST, THEORY_URL_PART, "学期理论课表")
+val theory = OneClickImport.theorySource(evalJs(wv, QiangzhiScheduleParser.EXTRACT_JS))
+// 实验页跟着理论页的学期号走，否则两页默认学期不一致时合并出来的是跨学期课表
+openPageAndWait(JwUrls.labScheduleUrl(theory.term), LAB_URL_PART, "实验课表")
+val lab = OneClickImport.labSource(evalJs(wv, SyjxScheduleParser.EXTRACT_JS))
+// evalJs 回收的 raw 是包了一层引号的 JSON 字符串（unwrapJsString 先剥引号与转义）
 ```
 
+**`loadUrl` 是异步的**：注入前必须等 `onPageFinished`（`PageLoadGate` + `CompletableDeferred`，
+超时 20 秒/页），否则抽到的是旧页面的 DOM。闸门按 URL **片段**放行（`xskb_list.do` / `syjx/toXskb`），
+失败由 `reportFailure` 放行 false（自动重试那一轮不算失败）。
+
 注入脚本与 §4 的 Python 解析是同一套算法（列序 + colspan/rowspan carry），
-返回 `JSON.stringify({ ok, items, term, url })`；Kotlin 侧用
+返回 `JSON.stringify({ ok, items, term, cells|container, url })`；Kotlin 侧用
 `kotlinx.serialization` 解析（`unwrapJsString` 先剥掉外层引号与转义）。
+`cells`（理论：`td[name=kbDataTd]` 个数）与 `container`（实验：课表 tbody 在不在）是**页面形态**，
+一键导入靠它区分「这张课表本来就空」与「拿到的不是这张课表」——实验课表在前期学期本来就空，
+当成失败会让用户根本导不进来（`data/jw/OneClickImport.kt`）。
 每个解析器还提供一份正则版 `parseFromHtml`，供 JVM 单测跑 HTML fixture、不依赖真机。
 
 经验：**两张课表的 URL 都含 `xskb`**（理论 `xskb_list`、实验 `toXskb`），
@@ -407,6 +416,8 @@ suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
 
 - 用户**强制选择**目标课表（可新建）与合并/覆盖方式——多课表之后
   「导到当前课表」不再是唯一合理解释，静默覆盖正在用的数据不可接受；
+- 一键导入多传一个 `breakdown`，逐项列出「理论课表 29 条 / 实验课表 12 条」——
+  只写「共 N 条」时，0 条的来源是隐形的；
 - 弹窗展示解析出的条数与页面学期（`term`）；
 - 考试导入在确认时用**目标课表**的开学日重新映射周次（预览口径 ≠ 落库口径）；
 - 入库走 `ScheduleRepository.importParsedCourses`：合并按 mergeKey 去重，

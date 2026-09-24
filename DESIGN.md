@@ -1460,6 +1460,56 @@ SSO 落点 500；关闭即恢复。`JwVpnDetector` 在失败路径探测 `TRANSP
 `data/jw/JwVpnDetector.kt`、`data/jw/JsStringDecode.kt`；
 调用点 `ui/jwvw/JwImportScreen.kt`（`reportFailure` 是唯一失败出口）。
 
+#### 4.4.2 一键导入：理论 + 实验合成一批（2026-09-24）
+
+用户拍板：底部只留「一键导入课表」一个主按钮。点一下，App 依次打开学期理论课表页与实验课表页，
+各注入一次抽取脚本，两份结果合成一批，弹**一次**识别结果，确认后写进同一张课表。
+
+为什么是顺序导航而不是「同源 fetch 两份 HTML 再本地解析」：两张表的 DOM 抽取脚本是真机跑出来的
+口径，而 `parseFromHtml` 那套正则只有合成 fixture 的单测（§4.8 把它标为备用路径）。顺序导航
+只新增一个「等页面加载完」的闸门，解析口径一行不动。
+
+实现要点（`ui/jwvw/JwImportScreen.kt`）：
+
+| 环节 | 口径 |
+|------|------|
+| 等待页面加载 | `PageLoadGate`（`CompletableDeferred<Boolean>`）+ `onPageFinished` 里在 `checkSessionLost` 通过、`pageState = Ready` 之后放行。`loadUrl` 是异步的，不等就注入会抽到旧页面的 DOM |
+| 放行的 URL 匹配 | 片段 `xskb_list.do` / `syjx/toXskb`。两张课表 URL 都含 `xskb`，整串比较会互相误判（§4.8 记过同一个坑） |
+| 失败即中断 | `reportFailure` 里**自动重试分支之后**放行 false——自动重试把目标换成了认证入口，目标页还没到 |
+| 超时 | 单页 20 秒（`PAGE_LOAD_TIMEOUT_MS`），超时不写库，状态条给「打开X超时」 |
+| 学期一致 | 理论页读到 `select#xnxq01id` 的学期号后拼给实验页（`JwUrls.labScheduleUrl`，白名单 `JwUrls.TERM_PATTERN`）。两页各有一套默认学期，不一致时合并出来的是跨学期课表 |
+| 已在理论页就不重载 | 用户可能自己在下拉里选了学期，重载会把这个选择打回教务默认 |
+
+**「0 条」与「拿到的不是这张表」必须分开**（`data/jw/OneClickImport.kt` + `ExtractMeta`）：
+
+- 理论页：`td[name=kbDataTd]` 扫到过（`cells > 0`）才算识别成功。整屏网格恒在（实测 41 个格子），
+  「网格在但没课」与「根本不是这张表」是两件事。
+- 实验页：课表 tbody 在不在（`container`）。为此 `SyjxScheduleParser.EXTRACT_JS` 找不到容器时
+  返回 `ok:true, container:false` 的空结果，**不再**提前 `ok:false`——两种情形在 Kotlin 侧要能分开。
+- 实验课表 0 条**不算失败**。前期学期本来就没有实验课，把它当失败会让用户在没排实验课的学期
+  根本导不进来。结论写进识别结果弹窗，让用户在写库前看到。
+
+识别结果弹窗复用 `ImportTargetDialogHost`，新增可选 `breakdown`（其余调用点不传，行为不变）：
+
+```
+识别结果
+数据学期：2026-2027-1
+理论课表 29 条
+实验课表 12 条
+共 41 门课。示例：高等数学、大学物理、机械制造基础A
+```
+
+- 两张表都没拿到东西 → 不弹窗，Snackbar 报错（`OneClickResult.blocked`）
+- 有一张 0 条 → 弹窗照常出，警示行写明是「本学期暂无实验课安排」还是「未识别到课表」
+- 学期不一致 → 警示行点名两个学期
+- 一键导入默认**合并**：两批数据一起进来，覆盖会连用户自建、调课过的行一起清掉且不可撤销
+
+底部按钮：删掉「理论课表 / 实验课表」两个入口（按当前页选解析器这件事，App 自己做得比用户准），
+保留「考试安排」入口；停在考试查询页时主按钮切回「导入考试安排」，成绩模式不变。
+
+验证：`OneClickImportTest` 13 项（形态判定 / 合成 / 警示文案 / 脏字段容错）；
+真机走「登录 → 一键导入 → 弹窗条数与学期 → 合并 → 周课表同时出现理论与实验课 → 再点一次不重复」。
+
 ### 4.5 胖乖 API（源：light-life）
 
 Base：`https://userapi.qiekj.com/`  
@@ -1618,8 +1668,11 @@ enum class CourseKind { Theory, Lab }   // domain
 **导入交互**
 
 - `JwUrls` 增加 `LAB_SCHEDULE` 常量与 `isLabScheduleUrl(url)`（匹配 `syjx/toXskb`）
-- `JwImportScreen` 底部改为 `[理论课表] [实验课表]` 导航 + `[导入本页]`，按当前 URL 自动选择解析器；两者都不匹配时提示「请先打开学期理论课表或实验课表查询页」
-- 确认弹窗显示「共 N 条，其中实验课 M 条」，避免两种课表混淆
+- ~~`JwImportScreen` 底部改为 `[理论课表] [实验课表]` 导航 + `[导入本页]`，按当前 URL 自动选择解析器~~
+  → **2026-09-24 起改成「一键导入课表」**（依次打开两张表，见 §4.4.2）：按当前页选解析器这件事
+  App 自己做得比用户准，底部只留「考试安排」入口
+- ~~确认弹窗显示「共 N 条，其中实验课 M 条」~~ → 由识别结果弹窗的逐项条数取代（§4.4.2），
+  含 0 条的那一项也要列出来
 
 **验收**
 
