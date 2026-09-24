@@ -1230,6 +1230,16 @@ Activity 窗口的 `LocalFocusManager` / `LocalSoftwareKeyboardController` / ins
 前两个走 FileProvider 的临时授权 Uri；第三个由用户自己选目录，App 不申请任何存储权限。
 文件默认只落应用私有目录，并只保留最近 10 份（§4.25）。
 
+**最近导出**（2026-09-24 追加）：导出窗口顶栏的历史图标 → 二级页 `SubpageScreen.TRANSCRIPTS`。
+列出本机保存的成绩单（学期标签 + 导出时刻 + 体积），每条支持 打开 / 分享 / 删除，顶部可清空。
+
+- 行点击 = 打开；右侧只留 分享 与 删除 两个按钮。同一个动作不给两处入口。
+- 删除与清空都要确认（成绩单删了只能重导，而重导出来的单子未必与已交出去的那份一致）。
+- **定位是「最近导出」不是档案库**：页面底部写明「只保留最近 10 份，超出的下次导出自动清理，
+  要长期留存请存到下载或分享出去」。所以要长期留的路径是用户自己另存，App 不做长期档案。
+- 列表数据源就是目录本身，不建 Room 表也不写清单文件：不会出现「记录还在、文件没了」的分叉。
+  代价是列表只能反推文件名里的信息，界面不显示成绩单的内部字段（也不需要）。
+
 **文案里的两条实话**：卡片写明含证件照与教务处成绩专用章；就绪态底部一行小字说明
 签章系统只有 HTTP 明文通道。不写这两条，用户既不知道自己拿到的是不是正式单据，
 也不知道这个页面在校内网外多走一步意味着什么。
@@ -3170,6 +3180,9 @@ JSON 后连 2024 年的过期单也能删（平台**不自动清理** `status=0`
 | `data/jw/TranscriptClient.kt` | 两步编排 + [TranscriptTransport] 传输抽象（OkHttp 实现单独一层），`cookie` 由调用方传入 |
 | `data/jw/TranscriptClient.kt` 的 `TranscriptCookies` | 从 WebView `CookieManager` 读该域 Cookie。HttpOnly 也读得到：它返回的是请求头原文 |
 | `data/repo/TranscriptStore.kt` | 落盘 `filesDir/transcripts/`（先写 `.part` 再改名）、保留最近 10 份、FileProvider Uri |
+| `domain/TranscriptHistory.kt` | 保留策略与文件名解析（纯逻辑）：认哪些文件、留哪几份、标签/时间/体积文案 |
+| `ui/score/TranscriptHistoryScreen.kt` | 最近导出页（打开/分享/删除/清空），挂 `SubpageScreen.TRANSCRIPTS` |
+| `ui/score/TranscriptActions.kt` | 打开/分享两个 Intent 的唯一出处（导出页与历史页共用，避免两份实现漂移） |
 | `ui/score/TranscriptScreen.kt` | 四态 UI + 授权 WebView 层 + 打开/分享/SAF 保存 |
 | `TranscriptActivity.kt` + manifest | 独立窗口，**锁竖屏**（窗口里有统一认证表单，转屏会销毁 WebView） |
 | manifest + `res/xml/file_paths.xml` | FileProvider，authority `${applicationId}.fileprovider`，只开 `transcripts/` 一个根 |
@@ -3200,7 +3213,17 @@ App 不解析页面的下拉，学期清单从 `ddqzcjList` 自己取，所以�
 
 **测试**：`TranscriptParsingTest`（应答解析与脏数据容错、学期归并、分页换算、魔数、
 失败归类、表单字段、文件命名）、`TranscriptClientTest`（假传输下的完整编排：翻页收学期、
-MAX_PAGES 兜底、令牌回传、三条失败路径、IOException → 网络错）。均不联网。
+MAX_PAGES 兜底、令牌回传、三条失败路径、IOException → 网络错）、`TranscriptHistoryTest`
+（保留策略与文件名解析：`.part` 半成品不进列表、标签反推、同秒稳定排序、保留 10 份的裁边、
+时间与体积文案）。均不联网。
+
+**保留策略的两个坑**（顺手在 2026-09-24 的自查里修掉）：
+
+1. **`.pdf.part` 同时带两个后缀**：判定顺序必须是「先 `.part` 再 `.pdf`」，否则崩溃留下的
+   半成品会被当成一条记录列出来，用户点开就是坏文件。`recent()` 读到半成品直接删。
+2. **列表与动作之间有时间差**：新导出一份会触发保留策略删掉最旧的，历史页当时那一屏就是旧数据。
+   所以打开/分享前一律用 `TranscriptStore.existingFile` 复核，文件不在就给提示并刷新列表，
+   而不是把一个不存在的 Uri 交给阅读器（那会变成系统报错弹窗）。
 
 ### 4.26 宿舍报修（学工系统 WebView，2026-09-24，P6；UI 规格见 §3.15）
 

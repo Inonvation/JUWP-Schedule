@@ -34,6 +34,7 @@ import edu.jxslu.schedule.ui.notes.NoteCourseScreen
 import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
 import edu.jxslu.schedule.ui.score.ScoreScreen
+import edu.jxslu.schedule.ui.score.TranscriptHistoryScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
@@ -62,6 +63,8 @@ enum class SubpageScreen {
     SHORTCUTS,
     /** 我的 → 成绩查询（按学期存储，DESIGN §4.15） */
     SCORES,
+    /** 导出成绩单 → 最近导出（DESIGN §3.14；列表即 filesDir/transcripts，最多 10 份） */
+    TRANSCRIPTS,
     /** 今日 → 共享单车出码（DESIGN §3.9；独立窗口承载二维码展示） */
     EBIKE,
     /** 今日 → 附近单车地图（DESIGN §3.9；从出码页进，选中的车号回填出码页） */
@@ -179,6 +182,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SHORTCUTS ->
                 ShortcutSettingsScreen(onBack = onBack, focusItemId = focusItemId)
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
+            SubpageScreen.TRANSCRIPTS -> TranscriptHistoryScreen(onBack = onBack)
             // focusItemId 对 EBIKE 复用为「进页即出码的车号」：今日页地图选车链路
             // 把选中车号带进出码页直接生成（2026-09-24，DESIGN §3.9）
             SubpageScreen.EBIKE -> EbikeQrScreen(onBack = onBack, initialCarNum = focusItemId)

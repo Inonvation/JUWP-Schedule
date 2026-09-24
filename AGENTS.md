@@ -127,7 +127,8 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 `BalanceAlertTest`（余额提醒：档位表/夹取/下标/文案、电费元换算三态、阈值边界、每日闸门）
 、`TranscriptParsingTest`（盖章成绩单：应答解析与脏数据容错/学期归并/分页换算/魔数/失败归类/表单字段/文件命名）
 、`TranscriptClientTest`（导出编排：翻页收学期/MAX_PAGES 兜底/令牌回传/三条失败路径/网络错分类）
-等 69 个测试类（707 个用例，2026-09-24 现数）。
+、`TranscriptHistoryTest`（最近导出：`.part` 半成品不进列表/标签反推/同秒稳定排序/保留 10 份裁边/文案/文件名越界防护）
+等 70 个测试类（714 个用例，2026-09-24 现数）。
 
 行为约定（改之前先读）：
 - 教务页星期只能从课程所在 `<td>` 的**列序**推（第 0 列是节次标签）。`li.qz-hasCourse-N` **几乎恒为 1**（实测 33 处 `-1`、2 处 `-3`），不能当星期来源。
@@ -330,6 +331,11 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   且 37 个旧学期重复，是坏的。成绩单 PDF 的章是**注释 + 数字签名**（`/FT /Sig`，Rect 压在
   「学校盖章：」上），PDFium 系渲染器（含 pypdfium2）不画注释，用它截图自检会误判「没盖章」。
   签章系统只有 HTTP 明文，成绩单与 CAS 票据都明文回传，这句实话要留在导出页上。
+  「最近导出」页（`SubpageScreen.TRANSCRIPTS`）的列表**就是 `filesDir/transcripts/` 目录本身**，
+  不要给它加 Room 表或清单文件：文件名里已经带学期标签与导出时刻，两套真相迟早对不上。
+  判定顺序是「先 `.part` 再 `.pdf`」（`x.pdf.part` 同时满足两个后缀），否则崩溃留下的半成品
+  会被当成一条记录列出来；打开/分享前必须用 `TranscriptStore.existingFile` 复核（新导出会触发
+  保留策略删旧的，列表那一屏可能已经过期）。
 
 - **宿舍报修是 WebView，不是原生表单**（2026-09-24，DESIGN §3.15 / §4.26）：
   `DormRepairActivity`（第三个「因为窗口里有统一认证表单而锁竖屏」的窗口，前两个是教务导入

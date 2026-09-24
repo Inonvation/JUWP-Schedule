@@ -1,10 +1,7 @@
 package edu.jxslu.schedule.ui.score
 
 import android.annotation.SuppressLint
-import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.net.http.SslError
 import android.view.View
 import android.view.ViewGroup
@@ -36,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -65,11 +63,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.jw.PtworkTranscript
 import edu.jxslu.schedule.data.jw.TranscriptCookies
 import edu.jxslu.schedule.data.jw.TranscriptException
 import edu.jxslu.schedule.data.jw.TranscriptTerm
+import edu.jxslu.schedule.domain.TranscriptHistory
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
@@ -79,10 +80,12 @@ import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SectionHeader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 
 /**
  * 导出成绩单（DESIGN §3.14 / §4.25）：选学期 → 取教务处盖章 PDF → 打开 / 分享 / 另存。
@@ -115,6 +118,20 @@ fun TranscriptScreen(onBack: () -> Unit) {
         scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
     }
 
+    /**
+     * 落到「完成」页之后，文件仍可能被用户从「最近导出」里删掉。
+     * 所有后续动作都先过这道闸：文件不在了就回就绪态，而不是让阅读器抛一个看不懂的错。
+     */
+    fun withSavedFile(action: (File) -> Unit) {
+        val file = savedFile
+        if (file == null || !file.exists()) {
+            notify("成绩单文件已不在了，请重新导出", NoticeTone.Warning)
+            stage = TxStage.Ready
+            return
+        }
+        action(file)
+    }
+
     fun loadTerms() {
         scope.launch {
             stage = TxStage.Checking
@@ -131,8 +148,12 @@ fun TranscriptScreen(onBack: () -> Unit) {
                 stage = if (list.isEmpty()) TxStage.Empty else TxStage.Ready
             } catch (e: TranscriptException.SessionExpired) {
                 stage = TxStage.NeedLogin("统一认证会话已过期")
+            } catch (e: CancellationException) {
+                // 取消（用户返回关窗口）必须原样抛：被下面那条 catch 吃掉会变成「导出失败」，
+                // 还会在已经销毁的组合上写状态（同 JwHttpSession 的教训）
+                throw e
             } catch (e: Throwable) {
-                stage = TxStage.Failed(friendlyMessage(e), relogin = false)
+                stage = TxStage.Failed(friendlyMessage(e))
             }
         }
     }
@@ -157,8 +178,10 @@ fun TranscriptScreen(onBack: () -> Unit) {
                 stage = TxStage.Done
             } catch (e: TranscriptException.SessionExpired) {
                 stage = TxStage.NeedLogin("统一认证会话已过期")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
-                stage = TxStage.Failed(friendlyMessage(e), relogin = false)
+                stage = TxStage.Failed(friendlyMessage(e))
             }
         }
     }
@@ -197,6 +220,13 @@ fun TranscriptScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { SubpageActivity.start(context, SubpageScreen.TRANSCRIPTS) },
+                    ) {
+                        Icon(Icons.Filled.History, contentDescription = "最近导出")
                     }
                 },
             )
@@ -250,17 +280,15 @@ fun TranscriptScreen(onBack: () -> Unit) {
                 TxStage.Done -> DoneContent(
                     file = savedFile,
                     termLabel = termLabel(savedTerms),
-                    onOpen = { savedFile?.let { openPdf(context, store.uriOf(it), ::notify) } },
-                    onShare = { savedFile?.let { sharePdf(context, store.uriOf(it), ::notify) } },
-                    onSaveToDownloads = { savedFile?.let { saveLauncher.launch(it.name) } },
+                    onOpen = { withSavedFile { openPdf(context, store.uriOf(it), ::notify) } },
+                    onShare = { withSavedFile { sharePdf(context, store.uriOf(it), ::notify) } },
+                    onSaveToDownloads = { withSavedFile { saveLauncher.launch(it.name) } },
                     onExportAgain = { stage = TxStage.Ready },
                 )
 
                 is TxStage.Failed -> FailedContent(
                     message = current.message,
-                    relogin = current.relogin,
                     onRetry = { loadTerms() },
-                    onAuthorize = { authVisible = true },
                 )
             }
 
@@ -286,7 +314,7 @@ private sealed interface TxStage {
     data object Ready : TxStage
     data object Exporting : TxStage
     data object Done : TxStage
-    data class Failed(val message: String, val relogin: Boolean) : TxStage
+    data class Failed(val message: String) : TxStage
 }
 
 @Composable
@@ -387,6 +415,8 @@ private fun ReadyContent(
         Surface(tonalElevation = 3.dp) {
             Button(
                 onClick = onExport,
+                // 一个学期都没选就置灰：按钮文案已经写着「先选学期」，能点却只弹一句提示是自相矛盾
+                enabled = selected.isNotEmpty(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 10.dp)
@@ -448,7 +478,10 @@ private fun DoneContent(
             Text(termLabel, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(2.dp))
             Text(
-                listOfNotNull(file?.name, sizeText(file)).joinToString(" · "),
+                listOfNotNull(
+                    file?.name,
+                    file?.let { TranscriptHistory.sizeLabel(it.length()) },
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
@@ -476,9 +509,7 @@ private fun DoneContent(
 @Composable
 private fun FailedContent(
     message: String,
-    relogin: Boolean,
     onRetry: () -> Unit,
-    onAuthorize: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -489,10 +520,9 @@ private fun FailedContent(
     ) {
         InlineNoticeRow(message, NoticeTone.Error)
         Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onRetry) { Text("重试") }
-            if (relogin) Button(onClick = onAuthorize) { Text("重新登录") }
-        }
+        // 只给「重试」：会话失效这条根本走不到这里（它在 loadTerms/export 里被单独分出来，
+        // 直接进「待登录」态），所以不需要并列一个永远不出现的「重新登录」按钮
+        OutlinedButton(onClick = onRetry) { Text("重试") }
     }
 }
 
@@ -663,14 +693,14 @@ private fun configureForPtworkAuth(webView: WebView) {
     }
 }
 
-private const val PDF_MIME = "application/pdf"
-
 /** 把异常翻成用户能照着做点什么的话。 */
 private fun friendlyMessage(e: Throwable): String = when (e) {
     is TranscriptException.NoContent -> e.message ?: "没有可导出的成绩"
     is TranscriptException.Network -> "网络不可达，检查是否开了 VPN 或代理"
     is TranscriptException.Protocol -> e.message ?: "签章系统接口变了"
     is TranscriptException.SessionExpired -> e.message ?: "需要重新登录统一认证"
+    // 落盘失败走这条：最可能是存储空间不足，其次是被别的进程占着（很少见）
+    is IOException -> "写入文件失败，检查存储空间后重试"
     else -> e.message ?: "导出失败"
 }
 
@@ -679,32 +709,4 @@ private fun termLabel(terms: List<String>): String = when {
     terms.isEmpty() -> "全部学期"
     terms.size == 1 -> terms.first()
     else -> "${terms.first()} 等 ${terms.size} 个学期"
-}
-
-private fun sizeText(file: File?): String? {
-    val bytes = file?.length() ?: return null
-    return if (bytes >= 1024 * 1024) {
-        "%.1f MB".format(bytes / 1024.0 / 1024.0)
-    } else {
-        "%d KB".format(bytes / 1024)
-    }
-}
-
-private fun openPdf(context: Context, uri: Uri, notify: (String, NoticeTone) -> Unit) {
-    val intent = Intent(Intent.ACTION_VIEW)
-        .setDataAndType(uri, PDF_MIME)
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    val ok = runCatching { context.startActivity(intent) }.isSuccess
-    if (!ok) notify("没有能打开 PDF 的应用，可以改用「分享」", NoticeTone.Warning)
-}
-
-private fun sharePdf(context: Context, uri: Uri, notify: (String, NoticeTone) -> Unit) {
-    val send = Intent(Intent.ACTION_SEND)
-        .setType(PDF_MIME)
-        .putExtra(Intent.EXTRA_STREAM, uri)
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    val ok = runCatching {
-        context.startActivity(Intent.createChooser(send, "分享成绩单"))
-    }.isSuccess
-    if (!ok) notify("没有可用的分享目标", NoticeTone.Warning)
 }
