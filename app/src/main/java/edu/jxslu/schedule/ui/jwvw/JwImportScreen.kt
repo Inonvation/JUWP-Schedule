@@ -136,6 +136,11 @@ fun JwImportScreen(
     var pageState by remember { mutableStateOf<PageState>(PageState.Loading) }
     var statusNote by remember { mutableStateOf("正在打开学校统一身份认证登录…") }
     var autoNavPending by remember { mutableStateOf(false) }
+    /**
+     * 一键导入是否已经跑过（自动触发只做第一次，见 [autoImportOnTheoryReady]）。
+     * 手动点按钮也算用掉：导过一次之后再回到理论课表页，不该自己又跑一轮。
+     */
+    var autoImportTried by remember { mutableStateOf(false) }
     // 主 frame 最近一次失败的 URL，由失败回调写入、由 URL 相同的 onPageFinished 消费。
     //
     // 为什么必须按 URL 匹配 + 一次性消费（2026-09-18 手机日志实证）：500 响应体与
@@ -306,6 +311,8 @@ fun JwImportScreen(
     suspend fun runOneClickImport() {
         val wv = webView ?: return
         if (busy) return
+        // 自动触发与手动点击共用这一条「跑过了」的标记
+        autoImportTried = true
         busy = true
         try {
             // 已经在理论课表页就不重复加载：用户可能自己在下拉里选了学期，重新加载会把这个
@@ -341,6 +348,25 @@ fun JwImportScreen(
         } finally {
             busy = false
         }
+    }
+
+    /**
+     * 落在理论课表页就自动跑一次一键导入（DESIGN §4.4.2）。
+     *
+     * 课表模式下打开这个窗口的目的就是导入，落哪一页 App 已经自己决定了
+     * （xsMainV → 理论课表），中间那次「点一下按钮」是「按当前页选解析器」时代的遗留。
+     *
+     * 调用点在 onPageFinished 的「页面已就绪」分支里，所以只再判三件事：课表模式、页面类型是
+     * **理论课表**、没有别的活在跑。判页面类型而不是判「URL 含 xskb」：实验页 URL 也含 `xskb`，
+     * 认错会在实验页就绪时再触发一轮，而一键导入自己就会跳到实验页，等于自动死循环。
+     *
+     * 标记**同步置位**、不放进协程：onPageFinished 可能连着来两次，进协程再置会漏一次。
+     */
+    fun autoImportOnTheoryReady(page: JwSchedulePage) {
+        if (autoImportTried || busy) return
+        if (mode != JwImportMode.Schedule || page != JwSchedulePage.Theory) return
+        autoImportTried = true
+        scope.launch { runOneClickImport() }
     }
 
     /**
@@ -743,6 +769,9 @@ fun JwImportScreen(
                                                 applyPageFit(view, u)
                                                 // 一键导入在等这一页：就绪即放行（DOM 已完整，可以注入抽取）
                                                 releaseLoadGate(u)
+                                                // 理论课表就绪 → 自动跑一次一键导入（DESIGN §4.4.2），
+                                                // 用户不必再点「一键导入课表」
+                                                autoImportOnTheoryReady(page)
                                                 return@checkSessionLost
                                             }
                                             applyPageFit(view, u)
