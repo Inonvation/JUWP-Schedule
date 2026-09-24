@@ -387,7 +387,7 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
 - **登录态只有一条口径**（2026-09-24，DESIGN §4.27）：`data/session/` 三个件——
   `CredentialVault`（两份凭证加密存储的唯一读写口，文件仍是 `jw_credentials.xml` /
   `ykt_credentials.xml`，备份排除规则已在）、`CasSession`（CAS 会话唯一持有者，教务 / 学工 /
-  签章共用，含 `ensureValid` / `tryLogin` / cookie 注入与回灌）、`SessionStatus`（运行时停用状态）。
+  签章共用，含 `ensureValid` / `tryLogin` / cookie 回灌）、`SessionStatus`（运行时停用状态）。
   四条别改坏：① **闸门只有「凭证错」计数**，验证码 / 网络 / 5xx 一律不计——旧实现把
   「CAS 无 Location」一律当凭证错，会把对的密码记成错的、累计还把账号停用，所以
   `CasLoginClassifier` 必须四分类（详情页 / 认不出的 200 走 `Manual`，转 WebView）；
@@ -398,31 +398,35 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   `lastAttemptMs <= lastSuccessMs` 要直接放行**——那是成功留下的时间戳不是失败，否则
   冷启动后 5 分钟内既不信会话也不允许重登（2026-09-24 真机：引导登录 4.6 分钟后冷启动，
   `last_attempt` 还停在成功那一刻，用户看到「明明登录了还要手动登」）；
-  ③ 注入 WebView **只要 `Ready` 就做**，且必须发生在
-  `loadUrl` **之前**。这一条踩过坑（2026-09-24 用户报「明明登录了，打开导入页 / 报修 /
-  请假还要再登一次」）：**别判「是不是刚登录」**——引导第 2 步是在原生表单里登的，cookie
-  只进了 OkHttp 的 jar，之后打开 WebView 走的是 10 分钟可信期、永远不满足「刚登录」，
-  于是永远不注入；也**别判「WebView 那边已经有会话就跳过」**——那份可能是失效的旧 cookie
-  （真机上实测 CookieManager 会一直压着它），正挡着新会话进去。WebView 用出来的新会话
-  由「落到教务域且非登录页」时 `adoptFromWebView` 回灌，两个方向都得同步。
-  **另外 `loadUrl` 绝不能被等会话的动作挡住**：注入是本地操作（读 jar + setCookie，
-  毫秒级），而登录 / 探会话要联网。三个 WebView 入口都是「jar 有会话 → 注入后立刻
-  `loadUrl`」的快路径 +「没有 → **先 `loadUrl`**，后台补完再重载一次」的慢路径。
-  把 `loadUrl` 写在 `await prepareWebView()` 之后会让 WebView 白屏几十秒——日志里连
-  一条 `onPageStarted` 都没有（2026-09-24 用户报的「还是要手动登」就是这个）。
+  ③ **不做 cookie 注入，回灌是唯一方向**（2026-09-24 定案，注入侧代码已删）。真机实测
+  把 OkHttp 的 cookie 写进 `CookieManager`（读回 7/7 落位、`flush()` 已调）后，85ms 后
+  WebView 首跳仍落 CAS 登录页——差别是属性缺 `SameSite=None`，跨站跳转不带。所以
+  **WebView 的会话只能由 WebView 自己登出来**（`JwAutoLogin` 填表提交），
+  `WebViewCookieBridge` 只剩 `adopt` / `hasAnyCookie`，别再往回加注入。
+  WebView 用出来的新会话由「落到教务域且非登录页」时 `adoptFromWebView` 抄回 jar。
+  **另外 `loadUrl` 绝不能被等会话的动作挡住**：登录 / 探会话要联网，三个 WebView 入口
+  一律「**先 `loadUrl`** 让页面出来，再后台 `ensureValid` 拿结果写状态条」。把 `loadUrl`
+  排在等会话之后会让 WebView 白屏几十秒——日志里连一条 `onPageStarted` 都没有
+  （2026-09-24 用户报的「还是要手动登」就是这个）。
   ④ 两份凭证互不牵连：清一卡通不动教务，状态卡的「未开启凭证」按 ykt 判定、导入提示按 cas 判定。
+  **`CredentialVault` 对两份凭证各留一份内存缓存**（`@Volatile` + 已读标记，`save*` / `clear*`
+  同步更新）：`EncryptedSharedPreferences` 的读要走 Keystore 解密，而三个 WebView 入口 +
+  「我的」页账户卡各读一次，都在主线程。别再让页面自己 `remember { vault.readCas() }` 之外
+  另开一条读盘路径。
   `YktCredentialStore` 现在只是 `CredentialVault` 的薄适配器，**公开签名不要动**（8 个调用点，
   改内部就够——构造点只有 `Graph` 一处）。
 - **首启引导只服务新安装**（2026-09-24，DESIGN §3.16）：`onboarding_seen` 为 false 时
   `MainActivity` 拉起 `OnboardingActivity`（五屏：欢迎 → 学校统一认证 → 一卡通·电费 → 开水 →
   完成，**每步可跳过**，跳过只丢那一步的凭据）。老用户没有这个键 ⇒ 不弹引导，只在「我的」页
-  看状态。**账户卡常显**（不再以「有没有一卡通凭证」为条件），三行状态由
+  看状态。第 4 步（胖乖开水）**两种登录方式二选一**：手机号 + 短信验证码（60 秒冷却，
+  与开水页同档），或粘贴已有 Token（落盘 → `validateToken` 查余额，失败**清掉刚存的那份**
+  再报错，否则会留一个无效 token 让后续请求一路 401）。**账户卡常显**（不再以「有没有一卡通凭证」为条件），三行状态由
   `LoginStateRules.derive` 合成：凭证在不在是持久事实、停用是运行时事实，**别混成一个布尔**；
   没请求过就是「未登录」，只有真撞上凭证错才转「失效」——**不做后台主动探测**。
   「失效」的上报点都在仓库层：一卡通与电费走各自的 `credentialFailure(...)`（**只有
   凭证错**，token 过期走 401 重登、**不标失效**），教务走 `CasSession` 的闸门。后台任务
   （`BalanceAlertReminder`）调同一批方法，因此自动获得上报、不需要单独埋点。
-- **落在统一认证登录页时自动填表登录**（2026-09-24，DESIGN §4.4.1）：三个 WebView 入口
+- **落在统一认证登录页时自动填表登录**（2026-09-24，DESIGN §4.27「落登录页自动填表」）：三个 WebView 入口
   ——教务导入（`JwImportScreen`）、学工表单（`XgFormScreen`）、成绩单授权
   （`TranscriptScreen`）——都在 `onPageFinished` 里判「在 CAS 域」，命中就用 `JwAutoLogin`
   填 `username`/`password` 并**点提交按钮**，只试一次。四条别改坏：
@@ -433,7 +437,12 @@ HugeIcons **不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不�
   「能填入但没点登录」），按 `button/input[type=submit]` → `requestSubmit()` → `submit()`
   的顺序退让；
   ③ 值要用**原生 setter + `input`/`change` 事件**写（受控组件直接改 `.value` 框架状态不更新）；
-  ④ 只试一次，失败（`no-form` / `err:`）退回人工登录——反复试会撞风控。
+  ④ **两道闸都要留**：页面级 `autoLoginTried`（同一页面不重复提交）+ 进程级
+  `SessionStatus.tryAcquireAutoLogin`（5 分钟窗口，**取到许可就算用掉一次，失败也算**）。
+  只有页面级那道挡不住重开窗口：密码改过而 App 还存着旧的时候，每开一次导入页 / 报修 /
+  成绩单就撞一次 CAS。该平台已判停用（凭证错到阈值）时也一律不放行——密码就是错的，
+  再填只是多撞一次失败计数。`onCredentialsUpdated()`（改密码 / 退出登录）会清零这道闸。
+  失败（`no-form` / `err:`）退回人工登录——反复试会撞风控。
   「失效」之后怎么恢复：教务行的落点会**分流**——已登录去导入窗口，未登录/已失效直接进
   `OnboardingActivity.start(startAtJw = true)` 改密码（导入页只能手登 WebView，改不了已存
   的密码）；一卡通行去校园卡设置页。开水的 token 失效**本地判不出来**（无实测样本），

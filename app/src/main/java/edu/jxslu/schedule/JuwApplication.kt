@@ -53,8 +53,9 @@ class JuwApplication : Application() {
             BalanceAlertReminder.ensurePeriodicWork(this@JuwApplication)
             BalanceAlertReminder.enqueueCheck(this@JuwApplication)
         }
-        // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：导入页 / 学工表单 / 签章授权三个
-        // WebView 打开时就能走「jar 里已有会话」的快路径、直接本地注入，用户看不到登录页。
+        // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
+        // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链
+        // （学籍卡 / 成绩导入）也直接吃这份会话。
         //
         // 为什么可以放心每次都跑：`login_gate` 里的 `last_success` 是落盘的，10 分钟信任期
         // 内直接返回不发请求；超出才探一次会话（一个轻量 GET）。失败静默——打开 WebView

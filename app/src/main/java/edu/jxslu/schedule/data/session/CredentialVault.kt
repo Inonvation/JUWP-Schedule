@@ -39,21 +39,62 @@ class CredentialVault(context: Context) : CredentialStore, YktTokenCache {
 
     // ---------------------------------------------------------------- CAS
 
-    override fun readCas(): SessionCredentials? = read(casPrefs)
+    // 两份凭证各留一份内存缓存。`EncryptedSharedPreferences` 的读要走 Keystore 解密
+    // （首次几十毫秒），而三个 WebView 入口 + 「我的」页账户卡会各读一次，都在主线程。
+    // 并发首次读最多多读一次盘、写入同样的值，无害。
+    @Volatile
+    private var casCache: SessionCredentials? = null
 
-    fun saveCas(username: String, password: String) = write(casPrefs, username, password)
+    @Volatile
+    private var casCached = false
 
-    override fun clearCas() = casPrefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).apply()
+    override fun readCas(): SessionCredentials? {
+        if (!casCached) {
+            casCache = read(casPrefs)
+            casCached = true
+        }
+        return casCache
+    }
+
+    fun saveCas(username: String, password: String) {
+        write(casPrefs, username, password)
+        casCache = SessionCredentials(username.trim(), password)
+        casCached = true
+    }
+
+    override fun clearCas() {
+        casPrefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).apply()
+        casCache = null
+        casCached = true
+    }
 
     // ------------------------------------------------------------ 一卡通
 
-    fun readYkt(): SessionCredentials? = read(yktPrefs)
+    @Volatile
+    private var yktCache: SessionCredentials? = null
 
-    fun saveYkt(username: String, password: String) = write(yktPrefs, username, password)
+    @Volatile
+    private var yktCached = false
+
+    fun readYkt(): SessionCredentials? {
+        if (!yktCached) {
+            yktCache = read(yktPrefs)
+            yktCached = true
+        }
+        return yktCache
+    }
+
+    fun saveYkt(username: String, password: String) {
+        write(yktPrefs, username, password)
+        yktCache = SessionCredentials(username.trim(), password)
+        yktCached = true
+    }
 
     /** 清一卡通凭证时**连 token 一起清**：凭证没了，那个 token 也不该留着。 */
     fun clearYkt() {
         yktPrefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).apply()
+        yktCache = null
+        yktCached = true
         clearToken()
     }
 

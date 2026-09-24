@@ -102,4 +102,50 @@ class LoginGateRulesTest {
         assertEquals(0, clean.consecutiveCredentialFailures)
         assertEquals(0L, clean.lastSuccessMs)
     }
+
+    /**
+     * 自动填表登录的跨窗口节流。
+     *
+     * 页面级的「只自动一次」挡不住重开窗口：密码改过时每开一次页面就撞一次 CAS。
+     */
+    @Test
+    fun autoLoginThrottle_blocksRepeatWithinWindow() {
+        assertTrue(LoginGateRules.shouldAutoLogin(lastAutoLoginMs = 0L, nowMs = t0))
+        assertFalse(LoginGateRules.shouldAutoLogin(lastAutoLoginMs = t0, nowMs = t0 + 1))
+        assertFalse(
+            LoginGateRules.shouldAutoLogin(
+                lastAutoLoginMs = t0,
+                nowMs = t0 + LoginGateRules.AUTO_LOGIN_WINDOW_MS - 1,
+            ),
+        )
+        assertTrue(
+            LoginGateRules.shouldAutoLogin(
+                lastAutoLoginMs = t0,
+                nowMs = t0 + LoginGateRules.AUTO_LOGIN_WINDOW_MS,
+            ),
+        )
+    }
+
+    /**
+     * 凭证已被判错到停用时，自动填表一律不放行——那时密码就是错的，再填一次只是多撞
+     * 一遍 CAS 的失败计数，正好是账号锁定最敏感的形状。
+     */
+    @Test
+    fun autoLoginThrottle_blockedWhenSuspended() {
+        assertFalse(
+            LoginGateRules.shouldAutoLogin(
+                lastAutoLoginMs = 0L,
+                nowMs = t0,
+                suspended = true,
+            ),
+        )
+        // 窗口早已过去也一样
+        assertFalse(
+            LoginGateRules.shouldAutoLogin(
+                lastAutoLoginMs = t0,
+                nowMs = t0 + LoginGateRules.AUTO_LOGIN_WINDOW_MS * 10,
+                suspended = true,
+            ),
+        )
+    }
 }

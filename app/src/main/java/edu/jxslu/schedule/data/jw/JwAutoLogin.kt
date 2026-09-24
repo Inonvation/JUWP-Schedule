@@ -4,7 +4,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
- * 在 WebView 里**自动完成一次统一认证登录**（DESIGN §4.4.1 / §4.27）。
+ * 在 WebView 里**自动完成一次统一认证登录**（DESIGN §4.27「落登录页自动填表」）。
  *
  * 为什么要有它：把 OkHttp 登录拿到的 cookie 注入 `CookieManager` 这条路在真机上走不通
  * ——cookie 确实写进去了（读回验证通过），但 WebView 发请求时就是不带（2026-09-24 实测：

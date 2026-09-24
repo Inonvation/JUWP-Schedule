@@ -73,6 +73,7 @@ import edu.jxslu.schedule.data.jw.TranscriptCookies
 import edu.jxslu.schedule.data.jw.TranscriptException
 import edu.jxslu.schedule.data.jw.TranscriptTerm
 import edu.jxslu.schedule.data.jw.unwrapJsString
+import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.domain.TranscriptHistory
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -629,11 +630,15 @@ private fun AuthorizationOverlay(
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                // 与教务导入 / 学工表单同一手法（DESIGN §4.4.1）：让 WebView 自己
+                                // 与教务导入 / 学工表单同一手法（DESIGN §4.27）：让 WebView 自己
                                 // 填表提交，cookie 由 CAS 亲自 Set-Cookie——把 OkHttp 拿到的 cookie
                                 // 注入 CookieManager 那条路在真机走不通（属性缺 SameSite）。
                                 if (!autoLoginTried && JwUrls.isCasHost(url)) {
                                     savedCas?.let { cred ->
+                                        // 进程级节流（DESIGN §4.27）：页面级标记挡不住重开窗口。
+                                        if (!SessionStatus.tryAcquireAutoLogin(System.currentTimeMillis())) {
+                                            return@let
+                                        }
                                         autoLoginTried = true
                                         view?.evaluateJavascript(
                                             JwAutoLogin.fillJs(cred.username, cred.password),
@@ -677,13 +682,9 @@ private fun AuthorizationOverlay(
                             }
                         }
                         webChromeClient = WebChromeClient()
-                        // 会话先准备好（DESIGN §4.27）：存过凭证时 CAS 登录在这里完成、cookie
-                        // 注入 CookieManager，窗口打开后多半已经自动落到签章系统。
-                        // 没存凭证时什么都不做，行为与旧版一致（显示统一认证登录页）。
-                        scope.launch {
-                            runCatching { Graph.casSession(ctx).prepareWebView() }
-                            loadUrl(PtworkTranscript.CAS_ENTRY)
-                        }
+                        // 直接加载：登录由页面上的自动填表完成（DESIGN §4.27）。
+                        // 这里不再预注入 cookie——注入在真机不被采用，等它还会让窗口白屏。
+                        loadUrl(PtworkTranscript.CAS_ENTRY)
                     }
                     webView = view
                     addView(

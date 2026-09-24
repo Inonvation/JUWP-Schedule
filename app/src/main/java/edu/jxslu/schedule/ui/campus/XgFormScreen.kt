@@ -47,6 +47,7 @@ import edu.jxslu.schedule.data.jw.JwAutoLogin
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.jw.unwrapJsString
 import edu.jxslu.schedule.data.session.CasEnsureResult
+import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.data.xg.XgForm
 import edu.jxslu.schedule.data.xg.XgUrls
 import kotlinx.coroutines.launch
@@ -74,7 +75,7 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
     var canGoBack by remember { mutableStateOf(false) }
     var progress by remember { mutableIntStateOf(0) }
     var statusNote by remember { mutableStateOf(XgUrls.statusHint(null, form.title)) }
-    // 落在统一认证登录页时用保存的凭证自动登一次（DESIGN §4.4.1）。只试一次：
+    // 落在统一认证登录页时用保存的凭证自动登一次（DESIGN §4.27「落登录页自动填表」）。
     // 失败（结构变了 / 有验证码）就交给用户手登，反复试只会撞风控。
     val savedCas = remember { Graph.credentialVault(context).readCas() }
     var autoLoginTried by remember { mutableStateOf(false) }
@@ -170,9 +171,13 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
                                     // 停在统一认证登录页 → 用保存的凭证自动登一次。
                                     // 走「WebView 自己填表提交」而不是注入 cookie：注入的
                                     // cookie 在真机上不被采用（属性缺 SameSite，跨站跳转不带，
-                                    // DESIGN §4.4.1），而填表提交的 cookie 由 CAS 亲自下发。
+                                    // DESIGN §4.27），而填表提交的 cookie 由 CAS 亲自下发。
                                     if (!autoLoginTried && XgUrls.isCasHost(url)) {
                                         savedCas?.let { cred ->
+                                            // 进程级节流（DESIGN §4.27）：页面级标记挡不住重开窗口。
+                                            if (!SessionStatus.tryAcquireAutoLogin(System.currentTimeMillis())) {
+                                                return@let
+                                            }
                                             autoLoginTried = true
                                             view?.evaluateJavascript(
                                                 JwAutoLogin.fillJs(cred.username, cred.password),
@@ -248,21 +253,12 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
                             // 会话准备放在 loadUrl 之前（DESIGN §4.27）：存过凭证时会把 CAS 登录
                             // 做完、cookie 注入 CookieManager；没凭证时什么都不做，退化成旧行为。
                             scope.launch {
-                                // 与教务导入同一套快 / 慢路径（DESIGN §4.27）：有现成会话就本地注入后
-                                // 直接加载；没有就先加载（不能白屏等登录），后台补完再重载一次。
-                                if (cas.cookies().isNotEmpty()) {
-                                    runCatching { cas.injectToWebView() }
-                                    loadUrl(XgUrls.SSO_LOGIN)
-                                    return@launch
-                                }
+                                // 与教务导入同口径（DESIGN §4.27）：先让页面出来，登录由页面上的
+                                // 自动填表完成；这里只把 OkHttp 侧会话准备好、拿结果写状态条。
                                 loadUrl(XgUrls.SSO_LOGIN)
-                                val outcome = runCatching { cas.prepareWebView() }.getOrNull()
-                                when {
-                                    outcome is CasEnsureResult.Ready && outcome.loggedInNow ->
-                                        loadUrl(XgUrls.SSO_LOGIN)
-
-                                    outcome is CasEnsureResult.Failed -> statusNote = outcome.message
-                                    outcome == CasEnsureResult.Suspended ->
+                                when (val outcome = runCatching { cas.ensureValid() }.getOrNull()) {
+                                    is CasEnsureResult.Failed -> statusNote = outcome.message
+                                    CasEnsureResult.Suspended ->
                                         statusNote = "教务登录已停用，请在「我的」页更新账号密码"
 
                                     else -> Unit

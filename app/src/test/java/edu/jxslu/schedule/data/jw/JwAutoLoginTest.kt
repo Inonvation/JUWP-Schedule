@@ -5,7 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 自动登录脚本（DESIGN §4.4.1）。
+ * 自动登录脚本（DESIGN §4.27「落登录页自动填表」）。
  *
  * 这里最重要的是**转义**：密码可能含引号或反斜杠，手工拼字符串会把脚本拼坏，
  * 甚至把密码片段泄进页面 DOM。

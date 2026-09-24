@@ -85,10 +85,21 @@ fun ImportTargetDialogHost(
 
     if (courses == null) return
 
-    var selectedId by remember(courses) { mutableStateOf<Long?>(currentId.takeIf { id -> timetables.any { it.id == id } }) }
-    var createNew by remember(courses) { mutableStateOf(timetables.isEmpty()) }
+    // 选择态：null = 用户还没动过手，落点现算（见下方 createNew / selectedId）。
+    //
+    // **不能把默认值冻结在首次组合那一刻**：timetables 来自 Room、currentId 来自 DataStore，
+    // 首帧拿到的是初始值（空列表 / 0），据此算出「一张课表都没有」就会默认停在「新建课表…」，
+    // 而「导入」按钮又被空名称禁用——用户看到的是一屏没选中的课表列表，得自己点回来。
+    var pickedId by remember(courses) { mutableStateOf<Long?>(null) }
+    var pickedNew by remember(courses) { mutableStateOf<Boolean?>(null) }
     var newName by remember(courses) { mutableStateOf("") }
     var merge by remember(courses) { mutableStateOf(defaultMerge) }
+
+    /** 用户没选过就落当前课表；当前课表失效退第一张；一张都没有才落「新建课表…」。 */
+    val createNew = pickedNew ?: timetables.isEmpty()
+    val selectedId = pickedId
+        ?: currentId.takeIf { id -> timetables.any { it.id == id } }
+        ?: timetables.firstOrNull()?.id
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -133,15 +144,15 @@ fun ImportTargetDialogHost(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    createNew = false
-                                    selectedId = t.id
+                                    pickedNew = false
+                                    pickedId = t.id
                                 }
                                 .padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(selected = selected, onClick = {
-                                createNew = false
-                                selectedId = t.id
+                                pickedNew = false
+                                pickedId = t.id
                             })
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -163,11 +174,11 @@ fun ImportTargetDialogHost(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { createNew = true }
+                            .clickable { pickedNew = true }
                             .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = createNew, onClick = { createNew = true })
+                        RadioButton(selected = createNew, onClick = { pickedNew = true })
                         Text("新建课表…", style = MaterialTheme.typography.bodyMedium)
                     }
                 }

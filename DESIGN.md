@@ -1465,7 +1465,7 @@ Activity 窗口的 `LocalFocusManager` / `LocalSoftwareKeyboardController` / ins
 | 1 | 欢迎 + 免责声明 | 无 | 无 | 无 |
 | 2 | 学校统一认证 | 学号 + 统一认证密码 | 后台走一次真实 CAS 登录（`CasSession.ensureValid`，§4.27） | ① 凭证错就地提示、**不自动重试**；② 连续 2 次失败或命中验证码页 → 切 WebView 手登一次，登录结果回灌（§4.27「双向同步」）；③ VPN/代理开着时不尝试（`JwVpnDetector` 已有），提示先关掉 |
 | 3 | 一卡通 · 缴费平台共用凭证 | 学号 + 查询密码 | 复用 `CampusCardSettingsScreen.saveAndEnable` 的登录 + `queryCard` 校验 | `NeedCaptcha`(8002/8003) → 现成文案「去浏览器登录一次」（脚本绝不硬试）；安全键盘协议自检不过 → 「请更新 App」；`MultiAccount`(8001) → 提示去网页选默认账号 |
-| 4 | 胖乖开水 | 手机号 + 短信验证码 | `sendCode` → `login` → 查一次余额 | 验证码错误可重发；**此步可跳过**，说明写清「开水与学校账号无关，需单独登录」 |
+| 4 | 胖乖开水 | 手机号 + 短信验证码 **或** 粘贴 Token（二选一） | 短信：`sendCode` → `login` → 查一次余额；Token：落盘 → `validateToken`（查余额） | 验证码错误可重发（60 秒冷却，与开水页同档）；Token 校验失败**清掉刚存的那份**再报错；**此步可跳过**，说明写清「开水与学校账号无关，需单独登录」 |
 | 5 | 完成 | 无 | 无 | 列出三项状态，失败项标「未配置」，可回第 2/3/4 步重来 |
 
 **第 4 步为什么放最后**：它要求用户手上有一部能收短信的手机，且和学校账号体系无关。
@@ -2036,6 +2036,11 @@ v3 时代「旧全局键 → 课表 1 行」的迁移被本迁移替代合并（
 
 - 教务导入与 JSON 导入共用一个目标选择确认弹窗：目标课表单选（默认预选当前课表）+「新建课表…」
   （输名字，配置取默认源）+ 覆盖/合并模式 + 取消。弹窗显示目标课表现有课程数。
+  **默认值必须现算，不能冻结在弹窗首次组合那一刻**（2026-09-24 修）：`timetables` 来自 Room、
+  当前课表 id 来自 DataStore，首帧拿到的是初始值（空列表 / 0），据此算出「一张课表都没有」
+  就会默认停在「新建课表…」，而「导入」按钮又被空名称禁用——用户看到的是一屏没选中的课表列表，
+  得自己点回来。现在以「用户是否动过手」的 null 态兜住：没动过 → 当前课表（失效退第一张），
+  一张都没有才落「新建课表…」。
 - 覆盖/合并语义不变；`mergeKey` 去重只在目标课表内做。
 - 导出 = 导出当前课表；JSON 格式 `{"courses":[...]}` **不变**，拾光互导兼容。
 
@@ -3748,8 +3753,8 @@ CredentialVault            Graph 单例，加密存储的唯一读写口
 CasSession                 CAS 会话的唯一持有者（取代「用完即弃」的 JwHttpSession 用法）
  ├─ ensureValid()        有效直接返回；失效则用 cas 凭据静默重登一次
  ├─ cookieHeader(hosts)  → OkHttp 请求头（教务、签章）
- ├─ injectToWebView()    → CookieManager（教务导入 / 学工 / 签章授权）
- ├─ adoptFromWebView()   → 用户在 WebView 手登后回灌，避免双真源
+ ├─ adoptFromWebView()   → WebView 登出来的会话回灌进 jar（唯一方向，无注入侧）
+ ├─ onCredentialsUpdated() 改密码后清零闸门，并放开自动填表的 5 分钟节流
  └─ shutdown()           仅进程退出时调用（不再是每任务一次）
 
 SessionStatus             StateFlow<Map<LoginTarget, LoginState>>，供 §3.16 状态卡与引导页读
@@ -3766,20 +3771,32 @@ SessionStatus             StateFlow<Map<LoginTarget, LoginState>>，供 §3.16 �
 | 约束 | 理由 |
 |------|------|
 | `InMemoryCookieJar` 从 `JwHttpSession` 私有内部类提为公共类 | 会话要跨任务常驻，不能再随 `shutdown()` 丢掉 |
-| 注入必须**在 `loadUrl` 之前**完成 | `CookieManager.setCookie` 是异步落盘的，先加载会拿到没有 Cookie 的首个请求 |
-| **会话可用就注入**（`Ready` 即注入，每次打开都注入） | 2026-09-24 用户报的 bug：原条件写成「只在刚登录时注入」，而引导第 2 步是在**原生表单**里登的（cookie 只进 OkHttp 的 jar），之后打开导入页 / 报修 / 请假走的是 10 分钟可信期，「刚登录」永远不成立 → 永远不注入 → 用户看到「明明登录了还要再登一次」。**也不能**改成「WebView 已有会话就跳过」：真机上 `CookieManager` 会一直压着那份失效的旧 cookie，任何「已经有了就不动」的判断都会继续踩坑 |
-| WebView 用出来的新会话要回灌 | 落在教务域且不是登录页时 `adoptFromWebView`（**不要**再加「jar 已有就不回灌」的条件，那样网页里的新值永远回不来） |
-| **`loadUrl` 不能排在等会话之后** | 注入是本地操作（毫秒级），登录 / 探会话要联网。入口要拆成「jar 有会话 → 注入后立刻 `loadUrl`」的快路径 +「没有 → 先 `loadUrl`，后台补完再重载」的慢路径。2026-09-24 真机的「还是要手动登」其实是 WebView **白屏几十秒**：日志里连一条 `onPageStarted` 都没有 |
+| **不做 cookie 注入**（2026-09-24 定案，注入侧代码已删） | 真机实测：把 OkHttp 登录拿到的 cookie 逐条写进 `CookieManager`（读回验证 7/7 落位、`flush()` 已调），85ms 后 WebView 的首跳仍然落到 CAS 登录页。差别只剩属性——注入的那份缺 `SameSite=None`，Chrome 按 Lax 处理，跨站跳转不带。**WebView 的会话只能由 WebView 自己登出来**，这条路不要再试一遍 |
+| 回灌是**唯一方向** | `WebViewCookieBridge` 只留 `adopt` / `hasAnyCookie`。落在教务域且不是登录页时 `adoptFromWebView` 把 WebView 用出来的会话抄回 jar；**不要**加「jar 已有就不回灌」的条件，那样网页里的新值永远回不来 |
+| **`loadUrl` 不能排在等会话之后** | 登录 / 探会话要联网。三个入口一律「先 `loadUrl` 让页面出来，再后台 `ensureValid` 拿结果写状态条」。2026-09-24 真机的「还是要手动登」其实是 WebView **白屏几十秒**：日志里连一条 `onPageStarted` 都没有 |
 | 可信期要带「会话还在」的条件 | `last_success` 落盘、cookie 不落盘；进程重启后只看时间戳会把「空会话」当「可用会话」（真机实测 `last_success` 与当前只差 190 秒，会话早没了）。`canAttempt` 同理：`lastAttemptMs <= lastSuccessMs` 是成功留下的时间戳，必须放行 |
-| **落登录页就自动填表登录**（`JwAutoLogin`） | 三个 WebView 入口（教务导入 / 学工表单 / 成绩单授权）在 `onPageFinished` 判到 CAS 域即填表提交，只试一次。**不要再回去注入 cookie**：真机实测注入 7/7 条全部落位、85ms 后首跳仍落 CAS 登录页（属性缺 `SameSite`，跨站跳转不带）；也**不要用 `form.submit()`**——它绕过 `onsubmit` 与按钮的点击处理，现象是「能填入但没点登录」 |
-| `setCookie` 在有 Looper 的线程调用 | `CookieManager` 的公开 API 要求；协程里要切 `Dispatchers.Main` |
-| 按域 + 协议分别注入（`https://jiaowu…:81` 与 `http://jiaowu…:8080` 各一次） | Cookie 不区分端口，但 `Secure` 属性的 cookie 注入到 http URL 下会被拒收。`bzb_njw` 写在 `:81`（HTTPS），必须按实际协议对齐 |
-| 手工拼 `name=value; Domain=…; Path=…` | OkHttp `Cookie.toString()` 的输出形态不保证就是 `Set-Cookie` 的格式，不能直接喂给 `setCookie` |
-| 回灌只认白名单域 | `adoptFromWebView` 要按域列表（教务处/学工/签章/CAS）逐条读，不能把整份 CookieManager 抄进来 |
-| 回灌与注入不构成环 | 回灌只写 `CasSession` 的内存 jar，不触发再注入；注入只由「本次要用的页面」显式调用 |
+| **落登录页就自动填表登录**（`JwAutoLogin`） | 三个 WebView 入口（教务导入 / 学工表单 / 成绩单授权）在 `onPageFinished` 判到 CAS 域即填表提交。**不要用 `form.submit()`**——它绕过 `onsubmit` 与按钮上的点击处理，现象是「能填入但没点登录」；提交顺序是 `button[type=submit].click()` → `requestSubmit()` → `submit()` |
+| 自动填表要过**两道闸** | 页面级 `autoLoginTried` + 进程级 `SessionStatus.tryAcquireAutoLogin`（5 分钟窗口，与 `REPEAT_WINDOW_MS` 同一档）。只有页面级那道挡不住重开窗口：密码改过而 App 还存着旧的时候，每开一次导入页 / 报修 / 成绩单就撞一次 CAS。**取到许可就算用掉一次**（失败也算）。该平台已停用（凭证被判错）时也一律不放行——密码就是错的，再填只是多撞一次失败计数；`onCredentialsUpdated()` 同时清零停用标记与这道节流 |
+| `CookieManager` 的读写要在有 Looper 的线程 | 公开 API 的要求；协程里切 `Dispatchers.Main`（回灌同样） |
+| 回灌只认白名单域 | `adoptFromWebView` 按域列表（CAS / 教务处 / 学工 / 签章）逐条读，不把整份 `CookieManager` 抄进来 |
 | 失败计数**按平台分开**（CAS 与一卡通各一套） | 两套风控互不相干，一边失败不该让另一边停用 |
 | 同一账号 5 分钟内不重复登录（CAS 与一卡通各一份） | 防「打开三个窗口各登一次」把风控点着 |
 | 连续 2 次凭证错 → 转停用 + 通知，不再自动尝试 | 学校 CAS 有验证码/锁定机制（`scripts/README.md` 排错表第 1 条已提到「触发验证码」）。用户改密码后进 §3.16 状态卡更新即清零 |
+
+#### 落登录页自动填表（`JwAutoLogin`，2026-09-24）
+
+WebView 的会话只能由 WebView 自己登出来（注入无效，理由见上表），所以三个入口都接了
+「落在 CAS 登录页就填表提交」：`JwImportScreen`（教务导入 / 成绩 / 考试）、
+`XgFormScreen`（报修 / 请假）、`TranscriptScreen`（盖章成绩单授权）。
+
+脚本只做三件事：找到 `input[name=username]` 与 `input[name=password]`，用**原生 setter**
+写值并派 `input` / `change` 事件（受控组件直接改 `.value` 不更新框架状态），然后提交。
+密码用 JSON 字符串字面量拼进脚本——CAS 密码可能含 `"` 或 `\`，手工拼会把脚本拼坏。
+页面结构不认识、或命中验证码页时返回 `no-form`，调用方退回人工登录并提示。
+
+节流两道，取值与理由见上表。同一个 5 分钟窗口内不重复提交——密码错时反复撞是风控
+最敏感的形状；该平台已被判停用时也不提交（密码就是错的）；用户改完密码
+（`onCredentialsUpdated`）会立刻放开。
 
 #### CAS 登录结果必须分四类（现状只有两类）
 
@@ -3851,10 +3868,19 @@ SessionStatus             StateFlow<Map<LoginTarget, LoginState>>，供 §3.16 �
 已实现并随本次改动编过：`CredentialVault` / `CasSession` / `SessionStatus` / `MemoryCookieJar` /
 `CookieBridge` / `CasLoginClassifier` / `LoginGateRules` / `LoginStateRules` / `TokenFreshness` /
 `YktTokenCache` / `WebViewCookieBridge`；导入页、学工表单、签章授权三个 WebView 入口接上
-「先准备会话再 loadUrl」与「落到教务域后回灌」；`OnboardingActivity` 首启引导五屏；
+「先 loadUrl、后台探会话」与「落到教务域后回灌」；`OnboardingActivity` 首启引导五屏；
 「我的」页账户卡改常显 + 三行状态 + 退出入口；登录失效通知 channel `login_state`；
 一卡通 token 落盘复用。测试新增 6 个类 46 个用例（会话策略、四分类、闸门、状态推导、
 cookie 桥、新鲜度）。
+
+**2026-09-24 第二轮（收尾三项 + 引导补 Token 登录）**：① 删掉 cookie 注入侧
+（`WebCookieBridge.inject` / `CasSession.prepareWebView` / `injectToWebView`），四个调用点
+改成「先 loadUrl、后台 `ensureValid`」——注入既无效，留着还会误导后来人；② `CredentialVault`
+给 CAS / 一卡通两份凭证各加内存缓存（`EncryptedSharedPreferences` 读要走 Keystore 解密，
+三个入口 + 账户卡各读一次都在主线程），写入时同步更新缓存；③ 自动填表加进程级节流
+（`SessionStatus.tryAcquireAutoLogin`，5 分钟），`onCredentialsUpdated` 清零；
+④ 引导第 4 步（胖乖开水）加 Token 粘贴登录（与开水页同一序列：落盘 → 查余额校验，失败
+清掉刚存的 token），并补上 60 秒验证码冷却与登录成功后记住手机号。
 
 **2026-09-24 追加**：一卡通与电费的凭证错会上报 `SessionStatus`（`credentialFailure` 统一
 处理），所以状态卡第二行也会转「已失效」；token 过期（401）**不上报**——那条会重登一次，
@@ -3877,6 +3903,8 @@ cookie 桥、新鲜度）。
 | 教务页面结构变了 | 「页面结构可能已变化」 | 解析 0 条即回退 WebView 老路径 |
 | 一卡通触发风控 | 现成文案「去浏览器登录一次」 | 不重试、不停用其他平台 |
 | 用户在 WebView 手登 | 无感 | 落域后 `adoptFromWebView` 回灌 |
+| 落到 CAS 登录页、存过凭证 | 无感（页面自己填表提交） | 脚本返回 `no-form` 时提示「请在下方页面手动登录一次」 |
+| 密码改过、App 还存着旧的 | 一次「自动登录没走通」提示 | 自动填表 5 分钟只放行一次，不再每个窗口撞一次 CAS；改密码后闸门清零 |
 | 引导中途退出 | 主界面可用，功能各自提示未配置 | 每步独立落库 |
 | 用户清掉一卡通凭证 | 生活页回「未开启凭证」态（§4.24） | 电费 token 一并清 |
 
@@ -3911,8 +3939,10 @@ cookie 桥、新鲜度）。
 
 - `onboarding_seen` 缺失的老用户 → **不弹引导**（默认不打扰），只在「我的」页显示状态卡
   与入口。首启引导只服务新安装。
-- WebView 的 `CookieManager` 里可能已有老用户的有效会话：首次 `ensureValid` 先
-  `adoptFromWebView` 探一次，有就不登。
+- WebView 的 `CookieManager` 里可能已有老用户的有效会话：WebView 入口照旧直接加载，
+  页面自己就是已登录态（不会触发填表）。OkHttp 那条链（学籍卡 / 成绩导入）要凭证，
+  老用户没存过就显示「未登录」；页面落到登录页时由 `JwAutoLogin` 填表提交，
+  成功后再 `adoptFromWebView` 抄回 jar。
 - **与 AGENTS.md 的现有约定冲突，必须同步改**：AGENTS.md 的学工表单那条写着
   「学工与教务共用同一套统一身份认证，所以教务导入登录过一次这边就免登，App 不存密码」。
   本方案会存 CAS 密码用于续登，那句要改成「学工不存自己的密码；CAS 密码口径见 §4.27」。
@@ -3928,8 +3958,7 @@ cookie 桥、新鲜度）。
   5 分钟窗口、2 次停用、更新密码后清零。
 - `SessionStatusTest`：三种状态推导（未请求 / 成功 / 失效）、平台互不影响。
 - `CasResponseClassifyTest`：四类应答分类（含验证码页样本、错误页样本、302）。
-- `CookieBridgeTest`：cookie 拼接格式（Domain/Path/Secure）、域名白名单、
-  http/https 分注、回灌不成环。
+- `CookieBridgeTest`：请求头 `Cookie:` 拼接（分号 + 空格、空集合为空串）。
 - 既有 `JwHttpSessionTest` 全绿（重定向解析、IPv4 优先两条回归钉不许动）。
 
 #### 阶段拆解
@@ -3937,7 +3966,7 @@ cookie 桥、新鲜度）。
 | 阶段 | 内容 | 独立验收 |
 |------|------|---------|
 | P1 | `CredentialVault` + `CasSession` + `SessionStatus`，UI 不动 | 单测 + 真机「登录一次后一段时间内不再手登」 |
-| P2 | 导入/学工/签章三条链改走 `CasSession`（注入 + 回灌），WebView 手登保留 | 三处功能不回归 |
+| P2 | 导入/学工/签章三条链改走 `CasSession`（先 loadUrl、后台探会话；落登录页填表提交，成功后回灌） | 三处功能不回归 |
 | P3 | 成绩 / 考试 / 学籍卡取数搬 OkHttp（**课表不动**，理由见「请求收敛」），老路径兜底 | 与 P2 结果逐条比对 |
 | P4 | 引导窗口 + 状态卡 + 失效提醒 | 首次安装全流程 |
 | P5 | 统一 OkHttpClient（连接池 + DNS），收益最低，可砍 | 构建 + 冒烟 |

@@ -18,6 +18,10 @@ object SessionStatus {
 
     private val _suspended = MutableStateFlow<Set<LoginTarget>>(emptySet())
 
+    /** 上次放行「自动填表登录」的时刻（进程级：跨窗口节流，见 [LoginGateRules.AUTO_LOGIN_WINDOW_MS]）。 */
+    @Volatile
+    private var lastAutoLoginMs = 0L
+
     /** 已被判失效的平台；状态卡据此把该行显示成「登录状态已失效」。 */
     val suspended: StateFlow<Set<LoginTarget>> = _suspended.asStateFlow()
 
@@ -38,4 +42,26 @@ object SessionStatus {
 
     /** 退出登录 / 清凭证时调用。 */
     fun clear(target: LoginTarget) = clearSuspended(target)
+
+    /**
+     * 取一次「自动填表登录」的许可；窗口内返回 false。
+     *
+     * 只在真的要提交表单前调——**拿到许可就算用掉一次**，失败也算（否则密码错时会
+     * 每开一个窗口撞一遍）。
+     *
+     * 已停用（凭证被判错到停用）时一律不放行：那时密码就是错的，再填一次只会多撞一遍
+     * CAS 的失败计数。用户改完密码会经 `CasSession.onCredentialsUpdated` 清掉停用标记与节流。
+     */
+    fun tryAcquireAutoLogin(nowMs: Long): Boolean {
+        if (!LoginGateRules.shouldAutoLogin(lastAutoLoginMs, nowMs, isSuspended(LoginTarget.Jw))) {
+            return false
+        }
+        lastAutoLoginMs = nowMs
+        return true
+    }
+
+    /** 用户手动登录成功、或测试里复位时调用。 */
+    fun clearAutoLoginThrottle() {
+        lastAutoLoginMs = 0L
+    }
 }

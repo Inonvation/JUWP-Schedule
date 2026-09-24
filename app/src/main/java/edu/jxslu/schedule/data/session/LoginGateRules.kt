@@ -32,6 +32,27 @@ object LoginGateRules {
     const val REPEAT_WINDOW_MS = 5 * 60_000L
     const val SESSION_TRUST_MS = 10 * 60_000L
 
+    /**
+     * 自动填表登录的重复窗口。
+     *
+     * 页面级那个「只自动一次」挡不住重开窗口：密码改过而 App 还存着旧的时，每开一次
+     * 导入页 / 报修 / 成绩单就撞一次 CAS —— 正好是最容易触发风控的形状。
+     */
+    const val AUTO_LOGIN_WINDOW_MS = 5 * 60_000L
+
+    /**
+     * 自动填表登录是否放行。
+     *
+     * [lastAutoLoginMs] = 上次放行时刻，0 = 从没放过；[suspended] = 该平台的凭证已被判错到停用
+     * ——那时再拿同一份密码去撞一次 CAS 只有坏处（账号锁定就靠这个计数）。
+     */
+    fun shouldAutoLogin(
+        lastAutoLoginMs: Long,
+        nowMs: Long,
+        suspended: Boolean = false,
+        windowMs: Long = AUTO_LOGIN_WINDOW_MS,
+    ): Boolean = !suspended && (lastAutoLoginMs <= 0L || nowMs - lastAutoLoginMs >= windowMs)
+
     fun canAttempt(
         state: LoginGateState,
         nowMs: Long,

@@ -77,6 +77,7 @@ import edu.jxslu.schedule.domain.ExamMapper
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.data.session.CasEnsureResult
+import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.resolveImportTarget
@@ -203,7 +204,7 @@ fun JwImportScreen(
     }
 
     /**
-     * 落在统一认证登录页时，用保存的凭证**自动登一次**（DESIGN §4.4.1）。
+     * 落在统一认证登录页时，用保存的凭证**自动登一次**（DESIGN §4.27「落登录页自动填表」）。
      *
      * **为什么不注入 cookie 了**（2026-09-24 真机定性）：OkHttp 登录拿到的 cookie 注入
      * `CookieManager` 这条路走不通——cookie 确实写进去了（逐条读回验证通过），但 WebView
@@ -214,12 +215,16 @@ fun JwImportScreen(
      * 与用户手动登录走同一条路，从根上没有这个问题。
      *
      * 只做一次：页面结构变了、或者命中验证码，脚本会返回 `no-form`，那时退回人工登录。
+     *
+     * 除了页面级的 [autoLoginTried]，还要过一道**进程级节流**（[SessionStatus]）：页面级的
+     * 标记挡不住重开窗口，密码改过而 App 还存着旧的时候，每开一次导入页就撞一次 CAS。
      */
     fun tryAutoLoginOnCasPage(view: WebView?, url: String?) {
         if (autoLoginTried) return
         val u = url.orEmpty()
         if (!JwUrls.isCasHost(u) || !isLoginLikeUrl(u)) return
         val cred = savedCas ?: return
+        if (!SessionStatus.tryAcquireAutoLogin(System.currentTimeMillis())) return
         autoLoginTried = true
         view?.evaluateJavascript(JwAutoLogin.fillJs(cred.username, cred.password)) { raw ->
             // 只记结果，**不记凭证**
@@ -671,7 +676,7 @@ fun JwImportScreen(
                                             }
                                         }
 
-                                        // 落在统一认证登录页 → 用保存的凭证自动登一次（DESIGN §4.4.1）。
+                                        // 落在统一认证登录页 → 用保存的凭证自动登一次（DESIGN §4.27）。
                                         // 放在会话检查之前：它一提交就触发导航，这一轮不必再往下走。
                                         tryAutoLoginOnCasPage(view, u)
 
@@ -684,8 +689,8 @@ fun JwImportScreen(
                                             // 走到这里说明不是登录页（登录页已被 checkSessionLost 拦下）
                                             // ——WebView 手里那份会话是真的能用。把它的 cookie 抄回会话层：
                                             // 服务端可能在这期间轮换过 session，网页里那份才是最新的。
-                                            // **不要**再加「jar 已有时就不抄」的条件：那样网页里的新值
-                                            // 永远回不来，而 prepareWebView 的注入方向以 jar 为准。
+                                            // **不要**再加「jar 已有时就不抄」的条件：回灌是唯一方向
+                                            // （没有注入侧了），加了网页里的新值就永远回不来。
                                             if (JwUrls.isJwHost(u)) {
                                                 scope.launch { runCatching { cas.adoptFromWebView() } }
                                             }
@@ -838,35 +843,22 @@ fun JwImportScreen(
                                 // 但消除了「第一次 sso.jsp?ticket 必 500」的问题。
                                 // 根因见 JwUrls.SSO_WARMUP 注释与 DESIGN §4.4.1。
                                 //
-                                // 会话准备放在 loadUrl **之前**（DESIGN §4.27）：存过凭证时这一步
-                                // 会把登录做完并把 cookie 注入 CookieManager，用户看到的就是已登录
-                                // 页面；没存凭证 / 已停用时它什么都不做，行为与旧版一致
-                                // （照常显示登录页让用户手填）。无论结果如何都要继续加载——
-                                // 一次登录失败不该把整个导入入口挡死。
+                                // 页面**先加载**，会话准备放在它后面（DESIGN §4.27）：等会话再
+                                // loadUrl 会让 WebView 白屏几十秒，预注入 cookie 在真机又不被采用。
+                                // 一次登录失败不该把整个导入入口挡死——结果只用来写状态条。
                                 scope.launch {
-                                    // 快路径：jar 里已有会话（引导刚登录过 / 冷启动预登录过）→ 纯本地
-                                    // 注入，一个网络请求都不等，页面直接是已登录的。
-                                    if (cas.cookies().isNotEmpty()) {
-                                        runCatching { cas.injectToWebView() }
-                                        loadUrl(JwUrls.SSO_WARMUP)
-                                        return@launch
-                                    }
-                                    // 慢路径：没有可注入的会话。**先让页面出来**——把 loadUrl 放在
-                                    // await 登录之后会让 WebView 白屏几十秒（2026-09-24 用户报
-                                    // 「还是要手动登」的真相：页面根本没加载，日志里连一条
-                                    // onPageStarted 都没有）。
+                                    // **先让页面出来**：登录由页面上的自动填表完成（DESIGN §4.27），
+                                    // 这里只把 OkHttp 侧的会话准备好、拿结果写状态条。
+                                    // 两件事都别反过来做：等会话再 loadUrl 会让 WebView 白屏几十秒
+                                    // （2026-09-24 真机：日志里连一条 onPageStarted 都没有）；
+                                    // 预注入 cookie 也无效（属性缺 SameSite，WebView 不采用）。
                                     loadUrl(JwUrls.SSO_WARMUP)
-                                    val outcome = runCatching { cas.prepareWebView() }.getOrNull()
-                                    when {
-                                        outcome is CasEnsureResult.Ready && outcome.loggedInNow ->
-                                            // 刚登录成功：cookie 已注入，重载一次让页面吃到会话
-                                            loadUrl(JwUrls.SSO_WARMUP)
-
-                                        outcome is CasEnsureResult.Failed -> statusNote = outcome.message
-                                        outcome == CasEnsureResult.Suspended ->
+                                    when (val outcome = runCatching { cas.ensureValid() }.getOrNull()) {
+                                        is CasEnsureResult.Failed -> statusNote = outcome.message
+                                        CasEnsureResult.Suspended ->
                                             statusNote = "教务登录已停用，请在「我的」页更新账号密码"
 
-                                        outcome is CasEnsureResult.NeedsManualLogin -> Unit
+                                        else -> Unit
                                     }
                                 }
                             }

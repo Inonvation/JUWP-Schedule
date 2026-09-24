@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
@@ -239,10 +240,6 @@ private fun JwStep(
             when (result) {
                 is CasEnsureResult.Ready -> {
                     vault.saveCas(user, password)
-                    // 把刚拿到的会话送进 WebView 的 CookieManager（DESIGN §4.27）：之后打开
-                    // 导入页 / 报修 / 请假直接免登。`prepareWebView` 每次也会注入，这里做
-                    // 是为了不让「引导完马上打开」依赖那条兜底路径。
-                    runCatching { cas.injectToWebView() }
                     // 顺手补学籍卡的姓名 / 班级（DESIGN §3.3）：走到「完成」页时「我的」页
                     // 已经有名字和班级，不用先导一次成绩。失败静默——它是锦上添花，
                     // 不该挡住引导的下一步。
@@ -386,12 +383,25 @@ private fun QiekjStep(
     val repo = remember { Graph.qiekj(context) }
     var phone by remember { mutableStateOf(repo.readPhone().orEmpty()) }
     var code by remember { mutableStateOf("") }
+    var tokenInput by remember { mutableStateOf("") }
+    // 两种登录方式二选一：短信验证码（默认）/ 粘贴已有 Token。
+    var tokenMode by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<NoticeFeedback?>(null) }
+    // 发送验证码的冷却起点：和开水页同一档 60 秒，避免连点把平台短信额度撞穿。
+    var codeSentAt by remember { mutableStateOf(0L) }
 
     fun sendCode() {
         val p = phone.trim()
+        val elapsed = System.currentTimeMillis() - codeSentAt
+        if (elapsed < 60_000) {
+            notice = NoticeFeedback(
+                "验证码已发送，请 ${(60 - elapsed / 1000).toInt()} 秒后再试",
+                NoticeTone.Warning,
+            )
+            return
+        }
         if (p.length != 11) {
             notice = NoticeFeedback("请输入 11 位手机号", NoticeTone.Warning)
             return
@@ -400,6 +410,7 @@ private fun QiekjStep(
         scope.launch {
             try {
                 repo.sendCode(p)
+                codeSentAt = System.currentTimeMillis()
                 notice = NoticeFeedback("验证码已发送", NoticeTone.Success)
             } catch (e: Exception) {
                 notice = NoticeFeedback(e.message ?: "验证码发送失败", NoticeTone.Error)
@@ -408,7 +419,7 @@ private fun QiekjStep(
         }
     }
 
-    fun submit() {
+    fun submitPhone() {
         val p = phone.trim()
         if (p.length != 11 || code.isBlank()) {
             notice = NoticeFeedback("请填手机号和验证码", NoticeTone.Warning)
@@ -418,6 +429,8 @@ private fun QiekjStep(
         scope.launch {
             try {
                 repo.login(p, code)
+                // 记住手机号，下次进来直接填好（与开水页登录成功后的处理一致）
+                repo.savePhone(p)
                 repo.queryBalance()
                 busy = false
                 onDone()
@@ -428,39 +441,97 @@ private fun QiekjStep(
         }
     }
 
-    Text("胖乖开水", style = MaterialTheme.typography.titleMedium)
-    Text(
-        "开水用手机号 + 短信验证码登录，和学校账号无关。登录一次之后会记住，token 过期时才需要再收一次短信。",
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    OutlinedTextField(
-        value = phone,
-        onValueChange = { phone = it.filter { c -> c.isDigit() }.take(11) },
-        label = { Text("手机号") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = code,
-            onValueChange = { code = it.filter { c -> c.isDigit() } },
-            label = { Text("验证码") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            onClick = { sendCode() },
-            enabled = !sending && phone.length == 11,
-            modifier = Modifier.align(Alignment.CenterVertically),
-        ) {
-            Text(if (sending) "发送中" else "发送验证码")
+    fun submitToken() {
+        val token = tokenInput.trim()
+        if (token.isBlank()) {
+            notice = NoticeFeedback("请输入 Token", NoticeTone.Warning)
+            return
+        }
+        busy = true
+        scope.launch {
+            try {
+                // 与开水页同一序列：先落盘再查一次余额，余额查得通即 token 有效
+                repo.saveToken(token)
+                repo.validateToken()
+                busy = false
+                onDone()
+            } catch (e: Exception) {
+                // 校验没过就把刚存进去的清掉，否则会留一个无效 token，后续请求一路 401
+                runCatching { repo.logout() }
+                busy = false
+                notice = NoticeFeedback(e.message ?: "Token 无效或已过期", NoticeTone.Error)
+            }
         }
     }
-    notice?.let { InlineNoticeRow(it.text, it.tone) }
-    Button(onClick = { submit() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-        Text(if (busy) "正在登录…" else "登录并保存")
+
+    Text("胖乖开水", style = MaterialTheme.typography.titleMedium)
+    if (tokenMode) {
+        Text(
+            "粘贴已从其他渠道拿到的 Token 即可，不用再收短信。",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedTextField(
+            value = tokenInput,
+            onValueChange = { tokenInput = it },
+            label = { Text("Token") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "手机号登录会使旧 Token 失效；两者选一个就行。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+        notice?.let { InlineNoticeRow(it.text, it.tone) }
+        Button(onClick = { submitToken() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Text(if (busy) "正在校验…" else "验证并保存")
+        }
+        OutlinedButton(
+            onClick = { tokenMode = false; notice = null },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("改用手机号登录") }
+    } else {
+        Text(
+            "开水用手机号 + 短信验证码登录，和学校账号无关。登录一次之后会记住，token 过期时才需要再收一次短信。",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedTextField(
+            value = phone,
+            onValueChange = { phone = it.filter { c -> c.isDigit() }.take(11) },
+            label = { Text("手机号") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = code,
+                onValueChange = { code = it.filter { c -> c.isDigit() } },
+                label = { Text("验证码") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = { sendCode() },
+                enabled = !sending && phone.length == 11,
+                modifier = Modifier.align(Alignment.CenterVertically),
+            ) {
+                Text(if (sending) "发送中" else "发送验证码")
+            }
+        }
+        notice?.let { InlineNoticeRow(it.text, it.tone) }
+        Button(onClick = { submitPhone() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Text(if (busy) "正在登录…" else "登录并保存")
+        }
+        OutlinedButton(
+            onClick = { tokenMode = true; notice = null },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Token 登录") }
     }
     TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) { Text("先跳过") }
 }

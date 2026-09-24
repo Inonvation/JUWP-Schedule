@@ -267,34 +267,6 @@ class CasSessionTest {
         assertEquals(1, http.loginCalls)
     }
 
-    /**
-     * 会话可用就注入，且**每次打开都注入**。
-     *
-     * 这条钉的是 2026-09-24 报的 bug：引导第 2 步在原生表单里登，cookie 只进了 OkHttp 的
-     * jar；条件写成「只在刚登录时注入」之后，打开导入页 / 报修 / 请假走的都是 10 分钟
-     * 可信期（不是刚登录），于是永远不注入 → 用户看到的是「明明登录了还要再登一次」。
-     *
-     * 也不能改成「WebView 那边已有会话就跳过」：那份可能是失效的旧 cookie，正挡着新会话。
-     */
-    @Test
-    fun prepareWebView_alwaysInjectsUsableSession() = runBlocking {
-        store.cas = SessionCredentials("1", "p")
-        val session = newSession()
-        assertTrue(session.prepareWebView() is CasEnsureResult.Ready)
-        assertEquals(1, web.injectCalls)
-
-        assertTrue(session.prepareWebView() is CasEnsureResult.Ready)
-        assertEquals(2, web.injectCalls)
-    }
-
-    /** 会话不可用时一条 cookie 都不该往 WebView 里塞。 */
-    @Test
-    fun prepareWebView_doesNotInjectWhenSessionUnavailable() = runBlocking {
-        http.cookiePresent = false   // 没凭证、没会话 → NoCredential
-        assertTrue(newSession().prepareWebView() is CasEnsureResult.NoCredential)
-        assertEquals(0, web.injectCalls)
-    }
-
     @Test
     fun logout_clearsCookieCredentialAndGate() = runBlocking {
         store.cas = SessionCredentials("1", "p")
@@ -373,12 +345,6 @@ private class FakeCasTransport : CasTransport {
 private class FakeWebCookieBridge : WebCookieBridge {
     var adoptResult: List<Cookie> = emptyList()
     var adoptCalls = 0
-    var injectCalls = 0
-
-    override suspend fun inject(cookies: List<Cookie>): Int {
-        injectCalls++
-        return cookies.size
-    }
 
     override suspend fun adopt(urls: List<String>): List<Cookie> {
         adoptCalls++

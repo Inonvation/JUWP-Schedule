@@ -4,7 +4,6 @@ import edu.jxslu.schedule.data.jw.JwHttpSession
 import edu.jxslu.schedule.data.jw.JwHttpSession.JwHttpException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import okhttp3.Cookie
 
 /** `CasSession.ensureValid` 的结果。UI 按它分支——三种引导的去处完全不同。 */
 sealed interface CasEnsureResult {
@@ -12,10 +11,10 @@ sealed interface CasEnsureResult {
     /**
      * 会话可用。
      *
-     * [loggedInNow] 区分两种来源：`true` = 本次真的走了一遍登录（cookie 是刚拿到的，
-     * 只在 jar 里，需要注入 WebView）；`false` = 复用已有会话或可信期内的判断
-     * （此时 jar 的内容不比 `CookieManager` 新，**不要**注入，否则可能用旧 cookie
-     * 覆盖用户在网页里操作后服务端刚下发的新值）。
+     * [loggedInNow] 区分两种来源：`true` = 本次真的走了一遍登录（cookie 是刚拿到的）；
+     * `false` = 复用已有会话，或落在 10 分钟可信期内。它只用于文案与日志区分——
+     * **没有「刚登录所以要注入 WebView」这一步了**：注入已被真机证伪，WebView 的会话
+     * 由 `JwAutoLogin` 填表提交自己拿（DESIGN §4.27）。
      */
     data class Ready(val loggedInNow: Boolean = false) : CasEnsureResult
 
@@ -65,12 +64,6 @@ class CasSession(
 ) {
 
     private val loginMutex = Mutex()
-
-    /** 当前会话 cookie 快照，注入 WebView 用。 */
-    fun cookies(): List<Cookie> = http.cookies()
-
-    /** 会话语义上是否还有东西（不代表有效，有效性要 [ensureValid] 判定）。 */
-    fun hasSession(): Boolean = http.hasCookies()
 
     /**
      * 保证 CAS 会话可用。**这是所有教务侧取数的唯一入口。**
@@ -189,28 +182,6 @@ class CasSession(
     }
 
     /**
-     * 给 WebView 准备会话：确保有效，且**只在刚登录时**把 cookie 注入 `CookieManager`。
-     *
-     * 导入页 / 学工表单 / 签章授权三处的统一入口。调用方必须在 `loadUrl` **之前**
-     * await 它——`setCookie` 落盘是异步的，先加载会拿到一个没有 cookie 的请求。
-     */
-    suspend fun prepareWebView(): CasEnsureResult {
-        val result = ensureValid()
-        // **总是注入**，不做任何「WebView 那边已经有了就不用」的判断。
-        //
-        // 根因（2026-09-24 报的 bug）：原来只在 `loggedInNow` 时注入，而引导第 2 步是在
-        // 原生表单里登的——cookie 只进了 OkHttp 的 jar，WebView 那边一直是空的，于是
-        // 「明明登录了，打开导入页 / 报修 / 请假还要再登一次」。
-        //
-        // 为什么敢直接覆盖 WebView 那边：`ensureValid` 刚确认过 jar 里的会话可用（或刚
-        // 登录拿到），它是我们这边最新的权威值；而 CookieManager 里的值无法确认（可能
-        // 正是那份失效的旧会话，挡着新会话进去）。WebView 用着用着产生的新值由
-        // `adoptFromWebView` 在「落到教务域且已登录」时回灌，两个方向都同步得到。
-        if (result is CasEnsureResult.Ready) injectToWebView()
-        return result
-    }
-
-    /**
      * 用户在 WebView 里手登成功后调用：把 cookie 抄回会话，并续上信任期。
      *
      * 不记这一步的话，手登完紧接着的 `ensureValid` 又会去走一次登录——白撞一次风控。
@@ -222,13 +193,12 @@ class CasSession(
         SessionStatus.syncSuspended(LoginTarget.Jw, false)
     }
 
-    /** 把会话 cookie 注入 WebView。调用方必须在 `loadUrl` **之前** await 它。 */
-    suspend fun injectToWebView(): Int = webCookies.inject(http.cookies())
-
     /** 用户更新了统一认证密码：清零闸门，允许重新尝试。 */
     fun onCredentialsUpdated() {
         vault.writeGate(LoginTarget.Jw, LoginGateRules.reset())
         SessionStatus.syncSuspended(LoginTarget.Jw, false)
+        // 凭证换过了，自动填表那道的 5 分钟节流也该放开——否则刚改完密码还得手动登一次。
+        SessionStatus.clearAutoLoginThrottle()
     }
 
     /** 退出教务登录：清会话与凭证（一卡通那套不受影响）。 */
