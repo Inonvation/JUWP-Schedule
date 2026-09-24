@@ -60,15 +60,10 @@ git log <上一个tag>..HEAD --oneline --no-merges
 - BUG 修复与 UI 调整尽量合并同类项，**总条目不超过 10 条**。
 - 不出现技术名词（不要说 Retrofit / Room / KSP / 迁移 / 重构 等），
   写"修复切换周次时课程块错位"而不是"修复 columnOf 下标越界"。
-- 中英双语，格式：
+- 纯中文（1.0.0 起各版本均为纯中文），格式：
 
 ```markdown
 更新内容：
-
-- xxx
-- xxx
-
-Updates:
 
 - xxx
 - xxx
