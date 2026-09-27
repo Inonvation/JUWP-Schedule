@@ -21,6 +21,14 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  */
 interface WebCookieBridge {
     suspend fun adopt(urls: List<String>): List<Cookie>
+
+    /**
+     * 这些域里有没有**会话标识**（[SessionCookieRules]）。只读 `CookieManager`，不发请求。
+     *
+     * `adopt` 会把站点标记（`bzb_njw` 这类）一起抄回来，值不值得抄先由它判：
+     * 抄一份没有会话的 cookie 只会让 `CasSession` 白探一次教务。
+     */
+    fun hasAnyCookie(urls: List<String> = CasSession.ADOPT_URLS): Boolean
 }
 
 /** 真机实现：`CookieManager` 的读写都要在有 Looper 的线程上，所以全部包 `Dispatchers.Main`。 */
@@ -62,12 +70,16 @@ object WebViewCookieBridge : WebCookieBridge {
      * 给「我的」页状态卡用（DESIGN §3.16）：升级用户没存凭证，但 WebView 里可能还留着
      * 有效会话。不认这一点，状态卡就会出现「说未登录、点进导入却能用」的自相矛盾。
      *
+     * **只认会话标识**（[SessionCookieRules]）：`bzb_njw` 这类站点标记也在 `CookieManager`
+     * 里长期存着，把它们算成会话会让状态卡报出一个干不了任何事的「已登录」。
+     *
      * 必须在有 Looper 的线程调用——组合期的主线程正合适。
      */
-    fun hasAnyCookie(urls: List<String> = CasSession.ADOPT_URLS): Boolean {
+    override fun hasAnyCookie(urls: List<String>): Boolean {
         val manager = CookieManager.getInstance()
         return urls.any { url ->
-            runCatching { manager.getCookie(url) }.getOrNull()?.isNotBlank() == true
+            val header = runCatching { manager.getCookie(url) }.getOrNull()
+            SessionCookieRules.hasSessionCookie(header)
         }
     }
 }

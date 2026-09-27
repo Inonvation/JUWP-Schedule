@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.power.PowerBill
 import edu.jxslu.schedule.data.power.PowerBillMonth
 import edu.jxslu.schedule.data.power.PowerException
@@ -12,6 +13,7 @@ import edu.jxslu.schedule.data.power.PowerReadingSource
 import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerRepository
 import edu.jxslu.schedule.data.power.PowerTurnover
+import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.domain.PowerReading
 import edu.jxslu.schedule.domain.PowerRechargePoint
@@ -97,6 +99,8 @@ class PowerBillViewModel(
     private val repo: PowerRepository,
     private val credentialStore: YktCredentialStore,
     private val readingStore: PowerReadingStore,
+    /** VPN / 代理探测：网络类失败时按它给「关代理」或「换网络」（口径见 `NetworkHint`）。 */
+    private val isVpnActive: () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PowerBillUiState())
@@ -153,6 +157,12 @@ class PowerBillViewModel(
                         loaded = true,
                         error = "${e.message}。若密码已改，请在「我的 → 校园卡」重新验证",
                     )
+                }
+                recomputeUsage()
+            } catch (e: PowerException.Network) {
+                // 整页提示块（整行、会折行），给带原因的完整文案
+                _uiState.update {
+                    it.copy(loading = false, loaded = true, error = NetworkHint.of(isVpnActive()))
                 }
                 recomputeUsage()
             } catch (e: Exception) {
@@ -292,6 +302,7 @@ class PowerBillViewModel(
                 Graph.powerRepository(context.applicationContext),
                 Graph.yktCredentialStore(context.applicationContext),
                 Graph.powerReadingStore(context.applicationContext),
+                isVpnActive = { JwVpnDetector.isVpnActive(context.applicationContext) },
             ) as T
         }
     }

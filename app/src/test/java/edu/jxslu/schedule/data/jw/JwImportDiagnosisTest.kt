@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.jw
 
+import edu.jxslu.schedule.data.session.NetworkHint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,7 +14,8 @@ import org.junit.Test
  * 1. 认证链上的失败必须回 [JwUrls.SSO_WARMUP]（先写 bzb_njw 的预热入口），
  *    不能重放含 ticket 的 URL；
  * 2. 已登录后的页面失败（如课表页自身 5xx）才允许就地 reload；
- * 3. VPN/代理开着时，正文必须点名「关代理」——这是 2026-09-18 实测的诱因。
+ * 3. 联网失败都要给一句网络排查动作：VPN/代理开着时点名关代理（2026-09-18 实测的诱因），
+ *    没开就让人换一条网络。文案唯一来源是 [NetworkHint]。
  */
 class JwImportDiagnosisTest {
 
@@ -59,7 +61,8 @@ class JwImportDiagnosisTest {
         assertTrue(d.title.contains("500"))
         assertTrue(d.body.contains("瞬时"))
         assertNull("已登录页面 5xx 应就地重放", d.retryUrl)
-        assertFalse("未开代理时不该出现代理提示", d.body.contains(JwImportDiagnosis.VPN_HINT))
+        assertFalse("未开代理时不该出现代理提示", d.body.contains(NetworkHint.VPN))
+        assertTrue("没开代理要给出换网络的建议", d.body.contains(NetworkHint.SWITCH_NETWORK))
     }
 
     @Test
@@ -121,7 +124,7 @@ class JwImportDiagnosisTest {
         val session = JwImportDiagnosis.sessionLost(vpnActive = true)
         val blank = JwImportDiagnosis.blankPage(vpnActive = true)
         for (d in listOf(timeout, http500, session, blank)) {
-            assertTrue("VPN 开启时必须点名关代理：${d.title}", d.body.contains(JwImportDiagnosis.VPN_HINT))
+            assertTrue("VPN 开启时必须点名关代理：${d.title}", d.body.contains(NetworkHint.VPN))
         }
     }
 

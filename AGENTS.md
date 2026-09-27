@@ -159,6 +159,7 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
                  + LifeFeed（一卡通与电费流水分段，§3.13）
+                 + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
 data/local/      Room v13：courses / time_slots / semester_config / timetables / scores
                  / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
                  / power_readings（v12 起；房号显示名 roomName）
@@ -175,7 +176,9 @@ data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN �
 data/kqcx/       快趣出行「附近车辆」接口（DESIGN §4.23；无鉴权、无凭证、只发坐标）
 data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIGN §4.24；凭证复用一卡通的
                  学号 + 查询密码；token 仅内存、无日志拦截器）
-ui/today|week|life|me|water|campus|jwvw|score|scholar|timetable|common|theme|widget|ebike|notes|homework
+data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
+                 QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|scholar|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -209,7 +212,7 @@ P5 教务 WebView · P5b 实验课表导入 — **已完成**
 
 P6 打磨 — **进行中**。2026-09-21 起陆续落地：笔记与作业（自研 Markdown/TeX）、课表页背景图、
 免费时长提醒、生活页（一卡通 · 寝室电费）、统一登录会话层、首启引导、学工表单、盖章成绩单导出、
-桌面小组件三条目（校园卡 · 电费，2026-09-27，红线见 `.agents/rules/widget.md`）。
+桌面小组件两条目（课表 / 校园卡 · 电费合并卡，2026-09-27，红线见 `.agents/rules/widget.md`）。
 学业完成情况与成绩自动导入（2026-09-27，DESIGN §3.17 / §4.29：首启登录成功与冷启动各抓一次，OkHttp 直取不依赖 WebView）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 

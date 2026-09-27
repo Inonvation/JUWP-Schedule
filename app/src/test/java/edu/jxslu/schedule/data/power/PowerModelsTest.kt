@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.data.power
 
+import edu.jxslu.schedule.domain.BalanceAlert
+import edu.jxslu.schedule.domain.PowerReading
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -147,5 +149,44 @@ class PowerModelsTest {
         assertNull(PowerModels.parseToken("""{"error":"unauthorized"}"""))
         assertEquals(0L, PowerModels.parseTimeMs(""))
         assertEquals(0L, PowerModels.parseTimeMs("2026-08-25"))
+    }
+
+    // ------------------------------------------------------------------
+    // 首屏种子（本机最新读数 → 卡面占位快照）
+    // ------------------------------------------------------------------
+
+    private fun reading(
+        price: Double = 0.62,
+        roomName: String = "9A101",
+        remain: Double = 55.57,
+        at: Long = 1_756_000_000_000L,
+    ) = PowerReading(epochMs = at, remainKwh = remain, priceYuan = price, roomId = "14600", roomName = roomName)
+
+    @Test
+    fun `种子快照照抄读数：房号取显示名而不是 roomId`() {
+        val snapshot = PowerModels.snapshotSeedOf(reading())
+        assertEquals(55.57, snapshot.meter.remain!!, 1e-9)
+        assertEquals(1_756_000_000_000L, snapshot.meter.fetchedAtMs)
+        assertEquals("9A101", snapshot.meter.room.room)
+        // 去重键仍带着，统计分组不受展示名影响
+        assertEquals("14600", snapshot.meter.room.roomId)
+        assertEquals(0.62, snapshot.feeItem.priceYuan!!, 1e-9)
+        // 单价已知：副行走折算金额，不给字段名兜底文案
+        assertNull(snapshot.meter.remainField)
+    }
+
+    @Test
+    fun `单价未知的种子不折算，副行给兜底文案`() {
+        val snapshot = PowerModels.snapshotSeedOf(reading(price = 0.0))
+        assertNull(snapshot.feeItem.priceYuan)
+        assertEquals(PowerModels.SEED_FIELD_TEXT, snapshot.meter.remainField)
+        assertNull(BalanceAlert.remainingYuan(snapshot.meter.remain, snapshot.feeItem.priceYuan))
+    }
+
+    @Test
+    fun `历史读数没有房号名：种子里留空，不拿数字 id 顶替`() {
+        val snapshot = PowerModels.snapshotSeedOf(reading(roomName = ""))
+        assertNull(snapshot.meter.room.room)
+        assertEquals("14600", snapshot.meter.room.roomId)
     }
 }

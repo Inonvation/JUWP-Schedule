@@ -5,12 +5,14 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secure_token.xml" />
+        <exclude domain="sharedpref" path="secure_qzxy.xml" />
         <exclude domain="sharedpref" path="jw_credentials.xml" />
         <exclude domain="sharedpref" path="ykt_credentials.xml" />
         <exclude domain="sharedpref" path="ykt_tokens.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="secure_token.xml" />
+        <exclude domain="sharedpref" path="secure_qzxy.xml" />
         <exclude domain="sharedpref" path="jw_credentials.xml" />
         <exclude domain="sharedpref" path="ykt_credentials.xml" />
         <exclude domain="sharedpref" path="ykt_tokens.xml" />

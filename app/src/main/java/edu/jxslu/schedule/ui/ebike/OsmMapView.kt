@@ -80,6 +80,10 @@ private var osmdroidConfigured = false
  *    6.1.18 不解析任何缓存头（拆包确认：expires / cache-control 字符串为 0），默认
  *    不过期——旧图不会随时间换新，只等缓存超容量被清。设 7 天覆盖一次，高德改了
  *    路网/校名之类，最迟一周内能跟上。
+ * 5. 缓存**体积上限也要自己设**：`DefaultConfigurationProvider` 的默认值是上限
+ *    600 MiB、回收目标 500 MiB（拆包确认，见 [TILE_CACHE_MAX_BYTES]），校园尺度
+ *    用不到这么多，手机存储却被一直占着。缓存目录在 `cacheDir`，系统清理时机
+ *    不可控，自己压到几十兆更实在。
  */
 private fun ensureOsmdroidConfiguration(context: Context) {
     if (osmdroidConfigured) return
@@ -97,10 +101,21 @@ private fun ensureOsmdroidConfiguration(context: Context) {
     config.userAgentValue = context.packageName
     config.setTileDownloadThreads(4.toShort())
     config.expirationOverrideDuration = TILE_EXPIRATION_MS
+    config.tileFileSystemCacheMaxBytes = TILE_CACHE_MAX_BYTES
+    config.tileFileSystemCacheTrimBytes = TILE_CACHE_TRIM_BYTES
 }
 
 /** 瓦片过期时间：7 天（理由见 [ensureOsmdroidConfiguration] 第 4 条）。 */
 private const val TILE_EXPIRATION_MS = 7L * 24 * 60 * 60 * 1000
+
+/**
+ * 瓦片缓存上限与回收目标（字节）。超过上限时 osmdroid 回收，收到目标以下。
+ *
+ * 60 / 50 MiB：单张瓦片几十 KB，几十兆够放几千张，校区周边来回逛也刷不满；
+ * 上限与目标留 10 MiB 的差，避免刚回收完又立刻触发一次。
+ */
+private const val TILE_CACHE_MAX_BYTES = 60L * 1024 * 1024
+private const val TILE_CACHE_TRIM_BYTES = 50L * 1024 * 1024
 
 /**
  * 附近单车地图（DESIGN §3.9）。

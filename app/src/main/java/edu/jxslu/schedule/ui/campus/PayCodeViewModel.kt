@@ -7,7 +7,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.local.YktTurnoverEntity
+import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
 import edu.jxslu.schedule.data.ykt.YktBarcodeData
 import edu.jxslu.schedule.data.ykt.YktCard
@@ -94,6 +96,9 @@ class PayCodeViewModel(
 
     private val syncer = YktTurnoverSyncer(repo, db)
 
+    /** 取码失败时的排查提示按它分支（口径见 `NetworkHint`）。 */
+    private val isVpnActive: () -> Boolean = { JwVpnDetector.isVpnActive(appContext) }
+
     // 初值 Idle：付款码页进页就 load()（Loading 立刻接上），生活页内嵌用法则停在占位态不取码
     private val _uiState = MutableStateFlow<PayCodeUiState>(PayCodeUiState.Idle)
     val uiState: StateFlow<PayCodeUiState> = _uiState.asStateFlow()
@@ -157,7 +162,8 @@ class PayCodeViewModel(
                 }
                 if (data == null) {
                     _uiState.value = PayCodeUiState.Error(
-                        "登录超时（${LOGIN_TOTAL_TIMEOUT_MS / 1000} 秒无响应），请检查网络后重试",
+                        "登录超时（${LOGIN_TOTAL_TIMEOUT_MS / 1000} 秒无响应）：" +
+                            NetworkHint.of(isVpnActive()),
                         canRetry = true,
                     )
                     return@launch
@@ -181,6 +187,8 @@ class PayCodeViewModel(
                     "${e.message}。若密码已修改，请在「我的 → 校园卡」重新验证",
                     canRetry = true,
                 )
+            } catch (e: YktException.Network) {
+                _uiState.value = PayCodeUiState.Error(NetworkHint.of(isVpnActive()), canRetry = true)
             } catch (e: YktException) {
                 _uiState.value = PayCodeUiState.Error(e.message ?: "取码失败", canRetry = true)
             } catch (e: Exception) {
@@ -228,14 +236,10 @@ class PayCodeViewModel(
             elecFen = cards.sumOf { it.elecBalanceFen },
         )
         _balance.value = snapshot
-        // 桌面校园卡小组件（DESIGN §3.6 三条目改版）：数据已经在手上，顺手推一次
-        // （零额外请求）。电子账户取不到时传 null——小组件保留旧值，不显示 ¥0.00
+        // 桌面生活小组件（DESIGN §3.6 二条目改版）：余额数据已经在手上，顺手推一次
+        // （零额外请求）
         runCatching {
-            LifeWidgetSync.pushCampusBalance(
-                Graph.appContext,
-                cardFen = snapshot.cardFen,
-                accountFen = snapshot.accountFen.takeIf { it > 0 },
-            )
+            LifeWidgetSync.pushCampusBalance(Graph.appContext, cardFen = snapshot.cardFen)
         }
     }
 

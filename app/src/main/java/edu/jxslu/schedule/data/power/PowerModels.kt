@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.power
 
+import edu.jxslu.schedule.domain.PowerReading
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
@@ -160,6 +161,46 @@ object PowerModels {
             fetchedAtMs = nowMs,
         )
     }
+
+    /**
+     * 本机最新读数 → 首屏占位快照（生活页冷启动用，DESIGN §3.13）。
+     *
+     * 进页链路是 登录 → 项目详情 → 读表 串行三条请求，冷启动进程里 token 与内存缓存全空，
+     * 手机网络上要好几秒——此前这段时间电费卡只能显示「—／读取中…」。把上次读数顶上去，
+     * 数值与读数时刻先出来，平台那条回来原地替换（口径与「刷新失败保留上次读数」一致）。
+     *
+     * 只补齐卡面要用的三件事，其余照实留空、不猜：
+     * - `priceYuan`：读数里 0 = 未知 → 快照里给 null，卡上就只报度数（不按默认单价折算）；
+     * - `remainField`：单价未知时也没得折算，给一句 [SEED_FIELD_TEXT]，别让副行空着；
+     * - `fields` / `scene`：种子不进统计也不发请求，留空。
+     *
+     * **不写回仓库缓存**：这是展示用的影子快照，`snapshot()` 的内存缓存与落库仍只认真读表。
+     */
+    fun snapshotSeedOf(reading: PowerReading): PowerSnapshot = PowerSnapshot(
+        feeItem = PowerFeeItem(
+            id = RECHARGE_FEE_ITEM_ID,
+            name = "",
+            priceYuan = reading.priceYuan.takeIf { it > 0 },
+            unit = null,
+            feetypeName = null,
+            scene = emptyList(),
+        ),
+        meter = PowerMeter(
+            room = PowerRoom(
+                campus = null,
+                building = null,
+                room = reading.roomName.takeIf { it.isNotBlank() },
+                roomId = reading.roomId.takeIf { it.isNotBlank() },
+            ),
+            fields = emptyMap(),
+            remain = reading.remainKwh,
+            remainField = if (reading.priceYuan > 0) null else SEED_FIELD_TEXT,
+            fetchedAtMs = reading.epochMs,
+        ),
+    )
+
+    /** 种子快照在单价未知时的副行文案（见 [snapshotSeedOf]）。 */
+    const val SEED_FIELD_TEXT: String = "上次读数"
 
     /**
      * 电费流水（`GET /charge/turnover/personal_data` 的 `list`），按时间升序。

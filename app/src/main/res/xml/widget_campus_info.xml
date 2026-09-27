@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  校园卡小组件（DESIGN §3.6 三条目改版，2026-09-27）：余额 + 点击出示付款码。
+  生活小组件（DESIGN §3.6 二条目改版，2026-09-27）：校园卡余额大字 + 寝室电费小字。
+  点击分区：整卡 → 付款码页（无凭证 → 校园卡设置页），电费副行 → 用电统计页。
 
-  按**内容**拆条目（课表 / 校园卡 / 电费各一条 receiver），不是按尺寸拆——
-  旧规矩「不要按尺寸拆 receiver」不变，本条目自身仍是单条目 + SizeMode.Exact。
+  当天先从一条拆成三条（课表 / 校园卡 / 电费各一条 receiver）、再合并回一条：拆开后
+  2 格宽的卡片只放得下一块信息，桌面看着空。本条目仍是单条目 + SizeMode.Exact，
+  「不要按尺寸拆 receiver」的旧规矩不变。
 
-  默认 4×2（余额大字 + 电子账户副行 + 胶囊按钮信息量最舒服）；内容形态固定、
-  不随尺寸换档，所以 maxResize 收在 4×2（250dp ≈ 4 格、110dp ≈ 2 格），拖更大会留大片空白。
+  默认 4×2，可拖 2×2（实测 150×178dp）：窄档由渲染层收排版（内容整块居中，
+  见 ui/widget/LifeWidgetUi.kt 的 WidgetNarrowWidthDp）；拖更大会留大片空白，
+  所以 maxResize 收在 4×2（250dp ≈ 4 格、110dp ≈ 2 格）。
   minWidth/minHeight 是 Android 11 及以下的回退尺寸，与 target 口径一致（同 widget_info.xml）。
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"

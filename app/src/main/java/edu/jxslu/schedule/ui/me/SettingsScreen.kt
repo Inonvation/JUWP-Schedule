@@ -64,6 +64,7 @@ import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.common.stateWord
 import edu.jxslu.schedule.ui.common.tint
 import me.rerere.hugeicons.HugeIcons
@@ -73,6 +74,7 @@ import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.GraduationCap
 import me.rerere.hugeicons.stroke.Book02
 import me.rerere.hugeicons.stroke.InformationCircle
+import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Settings01
 import me.rerere.hugeicons.stroke.GridView
 import me.rerere.hugeicons.stroke.View
@@ -85,7 +87,8 @@ import me.rerere.hugeicons.stroke.ViewOff
  * 课表行锚定当前课表名，学习行带笔记/作业计数，其余行给内容概览。
  * 账号卡数据源 = 水宝宝一卡通凭证（`YktCredentialStore`），遮罩口径在
  * `domain/AccountMask`；眼睛只在内存里切换完整学号，不写存储不进剪贴板。
- * 卡内三个服务格（教务 / 一卡通 / 胖乖生活）是登录入口，见 [ServiceCell]。
+ * 卡内服务格（教务 / 一卡通 / 胖乖生活 / 趣智校园）是登录入口，见 [ServiceCell]；
+ * 后两格跟着今日页对应的卡片开关走（关了不留入口，DESIGN §3.16）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +103,8 @@ fun SettingsScreen(
     onOpenJwLogin: () -> Unit = {},
     onOpenCampusCard: () -> Unit = {},
     onOpenWater: () -> Unit = {},
+    /** 趣智校园开热水（DESIGN §4.30）：登录、余额、账单都在那一页。 */
+    onOpenQzxy: () -> Unit = {},
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -136,28 +141,51 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // 进页读一次加密凭证（EncryptedSharedPreferences 读取不便宜，别在重组里重复读）；
-            // 从引导页 / 校园卡设置页回来（ON_RESUME）会重建主窗口组合，这里随之重读。
+            // 组合被另一个 Activity 盖住时**不会重建**，所以用「回到前台」计数当 key：
+            // 从引导页 / 导入页 / 校园卡设置页回来时重读，否则卡片会停在旧状态（2026-09-27）。
             //
             // 账户卡**常显**（DESIGN §3.16）：显示条件不再依赖「有没有一卡通凭证」——
             // 没配一卡通的人同样需要身份区与登录入口。
             val vault = remember { Graph.credentialVault(context) }
-            val casUsername = remember { vault.readCas()?.username }
-            val yktUsername = remember { vault.readYkt()?.username }
-            val qiekjLoggedIn = remember { Graph.qiekj(context).localToken() != null }
+            val prefsStore = remember { Graph.displayPrefs(context) }
+            val resumeTick = rememberResumeTick()
+            val casUsername = remember(resumeTick) { vault.readCas()?.username }
+            val yktUsername = remember(resumeTick) { vault.readYkt()?.username }
+            // 胖乖登录态订阅仓库的流（2026-09-27）：开水页是独立窗口，回来后主窗口不重建
+            // 组合，只在组合期读一次的写法会一直停在旧值（「我的」账户卡说未登录、
+            // 今日页开水卡已是已登录）
+            val qiekjLoggedIn by remember { Graph.qiekj(context).loggedIn }
+                .collectAsStateWithLifecycle()
+            // 趣智校园登录态同样订阅仓库的流（2026-09-27）：它的会话存在本机，
+            // 登录 / 退出在趣智校园页发生，主窗口不重建也得跟着变
+            val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
+                .collectAsStateWithLifecycle()
             // 升级用户没存凭证，但 WebView 里可能还有有效会话。只读 CookieManager、不联网，
             // 不认这一点就会出现「卡上说未登录、点进导入却能用」的自相矛盾。
-            val webSession = remember { WebViewCookieBridge.hasAnyCookie() }
+            val webSession = remember(resumeTick) { WebViewCookieBridge.hasAnyCookie() }
             val suspendedTargets by SessionStatus.suspended.collectAsStateWithLifecycle()
+            // 两个第三方服务的开关（DESIGN §3.9 / §4.30）：关掉的不留入口，
+            // 与今日页底部区「关了就不显示」同口径（2026-09-27 用户拍板）
+            val waterCardEnabled by remember { prefsStore.waterCardEnabled }
+                .collectAsState(initial = true)
+            val qzxyCardEnabled by remember { prefsStore.qzxyCardEnabled }
+                .collectAsState(initial = true)
             val profileName by remember {
-                Graph.displayPrefs(context).profileName
+                prefsStore.profileName
             }.collectAsState(initial = "")
             val profileClass by remember {
-                Graph.displayPrefs(context).profileClass
+                prefsStore.profileClass
+            }.collectAsState(initial = "")
+            // 学籍卡里的学号：引导跳过教务、后来在导入页手登的用户没有凭证，
+            // 身份区就靠它（2026-09-27）
+            val profileStudentId by remember {
+                prefsStore.profileStudentId
             }.collectAsState(initial = "")
             // 班级为空就补抓一次（DESIGN §3.3）：闸门在 ProfileSync 内部（班级空 + 今天没
             // 试过），正常情况下一进页最多一次请求，抓到之后不再请求。失败静默——
             // 「我的」页不该因为一个锦上添花的字段变成错误态。
-            LaunchedEffect(Unit) {
+            // 跟着 resumeTick 重跑：从导入页手登回来时也要补一次，否则名字要等下次切页
+            LaunchedEffect(resumeTick) {
                 if (profileClass.isBlank()) {
                     runCatching { Graph.profileSync(context).syncOnce() }
                 }
@@ -177,18 +205,29 @@ fun SettingsScreen(
                 webSessionExists = false,
                 suspended = LoginTarget.Qiekj in suspendedTargets,
             )
+            // 趣智校园没有「停用」上报（会话串存在本机、失效只能到页面里撞），
+            // 与胖乖生活同一档：只分已登录 / 未登录（DESIGN §3.16 末段）
+            val qzxyState = LoginStateRules.derive(
+                credentialExists = qzxyLoggedIn,
+                webSessionExists = false,
+                suspended = false,
+            )
             AccountBar(
-                username = casUsername ?: yktUsername.orEmpty(),
+                username = casUsername ?: yktUsername ?: profileStudentId,
                 name = profileName,
                 className = profileClass,
                 jwState = jwState,
                 yktState = yktState,
                 qiekjState = qiekjState,
+                qzxyState = qzxyState,
+                showQiekj = waterCardEnabled,
+                showQzxy = qzxyCardEnabled,
                 // 统一进教务账户页：状态、学业信息、更新密码、导入入口都在那一页。
                 // 此前按状态分流（已登录直接跳 WebView），与「一卡通」点进去是原生页不一致。
                 onOpenJw = onOpenJwLogin,
                 onOpenYkt = onOpenCampusCard,
                 onOpenQiekj = onOpenWater,
+                onOpenQzxy = onOpenQzxy,
             )
 
             SettingsSection(title = "设置") {
@@ -240,12 +279,13 @@ fun SettingsScreen(
 }
 
 /**
- * 账号卡（DESIGN §3.3）：头像圆标 +「姓名 学号」+ 班级副行 + 三个服务格。
+ * 账号卡（DESIGN §3.3）：头像圆标 +「姓名 学号」+ 班级副行 + 服务格（最多四格）。
  * 完整学号只存在 [username] 参数（内存）里，切眼睛不触发任何持久化；
- * 卡片本体不可点（AppCard 不传 onClick，无涟漪），交互面只有眼睛按钮与三个服务格。
+ * 卡片本体不可点（AppCard 不传 onClick，无涟漪），交互面只有眼睛按钮与各服务格。
  *
- * [name] / [className] 来自教务学籍卡（成绩导入顺带落 DataStore）；缺失时
- * 标题退回遮罩学号（此时学号不再重复跟在旁边），班级缺失则整行副行不显示。
+ * [name] / [className] 来自教务学籍卡（成绩导入顺带落 DataStore）；缺失时标题退回遮罩
+ * 学号（此时学号不再重复跟在旁边），班级缺失则整行副行不显示。姓名与学号都拿不到时按
+ * 三格合成的一档给词（[LoginStateRules.overall]），**不写死「未登录」**。
  */
 @Composable
 private fun AccountBar(
@@ -255,15 +295,25 @@ private fun AccountBar(
     jwState: LoginState,
     yktState: LoginState,
     qiekjState: LoginState,
+    qzxyState: LoginState,
+    /** 胖乖生活卡片开关：关掉就不留这一格（DESIGN §3.16）。 */
+    showQiekj: Boolean,
+    /** 趣智校园卡片开关：同上。 */
+    showQzxy: Boolean,
     onOpenJw: () -> Unit,
     onOpenYkt: () -> Unit,
     onOpenQiekj: () -> Unit,
+    onOpenQzxy: () -> Unit,
 ) {
     var revealed by rememberSaveable { mutableStateOf(false) }
     val masked = AccountMask.maskStudentId(username).orEmpty()
     val hasName = name.isNotBlank()
-    // 姓名与学号都没有 = 一份凭证都没配过：标题写「未登录」，而不是留一片空白
-    val title = name.ifBlank { masked.ifBlank { "未登录" } }
+    // 姓名与学号都没有 = 拿不到身份：标题按三格合成的一档给词，而不是留一片空白。
+    // **不能一律写「未登录」**——只有一份教务网页会话（引导跳过教务、后来在导入页手登）
+    // 或只登了胖乖生活时，那样会与同一张卡上的「● 已登录」并存（2026-09-27 用户报）。
+    val title = name.ifBlank {
+        masked.ifBlank { LoginStateRules.overall(jwState, yktState, qiekjState).stateWord() }
+    }
     // 学号跟在姓名右侧；姓名缺失时它已经当标题用了，不再重复一遍
     val idText = if (revealed) username else masked
     AppCard {
@@ -333,19 +383,26 @@ private fun AccountBar(
         ) {
             ServiceCell("教务", HugeIcons.GraduationCap, jwState, onOpenJw, Modifier.weight(1f))
             ServiceCell("一卡通", HugeIcons.CreditCard, yktState, onOpenYkt, Modifier.weight(1f))
-            ServiceCell("胖乖生活", HugeIcons.Droplet, qiekjState, onOpenQiekj, Modifier.weight(1f))
+            if (showQiekj) {
+                ServiceCell("胖乖生活", HugeIcons.Droplet, qiekjState, onOpenQiekj, Modifier.weight(1f))
+            }
+            if (showQzxy) {
+                // 花洒而不是水杯：这一格是「洗澡开热水」（DESIGN §4.30），不是喝水
+                ServiceCell("趣智校园", HugeIcons.ShowerHead, qzxyState, onOpenQzxy, Modifier.weight(1f))
+            }
         }
     }
 }
 
 /**
- * 服务格（DESIGN §3.16）：图标 + 名称 + 登录状态点，整格可点，落点由调用方给
- * （教务账户页 / 校园卡设置 / 胖乖生活页）。
+ * 服务格（DESIGN §3.16）：图标 + 名称 + 状态点，整格可点，落点由调用方给
+ * （教务账户页 / 校园卡设置 / 胖乖生活页 / 趣智校园页）。
  *
  * 状态只给名词，动作提示交给「整格可点」和状态色。**不做后台探测**：没请求过就是
  * 「未登录」，只有真撞上凭证错才转「已失效」。
  *
- * 格宽约 94dp（360dp 屏），「胖乖生活」在 12sp 下约 50dp，字体放大到 1.3 倍仍放得下。
+ * 格宽随格数变：三格约 94dp（360dp 屏），四格约 70dp。「胖乖生活」在 12sp 下约 50dp，
+ * 四格时字体放大到 1.3 倍（约 65dp）仍放得下；再窄就靠 [TextOverflow.Ellipsis] 兜底。
  */
 @Composable
 private fun ServiceCell(

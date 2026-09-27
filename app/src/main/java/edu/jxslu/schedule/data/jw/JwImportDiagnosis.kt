@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.data.jw
 
+import edu.jxslu.schedule.data.session.NetworkHint
+
 /**
  * 教务导入失败诊断（WebView 侧）。
  *
@@ -19,7 +21,9 @@ package edu.jxslu.schedule.data.jw
  * 1、2 有一个共同诱因：**学校对直连出口与代理出口区别对待**。移动端开着第三方
  * VPN/代理时，统一认证超时、SSO 落点 500；关闭后立即恢复。脚本侧同一现象
  * （`DESIGN.md` §7.6、`scripts/README.md` §4）曾被误判成"教务挂了"。
- * 故各诊断工厂都接受 `vpnActive`，命中时在正文里点名让用户先关代理。
+ * 故各诊断工厂都接受 `vpnActive`，正文里按它分两句给可操作的动作：
+ * 开着代理点「关掉代理」，没开就让人换一条网络（手机流量 / 别的 Wi-Fi）。
+ * 文案在 [edu.jxslu.schedule.data.session.NetworkHint]，全 App 只有那一份。
  *
  * 本对象**不依赖 android.* / WebView**，是纯逻辑，可 JVM 单测
  * （错误码用下面这组本地常量，数值与 `WebViewClient.ERROR_*` 一一对应）。
@@ -222,10 +226,8 @@ object JwImportDiagnosis {
             append("\n")
             append(url)
         }
-        if (vpnActive) {
-            append("\n")
-            append(VPN_HINT)
-        }
+        append("\n")
+        append(NetworkHint.of(vpnActive))
         append("\n")
         append(RETRY_HINT)
     }
@@ -234,10 +236,6 @@ object JwImportDiagnosis {
         if (url.isNullOrBlank()) return ""
         return url.substringAfter("://", url).substringBefore('/')
     }
-
-    /** 移动端非学校官方代理（VPN/加速器）开着：学校对代理出口超时或 500。 */
-    const val VPN_HINT: String =
-        "检测到 VPN/代理正在启用：学校对直连与代理出口区别对待，请先关闭它再重试。"
 
     const val RETRY_HINT: String = "这类失败多为瞬时，点「重试」会重新走一次认证。"
 }

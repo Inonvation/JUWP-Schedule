@@ -14,8 +14,12 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -25,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +46,7 @@ import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.data.session.CredentialVault
 import edu.jxslu.schedule.data.ykt.YktException
+import edu.jxslu.schedule.domain.QzxySessionLink
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DisclaimerDialog
@@ -56,15 +62,16 @@ private enum class Step(val index: Int, val title: String) {
     Jw(1, "学校统一认证"),
     Ykt(2, "一卡通 · 电费"),
     Qiekj(3, "胖乖生活"),
-    Done(4, "完成"),
+    Qzxy(4, "趣智校园"),
+    Done(5, "完成"),
 }
 
-private const val TOTAL_STEPS = 4
+private const val TOTAL_STEPS = 5
 
 /**
  * 首次配置引导（DESIGN §3.16 / §4.27）。
  *
- * 五屏：欢迎 → 学校统一认证 → 一卡通·电费 → 胖乖生活 → 完成。**每一步都能跳过**，
+ * 六屏：欢迎 → 学校统一认证 → 一卡通·电费 → 胖乖生活 → 趣智校园 → 完成。**每一步都能跳过**，
  * 跳过的只是那一步的凭据，不挡后面的步骤，也不挡进主界面。
  *
  * 第 2 步用原生表单收密码，是整个 App 里唯一明确告诉用户「我们会保存这个密码」的地方
@@ -89,7 +96,19 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     var jwOk by remember { mutableStateOf(false) }
     var yktOk by remember { mutableStateOf(false) }
     var qiekjOk by remember { mutableStateOf(false) }
+    var qzxyOk by remember { mutableStateOf(false) }
     var showDisclaimer by remember { mutableStateOf(false) }
+    // 首启自动弹的那一次要强制读完；用户自己点「查看免责声明」再开的不强制
+    var disclaimerForced by remember { mutableStateOf(false) }
+
+    // 首启第一步必须弹一次免责声明，且 5 秒内关不掉（DESIGN §3.16）。
+    // 直接进来改密码的（startAtJw）不弹：那是重复进入，不是首启。
+    LaunchedEffect(Unit) {
+        if (!startAtJw && step == Step.Welcome) {
+            disclaimerForced = true
+            showDisclaimer = true
+        }
+    }
 
     /** 完成或跳过都写标记——只有「走完了」才算看过，后面不再打扰。 */
     fun finish() {
@@ -103,16 +122,23 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
         step = target
     }
 
-    // 返回键 = 跳过本步，**不退出 App**：首启误触返回直接退掉会让人以为程序崩了
-    // 直接进来改密码的：返回 = 退出，不是「跳过本步」——用户本来就不在配置流程里
-    BackHandler(enabled = !startAtJw && step != Step.Welcome) {
+    /** 上一步（DESIGN §3.16）。[Step.Done] 退回趣智校园那一步。 */
+    fun back() {
         step = when (step) {
-            Step.Jw -> Step.Ykt
-            Step.Ykt -> Step.Qiekj
-            Step.Qiekj -> Step.Done
-            else -> Step.Done
+            Step.Jw -> Step.Welcome
+            Step.Ykt -> Step.Jw
+            Step.Qiekj -> Step.Ykt
+            Step.Qzxy -> Step.Qiekj
+            Step.Done -> Step.Qzxy
+            Step.Welcome -> Step.Welcome
         }
     }
+
+    // 返回键 = **上一步**（2026-09-27 改）：此前是「跳过本步」往前跳，与直觉相反——
+    // 想回头改一下密码只能一路跳过再重新进引导。跳过本步仍有出口：顶栏「跳过」收整个引导，
+    // 每屏底部的「先跳过」进下一步，两条都在。
+    // 直接进来改密码的（startAtJw）：返回 = 退出，用户本来就不在配置流程里。
+    BackHandler(enabled = !startAtJw && step != Step.Welcome) { back() }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -121,6 +147,13 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
             TopAppBar(
                 windowInsets = WindowInsets.statusBars,
                 title = { Text(step.title) },
+                navigationIcon = {
+                    if (!startAtJw && step != Step.Welcome) {
+                        IconButton(onClick = { back() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "上一步")
+                        }
+                    }
+                },
                 actions = {
                     if (step != Step.Done) {
                         TextButton(onClick = { finish() }) { Text("跳过") }
@@ -143,7 +176,10 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
             when (step) {
                 Step.Welcome -> WelcomeStep(
                     onNext = { next(Step.Jw) },
-                    onOpenDisclaimer = { showDisclaimer = true },
+                    onOpenDisclaimer = {
+                        disclaimerForced = false
+                        showDisclaimer = true
+                    },
                 )
                 Step.Jw -> JwStep(
                     cas = cas,
@@ -161,13 +197,19 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                 )
                 Step.Qiekj -> QiekjStep(
                     scope = scope,
-                    onDone = { qiekjOk = true; next(Step.Done) },
+                    onDone = { qiekjOk = true; next(Step.Qzxy) },
+                    onSkip = { next(Step.Qzxy) },
+                )
+                Step.Qzxy -> QzxyStep(
+                    scope = scope,
+                    onDone = { qzxyOk = true; next(Step.Done) },
                     onSkip = { next(Step.Done) },
                 )
                 Step.Done -> DoneStep(
                     jwOk = jwOk,
                     yktOk = yktOk,
                     qiekjOk = qiekjOk,
+                    qzxyOk = qzxyOk,
                     onFinish = { finish() },
                 )
             }
@@ -178,9 +220,15 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     // 正文只有 domain/Disclaimer.kt 一份。**不做强制勾选**——自用工具没必要拿同意书挡人，
     // 用户想看得见、找得到就够了。
     if (showDisclaimer) {
-        DisclaimerDialog(onDismiss = { showDisclaimer = false })
+        DisclaimerDialog(
+            onDismiss = { showDisclaimer = false },
+            readSeconds = if (disclaimerForced) DISCLAIMER_READ_SECONDS else 0,
+        )
     }
 }
+
+/** 首启第一步的免责声明强制阅读秒数（DESIGN §3.16）。 */
+private const val DISCLAIMER_READ_SECONDS = 5
 
 @Composable
 private fun StepProgress(step: Step) {
@@ -486,14 +534,14 @@ private fun QiekjStep(
         busy = true
         scope.launch {
             try {
-                // 与开水页同一序列：先落盘再查一次余额，余额查得通即 token 有效
+                // 与开水页同一序列：先查一次余额验 token，验过才落盘——
+                // 落盘会翻转仓库的登录态，无效 token 不该先落上再回滚（今日页开水卡会闪跳）
+                repo.validateToken(token)
                 repo.saveToken(token)
-                repo.validateToken()
                 busy = false
                 onDone()
             } catch (e: Exception) {
-                // 校验没过就把刚存进去的清掉，否则会留一个无效 token，后续请求一路 401
-                runCatching { repo.logout() }
+                // 校验没过什么都没存，后续请求不会拿着无效 token 一路 401
                 busy = false
                 notice = NoticeFeedback(e.message ?: "Token 无效或已过期", NoticeTone.Error)
             }
@@ -572,11 +620,229 @@ private fun QiekjStep(
     TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) { Text("先跳过") }
 }
 
+/** 趣智校园那一步的登录方式（DESIGN §3.16）。 */
+private enum class QzxyMode { Password, Sms, Session }
+
+@Composable
+private fun QzxyStep(
+    scope: CoroutineScope,
+    onDone: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    val context = LocalContext.current
+    val repo = remember { Graph.qzxy(context) }
+    // 已经登录过（比如重复进入引导）就把手机号带出来，省得再敲一遍
+    var phone by remember { mutableStateOf(repo.localSession()?.telephone.orEmpty()) }
+    var password by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var sessionInput by remember { mutableStateOf("") }
+    // 密码是默认项：验证码要等短信，会话串要先有另一台登录过的设备
+    var mode by remember { mutableStateOf(QzxyMode.Password) }
+    var busy by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<NoticeFeedback?>(null) }
+    // 与趣智校园页同档的 60 秒冷却，避免连点把平台短信额度撞穿
+    var codeSentAt by remember { mutableStateOf(0L) }
+
+    fun sendCode() {
+        val p = phone.trim()
+        val elapsed = System.currentTimeMillis() - codeSentAt
+        if (elapsed < 60_000) {
+            notice = NoticeFeedback(
+                "验证码已发送，请 ${(60 - elapsed / 1000).toInt()} 秒后再试",
+                NoticeTone.Warning,
+            )
+            return
+        }
+        if (p.length != 11) {
+            notice = NoticeFeedback("请输入 11 位手机号", NoticeTone.Warning)
+            return
+        }
+        sending = true
+        scope.launch {
+            try {
+                repo.sendCode(p)
+                codeSentAt = System.currentTimeMillis()
+                notice = NoticeFeedback("验证码已发送", NoticeTone.Success)
+            } catch (e: Exception) {
+                notice = NoticeFeedback(e.message ?: "验证码发送失败", NoticeTone.Error)
+            }
+            sending = false
+        }
+    }
+
+    fun submitPhone() {
+        val p = phone.trim()
+        if (p.length != 11) {
+            notice = NoticeFeedback("请输入 11 位手机号", NoticeTone.Warning)
+            return
+        }
+        if (mode == QzxyMode.Sms && code.isBlank()) {
+            notice = NoticeFeedback("请填短信验证码", NoticeTone.Warning)
+            return
+        }
+        if (mode == QzxyMode.Password && password.isBlank()) {
+            notice = NoticeFeedback("请输入密码", NoticeTone.Warning)
+            return
+        }
+        busy = true
+        scope.launch {
+            try {
+                if (mode == QzxyMode.Sms) repo.loginBySms(p, code) else repo.loginByPassword(p, password)
+                busy = false
+                onDone()
+            } catch (e: Exception) {
+                busy = false
+                notice = NoticeFeedback(e.message ?: "登录失败", NoticeTone.Error)
+            }
+        }
+    }
+
+    /**
+     * 用粘贴的会话串登录，与趣智校园页同一套口径（那边见 `QzxyViewModel.loginWithSession`）。
+     *
+     * **先验后存**：先拿候选会话调一次只读接口，通了才落盘。否则会留下一个
+     * 「已登录但什么都查不到」的会话，用户分不清是会话错还是网络问题。
+     */
+    fun submitSession() {
+        val text = sessionInput.trim()
+        if (text.isEmpty()) {
+            notice = NoticeFeedback("请先粘贴会话串", NoticeTone.Warning)
+            return
+        }
+        val candidate = QzxySessionLink.parse(text)
+        if (candidate == null) {
+            val missing = QzxySessionLink.missingField(text) ?: "loginCode"
+            notice = NoticeFeedback(
+                "没认出会话串：缺少 $missing。把登录响应里的 loginCode、projectId、" +
+                    "accountId、userId、telephone 一起复制过来",
+                NoticeTone.Error,
+            )
+            return
+        }
+        busy = true
+        scope.launch {
+            try {
+                repo.validateSession(candidate)
+                repo.adoptSession(candidate)
+                busy = false
+                onDone()
+            } catch (e: Exception) {
+                busy = false
+                notice = NoticeFeedback(e.message ?: "会话无效或已过期", NoticeTone.Error)
+            }
+        }
+    }
+
+    Text("趣智校园", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "洗澡开热水用的是趣智校园账号，和学校账号无关。登录一次就会记住，" +
+            "会话过期时回「趣智校园」页重新登录即可。本应用不提供注册；充值在登录后点" +
+            "账号一行的「充值」，跳到官方支付宝小程序完成。",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (mode == QzxyMode.Session) {
+        OutlinedTextField(
+            value = sessionInput,
+            onValueChange = { sessionInput = it },
+            label = { Text("会话串") },
+            minLines = 3,
+            maxLines = 5,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "从已登录的设备导出，或把登录响应里的 loginCode、projectId、accountId、" +
+                "userId、telephone 一起复制过来。这串等于账号通行证，别发给别人。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+        notice?.let { InlineNoticeRow(it.text, it.tone) }
+        Button(
+            onClick = { submitSession() },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (busy) "正在校验…" else "验证并保存")
+        }
+        OutlinedButton(
+            onClick = { mode = QzxyMode.Password; notice = null },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("改用手机号登录") }
+    } else {
+        OutlinedTextField(
+            value = phone,
+            onValueChange = { phone = it.filter { c -> c.isDigit() }.take(11) },
+            label = { Text("手机号") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (mode == QzxyMode.Sms) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.filter { c -> c.isDigit() }.take(6) },
+                    label = { Text("短信验证码") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { sendCode() },
+                    enabled = !sending && phone.length == 11,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                ) {
+                    Text(if (sending) "发送中" else "发送验证码")
+                }
+            }
+        } else {
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("密码") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        notice?.let { InlineNoticeRow(it.text, it.tone) }
+        Button(
+            onClick = { submitPhone() },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (busy) "正在登录…" else "登录并保存")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    mode = if (mode == QzxyMode.Sms) QzxyMode.Password else QzxyMode.Sms
+                    notice = null
+                },
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (mode == QzxyMode.Sms) "改用密码" else "改用验证码")
+            }
+            OutlinedButton(
+                onClick = { mode = QzxyMode.Session; notice = null },
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) { Text("会话串登录") }
+        }
+    }
+    TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) { Text("先跳过") }
+}
+
 @Composable
 private fun DoneStep(
     jwOk: Boolean,
     yktOk: Boolean,
     qiekjOk: Boolean,
+    qzxyOk: Boolean,
     onFinish: () -> Unit,
 ) {
     Text("配置完成", style = MaterialTheme.typography.headlineSmall)
@@ -586,6 +852,7 @@ private fun DoneStep(
             "· 学校统一认证：${if (jwOk) "已配置" else "未配置（导入课表时手动登录）"}",
             "· 一卡通 · 电费：${if (yktOk) "已配置" else "未配置"}",
             "· 胖乖生活：${if (qiekjOk) "已配置" else "未配置"}",
+            "· 趣智校园：${if (qzxyOk) "已配置" else "未配置（洗澡开热水时再登录）"}",
         ),
     )
     Text(

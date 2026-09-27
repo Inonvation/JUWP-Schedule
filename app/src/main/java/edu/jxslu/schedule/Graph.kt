@@ -11,12 +11,20 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.QiekjTokenStore
+import edu.jxslu.schedule.data.qzxy.QzxyRepository
+import edu.jxslu.schedule.data.qzxy.QzxyDeviceStore
+import edu.jxslu.schedule.data.qzxy.QzxyDebugStore
+import edu.jxslu.schedule.data.qzxy.QzxyClearStore
+import edu.jxslu.schedule.data.qzxy.QzxyWateringStore
+import edu.jxslu.schedule.data.qzxy.QzxyGattLink
+import edu.jxslu.schedule.data.qzxy.QzxySessionStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import kotlinx.coroutines.sync.Mutex
 import edu.jxslu.schedule.data.repo.ScholarProgressRepository
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.ScoreRepository
@@ -51,7 +59,26 @@ object Graph {
     private var prefsStore: DisplayPrefsStore? = null
 
     @Volatile
-    private var qiekjRepository: QiekjRepository? = null
+private var qiekjRepository: QiekjRepository? = null
+private var qzxyRepository: QzxyRepository? = null
+    private var qzxyDeviceStore: QzxyDeviceStore? = null
+    private var qzxyDebugStore: QzxyDebugStore? = null
+    private var qzxyClearStore: QzxyClearStore? = null
+
+    @Volatile
+    private var qzxyWateringStore: QzxyWateringStore? = null
+
+    @Volatile
+    private var qzxyGattLink: QzxyGattLink? = null
+
+    /**
+     * 趣智校园「一次只跑一条流程」的进程级互斥（DESIGN §4.30）。
+     *
+     * **不能放在 ViewModel 里**：今日页那份（面板开阀）与页面、诊断页各持一份 ViewModel，
+     * 各自的锁互不相识，两个窗口的流程会同时去用同一条 GATT 链路——一边在等回包、
+     * 另一边把链路关掉重连，或者两条指令交替写进设备。
+     */
+    val qzxyFlowLock: Mutex = Mutex()
 
     @Volatile
     private var scoreRepository: ScoreRepository? = null
@@ -203,6 +230,64 @@ object Graph {
                 QiekjTokenStore(context.applicationContext),
                 QiekjOrderHistoryStore(context.applicationContext),
             ).also { qiekjRepository = it }
+        }
+
+    /**
+     * 趣智校园仓库单例（DESIGN §4.30）。同为第三方的独立会话，
+     * 与胖乖各存一份凭证，互不牵连。
+     */
+    fun qzxy(context: Context): QzxyRepository =
+        qzxyRepository ?: synchronized(this) {
+            qzxyRepository ?: QzxyRepository(QzxySessionStore(context.applicationContext))
+                .also { qzxyRepository = it }
+        }
+
+    /** 趣智校园已绑定设备（DESIGN §4.30）。纯本地偏好，与登录会话分开存。 */
+    fun qzxyDevices(context: Context): QzxyDeviceStore =
+        qzxyDeviceStore ?: synchronized(this) {
+            qzxyDeviceStore ?: QzxyDeviceStore(context.applicationContext)
+                .also { qzxyDeviceStore = it }
+        }
+
+    /**
+     * 趣智校园蓝牙链路单例（DESIGN §4.30）。
+     *
+     * **必须是单例**：GATT 连接是进程级资源，设备被连上后通常就停止广播，多半只接受
+     * 一个连接。今日页那份 ViewModel（面板开阀）与页面、诊断页各持一份 ViewModel，
+     * 各建一条链路的话，「面板里开阀 → 进页面点结束用水」会去抢同一台设备，
+     * 后到的那条连不上（表现为「连接设备失败」）。
+     */
+    fun qzxyLink(context: Context): QzxyGattLink =
+        qzxyGattLink ?: synchronized(this) {
+            qzxyGattLink ?: QzxyGattLink(context.applicationContext)
+                .also { qzxyGattLink = it }
+        }
+
+    /** 趣智校园调试开关（DESIGN §4.30）：目前只有「记录调试日志」，默认关。 */
+    fun qzxyDebug(context: Context): QzxyDebugStore =
+        qzxyDebugStore ?: synchronized(this) {
+            qzxyDebugStore ?: QzxyDebugStore(context.applicationContext)
+                .also { qzxyDebugStore = it }
+        }
+
+    /** 趣智校园清除命令试出来的可用参数（DESIGN §4.30）。纯本地偏好。 */
+    fun qzxyClear(context: Context): QzxyClearStore =
+        qzxyClearStore ?: synchronized(this) {
+            qzxyClearStore ?: QzxyClearStore(context.applicationContext)
+                .also { qzxyClearStore = it }
+        }
+
+    /**
+     * 趣智校园进行中的用水（DESIGN §3.18）。
+     *
+     * **必须是单例**：今日页卡片与趣智校园页是两个独立 ViewModel 实例，靠它这条
+     * [kotlinx.coroutines.flow.StateFlow] 同步「正在用水」状态；各持一份的话，
+     * 页面里开阀、今日页卡片不会跟着变。
+     */
+    fun qzxyWatering(context: Context): QzxyWateringStore =
+        qzxyWateringStore ?: synchronized(this) {
+            qzxyWateringStore ?: QzxyWateringStore(context.applicationContext)
+                .also { qzxyWateringStore = it }
         }
 
     /**

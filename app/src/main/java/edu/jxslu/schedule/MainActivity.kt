@@ -74,6 +74,8 @@ import edu.jxslu.schedule.ui.life.LifeScreen
 import edu.jxslu.schedule.ui.theme.JuwTheme
 import edu.jxslu.schedule.ui.today.TodayScreen
 import edu.jxslu.schedule.ui.water.WaterViewModel
+import edu.jxslu.schedule.data.qzxy.QzxyBluetoothScanner
+import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.week.WeekScreen
 import edu.jxslu.schedule.ui.week.ScheduleBackgroundLayer
 import edu.jxslu.schedule.domain.BgScale
@@ -192,10 +194,10 @@ internal const val ROUTE_LIFE = "life"
 /** [EXTRA_ROUTE] 的取值：我的 Tab（登录失效通知的落点，DESIGN §3.16）。 */
 internal const val ROUTE_ME = "me"
 
-/** [EXTRA_ROUTE] 的取值：校园卡小组件 → 付款码页（DESIGN §3.6 三条目改版，2026-09-27）。 */
+/** [EXTRA_ROUTE] 的取值：生活小组件整卡 → 付款码页（DESIGN §3.6 二条目改版，2026-09-27）。 */
 internal const val ROUTE_PAY_CODE = "pay_code"
 
-/** [EXTRA_ROUTE] 的取值：电费小组件 → 缴费账单·用电统计页。 */
+/** [EXTRA_ROUTE] 的取值：生活小组件的电费副行 → 缴费账单·用电统计页。 */
 internal const val ROUTE_POWER_BILL = "power_bill"
 
 /** [EXTRA_ROUTE] 的取值：校园卡小组件未开凭证 → 校园卡设置页。 */
@@ -509,8 +511,8 @@ internal fun JuwApp(
             }
             pendingRoute.value = null
         } else if (route == ROUTE_PAY_CODE || route == ROUTE_POWER_BILL || route == ROUTE_CAMPUS_CARD) {
-            // 校园卡 / 电费小组件点击（DESIGN §3.6 三条目改版）：落点不是底栏 Tab 而是
-            // 二级页（付款码 / 用电统计 / 校园卡设置）。仍走「先消费再启动」，与上面
+            // 生活小组件点击（DESIGN §3.6 二条目改版）：落点不是底栏 Tab 而是二级页
+            // （付款码 / 用电统计 / 校园卡设置）。仍走「先消费再启动」，与上面
             // 同一套防重组回弹的口径；主界面在底下保持今日页原样
             pendingRoute.value = null
             val screen = when (route) {
@@ -544,6 +546,22 @@ internal fun JuwApp(
     val waterViewModel: WaterViewModel = viewModel(
         viewModelStoreOwner = context as ComponentActivity,
         factory = WaterViewModel.Factory(Graph.qiekj(context)),
+    )
+
+    // 趣智校园 ViewModel 挂 Activity 作用域（DESIGN §4.30）：今日页半行卡与趣智校园页
+    // 各自持有实例，这份供今日页卡片显示登录态与余额。
+    val qzxyViewModel: QzxyViewModel = viewModel(
+        viewModelStoreOwner = context as ComponentActivity,
+        factory = QzxyViewModel.Factory(
+            Graph.qzxy(context),
+            QzxyBluetoothScanner(context),
+            Graph.qzxyLink(context),
+            Graph.qzxyFlowLock,
+            Graph.qzxyDevices(context),
+            Graph.qzxyDebug(context),
+            Graph.qzxyClear(context),
+            Graph.qzxyWatering(context),
+        ),
     )
 
     // 悬浮导航栏（DESIGN §4.22）：底栏形态是全局项，这里单独订阅一次。
@@ -703,7 +721,7 @@ internal fun JuwApp(
                             onOpenTimetableSettings = {
                                 SubpageActivity.start(context, SubpageScreen.TIMETABLE_SETTINGS)
                             },
-                            // 一键开水卡常显（未登录给未登录态，显示设置可关，DESIGN §3.3）；
+                            // 胖乖生活卡常显（未登录给未登录态，显示设置可关，DESIGN §3.3）；
                             // 登录态由 WaterViewModel 自带，外层不再按登录与否隐藏整卡
                             onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
                             // 共享单车出码页（DESIGN §3.9）：今日页卡片直达，独立窗口；
@@ -732,6 +750,9 @@ internal fun JuwApp(
                                 SubpageActivity.start(context, SubpageScreen.HOMEWORK_COURSE, courseName = course.name)
                             },
                             waterViewModel = waterViewModel,
+                            // 趣智校园卡（DESIGN §4.30）：与胖乖生活并排，默认开、可关
+                            onOpenQzxy = { SubpageActivity.start(context, SubpageScreen.QZXY) },
+                            qzxyViewModel = qzxyViewModel,
                         )
                     }
                 composable(Routes.WEEK) {
@@ -801,6 +822,10 @@ internal fun JuwApp(
                             },
                             onOpenWater = {
                                 SubpageActivity.start(context, SubpageScreen.WATER)
+                            },
+                            // 趣智校园（DESIGN §4.30）：登录 / 余额 / 账单都在这一页
+                            onOpenQzxy = {
+                                SubpageActivity.start(context, SubpageScreen.QZXY)
                             },
                         )
                     }

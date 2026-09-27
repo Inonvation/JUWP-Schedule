@@ -39,4 +39,21 @@ class LoginStateRulesTest {
             LoginStateRules.derive(credentialExists = true, webSessionExists = true, suspended = true),
         )
     }
+
+    /** 身份区标题的兜底：三格里有一个在登录态，就别给「未登录」这个词。 */
+    @Test
+    fun overall_prefersLoggedInOverExpiredOverNotLoggedIn() {
+        assertEquals(
+            LoginState.LoggedIn,
+            LoginStateRules.overall(LoginState.NotLoggedIn, LoginState.LoggedIn, LoginState.Expired),
+        )
+        assertEquals(
+            LoginState.Expired,
+            LoginStateRules.overall(LoginState.NotLoggedIn, LoginState.Expired),
+        )
+        assertEquals(
+            LoginState.NotLoggedIn,
+            LoginStateRules.overall(LoginState.NotLoggedIn, LoginState.NotLoggedIn),
+        )
+    }
 }

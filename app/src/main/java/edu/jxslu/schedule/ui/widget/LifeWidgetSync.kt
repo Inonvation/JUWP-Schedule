@@ -10,11 +10,12 @@ import edu.jxslu.schedule.Graph
 import kotlinx.coroutines.flow.first
 
 /**
- * 校园卡 / 电费小组件的数据同步（DESIGN §3.6 三条目改版，2026-09-27）。
+ * 生活小组件（校园卡 + 寝室电费，合并成一张卡）的数据同步（DESIGN §3.6 二条目改版，
+ * 2026-09-27）。
  *
- * 两条红线（改前先读）：
+ * 两条红线（改前先读，合并后各自照旧）：
  *
- * 1. **电费小组件的任何刷新路径都不发网络请求**。数据 = Room `power_readings` 最新一条
+ * 1. **电费那一行的任何刷新路径都不发网络请求**。数据 = Room `power_readings` 最新一条
  *    （`PowerRepository.snapshot()` 仍是读数唯一写入处），本类只做「读最新 → 写 Glance 状态
  *    → `update()`」的本地镜像。读数密度 = 打开 App 的密度（DESIGN §3.13），小组件不许
  *    变相轮询第三方平台；
@@ -34,7 +35,6 @@ internal object LifeWidgetSync {
     private val Context.lifeWidgetPrefs by preferencesDataStore(name = "life_widget_prefs")
 
     private val CampusCardFenKey = longPreferencesKey("campus_card_fen")
-    private val CampusAccountFenKey = longPreferencesKey("campus_account_fen")
     private val CampusFetchedAtMsKey = longPreferencesKey("campus_fetched_at_ms")
     private val CampusHideBalanceKey = booleanPreferencesKey("campus_hide_balance")
 
@@ -50,13 +50,16 @@ internal object LifeWidgetSync {
         val prefs = appContext.lifeWidgetPrefs.data.first()
         return CampusCardSnapshot(
             cardFen = prefs[CampusCardFenKey] ?: UNKNOWN_FEN,
-            accountFen = prefs[CampusAccountFenKey]?.takeIf { it >= 0 },
             fetchedAtMs = prefs[CampusFetchedAtMsKey] ?: 0L,
             hasCredentials = runCatching { Graph.yktCredentialStore(appContext).read() != null }
                 .getOrDefault(false),
             hideBalance = prefs[CampusHideBalanceKey] ?: false,
         )
     }
+
+    /** 合并快照：DataStore 里的校园卡数据 + Room 最新读数（全程零网络）。 */
+    suspend fun lifeCardSnapshot(context: Context): LifeCardSnapshot =
+        LifeCardSnapshot(campus = campusSnapshot(context), power = powerSnapshot(context))
 
     // ------------------------------------------------------------------
     // 推送点（全部搭现有链路的便车，见类 KDoc）
@@ -65,18 +68,15 @@ internal object LifeWidgetSync {
     /**
      * App 内成功取到一卡通余额时调用（付款码页 / 生活页 / 余额提醒日检）。
      *
-     * [accountFen] 传 null 表示「本次没取到电子账户」（那条数据来自独立接口，
-     * 余额提醒路径拿不到）——保留 DataStore 里的旧值，**不写 0**（0 会渲染成 ¥0.00）。
-     * 写完顺手刷新全部校园卡实例；无实例时 update 是空跑。
+     * 写完顺手刷新全部合并卡实例；无实例时 update 是空跑。
      */
-    suspend fun pushCampusBalance(context: Context, cardFen: Long, accountFen: Long?) {
+    suspend fun pushCampusBalance(context: Context, cardFen: Long) {
         val appContext = context.applicationContext
         appContext.lifeWidgetPrefs.edit { prefs ->
             prefs[CampusCardFenKey] = cardFen
-            if (accountFen != null) prefs[CampusAccountFenKey] = accountFen
             prefs[CampusFetchedAtMsKey] = System.currentTimeMillis()
         }
-        runCatching { refreshCampusWidgets(appContext) }
+        runCatching { refreshLifeWidgets(appContext) }
     }
 
     /** 「在小组件中隐藏余额」开关（设置页）。写完立即重渲染，桌面马上变样。 */
@@ -84,19 +84,16 @@ internal object LifeWidgetSync {
         context.applicationContext.lifeWidgetPrefs.edit { prefs ->
             prefs[CampusHideBalanceKey] = hide
         }
-        runCatching { refreshCampusWidgets(context.applicationContext) }
+        runCatching { refreshLifeWidgets(context.applicationContext) }
     }
 
     // ------------------------------------------------------------------
     // 刷新（本地数据 → Glance 状态 → update；零网络）
     // ------------------------------------------------------------------
 
-    suspend fun refreshCampusWidgets(context: Context) {
-        CampusCardSnapshotStore.refreshAll(context, campusSnapshot(context))
-    }
-
-    suspend fun refreshPowerWidgets(context: Context) {
-        PowerWidgetSnapshotStore.refreshAll(context, powerSnapshot(context))
+    /** 本地数据 → 合并快照 → Glance 状态 → `update()`。校园卡与电费一起推。 */
+    suspend fun refreshLifeWidgets(context: Context) {
+        LifeCardSnapshotStore.refreshAll(context, lifeCardSnapshot(context))
     }
 
     /** Room 最新读数 → 电费快照（本地镜像，零网络；无读数给空快照走引导态）。 */
@@ -120,7 +117,7 @@ internal object LifeWidgetSync {
      */
     suspend fun onColdStart(context: Context) {
         val appContext = context.applicationContext
-        runCatching { refreshPowerWidgets(appContext) }
+        runCatching { refreshLifeWidgets(appContext) }
         runCatching { maybeFetchCampusBalance(appContext) }
     }
 
@@ -130,7 +127,7 @@ internal object LifeWidgetSync {
      */
     suspend fun onPeriodicTick(context: Context) {
         val appContext = context.applicationContext
-        runCatching { refreshPowerWidgets(appContext) }
+        runCatching { refreshLifeWidgets(appContext) }
         runCatching { maybeFetchCampusBalance(appContext) }
     }
 
@@ -153,8 +150,7 @@ internal object LifeWidgetSync {
         return runCatching {
             val cards = Graph.yktRepository(appContext).cards(credentials.username, credentials.password)
             if (cards.isEmpty()) return@runCatching false
-            // 电子账户走独立接口，后台不追加请求（副行保留旧值）
-            pushCampusBalance(appContext, cards.sumOf { it.cardBalanceFen }, null)
+            pushCampusBalance(appContext, cards.sumOf { it.cardBalanceFen })
             true
         }.getOrDefault(false)
     }

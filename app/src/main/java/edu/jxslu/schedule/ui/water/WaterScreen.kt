@@ -111,6 +111,7 @@ fun WaterScreen(
     val context = LocalContext.current
     var showDeviceSheet by remember { mutableStateOf(false) }
     var detailItem by remember { mutableStateOf<Any?>(null) }
+    var confirmLogout by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -139,7 +140,7 @@ fun WaterScreen(
                 },
                 actions = {
                     if (state.loggedIn) {
-                        IconButton(onClick = { viewModel.logout() }) {
+                        IconButton(onClick = { confirmLogout = true }) {
                             Icon(HugeIcons.Logout04, contentDescription = "退出登录")
                         }
                     }
@@ -284,6 +285,31 @@ fun WaterScreen(
         is edu.jxslu.schedule.domain.UnlockResult -> OrderDetailDialog(item = d, onDismiss = { detailItem = null })
         is OrderHistoryItem -> OrderDetailDialog(item = toResult(d), onDismiss = { detailItem = null })
         null -> {}
+    }
+
+    // 退出二次确认（2026-09-27）：顶栏图标就在返回键旁边，一次误触就得重新收短信才能回来
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("退出胖乖登录？") },
+            text = {
+                Text(
+                    "将清除本机保存的胖乖 Token 与开水订单快照。" +
+                        "今日页开水卡回到未登录态，重新登录需要再收一次短信验证码。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLogout = false
+                        viewModel.logout()
+                    },
+                ) { Text("退出登录") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) { Text("取消") }
+            },
+        )
     }
 }
 

@@ -26,7 +26,7 @@ internal object WidgetCapabilities {
     /** 是否已把课表小组件添加到桌面（状态徽标 + 设置页计数用）。 */
     fun addedCount(context: Context): Int = addedCountOf(context, ScheduleWidgetReceiver::class.java)
 
-    /** 按条目计数（DESIGN §3.6 三条目改版）：三条各自独立 receiver，徽标互不相干。 */
+/** 按条目计数（DESIGN §3.6 二条目改版）：两条各自独立 receiver，徽标互不相干。 */
     fun addedCountOf(context: Context, receiver: Class<*>): Int =
         AppWidgetManager.getInstance(context)
             .getAppWidgetIds(ComponentName(context, receiver)).size

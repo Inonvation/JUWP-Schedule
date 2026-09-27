@@ -55,6 +55,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.prefs.PendingRecharge
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
@@ -71,6 +72,7 @@ import edu.jxslu.schedule.data.ykt.YktRepository
 import edu.jxslu.schedule.data.session.LoginState
 import edu.jxslu.schedule.data.session.LoginStateRules
 import edu.jxslu.schedule.data.session.LoginTarget
+import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AccountCard
@@ -154,7 +156,8 @@ fun CampusCardSettingsScreen(
 
     // 已保存学号**明文回填**（2026-09-24 用户拍板）：进页时读一次加密存储填进输入框，
     // 之后的编辑由 rememberSaveable 管（转屏/重建不丢）。改了就覆盖，留空才报错。
-    val savedUsername = remember { viewModel.savedUsername }
+    // 同一份值也供账户卡显示；开启 / 关闭 / 覆盖保存后由 [feedback] 重读（2026-09-27）。
+    var savedUsername by remember { mutableStateOf(viewModel.savedUsername) }
     var username by rememberSaveable { mutableStateOf(savedUsername.orEmpty()) }
     var password by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
@@ -171,7 +174,11 @@ fun CampusCardSettingsScreen(
 
     fun feedback(notice: NoticeFeedback) {
         busy = false
-        if (notice.tone != NoticeTone.Error) password = ""
+        if (notice.tone != NoticeTone.Error) {
+            password = ""
+            // 开启 / 关闭 / 覆盖保存都从这里收尾：重读一次凭证，账户卡跟着换身份
+            savedUsername = viewModel.savedUsername
+        }
         scope.launch {
             snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
         }
@@ -233,8 +240,9 @@ fun CampusCardSettingsScreen(
         ) {
             // 账户卡（DESIGN §3.3）：与教务账户页**同一形态**——同样一句「我是谁」，
             // 两个页面长得一样。原先这一页只有开关和余额，看不出当前用的是哪个账号。
-            val savedUsername = remember { Graph.yktCredentialStore(context).read()?.username }
             val profileName by remember { Graph.displayPrefs(context).profileName }
+                .collectAsStateWithLifecycle(initialValue = "")
+            val profileStudentId by remember { Graph.displayPrefs(context).profileStudentId }
                 .collectAsStateWithLifecycle(initialValue = "")
             val suspendedTargets by SessionStatus.suspended.collectAsStateWithLifecycle()
             val yktState = LoginStateRules.derive(
@@ -243,7 +251,7 @@ fun CampusCardSettingsScreen(
                 suspended = LoginTarget.Ykt in suspendedTargets,
             )
             AccountCard(
-                username = savedUsername.orEmpty(),
+                username = savedUsername ?: profileStudentId,
                 name = profileName,
                 statusText = when (yktState) {
                     LoginState.Expired -> "登录状态已失效，请重新填写查询密码"
@@ -640,6 +648,9 @@ private fun AlertCard(
 
 class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
+    /** 取数失败时的排查提示按它分支：开着代理点名关掉，没开就换一条网络（口径见 `NetworkHint`）。 */
+    private val isVpnActive: () -> Boolean = { JwVpnDetector.isVpnActive(appContext) }
+
     private val prefs = Graph.displayPrefs(appContext)
     private val credentialStore = Graph.yktCredentialStore(appContext)
     private val repo = Graph.yktRepository(appContext)
@@ -852,7 +863,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             if (result == null) {
                 onResult(
                     NoticeFeedback(
-                        "登录超时（${LOGIN_TOTAL_TIMEOUT_MS / 1000} 秒无响应），请检查网络后重试",
+                        "登录超时（${LOGIN_TOTAL_TIMEOUT_MS / 1000} 秒无响应）：${NetworkHint.briefOf(isVpnActive())}",
                         NoticeTone.Error,
                     ),
                 )
@@ -868,6 +879,9 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             repo.login(user, pwd)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: YktException.Network) {
+            // 网络类失败：正文换成可操作的两句之一（关代理 / 换网络），别再报「网络不可达」原文
+            return NoticeFeedback(NetworkHint.of(isVpnActive()), NoticeTone.Error)
         } catch (e: YktException) {
             return NoticeFeedback(e.message ?: "登录失败，请检查账号密码", NoticeTone.Error)
         } catch (e: Exception) {
@@ -949,6 +963,9 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 _arrivalWalletBaseFen = null
                 onResult(NoticeFeedback(e.message ?: "当前不在充值服务时间内", NoticeTone.Warning))
                 return@launch
+            } catch (e: YktException.Network) {
+                onResult(NoticeFeedback(NetworkHint.of(isVpnActive()), NoticeTone.Error))
+                return@launch
             } catch (e: YktException) {
                 onResult(NoticeFeedback(e.message ?: "下单失败，请稍后重试", NoticeTone.Error))
                 return@launch
@@ -962,7 +979,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 return@launch
             }
             if (placed == null) {
-                onResult(NoticeFeedback("下单超时，请检查网络后重试", NoticeTone.Error))
+                onResult(NoticeFeedback("下单超时：${NetworkHint.briefOf(isVpnActive())}", NoticeTone.Error))
                 return@launch
             }
             val order = placed.order

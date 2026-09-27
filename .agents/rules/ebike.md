@@ -34,12 +34,19 @@
   （镜头归一次性定位、接口禁止轮询，见 DESIGN §3.9）。挪点口径 `shouldMoveDot`（位移 ≥4 米
   或精度显著提升）是防双源交替与站定抖动的，**别删**；请求节奏 2 秒一次，别改回 0（费电不讨好）。
   启动姿势与二级页恢复见 `nav-window.md`（`MainActivity` 是 `standard`，不是 `singleTask`）。
+  落状态分两步（2026-09-27）：**中心点结果先落列表**，撒点在飞时 `loading` 保持 true
+  （头部进度圈就是「还在补全周围」的提示），采样合并回来再刷一遍。**别改回「`awaitAll`
+  之后一次性落」**——那会让用户干等 9 个请求里最慢的那个。两条路共用
+  `BikeMapViewModel.applyResult`，视野记账仍在中心那一次写。
 
-- 瓦片源两处硬口径（`ui/ebike/OsmMapView.kt`）：① **URL 别加 `scl=2`**——2026-09-27 试过：
+- 瓦片源三处硬口径（`ui/ebike/OsmMapView.kt`）：① **URL 别加 `scl=2`**——2026-09-27 试过：
   它回的是"无注记纯底图"（路网齐全、地名全没），真机上用户第一眼就报"名称没了"、当天撤销。
   带注记的只有 256px 版（按 512 声明渲染、略发虚），当前取舍是**注记优先**；要又高清又有
   注记得换方案，栅格这条路没有。② `Configuration.expirationOverrideDuration` 必须自己设：
   osmdroid 6.1.18 不解析 `Cache-Control`（拆包确认），默认不过期、旧图永远不换新，现设 7 天。
+  ③ `tileFileSystemCacheMaxBytes` / `tileFileSystemCacheTrimBytes` 也要自己设：osmdroid 默认
+  上限 600 MiB、回收目标 500 MiB，现设 60 / 50 MiB。**别把这两行删了**——默认值下瓦片能
+  把 `cacheDir` 占到半个 G，而系统清理时机不可控。
 
 - 「只看本校」（2026-09-27）：默认开的持久开关（`ebike_map_only_our_campus`，与「只看可用」
   同一套 VM 口径：数据在手、只重算簇不重查接口）。筛选口径是**校区名白名单 + 校区围栏
@@ -123,6 +130,12 @@
   别改回「冷启动无条件常排」——那会让没骑车的用户每 15 分钟被冷启动一次进程。
   系统日历那条链路（`data/calendar/EbikeCalendarEvents.kt`、`ebikeFreeEventId`、
   `水贝贝骑行提醒` 标记、日历权限申请）已整套删除，**别加回来**。
+
+- 今日页快趣卡副行在计时中显示「免费剩余 mm:ss」（2026-09-27，`TodayScreen` 的
+  `rideSubtitle`）：每秒自刷，到点、或起点被清成 0（结束骑行 / `check` 收干净）落回
+  「微信扫一扫开车」。**判据与出码页计时条完全一致**（开关开 + `EbikeFreeRide.isActive`），
+  **别改成「有起点就显示」**——同一个计时在两页说法不一样比不显示更糟。起点与开关从
+  `Graph.displayPrefs` 直接读，不往 `DisplayPrefs` 合并读模型里加字段（那条 combine 已满员）。
 
 ## 精确倒计时
 

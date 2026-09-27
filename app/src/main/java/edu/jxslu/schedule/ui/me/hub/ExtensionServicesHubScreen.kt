@@ -15,18 +15,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
@@ -44,6 +38,7 @@ import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.Repair
 import me.rerere.hugeicons.stroke.ScooterElectric
+import me.rerere.hugeicons.stroke.ShowerHead
 
 /**
  * 我的 → 扩展服务（DESIGN §3.3）：学校系统 + 第三方服务，开关原样。
@@ -58,26 +53,21 @@ fun ExtensionServicesHubScreen(
     onOpenShortcuts: () -> Unit,
     onOpenCampusCard: () -> Unit,
     onOpenWater: () -> Unit,
+    /** 趣智校园开热水（DESIGN §4.30）。今日页卡片关掉后，这里是唯一的入口。 */
+    onOpenQzxy: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    // 胖乖登录态：进页与从开水页返回（ON_RESUME）时各读一次——子窗口返回不触发重组，
-    // 只靠组合期读一次会在「登录后返回」时仍显示旧文案。
+    // 胖乖登录态订阅仓库的流（2026-09-27）：此前是 ON_RESUME 时重读一次 token，
+    // 只覆盖「从开水页返回」这一条路径；直接订阅后登录/退出在任何窗口发生都即时生效。
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    var waterLoggedIn by remember { mutableStateOf(Graph.qiekj(context).localToken() != null) }
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                waterLoggedIn = Graph.qiekj(context).localToken() != null
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    val waterLoggedIn by remember { Graph.qiekj(context).loggedIn }
+        .collectAsStateWithLifecycle()
+    val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
+        .collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -145,6 +135,13 @@ fun ExtensionServicesHubScreen(
                     subtitle = if (waterLoggedIn) "开水 / 余额 / 订单" else "点击登录胖乖生活",
                     icon = HugeIcons.Droplet,
                     onClick = onOpenWater,
+                )
+                SettingItem(
+                    title = "趣智校园",
+                    subtitle = if (qzxyLoggedIn) "开热水 / 余额 / 账单" else "点击登录趣智校园",
+                    // 花洒：这是「洗澡开热水」，不是喝水（与账户卡那一格同图标）
+                    icon = HugeIcons.ShowerHead,
+                    onClick = onOpenQzxy,
                 )
             }
         }

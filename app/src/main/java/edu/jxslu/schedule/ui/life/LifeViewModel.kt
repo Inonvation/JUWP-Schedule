@@ -14,8 +14,11 @@ import edu.jxslu.schedule.data.power.PowerPayModels
 import edu.jxslu.schedule.data.power.PowerPayResult
 import edu.jxslu.schedule.data.power.PowerModels
 import edu.jxslu.schedule.data.power.PowerRepository
+import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerSnapshot
 import edu.jxslu.schedule.data.power.PowerTurnover
+import edu.jxslu.schedule.data.jw.JwVpnDetector
+import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktRepository
 import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
@@ -53,6 +56,9 @@ data class PowerCardState(
     /**
      * 上次成功读数。刷新失败时**保留**它，卡上照旧显示上次的电量与时刻，
      * 另起一行报错——不给一个看不出新旧的数字（DESIGN §3.13）。
+     *
+     * 冷启动时先进来的可能是本机读数种子（[LifeViewModel.seedPowerFromReadings]），
+     * 口径同上：卡上照实显示读数时刻，平台那条回来原地替换。
      */
     val snapshot: PowerSnapshot? = null,
     val error: String? = null,
@@ -98,6 +104,16 @@ class LifeViewModel(
     private val db: JuwDatabase,
     /** 上次成功流水的落盘缓存：冷启动先进页再等网络的种子，见 [init]。 */
     private val historyCache: PowerHistoryCache,
+    /** 本机读数（Room）：生活页电费卡首屏种子的来源，见 [seedPowerFromReadings]。 */
+    private val readingStore: PowerReadingStore,
+    /**
+     * VPN / 代理探测（默认不探测，测试与不关心网络的调用点不必给）。
+     *
+     * 只在**网络类**失败时用：取数失败要说清下一步做什么，开着代理就关掉它，
+     * 没开就换一条网络（DESIGN §7.6 实测的诱因）。密码不对、平台结构变了这些
+     * 与出口无关，照旧报原文。
+     */
+    private val isVpnActive: () -> Boolean = { false },
 ) : ViewModel() {
 
     private val syncer = YktTurnoverSyncer(yktRepo, db)
@@ -121,6 +137,26 @@ class LifeViewModel(
                 _powerTurnovers.value = cached
                 powerFeedLoaded.value = true
             }
+            seedPowerFromReadings()
+        }
+    }
+
+    /**
+     * 电费卡首屏种子：拿本机最新读数把卡面顶起来（零网络）。
+     *
+     * 进页链路（登录 → 项目详情 → 读表）冷启动要好几秒，此前这段时间卡面是「—／读取中…」
+     * （2026-09-27 用户报「首次进入生活页电费余额还是很慢，手动下拉反而秒出」——下拉时
+     * token 已经热了）。读数是同一份数据、来自同一处写入（[PowerRepository.snapshot]），
+     * 顶上后平台那条回来原地替换，与「刷新失败保留上次读数」是同一种展示口径。
+     *
+     * 只在**还没有数**时填：真读数（或刷新失败留下的上次读数）已经在卡上就不动它，
+     * 免得旧读数把新的盖回去。凭证没开就没有电费可看，直接跳过。
+     */
+    private suspend fun seedPowerFromReadings() {
+        if (credentialStore.read() == null) return
+        val latest = runCatching { readingStore.latest() }.getOrNull() ?: return
+        _power.update { state ->
+            if (state.snapshot != null) state else state.copy(snapshot = PowerModels.snapshotSeedOf(latest))
         }
     }
 
@@ -189,14 +225,18 @@ class LifeViewModel(
             try {
                 val snapshot = powerRepo.snapshot(credentials.username, credentials.password, force = force)
                 _power.update { it.copy(loading = false, snapshot = snapshot, error = null) }
-                // 桌面电费小组件（DESIGN §3.6 三条目改版）：读数已落 Room，顺手镜像一次（零网络）
-                runCatching { LifeWidgetSync.refreshPowerWidgets(Graph.appContext) }
+                // 桌面生活小组件的电费副行（DESIGN §3.6 二条目改版）：读数已落 Room，
+                // 顺手镜像一次（零网络）
+                runCatching { LifeWidgetSync.refreshLifeWidgets(Graph.appContext) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PowerException.Credential) {
                 _power.update {
                     it.copy(loading = false, error = "${e.message}。若密码已改，请在「我的 → 校园卡」重新验证")
                 }
+            } catch (e: PowerException.Network) {
+                // 卡副行只有一行（约十来个字宽），给短文案；关代理 / 换网络二选一
+                _power.update { it.copy(loading = false, error = NetworkHint.briefOf(isVpnActive())) }
             } catch (e: PowerException) {
                 _power.update { it.copy(loading = false, error = e.message ?: "电费读取失败") }
             } catch (e: Exception) {
@@ -576,6 +616,8 @@ class LifeViewModel(
                 Graph.yktCredentialStore(context.applicationContext),
                 JuwDatabase.get(context.applicationContext),
                 Graph.powerHistoryCache(context.applicationContext),
+                Graph.powerReadingStore(context.applicationContext),
+                isVpnActive = { JwVpnDetector.isVpnActive(context.applicationContext) },
             ) as T
         }
     }

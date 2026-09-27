@@ -70,6 +70,72 @@ class CasSessionTest {
         assertEquals(0, http.loginCalls)
     }
 
+    /**
+     * 没存过密码、但 WebView 里有用出来的会话：抄回并**校验通过**才算 Ready。
+     *
+     * 钉的是 2026-09-27 用户报的场景——引导跳过教务、后来在导入页手登，
+     * 学籍卡 / 成绩这些 OkHttp 取数不该再判「未登录」。
+     */
+    @Test
+    fun noCredential_adoptsWebSessionAndVerifies() = runBlocking {
+        web.adoptResult = listOf(
+            Cookie.Builder().name("JSESSIONID").value("x")
+                .hostOnlyDomain("jiaowu.juwp.edu.cn").path("/").build(),
+        )
+        http.verifyResult = true
+        assertEquals(CasEnsureResult.Ready(), newSession().ensureValid())
+        assertEquals(1, web.adoptCalls)
+        assertEquals(1, http.verifyCalls)
+        assertEquals(0, http.loginCalls)
+        assertTrue(store.gate.lastSuccessMs > 0)
+    }
+
+    /** WebView 里一条 cookie 都没有：不发请求，直接判未登录。 */
+    @Test
+    fun noCredentialNoWebSession_doesNotProbe() = runBlocking {
+        web.adoptResult = emptyList()
+        assertEquals(CasEnsureResult.NoCredential, newSession().ensureValid())
+        assertEquals(0, http.verifyCalls)
+        assertEquals(0, http.loginCalls)
+    }
+
+    /**
+     * WebView 里只有站点标记（`bzb_njw` 这类，[SessionCookieRules] 不认）：不抄也不探。
+     *
+     * 抄回来只会白探一次教务，还会把一份死 cookie 填进 jar。
+     */
+    @Test
+    fun noCredentialNonSessionCookie_doesNotAdopt() = runBlocking {
+        web.adoptResult = listOf(
+            Cookie.Builder().name("bzb_njw").value("1")
+                .hostOnlyDomain("jiaowu.juwp.edu.cn").path("/").build(),
+        )
+        web.hasAnyCookieResult = false
+        assertEquals(CasEnsureResult.NoCredential, newSession().ensureValid())
+        assertEquals(0, web.adoptCalls)
+        assertEquals(0, http.verifyCalls)
+    }
+
+    /**
+     * 抄回来的会话校验不过：判未登录，**且不写闸门**。
+     *
+     * 写了 `last_success` 就会让信任期把一份过期会话当可用（10 分钟内所有取数都拿到
+     * 登录页），所以回灌必须「先验再用」。
+     */
+    @Test
+    fun noCredential_staleWebSessionDoesNotArmTrust() = runBlocking {
+        web.adoptResult = listOf(
+            Cookie.Builder().name("JSESSIONID").value("stale")
+                .hostOnlyDomain("jiaowu.juwp.edu.cn").path("/").build(),
+        )
+        http.verifyResult = false
+        val session = newSession()
+        assertEquals(CasEnsureResult.NoCredential, session.ensureValid())
+        assertEquals(0L, store.gate.lastSuccessMs)
+        // 信任期没被点起来：紧接着的调用同样探不通
+        assertEquals(CasEnsureResult.NoCredential, session.ensureValid())
+    }
+
     @Test
     fun loginSuccess_returnsReadyAndArmsGate() = runBlocking {
         store.cas = SessionCredentials("2023001", "pw")
@@ -345,9 +411,14 @@ private class FakeCasTransport : CasTransport {
 private class FakeWebCookieBridge : WebCookieBridge {
     var adoptResult: List<Cookie> = emptyList()
     var adoptCalls = 0
+    /** null = 按 [adoptResult] 是否为空推，够用；要单独造「有 cookie 但不是会话」时显式赋值。 */
+    var hasAnyCookieResult: Boolean? = null
 
     override suspend fun adopt(urls: List<String>): List<Cookie> {
         adoptCalls++
         return adoptResult
     }
+
+    override fun hasAnyCookie(urls: List<String>): Boolean =
+        hasAnyCookieResult ?: adoptResult.isNotEmpty()
 }

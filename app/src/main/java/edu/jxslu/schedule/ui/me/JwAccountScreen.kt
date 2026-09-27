@@ -59,6 +59,7 @@ import edu.jxslu.schedule.ui.common.AccountCard
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Book01
@@ -86,12 +87,16 @@ fun JwAccountScreen(onBack: () -> Unit) {
     val prefs = remember { Graph.displayPrefs(context) }
     val cas = remember { Graph.casSession(context) }
 
-    val casCred = remember { vault.readCas() }
+    // 登录态快照只在组合期读一次：从引导页（更新账号密码）回来时组合不重建，
+    // 用「回到前台」计数当 key 重读，否则卡片会停在旧状态（2026-09-27）
+    val resumeTick = rememberResumeTick()
+    val casCred = remember(resumeTick) { vault.readCas() }
     val profileName by prefs.profileName.collectAsStateWithLifecycle(initialValue = "")
     val profileClass by prefs.profileClass.collectAsStateWithLifecycle(initialValue = "")
+    val profileStudentId by prefs.profileStudentId.collectAsStateWithLifecycle(initialValue = "")
     val suspendedTargets by SessionStatus.suspended.collectAsStateWithLifecycle()
     // 升级用户没存凭证、但 WebView 里可能还有会话：只读 CookieManager，不联网
-    val webSession = remember { WebViewCookieBridge.hasAnyCookie() }
+    val webSession = remember(resumeTick) { WebViewCookieBridge.hasAnyCookie() }
     val jwState = LoginStateRules.derive(
         credentialExists = casCred != null,
         webSessionExists = webSession,
@@ -128,11 +133,17 @@ fun JwAccountScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             AccountCard(
-                username = casCred?.username.orEmpty(),
+                username = casCred?.username ?: profileStudentId,
                 name = profileName,
                 subtitle = profileClass,
                 statusText = when (jwState) {
-                    LoginState.LoggedIn -> "已登录 · 会话过期时自动重新登录"
+                    // 没存密码也进了登录态 = 靠 WebView 用出来的网页会话（DESIGN §3.16）。
+                    // 这两种「已登录」的后续行为不同，文案要分开，否则用户以为已经能自动续登。
+                    LoginState.LoggedIn -> if (casCred != null) {
+                        "已登录 · 会话过期时自动重新登录"
+                    } else {
+                        "已登录 · 网页会话；填一次账号密码可自动续登"
+                    }
                     LoginState.Expired -> "登录状态已失效，请更新账号密码"
                     LoginState.NotLoggedIn -> "未登录 · 没有保存密码"
                 },

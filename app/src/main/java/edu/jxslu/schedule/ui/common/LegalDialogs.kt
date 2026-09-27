@@ -11,10 +11,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Disclaimer
 import edu.jxslu.schedule.domain.OpenSourceLicenses
+import kotlinx.coroutines.delay
 
 /**
  * 长文弹窗的正文高度上限：超出后正文自己滚，确认按钮始终留在可见区。
@@ -30,14 +33,28 @@ private val LegalTextMaxHeight = 420.dp
  *
  * 正文来自 [Disclaimer]，与仓库根 README.md 的「免责声明」一节同源；
  * 不在弹窗里另抄一份，避免改一处漏一处。
+ *
+ * [readSeconds] 大于 0 时进入强制阅读：确认按钮在倒计时结束前不可点，点弹窗外或按返回
+ * 也关不掉。首启引导第一步要的就是「看过」，那里传 5；「我的 → 关于」里是随时可关的
+ * 查看，用默认的 0。
  */
 @Composable
 fun DisclaimerDialog(
     onDismiss: () -> Unit,
     confirmLabel: String = "我知道了",
+    readSeconds: Int = 0,
 ) {
+    val remaining by produceState(initialValue = readSeconds, key1 = readSeconds) {
+        var left = readSeconds
+        while (left > 0) {
+            delay(1_000L)
+            left -= 1
+            value = left
+        }
+    }
+    val canDismiss = remaining <= 0
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (canDismiss) onDismiss() },
         title = { Text("免责声明") },
         text = {
             Column(
@@ -59,7 +76,9 @@ fun DisclaimerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text(confirmLabel) }
+            TextButton(onClick = onDismiss, enabled = canDismiss) {
+                Text(if (canDismiss) confirmLabel else "$remaining 秒后可关闭")
+            }
         },
     )
 }

@@ -181,8 +181,14 @@ fun WaterEntrySheet(
                     enabled = false,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("开水进行中…") }
+                // 完成 = 这次开水到此为止：先归位流程态，再把面板收掉。
+                // 开水页上的同名按钮只归位、不收页（那里本来就是页面）——面板收掉才是
+                // 用户要的「点完成窗口就没了」（2026-09-27 用户反馈）
                 is UnlockFlowState.Success -> OutlinedButton(
-                    onClick = onDismissFlow,
+                    onClick = {
+                        onDismissFlow()
+                        onDismiss()
+                    },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("完成") }
             }

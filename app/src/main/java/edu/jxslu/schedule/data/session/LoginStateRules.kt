@@ -25,4 +25,17 @@ object LoginStateRules {
         credentialExists || webSessionExists -> LoginState.LoggedIn
         else -> LoginState.NotLoggedIn
     }
+
+    /**
+     * 把三格合成身份区标题用的一档（DESIGN §3.16）。
+     *
+     * 姓名与学号都拿不到时，标题**不能一律写「未登录」**：只登了胖乖生活、或只留着一份
+     * 教务网页会话的用户会看到同一张卡上「未登录」与「● 已登录」并存（2026-09-27 用户报）。
+     * 优先级：已登录 > 已失效 > 未登录。
+     */
+    fun overall(vararg states: LoginState): LoginState = when {
+        states.any { it == LoginState.LoggedIn } -> LoginState.LoggedIn
+        states.any { it == LoginState.Expired } -> LoginState.Expired
+        else -> LoginState.NotLoggedIn
+    }
 }

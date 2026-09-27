@@ -73,9 +73,10 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
         WaterUiState(
-            loggedIn = repo.localToken() != null,
+            // 初始值取自仓库那条流，[syncLoginState] 的相等判断才有意义（两处口径一致）
+            loggedIn = repo.loggedIn.value,
             phone = repo.readPhone() ?: "",
-            orderHistory = if (repo.localToken() != null) repo.orderHistory() else emptyList(),
+            orderHistory = if (repo.loggedIn.value) repo.orderHistory() else emptyList(),
         ),
     )
     val uiState: StateFlow<WaterUiState> = _uiState.asStateFlow()
@@ -94,9 +95,30 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         _events.trySend(WaterEvent.Notice(text, tone))
 
     init {
+        // 登录态以仓库的 [QiekjRepository.loggedIn] 为准：今日页开水卡与开水页各持一份
+        // WaterViewModel，本 VM 自己登录/退出会就地改 uiState，另一份只能从这条流得知。
+        viewModelScope.launch {
+            repo.loggedIn.collect { syncLoginState(it) }
+        }
         if (_uiState.value.loggedIn) {
             refreshBalance()
             refreshDevices()
+        }
+    }
+
+    /**
+     * 登录态翻转的统一落点。相等直接跳过——本 VM 自己走的登录/退出路径已经就地改过
+     * uiState，不设这道闸会把余额与设备各多发一轮。
+     */
+    private fun syncLoginState(loggedIn: Boolean) {
+        if (loggedIn == _uiState.value.loggedIn) return
+        if (loggedIn) {
+            _uiState.update { it.copy(loggedIn = true, orderHistory = repo.orderHistory()) }
+            refreshBalance()
+            refreshDevices()
+        } else {
+            cancelFlowJobs()
+            _uiState.update { WaterUiState() }
         }
     }
 
@@ -168,8 +190,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         }
         runCatching {
             _uiState.update { it.copy(tokenLoggingIn = true) }
+            // 先验后存：存了就会翻转共享登录态（今日页开水卡立刻切形态），验失败再回滚是可见闪跳
+            repo.validateToken(token)
             repo.saveToken(token)
-            repo.validateToken()
         }.onSuccess {
             onLoginSuccess("登录成功")
         }.onFailure {
@@ -179,22 +202,22 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         }
     }
 
+    /**
+     * 登录成功的收尾（清表单 + 提示）。**不在这里改 `loggedIn`、也不拉余额/设备**：
+     * token 一落盘 [syncLoginState] 就接手了，两处都做会让每次登录多发两轮请求。
+     */
     private fun onLoginSuccess(message: String) {
         _uiState.update {
             it.copy(
-                loggedIn = true,
                 loggingIn = false,
                 tokenLoggingIn = false,
                 showTokenLogin = false,
                 tokenLoginInput = "",
                 code = "",
                 phoneError = null,
-                orderHistory = repo.orderHistory(),
             )
         }
         notice(message, NoticeTone.Success)
-        refreshBalance()
-        refreshDevices()
     }
 
     fun logout() {

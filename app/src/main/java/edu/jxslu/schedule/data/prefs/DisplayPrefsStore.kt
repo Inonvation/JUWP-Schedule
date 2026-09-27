@@ -150,6 +150,11 @@ data class DisplayPrefs(
     val bgImageScale: BgScale = BgScale.Fill,
     /** 今日页开水卡片显示开关（DESIGN §3.3 底部固定区）。默认开；关 = 不展示（含未登录态）。 */
     val waterCardEnabled: Boolean = true,
+    /**
+     * 今日页趣智校园卡片显示开关（DESIGN §4.30）。**默认开**。
+     * 与开水卡并排占一行：开 = 两卡各半行；关 = 胖乖生活独占整行（回到加本卡之前的样子）。
+     */
+    val qzxyCardEnabled: Boolean = true,
     /** 今日页共享单车卡显示开关（DESIGN §3.9）。默认开（用户要求入口常驻）。 */
     val ebikeCardEnabled: Boolean = true,
     /**
@@ -319,11 +324,23 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_PROFILE_CLASS].orEmpty()
     }
 
-    /** 学籍卡落库；姓名/班级为空串时各键不动，避免一次脏解析抹掉已有数据。 */
-    suspend fun setProfile(name: String?, className: String?) {
+    /**
+     * 「我的」账号条：学号（教务学籍卡导入）。
+     *
+     * 存在的理由：学号原先只从凭证里取，于是「引导跳过教务、后来在导入页手登」的用户
+     * 有会话却没凭证，卡片只能写「未登录」（2026-09-27 用户报）。学籍卡本来就有学号，
+     * 顺手落库，身份区就有真值可用。
+     */
+    val profileStudentId: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_STUDENT_ID].orEmpty()
+    }
+
+    /** 学籍卡落库；各字段为空串时对应键不动，避免一次脏解析抹掉已有数据。 */
+    suspend fun setProfile(name: String?, className: String?, studentId: String? = null) {
         context.displayDataStore.edit { p ->
             if (!name.isNullOrBlank()) p[KEY_PROFILE_NAME] = name.trim()
             if (!className.isNullOrBlank()) p[KEY_PROFILE_CLASS] = className.trim()
+            if (!studentId.isNullOrBlank()) p[KEY_PROFILE_STUDENT_ID] = studentId.trim()
         }
     }
 
@@ -489,6 +506,11 @@ class DisplayPrefsStore(private val context: Context) {
      */
     val waterCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_WATER_CARD_ENABLED] ?: true
+    }.distinctUntilChanged()
+
+    /** 今日页趣智校园卡片开关（DESIGN §4.30）。全局项，默认开。 */
+    val qzxyCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_QZXY_CARD_ENABLED] ?: true
     }.distinctUntilChanged()
 
     /** 今日页共享单车卡开关（DESIGN §3.9）。全局项，默认开。 */
@@ -818,6 +840,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 今日页开水卡片开关（DESIGN §3.3）。 */
     suspend fun setWaterCardEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_WATER_CARD_ENABLED] = value }
+    }
+
+    /** 今日页趣智校园卡片开关（DESIGN §4.30）。 */
+    suspend fun setQzxyCardEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_QZXY_CARD_ENABLED] = value }
     }
 
     /** 今日页共享单车卡开关（DESIGN §3.9）。 */
@@ -1160,6 +1187,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_WIDGET_SETUP_SEEN = booleanPreferencesKey("widget_setup_seen")
         val KEY_SHORTCUTS_ENABLED = booleanPreferencesKey("shortcuts_enabled")
         val KEY_WATER_CARD_ENABLED = booleanPreferencesKey("water_card_enabled")
+        val KEY_QZXY_CARD_ENABLED = booleanPreferencesKey("qzxy_card_enabled")
         val KEY_EBIKE_CARD_ENABLED = booleanPreferencesKey("ebike_card_enabled")
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
@@ -1198,6 +1226,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCORE_SORT_MODE = stringPreferencesKey("score_sort_mode")
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_CLASS = stringPreferencesKey("profile_class")
+        val KEY_PROFILE_STUDENT_ID = stringPreferencesKey("profile_student_id")
         val KEY_PROFILE_SYNC_DATE = stringPreferencesKey("profile_sync_date")
         val KEY_ONBOARDING_SEEN = booleanPreferencesKey("onboarding_seen")
         val KEY_SCHOLAR_PLAN_NAME = stringPreferencesKey("scholar_plan_name")

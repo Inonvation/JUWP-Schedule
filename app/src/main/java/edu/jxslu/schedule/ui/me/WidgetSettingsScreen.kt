@@ -63,7 +63,6 @@ import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.widget.CampusCardWidgetReceiver
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
-import edu.jxslu.schedule.ui.widget.PowerWidgetReceiver
 import edu.jxslu.schedule.ui.widget.ScheduleWidgetReceiver
 import edu.jxslu.schedule.ui.widget.WidgetDay
 import edu.jxslu.schedule.ui.widget.WidgetFocus
@@ -88,15 +87,15 @@ import java.time.LocalDate
 /**
  * 「我的 → 桌面小组件」设置页（DESIGN §3.6）。
  *
- * 2026-09-27 **三条目改版**：可添加条目按内容扩为三条——课表（2026-09-20 单条目自适应，
- * 不变）/ 校园卡 / 电费（各一条 receiver，**不是按尺寸拆**，旧规矩「不要按尺寸拆 receiver」
- * 不变）。页面随之从单条目页重排为「添加区（三条）+ 各条目数据与点击说明 + 公共节」：
+ * 2026-09-27 **二条目改版**：可添加条目为课表（2026-09-20 单条目自适应，不变）+
+ * 「校园卡 · 电费」合并卡（当天先从一条拆成三条、再合并回一条：拆开后 2 格宽的卡片
+ * 只放得下一块信息，桌面看着空）。条目仍是**按内容拆**，不是按尺寸拆。页面结构：
  *
- * 1. 添加到桌面：三行添加条目，各自 `requestPinAppWidget`、各自计数徽标；
+ * 1. 添加到桌面：两行添加条目，各自 `requestPinAppWidget`、各自计数徽标；
  * 2. 课表尺寸形态：四张预览（同一份快照按四档裁剪，只作说明用）收进 2×2 网格省纵向空间；
- * 3. 校园卡：口径 / 更新时机 / 点击行为 bullets + 「在小组件中隐藏余额」开关（默认关）；
- * 4. 电费：读数口径 / 「小组件自身不联网」/ 点击行为 bullets；
- * 5. 后台及时性（可选）/ 说明：三条目共用。
+ * 3. 校园卡（主区）：口径 / 更新时机 / 点击行为 bullets + 「在小组件中隐藏余额」开关（默认关）；
+ * 4. 电费（副行）：读数口径 / 「小组件自身不联网」/ 点击行为 bullets；
+ * 5. 后台及时性（可选）/ 说明：两条目共用。
  *
  * 交互规则不变（用户已拍板「自动检测 + 逐项申请」）：进页只读检测；**首次进入**自动弹
  * 一次说明弹层（含一键添加课表条目），此后不再自动弹；不主动拉任何系统框。
@@ -168,7 +167,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             SettingsSection(
                 title = "添加到桌面",
                 subtitle = if (caps.canPin) {
-                    "点「添加」后在系统确认框里一键放到桌面；三个条目各自独立添加，可以同时上桌面"
+                    "点「添加」后在系统确认框里一键放到桌面；两个条目各自独立添加，可以同时上桌面"
                 } else {
                     "当前桌面不支持应用内添加，请长按桌面空白处 → 小组件 → 水贝贝"
                 },
@@ -231,7 +230,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
 
             SettingsSection(title = "校园卡", subtitle = "数据与点击") {
                 Spacer(Modifier.height(4.dp))
-                Bullet("余额只算正式卡（食堂 / 门禁），电子账户在副行小字单独展示。")
+                Bullet("余额只算正式卡（食堂 / 门禁）；电子账户余额不上卡片，在付款码页与生活页看。")
                 Bullet("点小组件任意位置 = 打开全屏付款码页：防截屏、亮度拉满、扫码后自动退出。")
                 Bullet("余额更新：打开 App 生活页或付款码页即时更新；后台约每 2 小时一次；" +
                     "取数失败保留上次余额与更新时刻，不会清空。")
@@ -248,12 +247,13 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(2.dp))
             }
 
-            SettingsSection(title = "电费", subtitle = "数据与点击") {
+            SettingsSection(title = "电费（卡片副行）", subtitle = "数据与点击") {
                 Spacer(Modifier.height(4.dp))
-                Bullet("显示最近一次读数：剩余电量（度）+ 按单价折合金额 + 寝室房号。")
+                Bullet("副行显示最近一次读数：剩余电量（度）+ 按单价折合金额。卡片窄到 2 格时" +
+                    "只留「电费 23.7 度 · ¥14.69」，单价括号省掉。")
                 Bullet("更新时机：打开生活页 / 充值 / 每日余额检查后同步；小组件自身不联网取数" +
                     "（读数密度 = 打开 App 的密度）。")
-                Bullet("点小组件任意位置 = 打开「缴费账单 · 用电统计」。")
+                Bullet("点副行 = 打开「缴费账单 · 用电统计」；点卡片其余位置 = 出示付款码。")
                 Bullet("还没有读数时显示引导；凭证关闭时一并回落，不残留旧数字。")
                 Spacer(Modifier.height(2.dp))
             }
@@ -285,9 +285,9 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
 
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(6.dp))
-                Bullet("三个条目各自独立添加，可以同时上桌面。")
+                Bullet("两个条目各自独立添加，可以同时上桌面。")
                 Bullet("内容与 App 内同口径：课表与「今日」页一致，余额与生活页钱包卡一致。")
-                Bullet("跟随系统深浅色；课表条目不占用额外网络，电费条目只显示已取到的读数。")
+                Bullet("跟随系统深浅色；校园卡余额与电费都不在渲染路径上联网，电费只显示已取到的读数。")
                 Bullet("「还有 N 分钟」按刷新时刻计算，两次刷新之间不会跳动。")
                 Spacer(Modifier.height(6.dp))
                 LauncherNoteRow()
@@ -302,7 +302,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             onAdd = {
                 showIntro = false
                 // 弹层里的「现在添加」默认钉一个课表 4×2（推荐）：横条在桌面上信息密度与
-                // 可读性平衡最好，之后可随时拖动改大小。校园卡 / 电费条目由用户按需自行添加。
+                // 可读性平衡最好，之后可随时拖动改大小。「校园卡 · 电费」条目由用户按需自行添加。
                 // 弹层刚关（它也是独立窗口），提示改由页面宿主展示，不被盖住
                 onAddClicked(context, ScheduleWidgetReceiver::class.java)?.let(showNotice)
             },
@@ -311,7 +311,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
     }
 }
 
-/** 可添加的三条目（DESIGN §3.6 三条目改版）；顺序即页面里的顺序。 */
+/** 可添加的两条目（DESIGN §3.6 二条目改版）；顺序即页面里的顺序。 */
 private data class WidgetEntry(
     val label: String,
     val description: String,
@@ -331,20 +331,12 @@ private val entries = listOf(
         countOf = { it.scheduleAdded },
     ),
     WidgetEntry(
-        label = "水贝贝 · 校园卡",
-        description = "桌面看余额，点一下直接出示付款码",
+        label = "水贝贝 · 校园卡 · 电费",
+        description = "余额大字 + 电费小字；点卡片出示付款码，点电费行进用电统计",
         receiver = CampusCardWidgetReceiver::class.java,
         icon = HugeIcons.Wallet03,
         iconTint = Color(0xFF1F7A4D),
         countOf = { it.campusAdded },
-    ),
-    WidgetEntry(
-        label = "水贝贝 · 电费",
-        description = "桌面看剩余电度，点一下看用电统计",
-        receiver = PowerWidgetReceiver::class.java,
-        icon = HugeIcons.Energy,
-        iconTint = Color(0xFF9A6400),
-        countOf = { it.powerAdded },
     ),
 )
 
@@ -353,7 +345,6 @@ private fun readCaps(context: Context): WidgetCaps = WidgetCaps(
     batteryWhitelisted = WidgetCapabilities.isIgnoringBatteryOptimizations(context),
     scheduleAdded = WidgetCapabilities.addedCountOf(context, ScheduleWidgetReceiver::class.java),
     campusAdded = WidgetCapabilities.addedCountOf(context, CampusCardWidgetReceiver::class.java),
-    powerAdded = WidgetCapabilities.addedCountOf(context, PowerWidgetReceiver::class.java),
 )
 
 private data class WidgetCaps(
@@ -361,7 +352,6 @@ private data class WidgetCaps(
     val batteryWhitelisted: Boolean,
     val scheduleAdded: Int,
     val campusAdded: Int,
-    val powerAdded: Int,
 )
 
 /**
@@ -779,8 +769,8 @@ private fun IntroDialog(
         text = {
             Text(
                 text = "课表：小到 2×2 看下一节，拖到 4×4 变本周课表。\n\n" +
-                    "校园卡：桌面看余额，点一下直接出示付款码。\n\n" +
-                    "电费：桌面看剩余电度，点一下看用电统计。\n\n" +
+                    "校园卡 · 电费：桌面看余额大字与电费小字；点卡片出示付款码，" +
+                    "点电费那一行进用电统计。\n\n" +
                     "小组件在上下课时刻自动更新；希望更及时可在页面下方开启" +
                     "「忽略电池优化」与「允许自启动」（可选，不开也能用）。",
                 style = MaterialTheme.typography.bodyMedium,

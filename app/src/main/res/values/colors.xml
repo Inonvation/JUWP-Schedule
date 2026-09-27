@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1FA3A3</color>
+    <!-- 自适应图标背景层：图标图形是「白底蓝色日历 + 水滴」，底色必须白，改色会和图形里的白色内页对不上 -->
+    <color name="ic_launcher_background">#FFFFFF</color>
 </resources>

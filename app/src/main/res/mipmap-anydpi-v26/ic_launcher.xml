@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  前景是位图（drawable-*dpi/ic_launcher_foreground.png），不是矢量：源图是蓝色渐变，
+  用矢量复刻要手写渐变节点，收益不抵风险。图形在 108dp 画布里的外接框固定 51dp——
+  Android 会把两层各放大 1.5 倍再裁切，108dp 画布中间 72dp 才是可见区，
+  51/72 ≈ 71% 与源图图形占方块的 70% 一致，且墨迹外接圆（≈47dp 遮罩坐标）
+  留在圆形遮罩半径 54dp 以内，Pixel 圆遮罩 / MIUI 方遮罩都不会切到日历角。
+  尺寸口径与取值理由见 DESIGN §4.28，重导出跑 tools/app-icon/make_foreground.py。
+  monochrome 直接复用前景的透明度通道（日历方框 + 四格 + 水滴的剪影）。
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />

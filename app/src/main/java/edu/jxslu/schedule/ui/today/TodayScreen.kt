@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.ui.today
 
 import androidx.compose.animation.AnimatedContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.expandVertically
@@ -52,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -67,16 +70,23 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
+import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
+import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
+import edu.jxslu.schedule.ui.qzxy.QzxyUiState
+import edu.jxslu.schedule.ui.qzxy.rememberQzxyWateringClock
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.domain.metaLine
 import edu.jxslu.schedule.domain.sectionRange
 import edu.jxslu.schedule.domain.TimeSlot
@@ -113,6 +123,7 @@ import me.rerere.hugeicons.stroke.ChevronDown
 import me.rerere.hugeicons.stroke.ChevronUp
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
+import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.ScooterElectric
@@ -135,7 +146,7 @@ import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
  *   编辑/删除是详情里的二级动作——直跳编辑器易误触。
  *
  * 底部固定区（DESIGN §3.3）：快捷方式三列图标网格（§3.8）在上、快趣出行码整行卡居中、
- * 一键开水卡在最底，用 [TodayBottomDock]**钉在滚动区下方**——此前它们是 LazyColumn 的
+ * 生活卡片带（胖乖 + 趣智校园，§3.18）在最底，用 [TodayBottomDock]**钉在滚动区下方**——此前它们是 LazyColumn 的
  * 最后两项，课少时悬在屏幕中段、课多时要滑到底才看得见，同一个「固定区」在空态（贴底）
  * 与有课态（跟滚）之间还是两种表现。三态共用同一个 dock，位置不随状态漂移。
  * 开水卡默认常显（未登录给未登录态，显示设置可关）。
@@ -148,6 +159,8 @@ fun TodayScreen(
     /** 「尚未开学」空态的 CTA：跳课表设置（学期起止） */
     onOpenTimetableSettings: () -> Unit = {},
     onOpenWater: () -> Unit = {},
+    /** 趣智校园开热水页（DESIGN §4.30）：与胖乖生活并排的半行卡，独立窗口 */
+    onOpenQzxy: () -> Unit = {},
     /** 共享单车出码页（DESIGN §3.9，SubpageActivity 独立窗口） */
     onOpenEbike: () -> Unit = {},
     /** 附近单车地图页（DESIGN §3.9）：快趣出行码卡右侧入口直达 */
@@ -162,6 +175,8 @@ fun TodayScreen(
     onOpenCourseHomework: (Course) -> Unit = {},
     /** 与开水页共享的 Activity 作用域实例；开水卡的解锁进度与登录态两页一致 */
     waterViewModel: WaterViewModel? = null,
+    /** 与趣智校园页共享的 Activity 作用域实例；今日页半行卡读它的登录态与余额 */
+    qzxyViewModel: QzxyViewModel? = null,
     viewModel: TodayViewModel = viewModel(
         factory = TodayViewModel.Factory(
             Graph.repository(LocalContext.current),
@@ -175,12 +190,30 @@ fun TodayScreen(
     val waterEntryState by waterViewModel?.uiState
         ?.collectAsStateWithLifecycle()
         ?: remember { mutableStateOf(WaterUiState()) }
+    // 趣智校园面板同理：面板里的计时与流程态要逐帧跟随，不能读打开瞬间的快照
+    val qzxyEntryState by qzxyViewModel?.uiState
+        ?.collectAsStateWithLifecycle()
+        ?: remember { mutableStateOf(QzxyUiState()) }
     val homework by viewModel.homeworkPending.collectAsStateWithLifecycle()
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
+    val qzxyCardEnabled by viewModel.qzxyCardEnabled.collectAsStateWithLifecycle()
     val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
+    // 免费时长计时的两个值直接读偏好仓库：`DisplayPrefs` 那层合并读模型不带它们，
+    // 而快趣卡只是展示（与 BikeMapScreen / EbikeQrScreen 读同一个单例）
+    val context = LocalContext.current
+    // 趣智登录态：卡片与开水面板都要，直接订阅仓库那条流（理由见 QzxyCard 里的注释）
+    val qzxyRepo = remember(context) { Graph.qzxy(context) }
+    val qzxyLoggedIn by qzxyRepo.loggedIn.collectAsStateWithLifecycle()
+    val ebikePrefs = remember(context) { Graph.displayPrefs(context) }
+    val ebikeRideStartAt by ebikePrefs.ebikeRideStartAt
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    val ebikeFreeReminderEnabled by ebikePrefs.ebikeFreeReminderEnabled
+        .collectAsStateWithLifecycle(initialValue = false)
     val dockExpanded by viewModel.todayDockExpanded.collectAsStateWithLifecycle()
     var showWaterEntrySheet by remember { mutableStateOf(false) }
+    // 趣智校园的余额面板（DESIGN §3.18）：与开水面板同形态，入口也是卡片右侧的余额
+    var showQzxyEntrySheet by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Course?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
     var detailCourse by remember { mutableStateOf<Course?>(null) }
@@ -230,6 +263,26 @@ fun TodayScreen(
         scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
     }
 
+    // 趣智校园开阀要连蓝牙，权限在今日页也要能就地补——缺权限时面板里点开始用水
+    // 直接拉起系统授权，授完接着开阀，不把用户赶回趣智校园页
+    val qzxyPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        if (result.values.all { granted -> granted }) {
+            qzxyViewModel?.openValveFromCard()
+        } else {
+            showNotice("缺少「附近的设备」权限，连不上热水器", NoticeTone.Warning)
+        }
+    }
+    val startQzxyValve: () -> Unit = {
+        val missing = AppPermissions.missingBluetoothScan(context)
+        if (missing.isEmpty()) {
+            qzxyViewModel?.openValveFromCard()
+        } else {
+            qzxyPermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
     // 撤销型反馈（DESIGN §3.3）：删除课程后给「撤销」
     val undoable by viewModel.undoable.collectAsStateWithLifecycle()
     LaunchedEffect(undoable) {
@@ -253,14 +306,65 @@ fun TodayScreen(
             // 共享单车整行卡（DESIGN §3.9，2026-09-24 起，开关关 = 整卡不占位）：
             // 点卡片其余位置进出码页，右侧「附近单车 ›」直达地图页
             ebikeCard = if (ebikeCardEnabled) {
-                { EbikeCard(onOpen = onOpenEbike, onOpenMap = onOpenEbikeMap) }
+                {
+                    EbikeCard(
+                        onOpen = onOpenEbike,
+                        onOpenMap = onOpenEbikeMap,
+                        rideStartAt = ebikeRideStartAt,
+                        freeReminderEnabled = ebikeFreeReminderEnabled,
+                    )
+                }
             } else {
                 null
             },
-            waterCard = if (waterCardEnabled && waterViewModel != null) {
-                { WaterCard(waterViewModel, onOpenWater) { showWaterEntrySheet = true } }
-            } else {
-                null
+            // 生活卡片带（DESIGN §4.30）：胖乖在左、趣智校园在右，各占半行；
+            // 任一方关掉后另一方独占整行，两张都关则整个位置不占。
+            waterCard = run {
+                val showWater = waterCardEnabled && waterViewModel != null
+                val showQzxy = qzxyCardEnabled && qzxyViewModel != null
+                when {
+                    !showWater && !showQzxy -> null
+                    showWater && showQzxy -> {
+                        {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Box(Modifier.weight(1f)) {
+                                    WaterCard(
+                                        waterViewModel!!,
+                                        onOpenWater,
+                                        horizontalPadding = 0.dp,
+                                        compact = true,
+                                    ) {
+                                        showWaterEntrySheet = true
+                                    }
+                                }
+                                Box(Modifier.weight(1f)) {
+                                    QzxyCard(
+                                        vm = qzxyViewModel!!,
+                                        onOpen = onOpenQzxy,
+                                        onOpenEntrySheet = { showQzxyEntrySheet = true },
+                                        horizontalPadding = 0.dp,
+                                        compact = true,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    showWater -> {
+                        { WaterCard(waterViewModel!!, onOpenWater) { showWaterEntrySheet = true } }
+                    }
+                    else -> {
+                        {
+                            QzxyCard(
+                                vm = qzxyViewModel!!,
+                                onOpen = onOpenQzxy,
+                                onOpenEntrySheet = { showQzxyEntrySheet = true },
+                            )
+                        }
+                    }
+                }
             },
         )
     }
@@ -445,13 +549,28 @@ fun TodayScreen(
             onDismiss = { showWaterEntrySheet = false },
         )
     }
+
+    // 趣智校园：点余额的开水面板（DESIGN §3.18）——余额/设备/用水状态/结算，
+    // 与趣智校园页共享同一个 QzxyViewModel，面板里开的阀在页面上状态一致
+    if (showQzxyEntrySheet && qzxyViewModel != null) {
+        QzxyEntrySheet(
+            state = qzxyEntryState,
+            loggedIn = qzxyLoggedIn,
+            onStart = startQzxyValve,
+            onStop = { qzxyViewModel.stopWater() },
+            onAbandon = { qzxyViewModel.abandonWatering() },
+            onDismissSettlement = { qzxyViewModel.dismissSettlement() },
+            onOpenPage = onOpenQzxy,
+            onDismiss = { showQzxyEntrySheet = false },
+        )
+    }
 }
 
 /**
  * 底部固定区（DESIGN §3.3）：**钉在滚动区下方**，不随课表滚动。
  *
  * 结构（2026-09-24 起）：快捷方式三列图标网格（§3.8）在上 → **快趣出行码整行卡**
- * （§3.9，右侧「附近单车 ›」直达地图）→ 一键开水卡恒在最底。三态（加载中/空态/有课态）
+ * （§3.9，右侧「附近单车 ›」直达地图）→ 生活卡片带恒在最底。三态（加载中/空态/有课态）
  * 共用本组件，位置不随状态漂移；全部关掉时只剩一个空 Column，高度为 0。
  *
  * **服务格并排的取消**（2026-09-24）：此前快趣出行与水宝宝一卡通并成一行两列；
@@ -484,7 +603,7 @@ private fun TodayBottomDock(
     onNotice: (String, NoticeTone) -> Unit = { _, _ -> },
     /** 快趣出行码整行卡（DESIGN §3.9）；快捷方式之下、开水卡之上 */
     ebikeCard: (@Composable () -> Unit)? = null,
-    /** 开水卡（含未登录态，显示设置可关）；恒为 dock 最后一项 */
+    /** 生活卡片带：胖乖生活 + 趣智校园（§3.18），各自可关；恒为 dock 最后一项 */
     waterCard: (@Composable () -> Unit)? = null,
 ) {
     val expanded = dockExpanded ?: return
@@ -996,11 +1115,20 @@ private val QuickCardMinHeight = 58.dp
 
 /**
  * 快趣出行码整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
- * 标题「快趣出行码」+ 副行「微信扫一扫开车」，**右侧「附近单车 ›」是二级入口**
+ * 标题「快趣出行码」+ 副行，**右侧「附近单车 ›」是二级入口**
  * （[CardSideActionText]，直达附近单车地图 `EBIKE_MAP`）；点卡片其余位置进出码页。
+ *
+ * 副行在免费时长计时中换成倒计时（[rideSubtitle]），其余是「微信扫一扫开车」。
  */
 @Composable
-private fun EbikeCard(onOpen: () -> Unit, onOpenMap: () -> Unit) {
+private fun EbikeCard(
+    onOpen: () -> Unit,
+    onOpenMap: () -> Unit,
+    /** 进行中的免费时长计时起点（epoch 毫秒，0 = 无计时）。 */
+    rideStartAt: Long = 0L,
+    /** 免费时长提醒开关；关着时不展示倒计时，与出码页计时条同一口径。 */
+    freeReminderEnabled: Boolean = false,
+) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
     AppCardRow(
@@ -1027,7 +1155,7 @@ private fun EbikeCard(onOpen: () -> Unit, onOpenMap: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "微信扫一扫开车",
+                text = rideSubtitle(rideStartAt, freeReminderEnabled),
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
@@ -1046,20 +1174,202 @@ private fun EbikeCard(onOpen: () -> Unit, onOpenMap: () -> Unit) {
     }
 }
 
+/** 快趣卡副行的常态文案。 */
+private const val EBIKE_CARD_SUBTITLE = "微信扫一扫开车"
 
 /**
- * 一键开水卡（DESIGN §3.3 底部固定区）：**默认常显**，按登录态分两形态——
+ * 快趣卡副行文案（DESIGN §3.9）：免费时长计时中显示「免费剩余 mm:ss」，其余为常态文案。
+ *
+ * 计时条那条口径照搬出码页（`EbikeQrScreen` 的 `timerActive`）：开关关着时只记起点、
+ * 不展示倒计时，两处对同一段计时的说法保持一致。每秒刷一次，切走页面或计时结束
+ * （起点被清成 0）就停；到点后落回常态文案。
+ */
+@Composable
+private fun rideSubtitle(rideStartAt: Long, freeReminderEnabled: Boolean): String {
+    val counting = freeReminderEnabled &&
+        EbikeFreeRide.isActive(rideStartAt, System.currentTimeMillis())
+    val text by produceState(
+        initialValue = if (counting) {
+            EbikeFreeRide.countdownText(rideStartAt, System.currentTimeMillis())
+        } else {
+            EBIKE_CARD_SUBTITLE
+        },
+        key1 = rideStartAt,
+        key2 = counting,
+    ) {
+        if (!counting) return@produceState
+        while (true) {
+            val now = System.currentTimeMillis()
+            if (!EbikeFreeRide.isActive(rideStartAt, now)) break
+            value = EbikeFreeRide.countdownText(rideStartAt, now)
+            delay(1_000L)
+        }
+        value = EBIKE_CARD_SUBTITLE
+    }
+    return text
+}
+
+
+/**
+ * 胖乖生活卡（DESIGN §3.3 底部固定区）：**默认常显**，按登录态分两形态——
  * 已登录 = 余额卡形态（[WaterQuickEntry]，点余额弹开水操作面板，点卡片其余位置进开水页）；
  * 未登录 = 未登录态（[WaterLoggedOutCard]，点卡片跳开水页，登录表单就在该页）。
  */
 @Composable
-private fun WaterCard(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntrySheet: () -> Unit) {
+private fun WaterCard(
+    vm: WaterViewModel,
+    onOpen: () -> Unit,
+    horizontalPadding: Dp = 16.dp,
+    /**
+     * 半行形态（与趣智校园并排时）：标题缩成「胖乖」、右侧只留金额。
+     * 整行时不动——半行宽度放不下「胖乖生活 + 小票 ¥x.xx ›」这一套。
+     */
+    compact: Boolean = false,
+    onOpenEntrySheet: () -> Unit,
+) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     if (state.loggedIn) {
-        WaterQuickEntry(vm, onOpen, onOpenEntrySheet)
+        WaterQuickEntry(vm, onOpen, onOpenEntrySheet, horizontalPadding, compact)
     } else {
-        WaterLoggedOutCard(onOpen)
+        WaterLoggedOutCard(onOpen, horizontalPadding, compact)
     }
+}
+
+/**
+ * 趣智校园卡（DESIGN §4.30）：与胖乖生活卡并排的半行卡，点整卡进趣智校园页。
+ *
+ * 卡上只放三件事：登录态、余额、页名。设备与开阀流程都在页内——
+ * 半行宽度放不下设备列表，也不该在这里发起任何蓝牙动作。
+ */
+@Composable
+private fun QzxyCard(
+    vm: QzxyViewModel,
+    onOpen: () -> Unit,
+    onOpenEntrySheet: () -> Unit,
+    horizontalPadding: Dp = 16.dp,
+    /**
+     * 半行形态（与胖乖生活并排时）：标题缩成「趣智」。
+     * 右边多了余额之后，半行宽度放不下「趣智校园」四个字加金额，真机上标题会被
+     * 挤成「趣智…」——与胖乖卡同一处理（那边是「胖乖生活」→「胖乖」）。
+     */
+    compact: Boolean = false,
+) {
+    val state by vm.uiState.collectAsStateWithLifecycle()
+    val primary = MaterialTheme.colorScheme.primary
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    // 登录态直接订阅仓库那条流，而不是只读 ViewModel 的镜像：会话登录可能发生在
+    // 引导窗口或趣智校园页（都是另一份 ViewModel 实例），卡片这里要的是「这个账号
+    // 到底登没登」这个事实，仓库是唯一的真相源
+    val context = LocalContext.current
+    val qzxyRepo = remember(context) { Graph.qzxy(context) }
+    val loggedIn by qzxyRepo.loggedIn.collectAsStateWithLifecycle()
+    AppCardRow(
+        modifier = Modifier
+            .padding(horizontal = horizontalPadding)
+            .heightIn(min = QuickCardMinHeight),
+        onClick = onOpen,
+        onClickLabel = "打开趣智校园开热水页",
+        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+        // 用水中把整卡点亮（主色描边）：副行那行小字在半行宽度上不够显眼，
+        // 水开着却看不出来是要花钱的
+        highlighted = state.watering != null,
+    ) {
+        Icon(
+            // 花洒：趣智校园是「洗澡开热水」，不是喝水（2026-09-27 用户拍板）
+            HugeIcons.ShowerHead,
+            contentDescription = null,
+            tint = primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            WaterCardTitle(if (compact) "趣智" else "趣智校园")
+            QzxyCardSubtitle(state, loggedIn)
+        }
+        Spacer(Modifier.width(4.dp))
+        // 右侧余额是面板入口（与胖乖生活卡同口径）：半行宽度放不下第二个按钮，
+        // 而余额本来就是这张卡最想被点的地方
+        when {
+            // 未登录时余额不会有人去拉，那个位置一直挂「读取中…」是假进度；
+            // 换成登录入口，点它开面板
+            !loggedIn -> CardSideActionText(
+                text = "登录 ›",
+                style = MaterialTheme.typography.bodySmall,
+                color = primary,
+                onClickLabel = "登录趣智校园",
+                onClick = onOpenEntrySheet,
+            )
+            state.balance != null -> {
+                val balance = state.balance
+                CardSideActionText(
+                    text = "¥${balance?.text} ›",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = primary,
+                    fontWeight = FontWeight.SemiBold,
+                    onClickLabel = "查看余额与开热水",
+                    onClick = onOpenEntrySheet,
+                )
+            }
+            state.balanceLoaded -> CardSideActionText(
+                text = "余额暂不可用 ›",
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+                onClickLabel = "查看余额与开热水",
+                onClick = onOpenEntrySheet,
+            )
+            else -> Text(
+                text = "余额读取中…",
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * 趣智卡的副行（DESIGN §3.18）：用水中显示计时，否则显示设备名。
+ *
+ * 设备名优先用上次用的那台——绑了多台时，挑字母序第一台没有意义。一台都没绑过
+ * 才退回「点此选择」。
+ */
+@Composable
+private fun QzxyCardSubtitle(state: QzxyUiState, loggedIn: Boolean) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val watering = state.watering
+    val text: String
+    if (watering != null) {
+        text = "用水中 ${rememberQzxyWateringClock(watering.startedAtMillis)}"
+    } else {
+        val lastUsed = state.lastUsedDevice
+        text = when {
+            !loggedIn -> "点此登录"
+            lastUsed != null -> shortDeviceName(lastUsed.name)
+            state.boundDevices.isNotEmpty() -> shortDeviceName(state.boundDevices.first().name)
+            else -> "还没绑定设备 · 点此选择"
+        }
+    }
+    Text(
+        text = text,
+        // 等宽数字：用水中那行每秒刷新，比例数字会让文字左右抽动
+        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+        color = onSurface.copy(alpha = 0.55f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/**
+ * 半行卡上的设备名：取最后一段（房号）。
+ *
+ * 服务端的名字形如「热水表-1栋B-2层-201房」，半行宽度扣掉图标与右侧余额只剩
+ * 三四个字的位，整串会被截成「热水表…」——那等于没写。房号是唯一能认出是哪台的
+ * 部分，取它。名字里没有分隔符就原样返回。完整名字在趣智校园页的设备行上。
+ */
+private fun shortDeviceName(name: String): String {
+    val tail = name.substringAfterLast('-', missingDelimiterValue = name).trim()
+    return tail.ifBlank { name }
 }
 
 /**
@@ -1117,12 +1427,16 @@ private fun DockHandle(
  * 不显示设备/解锁按钮——登录表单在开水页（SubpageActivity.WATER），点卡片直达。
  */
 @Composable
-private fun WaterLoggedOutCard(onOpen: () -> Unit) {
+private fun WaterLoggedOutCard(
+    onOpen: () -> Unit,
+    horizontalPadding: Dp = 16.dp,
+    compact: Boolean = false,
+) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
     AppCardRow(
         modifier = Modifier
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = horizontalPadding)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
         onClickLabel = "去登录胖乖生活",
@@ -1137,14 +1451,14 @@ private fun WaterLoggedOutCard(onOpen: () -> Unit) {
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = "胖乖生活 · 未登录",
+                text = if (compact) "胖乖 · 未登录" else "胖乖生活 · 未登录",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "点击去登录，登录后可一键开水、查余额与订单",
+                text = if (compact) "点此登录" else "点击去登录，登录后可一键开水、查余额与订单",
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
@@ -1163,7 +1477,13 @@ private fun WaterLoggedOutCard(onOpen: () -> Unit) {
  * 关闭弹窗不等于丢弃状态，右侧余额仍可点回面板看完整进度。
  */
 @Composable
-private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntrySheet: () -> Unit) {
+private fun WaterQuickEntry(
+    vm: WaterViewModel,
+    onOpen: () -> Unit,
+    onOpenEntrySheet: () -> Unit,
+    horizontalPadding: Dp = 16.dp,
+    compact: Boolean = false,
+) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val flow = state.flow
     val primary = MaterialTheme.colorScheme.primary
@@ -1171,7 +1491,7 @@ private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntryS
     val haptics = rememberAppHaptics()
     AppCardRow(
         modifier = Modifier
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = horizontalPadding)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
         onClickLabel = "打开胖乖生活开水页",
@@ -1185,7 +1505,7 @@ private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntryS
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            WaterCardTitle("胖乖生活")
+            WaterCardTitle(if (compact) "胖乖" else "胖乖生活")
             // 副行：Idle = 设备名（异步取的，占位口径见 [waterDeviceLabel]）；
             // 流程态 = 流程简报（计时/结算文案每秒都在变，不做 Crossfade，会一直闪）。
             // 简报纯展示不可点——进面板走右侧余额，副行不再嵌套 clickable
@@ -1211,7 +1531,11 @@ private fun WaterQuickEntry(vm: WaterViewModel, onOpen: () -> Unit, onOpenEntryS
             state.balance != null -> {
                 val balance = state.balance
                 CardSideActionText(
-                    text = "小票 ¥${balance?.ticketText} ›",
+                    text = if (compact) {
+                        "¥${balance?.ticketText} ›"
+                    } else {
+                        "小票 ¥${balance?.ticketText} ›"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = primary,
                     fontWeight = FontWeight.SemiBold,
@@ -1308,7 +1632,7 @@ private fun WaterCardTitle(text: String) {
 /**
  * 快捷方式三列图标网格（DESIGN §3.8，2026-09-19 自横滑 chips 改，用户拍板）：
  * 应用图标样式——方形图标块 + 块下单行名称，三项一行、超出换行；新增条目按列表顺序
- * 落最后的新行，区块向上生长（开水卡恒在底部固定区最后一项）。
+ * 落最后的新行，区块向上生长（生活卡片带恒在底部固定区最后一项）。
  * 点击立即拉起（执行层与错误口径见 [ShortcutLauncher]，失败走 [onShortcutError] 的
  * Snackbar 兜底，不做预检确认）；长按弹菜单：添加到桌面 / 快捷方式设置。
  */

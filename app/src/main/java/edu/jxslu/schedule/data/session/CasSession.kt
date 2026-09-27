@@ -105,7 +105,32 @@ class CasSession(
             }
         }
 
-        if (credentials == null) return CasEnsureResult.NoCredential
+        if (credentials == null) {
+            // 没存过统一认证密码。但 WebView 里可能有一份**用出来的**会话：引导跳过教务、
+            // 后来在导入页手登一次的人就是这个形状（DESIGN §4.27 回灌是唯一方向）。
+            // 认下它，学籍卡 / 成绩 / 学业完成情况这些 OkHttp 取数才不是「未登录」。
+            //
+            // 上面已经探过 jar 里那份（有 cookie 才会探），到这里还留着 cookie 就是探不通；
+            // 只有 jar 空着才值得抄一次，避免每次调用都探两遍。
+            if (http.hasCookies()) return CasEnsureResult.NoCredential
+            // 先判有没有会话标识再抄：`bzb_njw` 这类站点标记也在 CookieManager 里长期存着，
+            // 抄回来只会白探一次教务（探不通还会把 jar 填上一份死 cookie）。
+            if (!webCookies.hasAnyCookie(ADOPT_URLS)) return CasEnsureResult.NoCredential
+            val adopted = webCookies.adopt(ADOPT_URLS)
+            if (adopted.isEmpty()) return CasEnsureResult.NoCredential
+            http.adoptCookies(adopted)
+            // **先验再用**：回灌本身不写闸门——没验过的 cookie 一旦记成 last_success，
+            // 信任期就会把一份过期会话当可用，10 分钟内所有取数都拿到登录页。
+            val verified = try {
+                http.verifySession()
+            } catch (_: JwHttpException) {
+                return CasEnsureResult.NoCredential
+            }
+            if (!verified) return CasEnsureResult.NoCredential
+            vault.writeGate(LoginTarget.Jw, LoginGateRules.afterSuccess(clock()))
+            SessionStatus.syncSuspended(LoginTarget.Jw, false)
+            return CasEnsureResult.Ready()
+        }
         if (!LoginGateRules.canAttempt(gate, now)) {
             return CasEnsureResult.Failed("刚刚登录失败过，请稍后再试")
         }
@@ -212,20 +237,26 @@ class CasSession(
     fun shutdown() = http.shutdown()
 
     companion object {
-        /** 代理出口的提示。比 `JwImportDiagnosis.VPN_HINT` 短——引导页要给输入框留位置。 */
-        const val PROXY_HINT = "检测到 VPN/代理：学校对代理出口会拒绝，请先关掉再试"
+        /** 代理出口的提示。文案唯一来源 [NetworkHint]（引导页给输入框留位置，别在这加长句）。 */
+        const val PROXY_HINT: String = NetworkHint.VPN
 
         /**
          * 回灌时要读的域。
          *
          * 覆盖 CAS 与三个业务系统：教务业务在 `:8080`、预热在 `:81`、SSO 回跳在根域，
          * 三者是**不同的 URL 但同一个 host**，`getCookie` 按 URL 取，所以都要列上。
+         *
+         * **路径必须落在 cookie 的作用域里**：`getCookie` 按 URL 的路径筛，CAS 的
+         * `JSESSIONID` 作用域是 `/cas`、`TGC` 是 `/cas/`、教务的 `JSESSIONID` 是 `/jsxsd`。
+         * 早先这几条写成根路径，读回来的只有教务预热写的 `bzb_njw` 这类站点标记，
+         * 于是「有没有会话」全靠标记撑着（2026-09-27 真机实测：WebView 里只剩 `bzb_*`，
+         * 状态卡却写着「已登录」；反过来 CAS 会话还在时又读不到）。
          */
         val ADOPT_URLS: List<String> = listOf(
-            "https://eapp2.juwp.edu.cn:9443/",
+            "https://eapp2.juwp.edu.cn:9443/cas/",
             "http://jiaowu.juwp.edu.cn/sso.jsp",
             "https://jiaowu.juwp.edu.cn:81/",
-            "http://jiaowu.juwp.edu.cn:8080/",
+            "http://jiaowu.juwp.edu.cn:8080/jsxsd/",
             "https://xgxt.juwp.edu.cn/",
             "http://jwxyxx.juwp.edu.cn/ptwork/",
         )

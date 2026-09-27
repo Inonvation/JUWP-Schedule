@@ -35,8 +35,8 @@ class JuwApplication : Application() {
             // 不会白做 RemoteViews 组装。
             TodayWidgetRefresh.refreshNow(this@JuwApplication)
             TodayWidgetRefresh.ensurePeriodicWork(this@JuwApplication)
-            // 校园卡 / 电费小组件（DESIGN §3.6 三条目改版，2026-09-27）：电费镜像读 Room
-            // （零网络），校园卡过 2 小时闸门后取一次余额。无实例 / 无凭证 / 闸门未到
+            // 生活小组件（DESIGN §3.6 二条目改版，2026-09-27）：电费副行镜像读 Room
+            // （零网络），校园卡余额过 2 小时闸门后取一次。无实例 / 无凭证 / 闸门未到
             // 都是空跑，内部各自吞错，不会打断后面几步启动协程
             LifeWidgetSync.onColdStart(this@JuwApplication)
             // 上课提醒（DESIGN §3.7）：冷启动重排下一个提醒 + 周期核对兜底。

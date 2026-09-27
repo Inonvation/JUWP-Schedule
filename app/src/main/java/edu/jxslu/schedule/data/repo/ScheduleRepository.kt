@@ -363,6 +363,7 @@ class ScheduleRepository(
         val todayDockExpanded: Boolean,
         val lifeTabEnabled: Boolean,
         val startPage: StartPage,
+        val qzxyCardEnabled: Boolean,
     )
 
     // ------------------------------------------------------------------
@@ -435,6 +436,7 @@ class ScheduleRepository(
             prefs.todayDockExpanded,
             prefs.lifeTabEnabled,
             prefs.startPage,
+            prefs.qzxyCardEnabled,
             ::ShellPrefs,
         ),
     ) { global, ebike, campusCard, p, shell ->
@@ -445,6 +447,7 @@ class ScheduleRepository(
             hapticsEnabled = global.haptics,
             waterRequireDoubleClick = global.waterDouble,
             waterCardEnabled = global.waterCard,
+            qzxyCardEnabled = shell.qzxyCardEnabled,
             ebikeCardEnabled = ebike.cardEnabled,
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
@@ -510,6 +513,9 @@ class ScheduleRepository(
 
     /** 今日页开水卡片开关（DESIGN §3.3 底部固定区）。 */
     suspend fun setWaterCardEnabled(value: Boolean) = prefs.setWaterCardEnabled(value)
+
+    /** 今日页趣智校园卡片开关（DESIGN §4.30）。 */
+    suspend fun setQzxyCardEnabled(value: Boolean) = prefs.setQzxyCardEnabled(value)
 
     /** 今日页共享单车卡开关（DESIGN §3.9）。 */
     suspend fun setEbikeCardEnabled(value: Boolean) = prefs.setEbikeCardEnabled(value)

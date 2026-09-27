@@ -2,7 +2,7 @@
 
 作用域：找「某个行为被哪个测试钉住」时读。跑法与结果汇总见 `AGENTS.md`「常用命令」。
 
-现数（2026-09-27 实测）：**86 个测试类 / 883 个 `@Test`**。改动后现查，不要手改这个数字：
+现数（2026-09-28 实测）：**97 个测试类 / 966 个 `@Test`**。改动后现查，不要手改这个数字：
 
 ```powershell
 (Get-ChildItem -Recurse app\src\test -Filter *.kt).Count
@@ -15,17 +15,18 @@
 
 `ScheduleCalculatorTest`、`TimeSlotRulesTest`、`TimeSlotScheduleTest`（作息不变量）、
 `WeekGridLayoutTest`（网格几何）、`QiangzhiScheduleParserTest`、`SyjxScheduleParserTest`、
-`CasSessionTest`（会话编排：可信期/闸门/验证码不计数/并发只登一次/回灌续期）、
+`CasSessionTest`（会话编排：可信期/闸门/验证码不计数/并发只登一次/回灌续期/没凭证时回灌网页会话并校验，校验不过不点信任期）、
+`SessionCookieRulesTest`（「网页里有没有会话」：只认会话标识，`bzb_*` 这类站点标记不算）、
 `CasLoginClassifierTest`（CAS 应答四分类：302 成功/凭证错/验证码/认不出的 200 不当凭证错）、
 `LoginGateRulesTest`（防锁号闸门：窗口/计数/停用/可信期）、
-`LoginStateRulesTest`（状态卡三档：凭证/网页会话/停用优先级）、
+`LoginStateRulesTest`（状态卡三档：凭证/网页会话/停用优先级 + 身份区标题的三格合成）、
 `CookieBridgeTest`（cookie 拼接：hostOnly 不写 Domain/Secure/HttpOnly/Path）、
 `MemoryCookieJarTest`（分桶/快照/回灌/路径匹配）、`ProfileSyncRulesTest`（学籍卡补抓闸门：班级空/今日试过/隔日重试）、`TokenFreshnessTest`（落盘 token 新鲜度：过期/时钟回拨）、
 `OneClickImportTest`（一键导入：页面形态判定/合成/警示文案/脏字段容错）、
 `ImportJsonShapeTest`（导入 JSON：课程字段契约，以及成绩/学期作息/学业完成情况三段可选备份的往返与降级）、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest`、
 `CourseTweakTest`（调课规划：拆分/覆盖/交换/同格去重）、`TodayBoundaryTest`（小组件边界闹钟时刻）、
 `WidgetModelTest`（小组件：尺寸分档/行数预算/**明日接棒**/周网格列序与去重叠/旧 JSON 兼容）、
-`LifeWidgetModelsTest`（校园卡/电费小组件纯逻辑：2 小时取数闸门含时钟回拨/分转元与度数格式化/快照 codec round-trip）、、
+`LifeWidgetModelsTest`（生活卡纯逻辑：2 小时取数闸门含时钟回拨/分转元与度数格式化/电费副行宽窄两档文案/合并快照 codec round-trip/窄档排版阈值）、
 `ExamMapperTest`（考试→课条目映射，含历史学期估算）、
 `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 解析）、`ScoreCalculatorTest`（学期/学年汇总）、
 `ScoreGroupsTest`（成绩学年分组与年级标签）、
@@ -33,7 +34,7 @@
 `ScholarProgressParserTest`（学业完成情况 HTML：**按表头名映射**/三个维度的不同列集合/iconfont 实体与标签清理）、
 `AutoSyncRulesTest`（自动导入闸门：首次立即抓/间隔内跳过/脏日期/时钟回拨）、
 `ShortcutsTest`（快捷方式：拉起口径/表单校验/预设表/JSON 兜底/列表操作）、
-`JwHttpSessionTest`（检测登录链路：重定向解析参数顺序、IPv4 优先 DNS）、
+`JwHttpSessionTest`（检测登录链路：重定向解析参数顺序、IPv4 优先 DNS、**登录页不算会话**）、
 `EbikeQrTest`（共享单车出码：URL 拼装/车号校验/BitMatrix 参数/最近车号序列化）、
 `EbikeFreeRideTest`（免费时长提醒：提醒点/下一个未过点/迟到窗口/去重键带起点/通知 id 不撞号）、
 `WechatRentNoticeTest`（精确倒计时：只认微信包名/关键词命中先享后付/窗口两端与越界）、
@@ -80,4 +81,4 @@
 、`YktArrivalTest`（充值到账判定：余额涨满订单额/多卡与缺基线不判定）
 、`YktPayWatchTest`（付款码消费监听：水位之后命中/收入不算/同批不重复）
 、`YktSyncGateTest`（流水同步闸门：进页间隔十分钟量级）
-等 **81 个测试类 / 811 个用例**（2026-09-26 实测）。
+等 **97 个测试类 / 966 个用例**（2026-09-28 实测）。

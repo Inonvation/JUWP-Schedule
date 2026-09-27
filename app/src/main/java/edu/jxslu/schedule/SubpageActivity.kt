@@ -36,6 +36,8 @@ import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
 import edu.jxslu.schedule.ui.score.ScoreScreen
 import edu.jxslu.schedule.ui.score.TranscriptHistoryScreen
+import edu.jxslu.schedule.ui.qzxy.QzxyScreen
+import edu.jxslu.schedule.ui.qzxy.QzxyDebugScreen
 import edu.jxslu.schedule.ui.scholar.ScholarScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
@@ -53,6 +55,10 @@ enum class SubpageScreen {
     COURSE_TWEAK,
     /** 我的/今日 → 胖乖生活（开水卡显示与点击方式并入页内，DESIGN §3.4） */
     WATER,
+    /** 今日 → 趣智校园开热水（DESIGN §4.30；与胖乖生活并排的半行卡） */
+    QZXY,
+    /** 趣智校园 → 诊断与调试（DESIGN §3.18；设备现场 · 服务表 · 试签名 · 日志） */
+    QZXY_DEBUG,
     /** 我的 → 桌面小组件（DESIGN §3.6） */
     WIDGET_SETTINGS,
     /** 我的 → 权限设置（电池优化 · 自启动/锁后台 · 通知，DESIGN §3.12） */
@@ -190,6 +196,16 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.DATA_SETTINGS -> DataSettingsScreen(onBack = onBack)
             SubpageScreen.COURSE_TWEAK -> CourseTweakScreen(onBack = onBack)
             SubpageScreen.WATER -> WaterScreen(onBack = onBack)
+            SubpageScreen.QZXY -> QzxyScreen(
+                onBack = onBack,
+                onOpenDiagnostics = { address ->
+                    SubpageActivity.start(this, SubpageScreen.QZXY_DEBUG, focusItemId = address)
+                },
+            )
+            SubpageScreen.QZXY_DEBUG -> QzxyDebugScreen(
+                focusAddress = focusItemId,
+                onBack = onBack,
+            )
             SubpageScreen.WIDGET_SETTINGS -> WidgetSettingsScreen(onBack = onBack)
             SubpageScreen.PERMISSION_SETTINGS -> PermissionSettingsScreen(onBack = onBack)
             SubpageScreen.CALENDAR_SETTINGS -> CalendarSettingsScreen(onBack = onBack)
@@ -259,7 +275,8 @@ class SubpageActivity : ComponentActivity() {
                 onOpenCampusCard = {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS)
                 },
-                onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
+                        onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
+                        onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

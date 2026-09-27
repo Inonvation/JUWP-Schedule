@@ -69,6 +69,30 @@ class JwHttpSession private constructor(
         /** 正常主页 ~150KB；退回登录提示页时只有 860 字节。 */
         private const val HOME_MIN_BYTES = 20_000
         private const val NOT_LOGGED = "用户没有登录"
+
+        /**
+         * 未登录时教务**就地渲染登录页**（HTTP 200，约 79KB，title「登录」，
+         * 表单是 `<form name="loginForm" action="/jsxsd/xk/LoginToXk">`）。
+         *
+         * 它比「用户没有登录」那张 860 字节的提示页更容易骗过判据：字节数阈值过得去，
+         * 提示文案也没有。2026-09-27 真机实测：WebView 里只剩一份**已过期**的 CAS cookie 时，
+         * `verifySession` 把这张 79KB 登录页判成「会话有效」，于是状态卡显示已登录、
+         * 学籍卡抓回来一张登录页（解析必失败），而「今天试过」的闸门又把重试挡到第二天。
+         *
+         * 顺带记一笔：`用户没有登录` 这个文案按 DESIGN §4.17 的实测在真实页面上出现 **0 次**，
+         * 它只是历史兜底；真正认得出登录页的是这两个表单特征。
+         */
+        private val LOGIN_PAGE_MARKERS = listOf("LoginToXk", "userPassword")
+
+        /**
+         * 页面是不是登录页：既含 860 字节的提示页，也含就地渲染的登录页。
+         *
+         * `internal` 而非 private：这条判据要有 JVM 单测钉住（`JwHttpSessionTest`），
+         * 它错了的代价是「把一张登录页当会话有效」，比漏判更难发现。
+         */
+        internal fun looksLikeLoginPage(html: String): Boolean =
+            NOT_LOGGED in html || LOGIN_PAGE_MARKERS.any { it in html }
+
         private const val MAX_REDIRECTS = 15
 
         private const val UA =
@@ -190,7 +214,7 @@ class JwHttpSession private constructor(
             // [6] 教务侧跟随 302 链落到 xsMainV，再校验会话真的有效
             getFollowRedirects(ssoLocation)
             val home = getFollowRedirects(STUDENT_HOME)
-            val homeOk = home.length >= HOME_MIN_BYTES && NOT_LOGGED !in home
+            val homeOk = home.length >= HOME_MIN_BYTES && !looksLikeLoginPage(home)
             if (!homeOk) throw JwHttpException.Protocol("教务会话无效（已退回登录页）")
         } catch (e: IOException) {
             throw JwHttpException.Network(e)
@@ -206,7 +230,7 @@ class JwHttpSession private constructor(
     }
 
     /**
-     * 只校验会话还活着：GET 学生主页，按**字节数阈值 + 未登录文案**判定（DESIGN §4.27）。
+     * 只校验会话还活着：GET 学生主页，按**字节数阈值 + 登录页特征**判定（DESIGN §4.27）。
      *
      * 比拉一次课表页（约 150KB）便宜得多，是 `CasSession.ensureValid` 的探针。
      * 网络层失败照抛 [JwHttpException.Network]，调用方据此区分「会话没了」与「网不通」。
@@ -214,7 +238,7 @@ class JwHttpSession private constructor(
     override suspend fun verifySession(): Boolean = withContext(Dispatchers.IO) {
         try {
             val home = getFollowRedirects(STUDENT_HOME)
-            home.length >= HOME_MIN_BYTES && NOT_LOGGED !in home
+            home.length >= HOME_MIN_BYTES && !looksLikeLoginPage(home)
         } catch (e: IOException) {
             throw JwHttpException.Network(e)
         }
@@ -239,8 +263,8 @@ class JwHttpSession private constructor(
     override suspend fun fetchHtml(url: String): String = withContext(Dispatchers.IO) {
         try {
             val html = getFollowRedirects(url)
-            if (NOT_LOGGED in html) {
-                throw JwHttpException.Protocol("教务会话已失效（页面退回登录提示）")
+            if (looksLikeLoginPage(html)) {
+                throw JwHttpException.Protocol("教务会话已失效（页面退回登录页）")
             }
             html
         } catch (e: IOException) {
@@ -251,8 +275,8 @@ class JwHttpSession private constructor(
     private suspend fun fetchPage(url: String, mustContain: String): String = withContext(Dispatchers.IO) {
         try {
             val html = getFollowRedirects(url)
-            if (NOT_LOGGED in html) {
-                throw JwHttpException.Protocol("教务会话已失效（页面退回登录提示）")
+            if (looksLikeLoginPage(html)) {
+                throw JwHttpException.Protocol("教务会话已失效（页面退回登录页）")
             }
             if (mustContain !in html) {
                 throw JwHttpException.Protocol("页面未包含标记「$mustContain」，页面结构可能已变")

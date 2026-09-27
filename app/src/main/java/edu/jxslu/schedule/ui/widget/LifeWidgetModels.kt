@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.ui.widget
 
+import edu.jxslu.schedule.domain.BalanceAlert
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.time.Instant
@@ -8,19 +9,18 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * 校园卡 / 电费小组件的纯逻辑（DESIGN §3.6 三条目改版，2026-09-27）。
+ * 生活小组件的纯逻辑（DESIGN §3.6 二条目改版，2026-09-27）。
  *
- * 只放可 JVM 单测的东西：快照模型、JSON 编解码、取数闸门、数字/时刻格式化。
- * 同步与刷新的编排在 [LifeWidgetSync]；渲染在 `CampusCardWidget` / `PowerWidget`。
+ * 校园卡余额与寝室电费合并在一条卡片里（余额大字 + 电费副行），快照 [LifeCardSnapshot]
+ * 同时带两份数据。只放可 JVM 单测的东西：快照模型、JSON 编解码、取数闸门、文案格式化。
+ * 同步与刷新的编排在 [LifeWidgetSync]；渲染在 `CampusCardWidget`。
  */
 
 /**
- * 校园卡小组件快照。
+ * 校园卡数据（合并卡的**主区**，渲染成余额大字）。
  *
  * - [cardFen] = 正式卡余额（分），口径与余额提醒一致（`BalanceAlertReminder.checkYkt`：
  *   食堂 / 门禁实际扣款的那个钱包，不含电子账户）。**-1 = 从未取到**（显示「余额待更新」）；
- * - [accountFen] = 电子账户余额（分），独立接口（`rechargeAccountDetail`），余额提醒的
- *   取数路径拿不到 → **null = 本次没取 / 历史未知**（渲染时保留旧值或整行省略，**不显示 ¥0.00**）；
  * - [fetchedAtMs] = 最近一次**成功**取数时刻。取数失败不写它（与余额提醒「失败不落日期」
  *   同口径），它同时是 2 小时闸门的时间基点；
  * - [hasCredentials] = 计算快照那一刻凭证是否存在（决定渲染态与点击落点）；
@@ -29,14 +29,13 @@ import java.util.Locale
 @Serializable
 data class CampusCardSnapshot(
     val cardFen: Long = -1L,
-    val accountFen: Long? = null,
     val fetchedAtMs: Long = 0L,
     val hasCredentials: Boolean = false,
     val hideBalance: Boolean = false,
 )
 
 /**
- * 电费小组件快照（Room `power_readings` 最新一条的镜像，见 [LifeWidgetSync]）。
+ * 电费数据（合并卡的**副行**，渲染成一行小字，独立可点区域）。
  *
  * [remainKwh] 为 null = 没有读数（没开凭证 / 从未刷新）；[priceYuan] 为 null =
  * 读数上单价未知（落库时 0），此时只显示度数、不算折合（**不猜**，与
@@ -48,6 +47,20 @@ data class PowerWidgetSnapshot(
     val remainKwh: Double? = null,
     val priceYuan: Double? = null,
     val fetchedAtMs: Long = 0L,
+)
+
+/**
+ * 合并的生活卡片快照（DESIGN §3.6 二条目改版，2026-09-27）：[campus] 是主区（余额大字），
+ * [power] 是副行（电费小字 + 独立点击落点）。
+ *
+ * 合成一个快照而不是两条目各存一份：一次后台刷新（写状态 + `update()`）就能把两份数据
+ * 一起推上桌面。点击分区只是渲染层的事，不影响数据来源与取数口径（校园卡 2 小时闸门、
+ * 电费零网络，各自不变）。
+ */
+@Serializable
+data class LifeCardSnapshot(
+    val campus: CampusCardSnapshot = CampusCardSnapshot(),
+    val power: PowerWidgetSnapshot = PowerWidgetSnapshot(),
 )
 
 /** 校园卡余额的后台取数闸门：距上次成功取数 ≥ [INTERVAL_MS] 才再取一次。 */
@@ -89,24 +102,37 @@ object LifeWidgetFormat {
         if (fetchedAtMs <= 0L) return null
         return DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(Instant.ofEpochMilli(fetchedAtMs))
     }
+
+    /**
+     * 电费副行文案（合并卡主区下面那一行，DESIGN §3.6）。
+     *
+     * 窄档（2 格宽，真机实测 150dp）放不下「寝室」「折合」和单价括号，压成
+     * `电费 23.7 度 · ¥14.69`；宽档（4×2）给全口径。房号不进文案——卡片是自己看的，
+     * 房号在缴费页才有用。
+     *
+     * 折合只走 [BalanceAlert.remainingYuan]（全 App 唯一换算处）：单价缺失就只报度数，
+     * 不按默认单价编（DESIGN §3.13）。
+     */
+    fun powerLineText(power: PowerWidgetSnapshot, narrow: Boolean): String {
+        val prefix = if (narrow) "电费" else "寝室电费"
+        val remain = power.remainKwh ?: return "$prefix · 暂无读数"
+        val kwh = "$prefix ${kwh(remain)} 度"
+        val unitPrice = power.priceYuan
+        val yuan = BalanceAlert.remainingYuan(remain, unitPrice)
+        return when {
+            yuan == null || unitPrice == null -> kwh
+            narrow -> "$kwh · ¥${yuanAmount(yuan)}"
+            else -> "$kwh · 折合 ¥${yuanAmount(yuan)}（${price(unitPrice)} 元/度）"
+        }
+    }
 }
 
-/** 校园卡快照 JSON 编解码；解码失败返回 null（组合退回首帧快照，不崩）。 */
-internal object CampusCardSnapshotCodec {
+/** 合并卡快照 JSON 编解码；解码失败返回 null（组合退回首帧快照，不崩）。 */
+internal object LifeCardSnapshotCodec {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun encode(snapshot: CampusCardSnapshot): String = json.encodeToString(CampusCardSnapshot.serializer(), snapshot)
+    fun encode(snapshot: LifeCardSnapshot): String = json.encodeToString(LifeCardSnapshot.serializer(), snapshot)
 
-    fun decode(raw: String?): CampusCardSnapshot? =
-        raw?.let { runCatching { json.decodeFromString(CampusCardSnapshot.serializer(), it) }.getOrNull() }
-}
-
-/** 电费快照 JSON 编解码；口径同 [CampusCardSnapshotCodec]。 */
-internal object PowerWidgetSnapshotCodec {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    fun encode(snapshot: PowerWidgetSnapshot): String = json.encodeToString(PowerWidgetSnapshot.serializer(), snapshot)
-
-    fun decode(raw: String?): PowerWidgetSnapshot? =
-        raw?.let { runCatching { json.decodeFromString(PowerWidgetSnapshot.serializer(), it) }.getOrNull() }
+    fun decode(raw: String?): LifeCardSnapshot? =
+        raw?.let { runCatching { json.decodeFromString(LifeCardSnapshot.serializer(), it) }.getOrNull() }
 }

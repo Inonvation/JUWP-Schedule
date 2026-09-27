@@ -56,8 +56,10 @@ fun AccountCard(
 ) {
     var revealed by rememberSaveable { mutableStateOf(false) }
     val masked = AccountMask.maskStudentId(username).orEmpty()
-    // 姓名与学号都没有 = 一份凭证都没配过：标题写「未登录」，而不是留一片空白
-    val title = name.ifBlank { masked.ifBlank { "未登录" } }
+    // 姓名与学号都没有 = 拿不到身份：标题按状态给词，而不是留一片空白。
+    // **不能一律写「未登录」**：只有网页会话（引导跳过教务、后来在导入页手登）时学号是空的，
+    // 那时写「未登录」会与卡上「已登录」那行自相矛盾（2026-09-27 用户报）。
+    val title = name.ifBlank { masked.ifBlank { statusState.stateWord() } }
     val idText = if (revealed) username else masked
     val hasName = name.isNotBlank()
 

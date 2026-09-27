@@ -108,6 +108,14 @@ class TodayViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     /**
+     * 今日页趣智校园卡片开关（DESIGN §4.30）。与 [waterCardEnabled] 同口径：
+     * 纯设置值单独订阅，不掺进课表状态。关掉后胖乖生活卡独占整行。
+     */
+    val qzxyCardEnabled: StateFlow<Boolean> = repo.displayPrefs
+        .map { it.qzxyCardEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /**
      * 今日页共享单车卡开关（DESIGN §3.9）。与 [waterCardEnabled] 同口径：
      * 纯设置值单独订阅，不掺进课表状态。
      */

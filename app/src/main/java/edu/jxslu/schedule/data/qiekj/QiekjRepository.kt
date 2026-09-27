@@ -6,6 +6,9 @@ import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -49,23 +52,44 @@ class QiekjRepository(
 
     // ── 登录态 ──
 
-    fun localToken(): String? = tokenStore.readToken()
+    /**
+     * 登录态（进程级共享）：token 落盘/清除后就地翻转。
+     *
+     * 今日页开水卡与开水页（SubpageActivity 独立窗口）各持一份 `WaterViewModel`，
+     * 两边共用的只有这个仓库单例。没有这条流，一边登录另一边要重启应用才对得上
+     * （重建 ViewModel 时重读 token）。
+     */
+    private val _loggedIn = MutableStateFlow(tokenStore.readToken() != null)
+    val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
+
     fun readPhone(): String? = tokenStore.readPhone()
-    fun saveToken(token: String) = tokenStore.saveToken(token)
+
+    /** 落盘 token 并翻转登录态。只在**已确认 token 有效**时调用，见 [validateToken]。 */
+    fun saveToken(token: String) {
+        tokenStore.saveToken(token)
+        _loggedIn.value = true
+    }
+
     fun savePhone(phone: String) = tokenStore.savePhone(phone)
 
-    /** 退出：token 与快照一并清（对齐参考实现；快照依赖登录态存在意义不大）。 */
+    /** 退出：token、登录态与快照一并清（对齐参考实现；快照依赖登录态存在意义不大）。 */
     fun logout() {
         tokenStore.clear()
         orderHistoryStore.clearAll()
+        _loggedIn.value = false
     }
 
     private fun requireToken(): String =
         tokenStore.readToken()?.takeIf { it.isNotBlank() } ?: throw NotLoggedInException()
 
-    /** Token 粘贴登录的唯一校验方式：直接查余额，余额能查通即 token 有效。 */
-    suspend fun validateToken() {
-        api.queryBalance(requireToken()).throwIfFailed()
+    /**
+     * Token 粘贴登录的唯一校验方式：直接查余额，余额能查通即 token 有效。
+     *
+     * 传 [token] 而不是从存储读，是为了**先验后存**：一落盘 [loggedIn] 就翻转，
+     * 今日页开水卡立刻切到已登录形态并开始拉余额/设备，验失败再回滚就是一次可见的闪跳。
+     */
+    suspend fun validateToken(token: String) {
+        api.queryBalance(token).throwIfFailed()
     }
 
     // ── 登录 / 资产 / 设备 ──
@@ -77,7 +101,7 @@ class QiekjRepository(
     suspend fun login(phone: String, code: String): String {
         val token = api.login(phone = phone, verify = code).requireData().token
             ?: error("登录成功但未返回 token")
-        tokenStore.saveToken(token)
+        saveToken(token)
         return token
     }
 

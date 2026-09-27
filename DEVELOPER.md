@@ -163,7 +163,7 @@ data class SemesterConfig(
      （DESIGN §4.20）：换课表/换学期后旧内容仍可查，代价是同名课程跨学期共用一个抽屉。
    加字段可以，任何新功能绑行 id 必丢数据。
 
-### 3.2 Room schema（`data/local/JuwDatabase.kt`，当前 v11）
+### 3.2 Room schema（`data/local/JuwDatabase.kt`）
 
 | 表 | 主键 | 说明 |
 |----|------|------|
@@ -175,12 +175,12 @@ data class SemesterConfig(
 | `ykt_turnovers` | `orderId`（+ `jndatetime` 索引） | 一卡通流水；按服务端订单号去重 |
 | `notes` | `id`（+ `courseName` / `updatedAt` 索引） | 笔记·课件，按课程名归属（§3.1 决策 3） |
 | `homework` | `id`（+ `courseName` / `done` / `dueDate` 索引） | 作业，按课程名归属；`dueDate` 存 `yyyy-MM-dd` 文本（字典序即时间序） |
-| `power_readings` | `(epochMs, roomId)` 唯一 | 电表读数本机记录，用电量差分靠它（DESIGN §4.24） |
+| `power_readings` | `(epochMs, roomId)` 唯一 | 电表读数本机记录，用电量差分靠它（DESIGN §4.24）；`roomId` 是平台数字 id，v12 起另存 `roomName`（房号显示名，只给界面） |
 
-版本史（v1→v11 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
+版本史（v1→v12 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
 （`timetables` + `courses.timetableId`）→ v4 成绩表 → v5 调课检测两表 →
 v6 一卡通流水 → v7 笔记/作业 → v8 `courses.remark` → v9 `homework` 去 `title` →
-v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings`。
+v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings` → v12 `power_readings.roomName`。
 
 迁移纪律两条：
 

@@ -68,7 +68,7 @@ interface PowerReadingDao {
     @Query("SELECT * FROM power_readings ORDER BY epochMs, id")
     suspend fun getAll(): List<PowerReadingEntity>
 
-    /** 最新一条读数（电费小组件渲染用，DESIGN §3.6 三条目改版；无读数返回 null）。 */
+    /** 最新一条读数（生活小组件的电费副行用，DESIGN §3.6 二条目改版；无读数返回 null）。 */
     @Query("SELECT * FROM power_readings ORDER BY epochMs DESC, id DESC LIMIT 1")
     suspend fun latest(): PowerReadingEntity?
 

@@ -85,5 +85,35 @@ class JwHttpSessionTest {
         assertTrue(ordered.first() is Inet6Address)
     }
 
+    /**
+     * 会话探针要认得出「就地渲染的登录页」。
+     *
+     * 2026-09-27 真机实测：WebView 里只剩一份过期 CAS cookie 时，教务把登录页渲染在
+     * `xsMainV.htmlx` 的 200 应答里（约 79KB，title「登录」，表单 `LoginToXk`），
+     * 老判据「≥20KB 且不含『用户没有登录』」放它过去，于是状态卡显示已登录、
+     * 学籍卡抓回一张登录页。
+     */
+    @Test
+    fun loginPage_isNotASession() {
+        val loginPage = """
+            <html><head><title>登录</title></head><body>
+            <form name="loginForm" action="/jsxsd/xk/LoginToXk" method="post">
+            <input id="userAccount" name="userAccount">
+            <input id="userPassword" name="userPassword" type="password">
+            </form></body></html>
+        """.trimIndent()
+        assertTrue(JwHttpSession.looksLikeLoginPage(loginPage))
+
+        // 860 字节那种提示页同样要认（老判据的另一半）
+        assertTrue(JwHttpSession.looksLikeLoginPage("<html>用户没有登录</html>"))
+    }
+
+    @Test
+    fun studentHome_isNotALoginPage() {
+        val home = "<html><head><title>学生端</title></head><body>" +
+            "<div id='xsMainV'>我的课表</div></body></html>"
+        assertTrue(!JwHttpSession.looksLikeLoginPage(home))
+    }
+
     private fun String.toHttpUrlForTest(): HttpUrl = toHttpUrl()
 }

@@ -54,8 +54,8 @@ import java.time.LocalDate
  * **单条目**（2026-09-20 改版）：「水贝贝 · 课表」这一条内不按尺寸分条目，尺寸由
  * [SizeMode.Exact] 全权交给宿主——给多少 dp 就按多少算，[WidgetMetrics] 决定渲染形态：
  * 紧凑（日期 + 焦点卡）/ 列表（焦点 + 按高度算行数的剩余）/ 周网格（4×4 及以上）。
- * 2026-09-27 起选择器里另有按内容拆的校园卡 / 电费两条（见 `CampusCardWidget` /
- * `PowerWidget`），与本条互不相干。
+ * 2026-09-27 起选择器里另有按内容拆的「校园卡 · 电费」合并卡（见 `CampusCardWidget`），
+ * 与本条互不相干。
  *
  * 数据来源与今日页**完全同源**：Room → `buildTodayState()` → [buildWidgetSnapshot]。
  *
@@ -513,10 +513,10 @@ private fun WeekCourseCell(block: WidgetWeekBlock) {
 }
 
 /**
- * 小组件点击用的显式 Intent（课表 / 校园卡 / 电费三条目共用，DESIGN §3.6 三条目改版）。
+ * 小组件点击用的显式 Intent（课表 / 校园卡 · 电费两条目共用，DESIGN §3.6 二条目改版）。
  *
- * `NEW_TASK | CLEAR_TASK`：点小组件 = 从主窗口重新开始（整卡进今日页、周网格进课表页、
- * 校园卡进付款码页、电费进用电统计页），所以先把任务栈清空再起 `MainActivity`，
+ * `NEW_TASK | CLEAR_TASK`：点小组件 = 从主窗口重新开始（课表整卡进今日页、周网格进课表页、
+ * 生活卡整卡进付款码页、卡上电费行进用电统计页），所以先把任务栈清空再起 `MainActivity`，
  * 用户不会停在上次那个二级页上。
  *
  * 别改回 `SINGLE_TOP | CLEAR_TOP`：`MainActivity` 是 standard，CLEAR_TOP 只有在

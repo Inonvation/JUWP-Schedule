@@ -77,6 +77,7 @@ import edu.jxslu.schedule.domain.ExamMapper
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.data.session.CasEnsureResult
+import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
@@ -289,7 +290,7 @@ fun JwImportScreen(
         val done = withTimeoutOrNull(PAGE_LOAD_TIMEOUT_MS) { gate.done.await() } ?: false
         if (pageLoadGate === gate) pageLoadGate = null
         if (!done && pageState !is PageState.Error) {
-            statusNote = "打开${label}超时，请检查网络后重试"
+            statusNote = "打开${label}超时：${NetworkHint.briefOf(JwVpnDetector.isVpnActive(context))}"
         }
         return done
     }
@@ -432,7 +433,7 @@ fun JwImportScreen(
                     ExamScheduleParser.fetchJs(term = term, page = page),
                     ExamScheduleParser.READ_RESULT_JS,
                 ) ?: run {
-                    statusNote = "请求超时：请检查网络后重试"
+                    statusNote = "请求考试安排超时：${NetworkHint.briefOf(JwVpnDetector.isVpnActive(context))}"
                     snackbar.showSnackbar(statusNote)
                     return
                 }
@@ -514,7 +515,7 @@ fun JwImportScreen(
                     ScoreParser.fetchJs(term = "", page = page),
                     ScoreParser.READ_RESULT_JS,
                 ) ?: run {
-                    statusNote = "请求超时：请检查网络后重试"
+                    statusNote = "请求成绩超时：${NetworkHint.briefOf(JwVpnDetector.isVpnActive(context))}"
                     snackbar.showSnackbar(statusNote)
                     return
                 }
@@ -545,7 +546,7 @@ fun JwImportScreen(
                     timeoutLoops = 20,
                 )
                 val card = cardHtml?.let { ScoreParser.parseStudentCard(it) }
-                if (card != null) prefs.setProfile(card.name, card.studentClass)
+                if (card != null) prefs.setProfile(card.name, card.studentClass, card.studentId)
             } catch (_: Exception) {
                 // 学籍卡失败不影响成绩导入结果
             }

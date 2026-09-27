@@ -41,6 +41,19 @@ object AppPermissions {
     )
 
     /**
+     * 扫描附近蓝牙设备（DESIGN §4.30 趣智校园）。清单的唯一出处是
+     * [edu.jxslu.schedule.data.qzxy.QzxyBluetoothScanner.requiredPermissions]——
+     * 数据层发起扫描时也要判同一份，两处各写一遍迟早分叉。
+     *
+     * API 31+ 是两个新权限；30 及以下系统对蓝牙扫描另有硬性规定，必须持定位权限。
+     */
+    val bluetoothScan: List<String>
+        get() = edu.jxslu.schedule.data.qzxy.QzxyBluetoothScanner.requiredPermissions().toList()
+
+    /** 蓝牙扫描还差哪些权限；全有则返回空表（调用方据此决定是直接扫还是先弹框）。 */
+    fun missingBluetoothScan(context: Context): List<String> = missing(context, bluetoothScan)
+
+    /**
      * 相册写入。**只有 Android 9 及以下（API ≤ 28）需要**：10 起二维码走 MediaStore 落
      * `Pictures/水贝贝`，系统不要求权限（manifest 里也用 `maxSdkVersion="28"` 限定了）。
      */

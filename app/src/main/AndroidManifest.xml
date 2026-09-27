@@ -9,6 +9,20 @@
          用户只给「大致位置」也能用（BikeLocator 两个权限任一即可）。 -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 趣智校园开热水（DESIGN §4.30）：扫描附近的 KLCXKJ 热水器广播，再按地址连设备。
+         API 31+ 走新的蓝牙运行时权限（scan 声明 neverForLocation，扫描结果不当定位用）；
+         30 及以下系统规定扫描必须持定位权限，那条已为地图声明，这里补两个老权限兜底。
+         只在用户进趣智校园页点「扫描设备」时申请，不预取、不进首启流程。 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- 课表一键同步到系统日历（DESIGN §4.12）：删写本 App 标记事件 + 20 分钟提醒。
          只在用户点「同步到日历」时运行时申请，不预取 -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -52,6 +66,13 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="pinduoduo" />
+        </intent>
+        <!-- 趣智校园页「充值」（DESIGN §3.18）：充值落在支付宝的趣智校园小程序，
+             拉起 alipays:// 要先能被解析到，否则 startActivity 直接抛
+             ActivityNotFoundException（Android 11+ 包可见性过滤）。 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="alipays" />
         </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -149,7 +170,7 @@
         <!-- 课表小组件（DESIGN §3.6）：**单条目**（2026-09-20 起），尺寸自适应。
              旧的按尺寸拆的三条 receiver（Small/Wide/Large）已删——条目名变化会让桌面上
              旧实例失效，用户重新添加一次即可。
-             2026-09-27 起按内容另有校园卡 / 电费两条（见下），与本条互不相干。
+             2026-09-27 起另有「校园卡 + 电费」一条（见下），与本条互不相干。
              exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
         <receiver
             android:name=".ui.widget.ScheduleWidgetReceiver"
@@ -167,9 +188,11 @@
                 android:resource="@xml/widget_info" />
         </receiver>
 
-        <!-- 校园卡 / 电费小组件（DESIGN §3.6 三条目改版，2026-09-27）：按**内容**拆条目
-             （课表 / 校园卡 / 电费各一条 receiver），不是按尺寸拆——「不要按尺寸拆 receiver」
-             的老规矩不变，两条新条目自身仍是单条目 + SizeMode.Exact、无尺寸档。
+        <!-- 生活小组件（DESIGN §3.6 二条目改版，2026-09-27）：校园卡余额 + 寝室电费
+             合成一条（余额大字 + 电费副行，点击分区：整卡 → 付款码页、电费行 → 用电统计页）。
+             当天先从一条拆成三条、再合并回一条：拆开后 2 格宽的卡片只放得下一块信息。
+             receiver 保留 CampusCardWidget 类名，桌面上已添加的校园卡实例平滑变成合并卡；
+             原 PowerWidgetReceiver 已删（电费条目并进来，桌面上若有它的实例需手动删掉）。
              渲染路径零网络：校园卡余额由 App 内取数链路顺手推送（2 小时闸门在
              LifeWidgetSync），电费只镜像 Room 最新读数。
              exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
@@ -183,18 +206,6 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_campus_info" />
-        </receiver>
-
-        <receiver
-            android:name=".ui.widget.PowerWidgetReceiver"
-            android:exported="false"
-            android:label="@string/widget_power_label">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_power_info" />
         </receiver>
 
         <!-- 小组件边界闹钟落点（上下课时刻刷新），仅内部广播 -->

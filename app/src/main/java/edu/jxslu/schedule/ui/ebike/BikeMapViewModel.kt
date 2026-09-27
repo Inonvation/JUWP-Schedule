@@ -103,8 +103,9 @@ data class BikeMapUiState(
  * 刷新由用户动作驱动，**不做后台轮询**：进页一次、拖动停稳一次、点刷新一次、
  * 定位成功后一次。拖动有 500ms 防抖，且与上次实际请求过的中心点距离不足 30 米就跳过。
  *
- * 一次刷新可能发多个请求（见 [fetchNearby]）：接口只给"离查询点最近的 20 辆"，
- * 单点查不全。稀疏区域只发 1 个，车多的区域才会加撒一圈采样点。
+ * 一次刷新可能发多个请求（见 [query] / [mergeSamples]）：接口只给"离查询点最近的 20 辆"，
+ * 单点查不全。稀疏区域只发 1 个，车多的区域才会加撒一圈采样点。中心点那批先落列表，
+ * 撒点回来再合并刷一次，不让用户等最慢的那个请求。
  */
 class BikeMapViewModel(
     private val client: KqcxBikeClient,
@@ -456,13 +457,30 @@ class BikeMapViewModel(
             return
         }
 
-        // 中心点没返回满，说明这一带能查到的就这么多，不用再撒点浪费请求
-        val bikes = if (centerBikes.size >= SAMPLE_PAGE_SIZE) {
-            mergeSamples(lat, lng, centerBikes)
-        } else {
-            centerBikes
-        }
+        // 中心点先落列表，别等撒点跑完：九次请求里最慢的那个不该压在用户眼前。
+        // 撒点还在飞时不摘 loading——头部那枚进度圈就是「还在补全周围」的提示
+        val sampling = centerBikes.size >= SAMPLE_PAGE_SIZE
+        applyResult(lat, lng, centerBikes, stillLoading = sampling)
+        // 记视野。写完这一次就够了，不需要在退出时再写一遍
+        prefs.setEbikeMapViewport(lat, lng, pendingZoom)
 
+        // 中心点没返回满，说明这一带能查到的就这么多，不用再撒点浪费请求
+        if (!sampling) return
+        // 采样结果合并后再刷一遍：多出来的远车按距离插进列表，簇与展开态照旧重算
+        applyResult(lat, lng, mergeSamples(lat, lng, centerBikes), stillLoading = false)
+    }
+
+    /**
+     * 把一批车落成当前结果：状态、聚类、锚点记账都走这一条路。
+     *
+     * [stillLoading] = true 用于撒点在飞的中间态：列表已经可用，头部留着进度圈。
+     */
+    private fun applyResult(
+        lat: Double,
+        lng: Double,
+        bikes: List<NearbyBike>,
+        stillLoading: Boolean,
+    ) {
         fetched = bikes
         fetchedLat = lat
         fetchedLng = lng
@@ -470,15 +488,13 @@ class BikeMapViewModel(
         lastAttemptLng = lng
         _uiState.update {
             it.copy(
-                loading = false,
+                loading = stillLoading,
                 queried = true,
                 failure = null,
                 updatedAtMillis = System.currentTimeMillis(),
             )
         }
         rebuildClusters()
-        // 记视野。写完这一次就够了，不需要在退出时再写一遍
-        prefs.setEbikeMapViewport(lat, lng, pendingZoom)
     }
 
     private fun failQuery(lat: Double, lng: Double, failure: BikeFailure) {
