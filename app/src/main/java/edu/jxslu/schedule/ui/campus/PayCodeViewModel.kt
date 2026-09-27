@@ -21,6 +21,7 @@ import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.domain.YktTurnoverRow
 import edu.jxslu.schedule.ui.common.CodeBitmaps
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -219,13 +220,23 @@ class PayCodeViewModel(
     private suspend fun loadBalanceSnapshot(cards: List<YktCard>) {
         val credentials = credentialStore.read() ?: return
         val detail = runCatching { repo.rechargeAccountDetail(credentials.username, credentials.password) }.getOrNull()
-        _balance.value = BalanceSnapshot(
+        val snapshot = BalanceSnapshot(
             cards = cards,
             totalFen = cards.sumOf { it.cardBalanceFen },
             cardFen = cards.sumOf { it.cardBalanceFen },
             accountFen = detail?.second ?: 0L,
             elecFen = cards.sumOf { it.elecBalanceFen },
         )
+        _balance.value = snapshot
+        // 桌面校园卡小组件（DESIGN §3.6 三条目改版）：数据已经在手上，顺手推一次
+        // （零额外请求）。电子账户取不到时传 null——小组件保留旧值，不显示 ¥0.00
+        runCatching {
+            LifeWidgetSync.pushCampusBalance(
+                Graph.appContext,
+                cardFen = snapshot.cardFen,
+                accountFen = snapshot.accountFen.takeIf { it > 0 },
+            )
+        }
     }
 
     /**

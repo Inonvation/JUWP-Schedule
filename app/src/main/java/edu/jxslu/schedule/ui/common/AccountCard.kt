@@ -125,10 +125,25 @@ fun AccountCard(
     }
 }
 
-/** 登录态 → 颜色。已登录用主色、失效用 error、未登录用灰。 */
+/**
+ * 登录态 → 颜色。已登录用主色、失效用 error、未登录用灰。
+ *
+ * `internal` 而非 private：「我的」页账号卡的三格服务入口（`SettingsScreen`）用同一份口径，
+ * 两处各写一个 when 迟早会对不上。
+ */
 @Composable
-private fun LoginState.tint(): Color = when (this) {
+internal fun LoginState.tint(): Color = when (this) {
     LoginState.LoggedIn -> MaterialTheme.colorScheme.primary
     LoginState.Expired -> MaterialTheme.colorScheme.error
     LoginState.NotLoggedIn -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+}
+
+/**
+ * 登录态 → 状态词。用于空间只够放名词的位置（「我的」页账号卡三格）；
+ * 整句状态文案（含「点此更新」这类动作提示）仍由调用方给全文。
+ */
+internal fun LoginState.stateWord(): String = when (this) {
+    LoginState.LoggedIn -> "已登录"
+    LoginState.Expired -> "已失效"
+    LoginState.NotLoggedIn -> "未登录"
 }

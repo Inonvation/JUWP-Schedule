@@ -7,12 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
@@ -28,8 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +52,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.SkeletonBox
+import edu.jxslu.schedule.ui.common.lineHeightDp
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
@@ -149,20 +143,18 @@ fun PayCodeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            when (val s = state) {
-                // 未取码只出现在生活页内嵌用法（§3.13）；本页进页即 load()，走到这里说明
-                // 是同一份 ViewModel 被别处收起过——按加载中渲染，紧接着的 load() 会给出真状态
-                is PayCodeUiState.Idle -> LoadingBody()
-                is PayCodeUiState.Loading -> LoadingBody()
-                is PayCodeUiState.Error -> ErrorBody(s, onRetry = {
-                    haptics.tap()
-                    viewModel.load(force = true)
-                })
-                is PayCodeUiState.Success -> SuccessBody(s, bitmaps, onNext = {
+            PayCodeBody(
+                state = state,
+                bitmaps = bitmaps,
+                onNext = {
                     haptics.tap()
                     viewModel.next()
-                })
-            }
+                },
+                onRetry = {
+                    haptics.tap()
+                    viewModel.load(force = true)
+                },
+            )
 
             // 余额行 + 流水入口（DESIGN §4.19 B3/B4）：取到才显示余额；流水入口恒在
             BalanceRow(balance, onOpenStatement = {
@@ -223,137 +215,172 @@ private fun BalanceRow(
 }
 
 @Composable
-private fun LoadingBody() {
-    // 骨架占位（DESIGN §3.10 2026-09-21）：与成功态同布局（QR 方图 + 条码条 + 两行文本），
-    // 码渲染完成无缝替换，避免布局高度跳变；呼吸动画复用 LoadingHint 同款缓动
-    PayCodeSkeleton(hint = "正在登录校园卡，连接水宝宝并获取付款码…")
-}
+private fun PayCodeBody(
+    state: PayCodeUiState,
+    bitmaps: PayCodeBitmaps?,
+    onNext: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val error = state as? PayCodeUiState.Error
+    val success = state as? PayCodeUiState.Success
+    val showCode = success != null && bitmaps != null
+    val loading = !showCode && error == null
+    // 两行文本位的高度取自样式本身，系统字体调大时骨架跟着长，不会又差一截
+    val infoLine = lineHeightDp(MaterialTheme.typography.bodySmall)
+    val codeLine = lineHeightDp(MaterialTheme.typography.titleMedium)
 
-/**
- * 付款码骨架：成功态 QR 图为 `fillMaxWidth` 方图（宽=屏宽-32dp）、条码 `fillMaxWidth`
- * 低高度圆角条、下面两行文本——骨架逐块对应，出现时零位移。
- */
-@Composable
-private fun PayCodeSkeleton(hint: String) {
-    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "skeletonBreath")
-    val alpha by transition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.5f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(durationMillis = 700),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
-        ),
-        label = "skeletonAlpha",
-    )
-    val shimmer = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // 1. QR 位：1:1 常驻。空着是描边空框，取码中是流光骨架块，出码原地换图
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(14.dp))
-                .background(shimmer),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(shimmer),
-        )
-        Box(
-            modifier = Modifier
-                .width(200.dp)
-                .height(14.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .background(shimmer),
-        )
-        Text(
-            text = hint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            textAlign = TextAlign.Center,
-        )
-    }
-}
+                .then(
+                    if (error != null) {
+                        Modifier.border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant,
+                            RoundedCornerShape(14.dp),
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                error != null -> Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(
+                        HugeIcons.CreditCard,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(32.dp),
+                    )
+                    Text(
+                        text = error.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
 
-@Composable
-private fun ErrorBody(state: PayCodeUiState.Error, onRetry: () -> Unit) {
-    val shape = RoundedCornerShape(14.dp)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(
-            HugeIcons.CreditCard,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(32.dp),
-        )
-        Text(
-            state.message,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-        )
-        if (state.canRetry) {
-            Button(onClick = onRetry) { Text("重试") }
+                bitmaps != null -> Image(
+                    bitmap = bitmaps.qr.asImageBitmap(),
+                    contentDescription = "校园卡付款码二维码",
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                else -> SkeletonBox(Modifier.fillMaxSize(), RoundedCornerShape(14.dp))
+            }
         }
-    }
-}
 
-@Composable
-private fun SuccessBody(
-    state: PayCodeUiState.Success,
-    bitmaps: PayCodeBitmaps?,
-    onNext: () -> Unit,
-) {
-    if (bitmaps == null) {
-        // 码位图尚未渲染完成（Bitmap 生成在 IO 线程）：同布局骨架，占位与成品无高差
-        PayCodeSkeleton(hint = "正在生成付款码…")
-        return
-    }
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Image(
-            bitmap = bitmaps.qr.asImageBitmap(),
-            contentDescription = "校园卡付款码二维码",
+        // 2. 条码位：6:1（码图 720×120），几何与 QR 一样占死
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp)),
-        )
-        Image(
-            bitmap = bitmaps.barcode.asImageBitmap(),
-            contentDescription = "校园卡付款码条形码",
-            modifier = Modifier
-                .fillMaxWidth()
+                .aspectRatio(6f)
                 .clip(RoundedCornerShape(8.dp)),
-        )
-        Text(
-            text = "${state.accountMasked} · 第 ${state.index + 1}/${state.codes.size} 个 · " +
-                "约 ${state.expiresSeconds / 3600} 小时内有效",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-        )
-        Text(
-            text = state.current,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 2.sp,
-        )
-        if (state.hasMore) {
-            OutlinedButton(onClick = onNext) { Text("下一个码") }
+        ) {
+            when {
+                error != null -> Unit
+
+                bitmaps != null -> Image(
+                    bitmap = bitmaps.barcode.asImageBitmap(),
+                    contentDescription = "校园卡付款码条形码",
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                else -> SkeletonBox(Modifier.fillMaxSize(), RoundedCornerShape(8.dp))
+            }
+        }
+
+        // 3. 信息行：固定一行高。取码中这行放加载文案（它就是这一行的占位），出错留空
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(infoLine),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                success != null -> Text(
+                    text = "${success.accountMasked} · 第 ${success.index + 1}/${success.codes.size} 个 · " +
+                        "约 ${success.expiresSeconds / 3600} 小时内有效",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.62f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                loading -> Text(
+                    text = if (state is PayCodeUiState.Success) {
+                        "正在生成付款码…"
+                    } else {
+                        "正在登录校园卡，连接水宝宝并获取付款码…"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                else -> Unit
+            }
+        }
+
+        // 4. 卡号行：固定一行高（取码中是流光骨架条）
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(codeLine),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                success != null -> Text(
+                    text = success.current,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 2.sp,
+                    maxLines = 1,
+                )
+
+                loading -> SkeletonBox(
+                    Modifier
+                        .width(220.dp)
+                        .height(codeLine),
+                    RoundedCornerShape(codeLine / 2),
+                )
+
+                else -> Unit
+            }
+        }
+
+        // 5. 按钮行：常显，不可用置灰。**不做条件渲染**——「有下一个码」切换时行出现或消失
+        // 会把下方余额行顶动（同生活页出码位那套「按钮常显」口径）
+        val actionLabel = if (error != null) "重试" else "下一个码"
+        val actionEnabled = if (error != null) error.canRetry else (success != null && success.hasMore)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = if (error != null) onRetry else onNext,
+                enabled = actionEnabled,
+            ) {
+                Text(actionLabel)
+            }
         }
     }
 }

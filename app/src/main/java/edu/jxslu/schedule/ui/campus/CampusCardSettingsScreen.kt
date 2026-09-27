@@ -1,7 +1,6 @@
 package edu.jxslu.schedule.ui.campus
 
 import android.content.Context
-import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -73,12 +72,14 @@ import edu.jxslu.schedule.data.session.LoginState
 import edu.jxslu.schedule.data.session.LoginStateRules
 import edu.jxslu.schedule.data.session.LoginTarget
 import edu.jxslu.schedule.data.session.SessionStatus
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AccountCard
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.View
@@ -212,6 +213,7 @@ fun CampusCardSettingsScreen(
         snackbarHost = { AppSnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text("水宝宝一卡通") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -503,16 +505,11 @@ fun CampusCardSettingsScreen(
                     viewModel.recharge(
                         yuan,
                         targetAccount = target,
-                        // Activity context 直接启动（不设 NEW_TASK）：微信/浏览器在调用方 task
-                        // 内打开，返回无缝、无 task 重排 → 顶栏不跳动
+                        // 统一走 startActivityOutsideApp：拉起前把本窗口的推入/滑出过渡换成
+                        // 静止，防止从外部应用返回时重放右推动画（微信是 singleTask，开不进
+                        // 本 task，「不设 NEW_TASK」只救得了浏览器——2026-09-26 修页面跳动）
                         launchExternal = { intent ->
-                            runCatching {
-                                (context as? Activity)?.startActivity(intent)
-                                    ?: context.startActivity(
-                                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                                    )
-                                true
-                            }.getOrDefault(false)
+                            runCatching { context.startActivityOutsideApp(intent) }.isSuccess
                         },
                     ) { notice ->
                         busy = false
@@ -658,13 +655,14 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     val savedUsername: String? get() = credentialStore.read()?.username
 
     /**
-     * 一卡通开关（付款码卡与充值入口的总闸）。
+     * 一卡通开关（付款码条、钱包卡与充值入口的总闸）。
      *
      * **初值不许写 false**（2026-09-24 修「冷启动首次切到生活页整页跳一下」）：`stateIn` 的初值
-     * 就是首帧读到的值，而 DataStore 的第一份数据必然晚于首帧。写 false 的话付款码卡先按
-     * 「未开启」渲染一次（矮一截的「去开启」块），真值到达后换成码位几何，下方内容整体下移。
-     * 实测 Redmi K70 冷启动首次进生活页：首帧「常用」标题在 y=1172，真值到达后跳到 y=1840，
-     * 一次位移 668px（≈243dp）——用户报的「页面跳动」。
+     * 就是首帧读到的值，而 DataStore 的第一份数据必然晚于首帧。写 false 的话生活页先按
+     * 「未开启」渲染一次（付款码条矮一截、钱包两栏是「— / 未开启凭证」），真值到达后换成
+     * 正常版式，下方内容整体下移。实测 Redmi K70 冷启动首次进生活页：首帧那个区块标题在
+     * y=1172，真值到达后跳到 y=1840，一次位移 668px（≈243dp）——用户报的「页面跳动」。
+     * （668px 量的是改版前的旧版式，数只作量级参考；2026-09-26 生活页已重构，见 DESIGN §3.13。）
      *
      * 初值取**凭证在不在**：开启 / 关闭与存 / 清凭证是同一次流程里的成对写入（设置页
      * `enable` / `disable`、首启引导都是先写凭证再写开关），所以它是首帧能同步拿到的最准的值。
@@ -917,10 +915,10 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     /**
      * 充值：下单 → 拉起微信/收银台 → 回流轮询到账（DESIGN §4.19「充值」）。
      *
-     * [launchExternal] 由 UI 层注入（当前 Activity 直接 startActivity，**不带
-     * FLAG_ACTIVITY_NEW_TASK**）——外部浏览器/微信支付会在调用方 task 内打开并在支付后
-     * 无缝返回，避免 appContext+NEW_TASK 的 task 重排导致顶栏/界面跳动（2026-09-21 实测）。
-     * 返回 false = 无法打开（未装微信等），调用方给文案。
+     * [launchExternal] 由 UI 层注入（[startActivityOutsideApp]：拉起前把二级页窗口的
+     * 推入/滑出过渡换成静止——微信是 singleTask、开不进调用方 task，从它返回时本页的
+     * 右推入过渡会被重放，2026-09-26 修「充值回来页面跳动」）。返回 false = 无法打开
+     * （未装微信等），调用方给文案。
      */
     fun recharge(
         yuan: String,

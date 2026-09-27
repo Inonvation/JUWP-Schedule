@@ -27,6 +27,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
+import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.flow.first
 import java.time.Duration
 import java.time.LocalDate
@@ -177,6 +178,8 @@ object BalanceAlertReminder {
             )
         }.getOrNull() ?: return // 失败不落日期：当天还能补查
         prefs.setAlertLastCheckDate(BalanceAlertSource.Power, BalanceAlert.dateKey(today))
+        // 桌面电费小组件（DESIGN §3.6 三条目改版）：读数已落 Room，顺手镜像一次（零网络）
+        runCatching { LifeWidgetSync.refreshPowerWidgets(context) }
 
         val meter = snapshot.meter
         val yuan = BalanceAlert.remainingYuan(meter.remain, snapshot.feeItem.priceYuan) ?: return
@@ -218,6 +221,9 @@ object BalanceAlertReminder {
         // 口径 = **正式卡**余额（付款码实际扣款的那个钱包）。电子账户是线上缴费用的
         // 独立钱包（DESIGN §3.10 账户口径），混进同一个阈值会让「还剩多少能刷」失去意义。
         if (cards.isEmpty()) return
+        // 桌面校园卡小组件（DESIGN §3.6 三条目改版）：日检本来就取到了余额，顺手推一次
+        // （零额外请求）；电子账户走独立接口，这里不追加，小组件副行保留旧值
+        runCatching { LifeWidgetSync.pushCampusBalance(context, cards.sumOf { it.cardBalanceFen }, null) }
         val cardYuan = cards.sumOf { it.cardBalanceFen } / 100.0
         val threshold = prefs.yktAlertYuan.first()
         if (!BalanceAlert.isLow(cardYuan, threshold)) return
