@@ -23,24 +23,30 @@ internal object WidgetCapabilities {
     fun canPin(context: Context): Boolean =
         AppWidgetManager.getInstance(context).isRequestPinAppWidgetSupported
 
-    /** 是否已把小组件添加到桌面（状态徽标 + 设置页计数用）。 */
-    fun addedCount(context: Context): Int =
+    /** 是否已把课表小组件添加到桌面（状态徽标 + 设置页计数用）。 */
+    fun addedCount(context: Context): Int = addedCountOf(context, ScheduleWidgetReceiver::class.java)
+
+    /** 按条目计数（DESIGN §3.6 三条目改版）：三条各自独立 receiver，徽标互不相干。 */
+    fun addedCountOf(context: Context, receiver: Class<*>): Int =
         AppWidgetManager.getInstance(context)
-            .getAppWidgetIds(ComponentName(context, ScheduleWidgetReceiver::class.java)).size
+            .getAppWidgetIds(ComponentName(context, receiver)).size
+
+    /** 一键添加课表小组件（历史入口，弹层「现在添加」仍钉这条）。 */
+    fun requestPin(context: Context): Boolean = requestPinOf(context, ScheduleWidgetReceiver::class.java)
 
     /**
-     * 一键添加小组件到桌面。返回 false 表示当前桌面不支持，由调用方提示手动添加。
+     * 一键添加指定条目到桌面。返回 false 表示当前桌面不支持，由调用方提示手动添加。
      *
      * 系统确认框（「要添加小组件吗？」）由桌面弹出——这就是
      * 「进入设置界面自动向用户申请添加桌面快捷方式」的实际落点：我们发起申请，
      * 用户在系统框里一键确认，不需要用户自己去小组件选择器里翻。
      */
-    fun requestPin(context: Context): Boolean {
+    fun requestPinOf(context: Context, receiver: Class<*>): Boolean {
         val manager = AppWidgetManager.getInstance(context)
         if (!manager.isRequestPinAppWidgetSupported) return false
         return runCatching {
             manager.requestPinAppWidget(
-                ComponentName(context, ScheduleWidgetReceiver::class.java),
+                ComponentName(context, receiver),
                 null,
                 null,
             )

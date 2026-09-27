@@ -14,7 +14,9 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
  *
  * 历史说明：改版删掉了 `TodayWidgetReceiverSmall/Wide/Large` 三个 receiver 与三份
  * `res/xml/widget_info_*.xml`。**组件名变化会让更新前放在桌面上的旧组件失效**，
- * 用户需重新添加一次（已与用户确认接受）。
+ * 用户需重新添加一次（已与用户确认接受）。2026-09-27 起选择器里另有按**内容**拆的
+ * 校园卡 / 电费两条（`CampusCardWidgetReceiver` / `PowerWidgetReceiver`），与本条
+ * 互不相干——按内容拆不是按尺寸拆，见 DESIGN §3.6。
  */
 class ScheduleWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = ScheduleWidget()

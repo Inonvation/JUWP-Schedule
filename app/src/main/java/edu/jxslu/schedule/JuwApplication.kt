@@ -9,6 +9,7 @@ import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
+import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +33,10 @@ class JuwApplication : Application() {
             // 不会白做 RemoteViews 组装。
             TodayWidgetRefresh.refreshNow(this@JuwApplication)
             TodayWidgetRefresh.ensurePeriodicWork(this@JuwApplication)
+            // 校园卡 / 电费小组件（DESIGN §3.6 三条目改版，2026-09-27）：电费镜像读 Room
+            // （零网络），校园卡过 2 小时闸门后取一次余额。无实例 / 无凭证 / 闸门未到
+            // 都是空跑，内部各自吞错，不会打断后面几步启动协程
+            LifeWidgetSync.onColdStart(this@JuwApplication)
             // 上课提醒（DESIGN §3.7）：冷启动重排下一个提醒 + 周期核对兜底。
             // 提醒关/无课时 scheduleNext 内部是撤销闹钟的空跑，很廉价。
             ClassReminder.scheduleNext(this@JuwApplication)

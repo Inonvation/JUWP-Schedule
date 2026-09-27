@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -40,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,10 +58,13 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.PermissionRow
-import edu.jxslu.schedule.ui.common.SettingsIconBadge
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.widget.CampusCardWidgetReceiver
+import edu.jxslu.schedule.ui.widget.LifeWidgetSync
+import edu.jxslu.schedule.ui.widget.PowerWidgetReceiver
+import edu.jxslu.schedule.ui.widget.ScheduleWidgetReceiver
 import edu.jxslu.schedule.ui.widget.WidgetDay
 import edu.jxslu.schedule.ui.widget.WidgetFocus
 import edu.jxslu.schedule.ui.widget.WidgetLayout
@@ -74,21 +80,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.BatteryCharging01
+import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Energy
+import me.rerere.hugeicons.stroke.Wallet03
 import java.time.LocalDate
 
 /**
  * 「我的 → 桌面小组件」设置页（DESIGN §3.6）。
  *
- * 2026-09-20 改版：可添加的条目从三条（2×2 / 4×2 / 4×4）合并为**一条**
- * 「水贝贝 · 课表」——三者都能自由拖动改大小、落到同一形态后内容相同，选择器里纯冗余。
- * 原来的三行变成「一条添加行 + 三张形态预览」，预览仍按三档尺寸各画一个缩略图，
- * 但只作说明用（拖到多大长什么样），不再各自可添加。
+ * 2026-09-27 **三条目改版**：可添加条目按内容扩为三条——课表（2026-09-20 单条目自适应，
+ * 不变）/ 校园卡 / 电费（各一条 receiver，**不是按尺寸拆**，旧规矩「不要按尺寸拆 receiver」
+ * 不变）。页面随之从单条目页重排为「添加区（三条）+ 各条目数据与点击说明 + 公共节」：
  *
- * 交互规则（用户已拍板「自动检测 + 逐项申请」）：
- * - 进页面**只读检测**各能力/权限状态并展示；
- * - **首次进入**自动弹一次说明弹层（含一键添加），此后不再自动弹；
- * - 不主动拉任何系统框——「去开启」「添加」都是用户点了才动。
+ * 1. 添加到桌面：三行添加条目，各自 `requestPinAppWidget`、各自计数徽标；
+ * 2. 课表尺寸形态：四张预览（同一份快照按四档裁剪，只作说明用）收进 2×2 网格省纵向空间；
+ * 3. 校园卡：口径 / 更新时机 / 点击行为 bullets + 「在小组件中隐藏余额」开关（默认关）；
+ * 4. 电费：读数口径 / 「小组件自身不联网」/ 点击行为 bullets；
+ * 5. 后台及时性（可选）/ 说明：三条目共用。
+ *
+ * 交互规则不变（用户已拍板「自动检测 + 逐项申请」）：进页只读检测；**首次进入**自动弹
+ * 一次说明弹层（含一键添加课表条目），此后不再自动弹；不主动拉任何系统框。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +115,14 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 「在小组件中隐藏余额」（校园卡条目）：进页读一次，开关切换走 LifeWidgetSync
+    // （内部写完立即重渲染，桌面马上变样）
+    var hideBalance by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        hideBalance = runCatching { LifeWidgetSync.campusSnapshot(context).hideBalance }
+            .getOrDefault(false)
     }
 
     // 首次进入的说明弹层（只弹一次，DataStore 标记）
@@ -149,34 +168,94 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             SettingsSection(
                 title = "添加到桌面",
                 subtitle = if (caps.canPin) {
-                    "点「添加」后在系统确认框里一键放到桌面；之后拖动边缘可任意改大小，" +
-                        "内容随尺寸变——小的是「下一节」，大了自动变本周课表"
+                    "点「添加」后在系统确认框里一键放到桌面；三个条目各自独立添加，可以同时上桌面"
                 } else {
                     "当前桌面不支持应用内添加，请长按桌面空白处 → 小组件 → 水贝贝"
                 },
             ) {
                 Spacer(Modifier.height(4.dp))
-                AddRow(
-                    added = caps.addedCount,
-                    canPin = caps.canPin,
-                    onAdd = { onAddClicked(context)?.let(showNotice) },
-                )
+                entries.forEach { entry ->
+                    AddRow(
+                        label = entry.label,
+                        description = entry.description,
+                        icon = entry.icon,
+                        iconTint = entry.iconTint,
+                        added = entry.countOf(caps),
+                        canPin = caps.canPin,
+                        onAdd = {
+                            onAddClicked(context, entry.receiver)?.let(showNotice)
+                        },
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
             }
 
             SettingsSection(
-                title = "尺寸形态",
+                title = "课表尺寸形态",
                 subtitle = "拖到以下大致尺寸时的样子；中间尺寸会自动落在最合适的一档",
             ) {
                 Spacer(Modifier.height(6.dp))
-                WidgetPreviewRow(WidgetPreviewSize.Small, "紧凑：日期 + 正在上 / 下一节")
-                Spacer(Modifier.height(10.dp))
-                WidgetPreviewRow(WidgetPreviewSize.Wide, "横条：日期 + 焦点课（课名更宽，地名全显示）")
-                Spacer(Modifier.height(10.dp))
-                WidgetPreviewRow(WidgetPreviewSize.Tall, "竖条：焦点课 + 今日剩余（行数随高度）")
-                Spacer(Modifier.height(10.dp))
-                WidgetPreviewRow(WidgetPreviewSize.Large, "大方：摘要 + 本周课表（今天 / 明天列高亮）")
+                Row {
+                    FormGridItem(
+                        modifier = Modifier.weight(1f),
+                        size = WidgetPreviewSize.Small,
+                        label = "紧凑",
+                        caption = "日期 + 正在上 / 下一节",
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    FormGridItem(
+                        modifier = Modifier.weight(1f),
+                        size = WidgetPreviewSize.Wide,
+                        label = "横条",
+                        caption = "焦点课课名更宽，地名全显示",
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    FormGridItem(
+                        modifier = Modifier.weight(1f),
+                        size = WidgetPreviewSize.Tall,
+                        label = "竖条",
+                        caption = "焦点课 + 今日剩余",
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    FormGridItem(
+                        modifier = Modifier.weight(1f),
+                        size = WidgetPreviewSize.Large,
+                        label = "大方",
+                        caption = "摘要 + 本周课表（今天 / 明天列高亮）",
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
+            }
+
+            SettingsSection(title = "校园卡", subtitle = "数据与点击") {
+                Spacer(Modifier.height(4.dp))
+                Bullet("余额只算正式卡（食堂 / 门禁），电子账户在副行小字单独展示。")
+                Bullet("点小组件任意位置 = 打开全屏付款码页：防截屏、亮度拉满、扫码后自动退出。")
+                Bullet("余额更新：打开 App 生活页或付款码页即时更新；后台约每 2 小时一次；" +
+                    "取数失败保留上次余额与更新时刻，不会清空。")
+                Bullet("未开启凭证时显示引导文案，点击前往「我的 → 校园卡」。")
+                HideBalanceSwitch(
+                    checked = hideBalance,
+                    onCheckedChange = { checked ->
+                        hideBalance = checked
+                        scope.launch {
+                            runCatching { LifeWidgetSync.setCampusHideBalance(context, checked) }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(2.dp))
+            }
+
+            SettingsSection(title = "电费", subtitle = "数据与点击") {
+                Spacer(Modifier.height(4.dp))
+                Bullet("显示最近一次读数：剩余电量（度）+ 按单价折合金额 + 寝室房号。")
+                Bullet("更新时机：打开生活页 / 充值 / 每日余额检查后同步；小组件自身不联网取数" +
+                    "（读数密度 = 打开 App 的密度）。")
+                Bullet("点小组件任意位置 = 打开「缴费账单 · 用电统计」。")
+                Bullet("还没有读数时显示引导；凭证关闭时一并回落，不残留旧数字。")
+                Spacer(Modifier.height(2.dp))
             }
 
             SettingsSection(
@@ -206,9 +285,9 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
 
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(6.dp))
-                Bullet("内容与「今日」页同一套口径：已结束的课不显示，今天上完自动换明日预告。")
-                Bullet("拖动可任意调整大小，内容随尺寸变化（2×2 到 5×5 都放得下）。")
-                Bullet("跟随系统深浅色；不占用额外网络。")
+                Bullet("三个条目各自独立添加，可以同时上桌面。")
+                Bullet("内容与 App 内同口径：课表与「今日」页一致，余额与生活页钱包卡一致。")
+                Bullet("跟随系统深浅色；课表条目不占用额外网络，电费条目只显示已取到的读数。")
                 Bullet("「还有 N 分钟」按刷新时刻计算，两次刷新之间不会跳动。")
                 Spacer(Modifier.height(6.dp))
                 LauncherNoteRow()
@@ -222,34 +301,75 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             canPin = caps.canPin,
             onAdd = {
                 showIntro = false
-                // 弹层里的「现在添加」默认钉一个 4×2（推荐）：横条在桌面上信息密度与
-                // 可读性平衡最好，之后可随时拖动改大小。
+                // 弹层里的「现在添加」默认钉一个课表 4×2（推荐）：横条在桌面上信息密度与
+                // 可读性平衡最好，之后可随时拖动改大小。校园卡 / 电费条目由用户按需自行添加。
                 // 弹层刚关（它也是独立窗口），提示改由页面宿主展示，不被盖住
-                onAddClicked(context)?.let(showNotice)
+                onAddClicked(context, ScheduleWidgetReceiver::class.java)?.let(showNotice)
             },
             onDismiss = { showIntro = false },
         )
     }
 }
 
+/** 可添加的三条目（DESIGN §3.6 三条目改版）；顺序即页面里的顺序。 */
+private data class WidgetEntry(
+    val label: String,
+    val description: String,
+    val receiver: Class<*>,
+    val icon: ImageVector,
+    val iconTint: Color,
+    val countOf: (WidgetCaps) -> Int,
+)
+
+private val entries = listOf(
+    WidgetEntry(
+        label = "水贝贝 · 课表",
+        description = "小尺寸看正在上 / 下一节，拖到 4×4 变本周课表",
+        receiver = ScheduleWidgetReceiver::class.java,
+        icon = HugeIcons.Calendar01,
+        iconTint = Color(0xFF0F7C7C),
+        countOf = { it.scheduleAdded },
+    ),
+    WidgetEntry(
+        label = "水贝贝 · 校园卡",
+        description = "桌面看余额，点一下直接出示付款码",
+        receiver = CampusCardWidgetReceiver::class.java,
+        icon = HugeIcons.Wallet03,
+        iconTint = Color(0xFF1F7A4D),
+        countOf = { it.campusAdded },
+    ),
+    WidgetEntry(
+        label = "水贝贝 · 电费",
+        description = "桌面看剩余电度，点一下看用电统计",
+        receiver = PowerWidgetReceiver::class.java,
+        icon = HugeIcons.Energy,
+        iconTint = Color(0xFF9A6400),
+        countOf = { it.powerAdded },
+    ),
+)
+
 private fun readCaps(context: Context): WidgetCaps = WidgetCaps(
     canPin = WidgetCapabilities.canPin(context),
     batteryWhitelisted = WidgetCapabilities.isIgnoringBatteryOptimizations(context),
-    addedCount = WidgetCapabilities.addedCount(context),
+    scheduleAdded = WidgetCapabilities.addedCountOf(context, ScheduleWidgetReceiver::class.java),
+    campusAdded = WidgetCapabilities.addedCountOf(context, CampusCardWidgetReceiver::class.java),
+    powerAdded = WidgetCapabilities.addedCountOf(context, PowerWidgetReceiver::class.java),
 )
 
 private data class WidgetCaps(
     val canPin: Boolean,
     val batteryWhitelisted: Boolean,
-    val addedCount: Int,
+    val scheduleAdded: Int,
+    val campusAdded: Int,
+    val powerAdded: Int,
 )
 
 /**
- * 添加小组件。返回 null = 已提交系统确认框；非 null = 用户可读错误，
+ * 添加指定条目。返回 null = 已提交系统确认框；非 null = 用户可读错误，
  * 由调用方走页面统一的 [AppSnackbarHost]（此前是系统 Toast，与本页其余提示两套观感）。
  */
-private fun onAddClicked(context: Context): String? =
-    if (WidgetCapabilities.requestPin(context)) null else WidgetCapabilities.manualAddHint
+private fun onAddClicked(context: Context, receiver: Class<*>): String? =
+    if (WidgetCapabilities.requestPinOf(context, receiver)) null else WidgetCapabilities.manualAddHint
 
 /** 卡内两行之间的换气线（与分区卡的克制风格一致）。 */
 @Composable
@@ -260,12 +380,16 @@ private fun WidgetEntryDivider() {
 }
 
 /**
- * 唯一一条添加行：名称 + 摘要 + 已添加徽标 + 「添加」。
+ * 一条添加行：图标徽标 + 名称 + 摘要 + 已添加徽标 + 「添加」。
  *
- * 不再有三行（旧版每档尺寸一行）——单条目后只有一个 receiver，多行会重复指向它。
+ * 三条各指向自己的 receiver；「已添加 N 个」按各自 receiver 计数，互不相干。
  */
 @Composable
 private fun AddRow(
+    label: String,
+    description: String,
+    icon: ImageVector,
+    iconTint: Color,
     added: Int,
     canPin: Boolean,
     onAdd: () -> Unit,
@@ -274,13 +398,23 @@ private fun AddRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 60.dp),
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(iconTint.copy(alpha = 0.13f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "水贝贝 · 课表",
+                    text = label,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -301,7 +435,7 @@ private fun AddRow(
             }
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "小尺寸看正在上 / 下一节与今日剩余，拖到 4×4 变本周课表",
+                text = description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 maxLines = 2,
@@ -318,6 +452,32 @@ private fun AddRow(
             ) { Text("添加") }
         }
         // 桌面不支持应用内 pin（DESIGN §3.6）：按钮隐藏，只留分区副标题里的手动引导
+    }
+}
+
+/** 「在小组件中隐藏余额」开关行（校园卡节内）：状态在 DataStore，写完桌面立即重渲染。 */
+@Composable
+private fun HideBalanceSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "在小组件中隐藏余额",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "桌面可能被旁人看到；隐藏后显示 ¥ ••••，点击仍可出示付款码",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -366,7 +526,7 @@ private fun LauncherNoteRow() {
  * 设置页展示用的快照（与小组件同一套状态推导），30 秒随时间重算一次。
  *
  * 与 widget 侧的差别只有一处：**周网格直接构建**（不按尺寸跳过），
- * 因为三张预览里有一张就是周网格档。渲染仍走 `forSize`，与桌面所见同源。
+ * 因为四张预览里有一张就是周网格档。渲染仍走 `forSize`，与桌面所见同源。
  */
 @Composable
 private fun rememberPreviewSnapshot(): WidgetSnapshot? {
@@ -391,46 +551,49 @@ private fun rememberPreviewSnapshot(): WidgetSnapshot? {
             val week = if (state.inTerm) state.week else 1
             val highlight = state.focus?.day
                 ?: state.tomorrowDay.takeIf { state.tomorrowVisible }
-                buildWidgetSnapshot(
-                    state,
-                    buildWidgetWeek(
-                        courses = courses,
-                        week = week,
-                        showSaturday = prefs.showSaturday,
-                        showSunday = prefs.showSunday,
-                        filter = prefs.courseFilter,
-                        highlightDay = highlight,
-                        slots = slots,
-                        now = now,
-                        markNow = state.focus != null || state.remaining.isNotEmpty(),
-                        nowDay = state.day,
-                    ),
-                )
+            buildWidgetSnapshot(
+                state,
+                buildWidgetWeek(
+                    courses = courses,
+                    week = week,
+                    showSaturday = prefs.showSaturday,
+                    showSunday = prefs.showSunday,
+                    filter = prefs.courseFilter,
+                    highlightDay = highlight,
+                    slots = slots,
+                    now = now,
+                    markNow = state.focus != null || state.remaining.isNotEmpty(),
+                    nowDay = state.day,
+                ),
+            )
         }.getOrNull()
     }.value
 }
 
-/** 一行预览：缩略图 + 名称 + 说明（不是可添加条目，纯形态参考）。 */
+/** 2×2 网格里的一格预览：缩略图在上、名称与说明在下（不是可添加条目，纯形态参考）。 */
 @Composable
-private fun WidgetPreviewRow(size: WidgetPreviewSize, caption: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun FormGridItem(
+    modifier: Modifier,
+    size: WidgetPreviewSize,
+    label: String,
+    caption: String,
+) {
+    Column(modifier) {
         PreviewTile(size)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = size.label,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = caption,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(1.dp))
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -612,12 +775,13 @@ private fun IntroDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("把课表放上桌面") },
+        title = { Text("把水贝贝放上桌面") },
         text = {
             Text(
-                text = "一个组件，尺寸随意：2×2 看正在上和下一节，4×2 多几节，拖到 4×4 " +
-                    "自动变成本周课表。\n\n" +
-                    "小组件在上下课时刻自动更新。若希望刷新更及时，可在页面下方开启" +
+                text = "课表：小到 2×2 看下一节，拖到 4×4 变本周课表。\n\n" +
+                    "校园卡：桌面看余额，点一下直接出示付款码。\n\n" +
+                    "电费：桌面看剩余电度，点一下看用电统计。\n\n" +
+                    "小组件在上下课时刻自动更新；希望更及时可在页面下方开启" +
                     "「忽略电池优化」与「允许自启动」（可选，不开也能用）。",
                 style = MaterialTheme.typography.bodyMedium,
             )

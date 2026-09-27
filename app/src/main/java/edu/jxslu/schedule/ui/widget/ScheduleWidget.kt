@@ -51,9 +51,11 @@ import java.time.LocalDate
 /**
  * 课表小组件（DESIGN §3.6）。
  *
- * **单条目**（2026-09-20 改版）：选择器里只有一条「水贝贝 · 课表」，尺寸由
+ * **单条目**（2026-09-20 改版）：「水贝贝 · 课表」这一条内不按尺寸分条目，尺寸由
  * [SizeMode.Exact] 全权交给宿主——给多少 dp 就按多少算，[WidgetMetrics] 决定渲染形态：
  * 紧凑（日期 + 焦点卡）/ 列表（焦点 + 按高度算行数的剩余）/ 周网格（4×4 及以上）。
+ * 2026-09-27 起选择器里另有按内容拆的校园卡 / 电费两条（见 `CampusCardWidget` /
+ * `PowerWidget`），与本条互不相干。
  *
  * 数据来源与今日页**完全同源**：Room → `buildTodayState()` → [buildWidgetSnapshot]。
  *
@@ -511,20 +513,21 @@ private fun WeekCourseCell(block: WidgetWeekBlock) {
 }
 
 /**
- * 小组件点击用的显式 Intent。
+ * 小组件点击用的显式 Intent（课表 / 校园卡 / 电费三条目共用，DESIGN §3.6 三条目改版）。
  *
- * `NEW_TASK | CLEAR_TASK`：点小组件 = 从主窗口重新开始（整卡进今日页、周网格进课表页），
- * 所以先把任务栈清空再起 `MainActivity`，用户不会停在上次那个二级页上。
+ * `NEW_TASK | CLEAR_TASK`：点小组件 = 从主窗口重新开始（整卡进今日页、周网格进课表页、
+ * 校园卡进付款码页、电费进用电统计页），所以先把任务栈清空再起 `MainActivity`，
+ * 用户不会停在上次那个二级页上。
  *
  * 别改回 `SINGLE_TOP | CLEAR_TOP`：`MainActivity` 是 standard，CLEAR_TOP 只有在
  * intent 与栈中实例的 baseIntent 匹配（action/category 一致）时才生效，我们这份是
  * 纯显式 intent，匹配不上——2026-09-23 真机实测点它清不掉二级页，用户看到的是
  * 二级页而不是今日页。CLEAR_TASK 与匹配无关，行为确定。
  *
- * `route` 用 `MainActivity` 的常量（[edu.jxslu.schedule.EXTRA_ROUTE] / `ROUTE_WEEK`），
+ * `route` 用 `MainActivity` 的常量（[edu.jxslu.schedule.EXTRA_ROUTE] / `ROUTE_WEEK` 等），
  * 不在这里另立一套——两处字符串漂移会让点击静默失效。
  */
-private fun widgetIntent(context: Context, route: String?): Intent =
+internal fun widgetIntent(context: Context, route: String?): Intent =
     Intent(context, MainActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         if (route != null) putExtra(edu.jxslu.schedule.EXTRA_ROUTE, route)

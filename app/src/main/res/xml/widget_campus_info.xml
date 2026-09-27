@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  校园卡小组件（DESIGN §3.6 三条目改版，2026-09-27）：余额 + 点击出示付款码。
+
+  按**内容**拆条目（课表 / 校园卡 / 电费各一条 receiver），不是按尺寸拆——
+  旧规矩「不要按尺寸拆 receiver」不变，本条目自身仍是单条目 + SizeMode.Exact。
+
+  默认 4×2（余额大字 + 电子账户副行 + 胶囊按钮信息量最舒服）；内容形态固定、
+  不随尺寸换档，所以 maxResize 收在 4×2（250dp ≈ 4 格、110dp ≈ 2 格），拖更大会留大片空白。
+  minWidth/minHeight 是 Android 11 及以下的回退尺寸，与 target 口径一致（同 widget_info.xml）。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:maxResizeWidth="250dp"
+    android:maxResizeHeight="110dp"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="0"
+    android:description="@string/widget_campus_description"
+    android:previewImage="@mipmap/ic_launcher"
+    android:initialLayout="@layout/glance_default_loading_layout" />

@@ -147,6 +147,10 @@ class WidgetRefreshWorker(
 
     override suspend fun doWork(): Result {
         TodayWidgetRefresh.refreshNow(applicationContext)
+        // 校园卡 / 电费小组件（DESIGN §3.6 三条目改版）：电费是本地镜像（零网络，兜住
+        // 账单页等未接推送的取数路径）；校园卡只做 2 小时闸门取数。无实例 / 无凭证 /
+        // 闸门未到都是廉价空跑，内部各自吞错
+        LifeWidgetSync.onPeriodicTick(applicationContext)
         return Result.success()
     }
 }

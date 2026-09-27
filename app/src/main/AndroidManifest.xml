@@ -147,8 +147,9 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!-- 课表小组件（DESIGN §3.6）：**单条目**（2026-09-20 起），尺寸自适应。
-             旧的三条目 receiver（Small/Wide/Large）已删——条目名变化会让桌面上
+             旧的按尺寸拆的三条 receiver（Small/Wide/Large）已删——条目名变化会让桌面上
              旧实例失效，用户重新添加一次即可。
+             2026-09-27 起按内容另有校园卡 / 电费两条（见下），与本条互不相干。
              exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
         <receiver
             android:name=".ui.widget.ScheduleWidgetReceiver"
@@ -164,6 +165,36 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_info" />
+        </receiver>
+
+        <!-- 校园卡 / 电费小组件（DESIGN §3.6 三条目改版，2026-09-27）：按**内容**拆条目
+             （课表 / 校园卡 / 电费各一条 receiver），不是按尺寸拆——「不要按尺寸拆 receiver」
+             的老规矩不变，两条新条目自身仍是单条目 + SizeMode.Exact、无尺寸档。
+             渲染路径零网络：校园卡余额由 App 内取数链路顺手推送（2 小时闸门在
+             LifeWidgetSync），电费只镜像 Room 最新读数。
+             exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
+        <receiver
+            android:name=".ui.widget.CampusCardWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_campus_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_campus_info" />
+        </receiver>
+
+        <receiver
+            android:name=".ui.widget.PowerWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_power_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_power_info" />
         </receiver>
 
         <!-- 小组件边界闹钟落点（上下课时刻刷新），仅内部广播 -->
