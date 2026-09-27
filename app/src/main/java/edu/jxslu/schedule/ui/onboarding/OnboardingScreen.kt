@@ -43,6 +43,7 @@ import edu.jxslu.schedule.data.session.CredentialVault
 import edu.jxslu.schedule.data.ykt.YktException
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DisclaimerDialog
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
@@ -88,6 +89,7 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     var jwOk by remember { mutableStateOf(false) }
     var yktOk by remember { mutableStateOf(false) }
     var qiekjOk by remember { mutableStateOf(false) }
+    var showDisclaimer by remember { mutableStateOf(false) }
 
     /** 完成或跳过都写标记——只有「走完了」才算看过，后面不再打扰。 */
     fun finish() {
@@ -139,7 +141,10 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                 StepProgress(step)
             }
             when (step) {
-                Step.Welcome -> WelcomeStep(onNext = { next(Step.Jw) })
+                Step.Welcome -> WelcomeStep(
+                    onNext = { next(Step.Jw) },
+                    onOpenDisclaimer = { showDisclaimer = true },
+                )
                 Step.Jw -> JwStep(
                     cas = cas,
                     vault = vault,
@@ -168,6 +173,13 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
             }
         }
     }
+
+    // 首启第一步的免责声明（DESIGN §3.16 / §4.5）：与「我的 → 关于」共用一个弹窗，
+    // 正文只有 domain/Disclaimer.kt 一份。**不做强制勾选**——自用工具没必要拿同意书挡人，
+    // 用户想看得见、找得到就够了。
+    if (showDisclaimer) {
+        DisclaimerDialog(onDismiss = { showDisclaimer = false })
+    }
 }
 
 @Composable
@@ -185,7 +197,10 @@ private fun StepProgress(step: Step) {
 }
 
 @Composable
-private fun WelcomeStep(onNext: () -> Unit) {
+private fun WelcomeStep(
+    onNext: () -> Unit,
+    onOpenDisclaimer: () -> Unit,
+) {
     Text("欢迎使用水贝贝", style = MaterialTheme.typography.headlineSmall)
     Text(
         "接下来用几步把学校账号配好。配过之后，课表、成绩、一卡通、电费都不用再手动登录。",
@@ -204,7 +219,15 @@ private fun WelcomeStep(onNext: () -> Unit) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
     )
+    Text(
+        "本应用完全免费，不是学校官方应用。开始之前，请先看一遍免责声明。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+    )
     Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) { Text("开始配置") }
+    TextButton(onClick = onOpenDisclaimer, modifier = Modifier.fillMaxWidth()) {
+        Text("查看免责声明")
+    }
 }
 
 @Composable

@@ -180,6 +180,21 @@
 首屏高度减半。二级页叠二级页走既有 `SubpageActivity.start`（`SubpageStack` 兜底恢复），
 不新增机制。原设置子页（课表管理、权限设置等）的路径与行为不变，只是入口挪了一层。
 
+免责声明与开源许可（2026-09-27 补）：`ABOUT` 页原先只有一行副标题、没有正文，与 §4.5 的
+「设置/关于页必须有免责声明」不符。现加两行：
+
+- **免责声明** → 全文弹窗（开场一句 + 逐条列表，`heightIn(max = 420.dp)` 可滚）。
+  条文唯一实现在 `domain/Disclaimer.kt`，除第 1 条外与仓库根 `README.md` 的
+  「免责声明」一节逐条对应；第 1 条（完全免费、认准官方下载源）只在 App 内出现——
+  README 本身就挂在 GitHub 上，在那儿写这句是同义反复。
+- **开源许可** → 组件清单弹窗，数据在 `domain/OpenSourceLicenses.kt`（本应用 MIT +
+  7 条第三方组件，逐条核过官方仓库 LICENSE 或构件 POM）。HugeIcons 的 Compose 封装
+  （`com.github.rikkahub:hugeicons-compose`）仓库未声明许可，按上游图标集 MIT 口径标注，
+  这条差异写在弹窗正文里。
+
+两个弹窗实现在 `ui/common/LegalDialogs.kt`，首启引导第一步共用（§3.16）——正文只有
+`domain/` 那两份数据，任何 UI 侧都不许再抄一份。
+
 二级页（`SubpageActivity`，§3.11 新增 7 个）：笔记·课件库 / 某课程笔记列表 / 笔记详情
 （`NOTES`·`NOTES_COURSE`·`NOTE_DETAIL`）、作业库 / 某课程作业列表 / 作业详情 /
 作业中心（`HOMEWORK`·`HOMEWORK_COURSE`·`HOMEWORK_DETAIL`·`HOMEWORK_TODO`，最后一个由
@@ -1621,6 +1636,11 @@ Activity 窗口的 `LocalFocusManager` / `LocalSoftwareKeyboardController` / ins
 | 3 | 一卡通 · 缴费平台共用凭证 | 学号 + 查询密码 | 复用 `CampusCardSettingsScreen.saveAndEnable` 的登录 + `queryCard` 校验 | `NeedCaptcha`(8002/8003) → 现成文案「去浏览器登录一次」（脚本绝不硬试）；安全键盘协议自检不过 → 「请更新 App」；`MultiAccount`(8001) → 提示去网页选默认账号 |
 | 4 | 胖乖生活 | 手机号 + 短信验证码 **或** 粘贴 Token（二选一） | 短信：`sendCode` → `login` → 查一次余额；Token：落盘 → `validateToken`（查余额） | 验证码错误可重发（60 秒冷却，与胖乖生活页同档）；Token 校验失败**清掉刚存的那份**再报错；**此步可跳过**，说明写清「开水与学校账号无关，需单独登录」 |
 | 5 | 完成 | 无 | 无 | 列出三项状态，失败项标「未配置」，可回第 2/3/4 步重来 |
+
+**第 1 步的免责声明**（2026-09-27 补）：欢迎页底部加一句「完全免费、非学校官方应用」
+与一个「查看免责声明」按钮，点开 `ui/common/DisclaimerDialog`（与「我的 → 关于」同一个
+弹窗、同一份 `domain/Disclaimer.kt`）。**不做强制勾选**：自用工具不拿同意书挡人，
+用户想看得见、找得到就够了；「跳过」照旧一路可用。
 
 **第 4 步为什么放最后**：它要求用户手上有一部能收短信的手机，且和学校账号体系无关。
 插在中间会打断「学号密码一次解决」的节奏，也会让以为「一个账号走天下」的用户困惑。

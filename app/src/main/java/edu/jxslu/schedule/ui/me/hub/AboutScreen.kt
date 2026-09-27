@@ -23,8 +23,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -34,15 +36,19 @@ import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DisclaimerDialog
+import edu.jxslu.schedule.ui.common.LicensesDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.me.MeViewModel
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Agreement01
 import me.rerere.hugeicons.stroke.Github
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Shield01
+import me.rerere.hugeicons.stroke.SoftwareLicense
 
 /** 公开仓库地址（MIT）；「开源仓库」点击后经系统浏览器打开。 */
 private const val REPO_URL = "https://github.com/Inonvation/JUWP-Schedule"
@@ -67,6 +73,8 @@ fun AboutScreen(
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var showDisclaimer by remember { mutableStateOf(false) }
+    var showLicenses by remember { mutableStateOf(false) }
     val showNotice: (String) -> Unit = { message ->
         scope.launch {
             snackbar.showSnackbar(AppNoticeVisuals(message, tone = NoticeTone.Warning))
@@ -104,10 +112,22 @@ fun AboutScreen(
                     showArrow = false,
                 )
                 SettingItem(
+                    title = "免责声明",
+                    subtitle = "非学校官方应用 · 第三方接口风险 · 仅供学习",
+                    icon = HugeIcons.Agreement01,
+                    onClick = { showDisclaimer = true },
+                )
+                SettingItem(
                     title = "开源仓库",
                     subtitle = "github.com/Inonvation/JUWP-Schedule",
                     icon = HugeIcons.Github,
                     onClick = { openUrl(context, REPO_URL)?.let(showNotice) },
+                )
+                SettingItem(
+                    title = "开源许可",
+                    subtitle = "本应用 MIT · 主要第三方组件清单",
+                    icon = HugeIcons.SoftwareLicense,
+                    onClick = { showLicenses = true },
                 )
             }
             SettingsSection(title = "系统") {
@@ -119,5 +139,12 @@ fun AboutScreen(
                 )
             }
         }
+    }
+
+    if (showDisclaimer) {
+        DisclaimerDialog(onDismiss = { showDisclaimer = false })
+    }
+    if (showLicenses) {
+        LicensesDialog(onDismiss = { showLicenses = false })
     }
 }
