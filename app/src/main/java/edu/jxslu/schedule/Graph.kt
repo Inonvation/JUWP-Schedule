@@ -17,7 +17,10 @@ import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.data.repo.ScholarProgressRepository
+import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.ScoreRepository
+import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.data.jw.TranscriptClient
 import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.repo.TranscriptStore
@@ -26,8 +29,21 @@ import edu.jxslu.schedule.data.session.CredentialVault
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 object Graph {
+    /**
+     * 进程级协程作用域（2026-09-27，DESIGN §4.29）。
+     *
+     * 给「不该被某个界面生命周期掐断」的后台任务用：首启引导登录成功后要抓的成绩 /
+     * 学业完成情况，不能挂在引导页的 `rememberCoroutineScope` 上——用户点「下一步」
+     * 跳进 MainActivity，那个 scope 就被取消了，抓取会半路夭折（写一半或干脆不写）。
+     * [JuwApplication] 也用它，全进程一份，不新开池。
+     */
+    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     @Volatile
     private var repository: ScheduleRepository? = null
 
@@ -39,6 +55,15 @@ object Graph {
 
     @Volatile
     private var scoreRepository: ScoreRepository? = null
+
+    @Volatile
+    private var scholarProgressRepository: ScholarProgressRepository? = null
+
+    @Volatile
+    private var scholarProgressSync: ScholarProgressSync? = null
+
+    @Volatile
+    private var scoreSync: ScoreSync? = null
 
     @Volatile
     private var noteRepository: NoteRepository? = null
@@ -109,6 +134,38 @@ object Graph {
     fun scoreRepository(context: Context): ScoreRepository =
         scoreRepository ?: synchronized(this) {
             scoreRepository ?: ScoreRepository(JuwDatabase.get(context)).also { scoreRepository = it }
+        }
+
+    /** 学业完成情况仓库单例（DESIGN §4.29）：与课表共用数据库，整体替换。 */
+    fun scholarProgressRepository(context: Context): ScholarProgressRepository =
+        scholarProgressRepository ?: synchronized(this) {
+            scholarProgressRepository ?: ScholarProgressRepository(JuwDatabase.get(context))
+                .also { scholarProgressRepository = it }
+        }
+
+    /**
+     * 学业完成情况抓取单例（DESIGN §4.29）：复用 CAS 会话与同一份仓库/偏好。
+     *
+     * 无状态，做成单例只是省一次构造——它会被引导页、冷启动、页面刷新三处同时持有，
+     * 各自 new 一个也不会错，但没必要。
+     */
+    fun scholarProgressSync(context: Context): ScholarProgressSync =
+        scholarProgressSync ?: synchronized(this) {
+            scholarProgressSync ?: ScholarProgressSync(
+                cas = casSession(context),
+                repo = scholarProgressRepository(context),
+                prefs = displayPrefs(context),
+            ).also { scholarProgressSync = it }
+        }
+
+    /** 成绩自动导入单例（DESIGN §4.29）：与成绩页共用同一份解析与仓库。 */
+    fun scoreSync(context: Context): ScoreSync =
+        scoreSync ?: synchronized(this) {
+            scoreSync ?: ScoreSync(
+                cas = casSession(context),
+                repo = scoreRepository(context),
+                prefs = displayPrefs(context),
+            ).also { scoreSync = it }
         }
 
     /** 笔记·课件仓库单例（DESIGN §4.20）：归属键是课程名，与课表无关。 */

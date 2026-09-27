@@ -123,6 +123,10 @@ interface ScoreDao {
     @Query("SELECT * FROM scores ORDER BY term DESC")
     suspend fun getAll(): List<ScoreEntity>
 
+    /** 「有没有成绩」的廉价判定（自动导入闸门用）：不把整张表读进内存。 */
+    @Query("SELECT COUNT(*) FROM scores")
+    suspend fun count(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(scores: List<ScoreEntity>)
 
@@ -209,4 +213,43 @@ interface HomeworkDao {
 
     @Query("DELETE FROM homework WHERE id = :id")
     suspend fun deleteById(id: Long)
+}
+
+/**
+ * 学业完成情况（DESIGN §4.29，Room v12 → v13）。
+ *
+ * 全局归属学生、**不过滤 timetableId**（同 [ScoreDao]）。写入口径是整体替换：
+ * [deleteAll] + [insertGroups]/[insertCourses] 在一个事务里跑，见
+ * `ScholarProgressRepository.replaceAll`。
+ */
+@Dao
+interface ScholarProgressDao {
+
+    @Query("SELECT * FROM scholar_groups ORDER BY dimension, sortOrder, id")
+    fun observeGroups(): Flow<List<ScholarGroupEntity>>
+
+    @Query("SELECT * FROM scholar_groups ORDER BY dimension, sortOrder, id")
+    suspend fun getGroups(): List<ScholarGroupEntity>
+
+    @Query("SELECT * FROM scholar_courses ORDER BY dimension, groupName, sortOrder, id")
+    fun observeCourses(): Flow<List<ScholarCourseEntity>>
+
+    @Query("SELECT * FROM scholar_courses ORDER BY dimension, groupName, sortOrder, id")
+    suspend fun getCourses(): List<ScholarCourseEntity>
+
+    /** 「有没有数据」的廉价判定：导入闸门与 UI 空态都用它，不必把两张表读全。 */
+    @Query("SELECT COUNT(*) FROM scholar_groups")
+    suspend fun countGroups(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGroups(groups: List<ScholarGroupEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCourses(courses: List<ScholarCourseEntity>)
+
+    @Query("DELETE FROM scholar_groups")
+    suspend fun deleteGroups()
+
+    @Query("DELETE FROM scholar_courses")
+    suspend fun deleteCourses()
 }

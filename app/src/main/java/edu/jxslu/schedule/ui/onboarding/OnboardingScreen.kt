@@ -244,6 +244,19 @@ private fun JwStep(
                     // 已经有名字和班级，不用先导一次成绩。失败静默——它是锦上添花，
                     // 不该挡住引导的下一步。
                     runCatching { Graph.profileSync(context).syncOnce(force = true) }
+                    // 首次配置完成后自动导入成绩与学业完成情况（DESIGN §4.29）。
+                    //
+                    // 两条纪律：
+                    // 1. **不等它**：学业完成情况要连抓四个页面，校园网下可能十几秒；
+                    //    引导页不能为它卡住「下一步」。用户走到「我的 → 学习」时大概率已落库。
+                    // 2. **不用本页的 scope**：这里用进程级 appScope。本页的
+                    //    rememberCoroutineScope 在跳进 MainActivity 时就被取消，
+                    //    挂上去会让抓取半路夭折（可能只写了一半维度）。
+                    val appContext = context.applicationContext
+                    Graph.appScope.launch {
+                        runCatching { Graph.scoreSync(appContext).sync(force = true) }
+                        runCatching { Graph.scholarProgressSync(appContext).sync(force = true) }
+                    }
                     onDone()
                 }
                 CasEnsureResult.Suspended -> notice = NoticeFeedback(

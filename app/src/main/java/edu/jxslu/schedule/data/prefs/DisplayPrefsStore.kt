@@ -340,6 +340,43 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_PROFILE_SYNC_DATE] = dateKey }
     }
 
+    /**
+     * 学业完成情况的培养方案名（DESIGN §4.29），如「2024 xxx专业培养方案及教学计划」。
+     *
+     * 只作展示用；解析没拿到时留空，UI 不显示这一行——它不是判断"有没有数据"的依据，
+     * 那个看 [ScholarProgressRepository.hasData]。
+     */
+    val scholarPlanName: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_SCHOLAR_PLAN_NAME].orEmpty()
+    }
+
+    suspend fun setScholarPlanName(value: String) {
+        context.displayDataStore.edit { it[KEY_SCHOLAR_PLAN_NAME] = value.trim() }
+    }
+
+    /**
+     * 学业完成情况的上次成功导入日期（ISO `2026-09-27`）。空 = 从没成功过。
+     *
+     * 与成绩的 [scoreSyncDate] 共用同一套闸门判定（`AutoSyncRules`）：这类数据一学期
+     * 才动一次，每次冷启动都抓是白撞教务风控。
+     */
+    val scholarSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_SCHOLAR_SYNC_DATE].orEmpty()
+    }
+
+    suspend fun setScholarSyncDate(dateKey: String) {
+        context.displayDataStore.edit { it[KEY_SCHOLAR_SYNC_DATE] = dateKey }
+    }
+
+    /** 成绩的上次成功导入日期（ISO）。空 = 从没成功过。口径同 [scholarSyncDate]。 */
+    val scoreSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_SCORE_SYNC_DATE].orEmpty()
+    }
+
+    suspend fun setScoreSyncDate(dateKey: String) {
+        context.displayDataStore.edit { it[KEY_SCORE_SYNC_DATE] = dateKey }
+    }
+
     /** 开水双击确认。全局项，默认双击防误触。 */
     val waterRequireDoubleClick: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_WATER_REQUIRE_DOUBLE_CLICK] ?: true
@@ -1163,6 +1200,9 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_PROFILE_CLASS = stringPreferencesKey("profile_class")
         val KEY_PROFILE_SYNC_DATE = stringPreferencesKey("profile_sync_date")
         val KEY_ONBOARDING_SEEN = booleanPreferencesKey("onboarding_seen")
+        val KEY_SCHOLAR_PLAN_NAME = stringPreferencesKey("scholar_plan_name")
+        val KEY_SCHOLAR_SYNC_DATE = stringPreferencesKey("scholar_sync_date")
+        val KEY_SCORE_SYNC_DATE = stringPreferencesKey("score_sync_date")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

@@ -20,8 +20,10 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         NoteEntity::class,
         HomeworkEntity::class,
         PowerReadingEntity::class,
+        ScholarGroupEntity::class,
+        ScholarCourseEntity::class,
     ],
-    version = 11,
+    version = 13,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -35,6 +37,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun homeworkDao(): HomeworkDao
     abstract fun powerReadingDao(): PowerReadingDao
+    abstract fun scholarProgressDao(): ScholarProgressDao
 
     companion object {
 
@@ -325,6 +328,72 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v11 → v12：读数补记房间显示名（2026-09-27）。
+         *
+         * 生活页冷启动要拿最新读数当首屏种子（电费卡不再从「读取中…」起步），
+         * 而房号以前只能从 `roomId` 拿——那是平台的数字内部 id，显示出来是一串数字。
+         * 走 ALTER TABLE 加空串默认值，历史读数照常参与统计（`roomName` 不参与分组）。
+         */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE power_readings ADD COLUMN roomName TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * v12 → v13：学业完成情况（DESIGN §4.29）。
+         *
+         * 两张新表，CREATE TABLE / CREATE INDEX 非 destructive。全局归属学生、不挂
+         * timetableId。可空列（学分、结论、是否学位课）在 SQLite 侧**不带 NOT NULL**，
+         * 与实体的 `Double?` / `Boolean?` 一一对应——多写一个 NOT NULL 会被迁移校验判不一致。
+         * 索引名必须与实体 `@Index("dimension")` 生成的 `index_<表>_<列>` 逐字对齐。
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS scholar_groups (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "dimension TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "sortOrder INTEGER NOT NULL, " +
+                        "requiredCredit REAL, " +
+                        "earnedCredit REAL, " +
+                        "ongoingCredit REAL, " +
+                        "remainingCredit REAL, " +
+                        "passed INTEGER, " +
+                        "percent TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_scholar_groups_dimension " +
+                        "ON scholar_groups(dimension)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS scholar_courses (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "dimension TEXT NOT NULL, " +
+                        "groupName TEXT NOT NULL, " +
+                        "sortOrder INTEGER NOT NULL, " +
+                        "term TEXT NOT NULL, " +
+                        "courseNo TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "credit REAL NOT NULL, " +
+                        "planned INTEGER, " +
+                        "category TEXT NOT NULL, " +
+                        "attribute TEXT NOT NULL, " +
+                        "nature TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, " +
+                        "scoreText TEXT NOT NULL, " +
+                        "remark TEXT NOT NULL, " +
+                        "degreeCourse INTEGER)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_scholar_courses_dimension " +
+                        "ON scholar_courses(dimension)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -346,6 +415,8 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
+                        MIGRATION_11_12,
+                        MIGRATION_12_13,
                     )
                     .build()
                     .also { instance = it }

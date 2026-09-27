@@ -48,6 +48,7 @@ class PowerReadingStore(private val dao: PowerReadingDao) {
             remainKwh = remain,
             priceYuan = priceYuan?.takeIf { it > 0 } ?: 0.0,
             roomId = roomId,
+            roomName = meter.room.room.orEmpty().trim(),
             source = source,
         )
         return dao.insertIgnore(row) != -1L
@@ -58,6 +59,7 @@ class PowerReadingStore(private val dao: PowerReadingDao) {
         remainKwh = remainKwh,
         priceYuan = priceYuan,
         roomId = roomId,
+        roomName = roomName,
     )
 }
 

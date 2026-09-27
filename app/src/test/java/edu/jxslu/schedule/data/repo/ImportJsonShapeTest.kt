@@ -278,6 +278,86 @@ class ImportJsonShapeTest {
         assertNull(export.semester)
         assertTrue(export.timeSlots.isEmpty())
     }
+
+    // ---- 学业完成情况备份段（DESIGN §4.3 / §4.29）----
+
+    private val scholarGroup = edu.jxslu.schedule.domain.ScholarGroup(
+        dimension = "system",
+        name = "通识必修课",
+        sortOrder = 0,
+        requiredCredit = 58.5,
+        earnedCredit = 57.5,
+        ongoingCredit = 0.25,
+        remainingCredit = 0.8,
+        passed = false,
+        percent = "98.3%",
+    )
+
+    private val scholarCourse = edu.jxslu.schedule.domain.ScholarCourse(
+        dimension = "system",
+        groupName = "通识必修课",
+        sortOrder = 0,
+        term = "2025-2026-2",
+        courseNo = "030401002",
+        name = "大学生职业生涯规划（下）",
+        credit = 0.5,
+        planned = true,
+        category = "1",
+        attribute = "必修",
+        nature = "通识必修课",
+        status = edu.jxslu.schedule.domain.ScholarCourseStatus.Earned.label,
+        scoreText = "84",
+        remark = "",
+        degreeCourse = false,
+    )
+
+    /** 学业段导出再导入逐字段一致：含可空学分、可空结论、可空是否学位课。 */
+    @Test
+    fun scholarSegmentsRoundTrip() {
+        val text = CourseJsonFormat.encodeToString(
+            CourseExport.serializer(),
+            CourseExport(
+                courses = emptyList(),
+                scholarGroups = listOf(scholarGroup.toBackupJson()),
+                scholarCourses = listOf(scholarCourse.toBackupJson()),
+            ),
+        )
+        val back = decode(text)
+        assertEquals(scholarGroup, back.scholarGroups.single().toScholarGroup())
+        assertEquals(scholarCourse, back.scholarCourses.single().toScholarCourse())
+    }
+
+    /** 缺字段（手工编辑）降级为默认值；状态空串落成「未修读」，不能写一个空状态进库。 */
+    @Test
+    fun scholarBackupPartialFieldsFallBackToDefaults() {
+        val sparse = """
+            {"courses":[{"name":"高数","day":1,"startSection":1,"endSection":2,"weeks":[1]}],
+             "scholarGroups":[{"dimension":"system","name":"通识必修课"}],
+             "scholarCourses":[{"dimension":"system","groupName":"通识必修课","name":"某课"}]}
+        """.trimIndent()
+        val export = decode(sparse)
+        val g = export.scholarGroups.single().toScholarGroup()
+        assertEquals("通识必修课", g.name)
+        assertNull(g.requiredCredit)
+        assertNull(g.passed)
+        assertEquals("", g.percent)
+        val c = export.scholarCourses.single().toScholarCourse()
+        assertEquals(0.0, c.credit, 1e-9)
+        assertEquals(
+            edu.jxslu.schedule.domain.ScholarCourseStatus.Pending.label,
+            c.status,
+        )
+        assertNull(c.degreeCourse)
+    }
+
+    /** 旧备份没有学业段：照常解码，段为空 = 导入不动学业数据。 */
+    @Test
+    fun oldFileWithoutScholarSegmentsFallsBackToEmpty() {
+        val export = decode(good)
+        assertTrue(export.scholarGroups.isEmpty())
+        assertTrue(export.scholarCourses.isEmpty())
+    }
+
 private val OLD_JSON_WITHOUT_REMARK = """
 {"id":0,"name":"高数","teacher":"张","position":"A101","day":1,"startSection":1,"endSection":2,
  "weeks":[1,2,3],"isCustomTime":false,"colorIndex":0,"kind":"theory"}

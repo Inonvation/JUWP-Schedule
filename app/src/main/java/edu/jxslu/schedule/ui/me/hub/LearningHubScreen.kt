@@ -22,12 +22,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.ScholarDimension
+import edu.jxslu.schedule.domain.ScholarProgressRules
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Task01
+import me.rerere.hugeicons.stroke.Target01
 
 /** 我的 → 学习（DESIGN §3.11 / §4.15）：笔记·课件、作业与成绩查询，副标题实时计数。
  * 成绩查询 2026-09-24 自课表汇总挪入（用户要求：成绩属学习内容，不该藏在课表配置流里）。 */
@@ -38,12 +41,30 @@ fun LearningHubScreen(
     onOpenNotes: () -> Unit,
     onOpenHomework: () -> Unit,
     onOpenScores: () -> Unit,
+    onOpenScholar: () -> Unit,
 ) {
     val context = LocalContext.current
     val noteGroups by remember { Graph.noteRepository(context) }.observeGroups()
         .collectAsStateWithLifecycle(initialValue = null)
     val homeworkGroups by remember { Graph.homeworkRepository(context) }.observeGroups()
         .collectAsStateWithLifecycle(initialValue = null)
+    // 学业完成情况只取「课程体系」维度算总账：四个维度是同一批课程的不同切法，
+    // 混在一起求和会算成四倍（DESIGN §4.29）
+    val scholarGroups by remember { Graph.scholarProgressRepository(context) }.groups
+        .collectAsStateWithLifecycle(initialValue = null)
+    val scholarCourses by remember { Graph.scholarProgressRepository(context) }.courses
+        .collectAsStateWithLifecycle(initialValue = null)
+    val scholarTotals = remember(scholarGroups, scholarCourses) {
+        val systemGroups = scholarGroups?.filter { it.dimension == ScholarDimension.System.id }
+        if (systemGroups == null) {
+            null
+        } else {
+            ScholarProgressRules.totals(
+                systemGroups,
+                scholarCourses.orEmpty().filter { it.dimension == ScholarDimension.System.id },
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -92,7 +113,31 @@ fun LearningHubScreen(
                     icon = HugeIcons.GraduationScroll,
                     onClick = onOpenScores,
                 )
+                SettingItem(
+                    title = "学业完成情况",
+                    subtitle = scholarSubtitle(scholarTotals),
+                    icon = HugeIcons.Target01,
+                    onClick = onOpenScholar,
+                )
             }
         }
+    }
+}
+
+/** 学业完成情况的副标题：有总账就报进度，没数据就说明来源。 */
+private fun scholarSubtitle(totals: edu.jxslu.schedule.domain.ScholarTotals?): String {
+    if (totals == null) return "培养方案达成度 · 从教务导入"
+    if (totals.required <= 0.0) return "培养方案达成度 · 已修 ${trimCredit(totals.earned)} 学分"
+    val line = "已修 ${trimCredit(totals.earned)} / ${trimCredit(totals.required)} 学分"
+    return if (totals.remaining > 0.0) "$line · 还需 ${trimCredit(totals.remaining)}" else "$line · 已达成"
+}
+
+/** 学分展示：整数不带小数点（79.0 → 79），小数最多两位。 */
+private fun trimCredit(value: Double): String {
+    val rounded = Math.round(value * 100) / 100.0
+    return if (rounded == rounded.toLong().toDouble()) {
+        rounded.toLong().toString()
+    } else {
+        rounded.toString().trimEnd('0').trimEnd('.')
     }
 }

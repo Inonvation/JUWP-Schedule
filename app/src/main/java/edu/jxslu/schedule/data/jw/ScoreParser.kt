@@ -45,6 +45,21 @@ object ScoreParser {
     fun fetchJs(term: String, page: Int): String =
         FETCH_JS.replace("__TERM__", term).replace("__PAGE__", page.toString())
 
+    /**
+     * 成绩接口的完整 URL（OkHttp 直抓用，DESIGN §4.29 的自动导入走这条）。
+     *
+     * 参数顺序与 [FETCH_JS] 内的注入 fetch 逐字一致——两个入口抓的是同一份数据，
+     * 顺序不同会让人误以为其中一条是另一条的特例。
+     *
+     * 学期号先过 [JwUrls.TERM_PATTERN] 白名单：它会被拼进 URL，脏值一律当"全部学期"，
+     * 与 [JwUrls.labScheduleUrl] 同一把尺子（宁可退回默认，也不拼一个可能出错的查询）。
+     */
+    fun listUrl(term: String, page: Int): String {
+        val safeTerm = if (term.isEmpty() || JwUrls.TERM_PATTERN.matches(term)) term else ""
+        return "${JwUrls.SCORE_LIST_API}?kksj=$safeTerm" +
+            "&kcxz=&kcsx=&kcmc=&xsfs=&pageNum=$page&pageSize=$PAGE_SIZE"
+    }
+
     /** 一页解析结果：rows + 总数（翻页判定用）。 */
     data class ScorePage(
         val count: Int,

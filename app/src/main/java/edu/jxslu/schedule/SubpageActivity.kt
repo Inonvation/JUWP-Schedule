@@ -36,6 +36,7 @@ import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
 import edu.jxslu.schedule.ui.score.ScoreScreen
 import edu.jxslu.schedule.ui.score.TranscriptHistoryScreen
+import edu.jxslu.schedule.ui.scholar.ScholarScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
@@ -64,6 +65,8 @@ enum class SubpageScreen {
     SHORTCUTS,
     /** 我的 → 成绩查询（按学期存储，DESIGN §4.15） */
     SCORES,
+    /** 我的 → 学习 → 学业完成情况（培养方案达成度，DESIGN §3.17 / §4.29） */
+    SCHOLAR,
     /** 导出成绩单 → 最近导出（DESIGN §3.14；列表即 filesDir/transcripts，最多 10 份） */
     TRANSCRIPTS,
     /** 今日 → 共享单车出码（DESIGN §3.9；独立窗口承载二维码展示） */
@@ -194,6 +197,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SHORTCUTS ->
                 ShortcutSettingsScreen(onBack = onBack, focusItemId = focusItemId)
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
+            SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)
             SubpageScreen.TRANSCRIPTS -> TranscriptHistoryScreen(onBack = onBack)
             // focusItemId 对 EBIKE 复用为「进页即出码的车号」：今日页地图选车链路
             // 把选中车号带进出码页直接生成（2026-09-24，DESIGN §3.9）
@@ -222,6 +226,7 @@ class SubpageActivity : ComponentActivity() {
                 onOpenNotes = { SubpageActivity.start(this, SubpageScreen.NOTES) },
                 onOpenHomework = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
                 onOpenScores = { SubpageActivity.start(this, SubpageScreen.SCORES) },
+                onOpenScholar = { SubpageActivity.start(this, SubpageScreen.SCHOLAR) },
             )
             SubpageScreen.TIMETABLE_HUB -> TimetableHubScreen(
                 onBack = onBack,

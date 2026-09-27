@@ -32,3 +32,20 @@
   注入课表页适配样式，并把成绩页误判成「理论课表就绪」，触发课表自动导入。
 - **`autoImportOnScoreReady` 必须定义在 `runScoreImport` 之后**：Kotlin 局部函数不能前向引用，
   挪到前面会 `Unresolved reference 'runScoreImport'` 编译不过。
+
+## 学业完成情况与自动导入（2026-09-27）
+
+- 学业完成情况（`/jsxsd/xxwcqk/xxwcqkOn*.do?isdb=0`，四个维度各一个页面）**返回 HTML 不是
+  JSON**，解析在 `data/jw/ScholarProgressParser.kt`，**按表头名映射**，不要按下标取——四个维度的
+  列集合各不相同（课程性质 9 列连「修读学期」都没有）。规格、坑与实测数字见 DESIGN §4.29。
+- **成绩与学业各有两条导入路径，写的是同一份数据**：WebView 注入（成绩页按钮，用用户在页面上
+  手登的会话）与 OkHttp 直取（`ScoreSync` / `ScholarProgressSync`，走 `CasSession.fetchHtml`
+  加已存凭证）。改解析或写库口径时两处一起看；URL 常量只有 `JwUrls` 一份。
+- **自动导入不许挂在页面的 `rememberCoroutineScope` 上**：引导页登录成功后的两次抓取丢
+  `Graph.appScope`（进程级）。页面 scope 在跳进 MainActivity 时就被取消，抓取会半路夭折。
+- **闸门 7 天**（`AutoSyncRules`，成绩与学业共用）：库里没数据立即抓，有数据满 7 天才抓。
+  改这个数字等于改「多久自动打一次教务」。
+- **日期只在写库成功后落**。失败也记 = 一次网络抖动换一周不刷新。
+- **解析结果先校验再整体替换**（`ScholarProgressRules.validate`）：教务改版时保留旧数据，
+  不拿残值覆盖。注意校验里**没有**「要求学分合计 > 0」这条通用闸门——公选课类别维度全是 0.0，
+  加了会把整个维度永久判失败；那条检查只在 `validateCreditTotal` 里对课程体系维度用。

@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.jw
 
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.ScholarDimension
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -157,6 +158,29 @@ object JwUrls {
 
     /** 成绩数据接口。 */
     const val SCORE_LIST_API = "$XSD_BASE/jsxsd/kscj/cjcx_list"
+
+    /**
+     * 学业完成情况壳页（学籍成绩 → 学籍管理 → 学业达成情况 → 学业完成情况，DESIGN §4.29）。
+     *
+     * 菜单 data-id = `NEW_XSD_XJCJ_XJGL_XXWCQKTX`。壳页只有四个 tab 的 tab 头，
+     * 真正的数据在下面四个 `xxwcqkOn*.do` 里。
+     */
+    const val SCHOLAR_PROGRESS = "$XSD_BASE/jsxsd/xxwcqk/xxwcqk_idxOntx.do"
+
+    /**
+     * 学业完成情况的四个数据页（DESIGN §4.29）。
+     *
+     * `isdb=0` 是「本人视图」标志；教务的「对比学业情况」用 `isdb=1`，那是教职工查
+     * 院系/年级/专业的入口，学生本人用不到，也不要去抓（页面要求先选院系，抓了也是空）。
+     *
+     * 返回的是 **HTML 而不是 JSON**，解析见 [ScholarProgressParser]。
+     */
+    fun scholarUrl(dimension: ScholarDimension): String = when (dimension) {
+        ScholarDimension.System -> "$XSD_BASE/jsxsd/xxwcqk/xxwcqkOnkctx.do?isdb=0"
+        ScholarDimension.Nature -> "$XSD_BASE/jsxsd/xxwcqk/xxwcqkOnkclb.do?isdb=0"
+        ScholarDimension.Attribute -> "$XSD_BASE/jsxsd/xxwcqk/xxwcqkOnkcxz.do?isdb=0"
+        ScholarDimension.Elective -> "$XSD_BASE/jsxsd/xxwcqk/xxwcqkOnszklb.do?isdb=0"
+    }
 
     /**
      * 学籍卡片查看（学籍毕业 → 学籍管理 → 学籍卡片查看）。

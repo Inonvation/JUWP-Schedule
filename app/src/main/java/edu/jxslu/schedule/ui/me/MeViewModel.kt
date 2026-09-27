@@ -285,6 +285,9 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
                         buildString {
                             append(base)
                             if (r.restoredScores > 0) append("；成绩已整体替换（${r.restoredScores} 条）")
+                            if (r.restoredScholarCourses > 0) {
+                                append("；学业完成情况已整体替换（${r.restoredScholarCourses} 门）")
+                            }
                             val configParts = buildList {
                                 if (r.restoredSemester) add("学期配置")
                                 if (r.restoredSlots > 0) add("作息 ${r.restoredSlots} 节")

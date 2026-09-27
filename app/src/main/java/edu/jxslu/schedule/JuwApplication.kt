@@ -12,13 +12,15 @@ import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class JuwApplication : Application() {
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * 进程级协程作用域。2026-09-27 起改用 [Graph.appScope] 那一份——引导页登录成功后
+     * 要丢后台的自动导入也往这里投，全进程一个池，不各开各的。
+     */
+    private val appScope: CoroutineScope = Graph.appScope
 
     override fun onCreate() {
         super.onCreate()
@@ -66,7 +68,15 @@ class JuwApplication : Application() {
         // 内直接返回不发请求；超出才探一次会话（一个轻量 GET）。失败静默——打开 WebView
         // 时还会再试，而且用户在页面上手登永远可以。
         appScope.launch {
-            runCatching { Graph.casSession(this@JuwApplication).ensureValid() }
+            runCatching {
+                Graph.casSession(this@JuwApplication).ensureValid()
+                // 会话可用就补抓学业数据（DESIGN §4.29）：首次（库里没数据）立即抓，
+                // 之后 7 天一次；不满足闸门时内部是零网络的空跑。失败静默——它们是
+                // 后台补充，不该在冷启动弹任何东西。顺序上先成绩后学业：成绩条数少、
+                // 先落库，用户打开「我的 → 学习」时大概率已经有数据。
+                runCatching { Graph.scoreSync(this@JuwApplication).sync() }
+                runCatching { Graph.scholarProgressSync(this@JuwApplication).sync() }
+            }
         }
         // 登录失效提醒（DESIGN §3.16 / §4.27）：只在「转停用」那一刻发一条。
         // 会话过期但凭证有效时不打扰用户——那时会自动续登，发通知只会制造噪音。

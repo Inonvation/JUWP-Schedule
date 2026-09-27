@@ -181,6 +181,13 @@ fun DataSettingsScreen(
                             "导入时会整体替换现有成绩。",
                     )
                 }
+                if (confirm.preview.scholarCourseCount > 0) {
+                    if (isNotEmpty()) append(" ")
+                    append(
+                        "另有 ${confirm.preview.scholarCourseCount} 门课程的学业完成情况，" +
+                            "导入时会整体替换。",
+                    )
+                }
                 val configParts = buildList {
                     if (confirm.preview.semester != null) add("学期配置")
                     if (confirm.preview.slotCount > 0) add("作息 ${confirm.preview.slotCount} 节")

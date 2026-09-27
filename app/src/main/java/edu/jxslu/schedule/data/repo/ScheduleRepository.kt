@@ -4,6 +4,8 @@ import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.ScoreEntity
+import edu.jxslu.schedule.data.local.ScholarCourseEntity
+import edu.jxslu.schedule.data.local.ScholarGroupEntity
 import edu.jxslu.schedule.data.local.SemesterConfigEntity
 import edu.jxslu.schedule.data.local.TimeSlotEntity
 import edu.jxslu.schedule.data.local.TimetableEntity
@@ -25,6 +27,9 @@ import edu.jxslu.schedule.domain.ScheduleBackground
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
 import edu.jxslu.schedule.domain.ScoreRecord
+import edu.jxslu.schedule.domain.ScholarCourse
+import edu.jxslu.schedule.domain.ScholarCourseStatus
+import edu.jxslu.schedule.domain.ScholarGroup
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
@@ -95,6 +100,15 @@ data class CourseExport(
      */
     val scores: List<ScoreBackupJson> = emptyList(),
     /**
+     * 学业完成情况备份段（DESIGN §4.3/§4.29）：换机/重装随课表一起恢复。
+     * 与成绩同理，旧版 App 忽略该段、新版读旧文件缺省为空，两版互不破坏。
+     *
+     * 培养方案名不在备份里：它是展示性字段，恢复后为空只是少显示一行，
+     * 下次抓取就有了；为此把它塞进 [DisplayPrefs] 反而会牵动整套偏好默认值契约。
+     */
+    val scholarGroups: List<ScholarGroupBackupJson> = emptyList(),
+    val scholarCourses: List<ScholarCourseBackupJson> = emptyList(),
+    /**
      * 学期配置备份段（DESIGN §4.3）：导出当前课表、导入恢复到目标课表。
      * 旧文件没有此键 → 不动目标课表的学期配置。
      */
@@ -144,6 +158,105 @@ data class ScoreBackupJson(
     val gradePoint: Double? = null,
     val status: String = "",
     val pendingReview: Boolean = false,
+)
+
+/**
+ * 备份文件里的学业完成情况分组段（DESIGN §4.3 / §4.29）。
+ *
+ * 字段全部带默认值：手工编辑或旧格式缺字段时降级为空值，而不是整个文件解码失败。
+ * 四个维度混在一张列表里，用 `dimension` 区分（与库里的存法一致）。
+ */
+@Serializable
+data class ScholarGroupBackupJson(
+    val dimension: String = "",
+    val name: String = "",
+    val sortOrder: Int = 0,
+    val requiredCredit: Double? = null,
+    val earnedCredit: Double? = null,
+    val ongoingCredit: Double? = null,
+    val remainingCredit: Double? = null,
+    val passed: Boolean? = null,
+    val percent: String = "",
+)
+
+/** 备份文件里的学业完成情况课程明细段（DESIGN §4.3 / §4.29）。 */
+@Serializable
+data class ScholarCourseBackupJson(
+    val dimension: String = "",
+    val groupName: String = "",
+    val sortOrder: Int = 0,
+    val term: String = "",
+    val courseNo: String = "",
+    val name: String = "",
+    val credit: Double = 0.0,
+    val planned: Boolean? = null,
+    val category: String = "",
+    val attribute: String = "",
+    val nature: String = "",
+    val status: String = "",
+    val scoreText: String = "",
+    val remark: String = "",
+    val degreeCourse: Boolean? = null,
+)
+
+fun ScholarGroupBackupJson.toScholarGroup(): ScholarGroup = ScholarGroup(
+    dimension = dimension,
+    name = name,
+    sortOrder = sortOrder,
+    requiredCredit = requiredCredit,
+    earnedCredit = earnedCredit,
+    ongoingCredit = ongoingCredit,
+    remainingCredit = remainingCredit,
+    passed = passed,
+    percent = percent,
+)
+
+fun ScholarGroup.toBackupJson(): ScholarGroupBackupJson = ScholarGroupBackupJson(
+    dimension = dimension,
+    name = name,
+    sortOrder = sortOrder,
+    requiredCredit = requiredCredit,
+    earnedCredit = earnedCredit,
+    ongoingCredit = ongoingCredit,
+    remainingCredit = remainingCredit,
+    passed = passed,
+    percent = percent,
+)
+
+fun ScholarCourseBackupJson.toScholarCourse(): ScholarCourse = ScholarCourse(
+    dimension = dimension,
+    groupName = groupName,
+    sortOrder = sortOrder,
+    term = term,
+    courseNo = courseNo,
+    name = name,
+    credit = credit,
+    planned = planned,
+    category = category,
+    attribute = attribute,
+    nature = nature,
+    status = status.ifBlank { ScholarCourseStatus.Pending.label },
+    scoreText = scoreText,
+    remark = remark,
+    degreeCourse = degreeCourse,
+)
+
+fun ScholarCourse.toBackupJson(): ScholarCourseBackupJson = ScholarCourseBackupJson(
+    dimension = dimension,
+    groupName = groupName,
+    sortOrder = sortOrder,
+    term = term,
+    courseNo = courseNo,
+    name = name,
+    credit = credit,
+    planned = planned,
+    category = category,
+    attribute = attribute,
+    nature = nature,
+    status = status,
+    scoreText = scoreText,
+    remark = remark,
+    degreeCourse = degreeCourse,
 )
 
 fun ScoreBackupJson.toScoreRecord(): ScoreRecord = ScoreRecord(
@@ -1007,6 +1120,10 @@ class ScheduleRepository(
         }
         // 成绩全局归属学生（DESIGN §4.15），随备份一起带走；timetableId 不影响它
         val scores = db.scoreDao().getAll().map { it.toDomain().toBackupJson() }
+        // 学业完成情况同理（DESIGN §4.29）：全局归属学生，不随课表。没抓过就是空段，
+        // 导入侧对空段不动作，不会把新设备上已有的数据清掉
+        val scholarGroups = db.scholarProgressDao().getGroups().map { it.toDomain().toBackupJson() }
+        val scholarCourses = db.scholarProgressDao().getCourses().map { it.toDomain().toBackupJson() }
         // 学期配置与作息按课表（DESIGN §4.3）：导出的就是这份课表的时间口径，恢复时跟课表走
         val ttId = timetableId ?: currentTimetableId.first()
         val semester = db.semesterConfigDao().getForTimetable(ttId)?.toDomain()?.let {
@@ -1017,7 +1134,14 @@ class ScheduleRepository(
         }
         return json.encodeToString(
             CourseExport.serializer(),
-            CourseExport(courses = courses, scores = scores, semester = semester, timeSlots = slots),
+            CourseExport(
+                courses = courses,
+                scores = scores,
+                scholarGroups = scholarGroups,
+                scholarCourses = scholarCourses,
+                semester = semester,
+                timeSlots = slots,
+            ),
         )
     }
 
@@ -1062,6 +1186,19 @@ class ScheduleRepository(
                 return ImportResult.Failure("第 ${index + 1} 条成绩缺少 term 或 name")
             }
         }
+        // 学业完成情况同样在校验阶段挡下（DESIGN §4.29）：缺维度或课程名的行一律整体拒绝
+        val scholarGroups = export.scholarGroups.map { it.toScholarGroup() }
+        val scholarCourses = export.scholarCourses.map { it.toScholarCourse() }
+        scholarGroups.forEachIndexed { index, g ->
+            if (g.dimension.isBlank() || g.name.isBlank()) {
+                return ImportResult.Failure("第 ${index + 1} 条学业分组缺少 dimension 或 name")
+            }
+        }
+        scholarCourses.forEachIndexed { index, c ->
+            if (c.dimension.isBlank() || c.name.isBlank()) {
+                return ImportResult.Failure("第 ${index + 1} 条学业课程缺少 dimension 或 name")
+            }
+        }
         // 学期/作息段同样先全量校验（DESIGN §4.3）：宁可整体拒绝，不留「课程对了时间错」的半套
         val backupSemester = export.semester?.let { s ->
             val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
@@ -1085,6 +1222,22 @@ class ScheduleRepository(
                 )
             }
             scoreRecords.size
+        }
+        // 学业完成情况（DESIGN §4.29）：与成绩同一口径——带数据才整体替换，空段不动现有数据
+        val restoredScholar = if (scholarGroups.isEmpty() && scholarCourses.isEmpty()) {
+            0
+        } else {
+            db.withTransaction {
+                db.scholarProgressDao().deleteGroups()
+                db.scholarProgressDao().deleteCourses()
+                db.scholarProgressDao().insertGroups(
+                    scholarGroups.map { ScholarGroupEntity.fromDomain(it) },
+                )
+                db.scholarProgressDao().insertCourses(
+                    scholarCourses.map { ScholarCourseEntity.fromDomain(it) },
+                )
+            }
+            scholarCourses.size
         }
         // 配置恢复到**目标课表**（与课程同落点）；恢复作息视为用户数据，置位防结构性迁移覆盖
         val ttId = timetableId ?: currentTimetableId.first()
@@ -1115,6 +1268,7 @@ class ScheduleRepository(
                 total = domain.size,
                 merge = true,
                 restoredScores = restoredScores,
+                restoredScholarCourses = restoredScholar,
                 restoredSemester = restoredSemester,
                 restoredSlots = restoredSlots,
             )
@@ -1125,6 +1279,7 @@ class ScheduleRepository(
                 total = domain.size,
                 merge = false,
                 restoredScores = restoredScores,
+                restoredScholarCourses = restoredScholar,
                 restoredSemester = restoredSemester,
                 restoredSlots = restoredSlots,
             )
@@ -1146,6 +1301,18 @@ class ScheduleRepository(
         }
         val domain = export.courses.map { it.toDomain() }
         val scores = export.scores.map { it.toScoreRecord() }
+        val scholarGroups = export.scholarGroups.map { it.toScholarGroup() }
+        val scholarCourses = export.scholarCourses.map { it.toScholarCourse() }
+        scholarGroups.forEachIndexed { index, g ->
+            if (g.dimension.isBlank() || g.name.isBlank()) {
+                return ImportPreview.Error("第 ${index + 1} 条学业分组缺少 dimension 或 name")
+            }
+        }
+        scholarCourses.forEachIndexed { index, c ->
+            if (c.dimension.isBlank() || c.name.isBlank()) {
+                return ImportPreview.Error("第 ${index + 1} 条学业课程缺少 dimension 或 name")
+            }
+        }
         // 学期/作息段也先验一遍（与 importJson 同口径）：弹窗阶段就把坏备份挡下
         val backupSemester = export.semester?.let { s ->
             val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
@@ -1163,6 +1330,7 @@ class ScheduleRepository(
             sample = domain.take(5).joinToString { it.name },
             term = export.term?.takeIf { it.isNotBlank() },
             scores = scores,
+            scholarCourseCount = scholarCourses.size,
             semester = backupSemester,
             slotCount = backupSlots.size,
         )
@@ -1187,6 +1355,8 @@ sealed interface ImportResult {
         val merge: Boolean,
         /** 随文件整体替换的成绩条数；0 = 文件没带成绩段。 */
         val restoredScores: Int = 0,
+        /** 随文件整体替换的学业完成情况课程条数；0 = 文件没带学业段。 */
+        val restoredScholarCourses: Int = 0,
         /** 是否随文件恢复了目标课表的学期配置。 */
         val restoredSemester: Boolean = false,
         /** 随文件恢复的作息条数；0 = 文件没带作息段。 */
@@ -1204,6 +1374,8 @@ sealed interface ImportPreview {
         val term: String? = null,
         /** 文件携带的成绩（DESIGN §4.3）：导入时整体替换，弹窗按它出提示。 */
         val scores: List<ScoreRecord> = emptyList(),
+        /** 文件携带的学业完成情况课程条数（DESIGN §4.29）：导入时整体替换；0 = 没带。 */
+        val scholarCourseCount: Int = 0,
         /** 文件带的学期配置（null = 没有）；随预览展示到确认弹窗注记。 */
         val semester: SemesterConfig? = null,
         /** 文件带的作息条数（0 = 没有）。 */
