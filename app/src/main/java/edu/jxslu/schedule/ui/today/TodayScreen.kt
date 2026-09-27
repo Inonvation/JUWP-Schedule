@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -1112,6 +1113,60 @@ private fun TomorrowBlock(
  */
 private val QuickCardMinHeight = 58.dp
 
+/**
+ * 生活卡片带（胖乖 / 趣智校园）的间距规格：整行形态一套、半行形态一套。
+ *
+ * 半行形态那套是挤出来的。半行卡内容宽 141.6dp（2026-09-28 在 411dp 宽的机器上实测），
+ * 四个汉字的标题按 14sp 量是 56dp，右边还要放金额（「¥76.14 ›」量到 52.6dp），
+ * 加上图标 20dp 已经 128.6dp，只剩 13dp 给三处间隙。整行那套（图标后 10dp、
+ * 标题与余额间 4dp、余额左内缩 12dp）用上去，标题列只剩 49dp，
+ * 「胖乖生活」就被截成「胖乖…」——半行卡里每一 dp 都在抢。
+ *
+ * 改这里之前先量一遍：[HalfCardBalanceMaxWidth] 与这几个数字绑在一起。
+ */
+private data class LifeCardSpacing(
+    val contentPadding: PaddingValues,
+    val iconGap: Dp,
+    val titleBalanceGap: Dp,
+    val balanceStartPadding: Dp,
+)
+
+/** 整行形态（另一张卡关掉时独占一行）：2026-09-23 那套间距，不动。 */
+private val FullRowLifeCardSpacing = LifeCardSpacing(
+    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+    iconGap = 10.dp,
+    titleBalanceGap = 4.dp,
+    balanceStartPadding = 12.dp,
+)
+
+/**
+ * 半行形态（两张卡并排）：左右内边距与整行一致（13dp），这样右侧金额的右缘和上方
+ * 「附近单车 ›」在同一条竖线上；挤宽度靠图标后的间距、标题与余额之间那点缝，
+ * 以及余额热区的左内缩（[HalfCardBalanceMaxWidth]）。
+ */
+private val HalfRowLifeCardSpacing = LifeCardSpacing(
+    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+    iconGap = 8.dp,
+    // 标题与余额之间不留缝（半行卡里每一 dp 都在抢，见 [HalfCardBalanceMaxWidth] 的算式）：
+    // 标题列比标题本身宽，多出来的那点就是两者之间的间隔
+    titleBalanceGap = 0.dp,
+    // 热区左内缩只留 2dp（整行卡是 12dp）：文字位置不受影响，省下的宽度给标题。
+    // 金额本身还有 50dp 宽、36dp 高，点得中
+    balanceStartPadding = 2.dp,
+)
+
+/**
+ * 半行卡右侧入口的最大宽度：57dp。
+ *
+ * Row 先量非 weight 的子项，余额一长，标题就被挤成省略号（标题列是「剩下的」那部分）。
+ * 封顶后反过来：余额先截断，标题恒有 56dp 以上——标题是卡片的身份，认不出是哪张卡更糟。
+ * 57dp 是算出来的：内容宽 141.6dp（卡 167.6dp − 左右 13dp）− 图标 20dp − 图标后 8dp
+ * − 标题 56dp（「胖乖生活」四个汉字按 14sp 量），留 0.6dp 余量。
+ * 扣掉左内缩 2dp，右侧文字最多 55dp：「¥76.14 ›」在这台机器上量到 52.6dp 放得下，
+ * 再长的金额由 [halfCardAmountText] 去掉箭头（「¥1234.56」约 53dp）也放得下。
+ */
+private val HalfCardBalanceMaxWidth = 57.dp
+
 
 /**
  * 快趣出行码整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
@@ -1221,8 +1276,8 @@ private fun WaterCard(
     onOpen: () -> Unit,
     horizontalPadding: Dp = 16.dp,
     /**
-     * 半行形态（与趣智校园并排时）：标题缩成「胖乖」、右侧只留金额。
-     * 整行时不动——半行宽度放不下「胖乖生活 + 小票 ¥x.xx ›」这一套。
+     * 半行形态（与趣智校园并排时）：间距收紧一档、右侧只留金额（去掉「小票」前缀）。
+     * 标题仍是「胖乖生活」四个字，宽度预算见 [LifeCardSpacing]。
      */
     compact: Boolean = false,
     onOpenEntrySheet: () -> Unit,
@@ -1240,6 +1295,7 @@ private fun WaterCard(
  *
  * 卡上只放三件事：登录态、余额、页名。设备与开阀流程都在页内——
  * 半行宽度放不下设备列表，也不该在这里发起任何蓝牙动作。
+ * 卡上的金额走 [cardAmount] 收成两位小数，面板与页面仍是服务端原始值。
  */
 @Composable
 private fun QzxyCard(
@@ -1248,9 +1304,8 @@ private fun QzxyCard(
     onOpenEntrySheet: () -> Unit,
     horizontalPadding: Dp = 16.dp,
     /**
-     * 半行形态（与胖乖生活并排时）：标题缩成「趣智」。
-     * 右边多了余额之后，半行宽度放不下「趣智校园」四个字加金额，真机上标题会被
-     * 挤成「趣智…」——与胖乖卡同一处理（那边是「胖乖生活」→「胖乖」）。
+     * 半行形态（与胖乖生活并排时）：间距收紧一档、右侧入口封顶，标题仍是「趣智校园」。
+     * 宽度预算见 [LifeCardSpacing] 与 [HalfCardBalanceMaxWidth]。
      */
     compact: Boolean = false,
 ) {
@@ -1263,13 +1318,15 @@ private fun QzxyCard(
     val context = LocalContext.current
     val qzxyRepo = remember(context) { Graph.qzxy(context) }
     val loggedIn by qzxyRepo.loggedIn.collectAsStateWithLifecycle()
+    val spacing = if (compact) HalfRowLifeCardSpacing else FullRowLifeCardSpacing
+    val sideActionMaxWidth = if (compact) HalfCardBalanceMaxWidth else null
     AppCardRow(
         modifier = Modifier
             .padding(horizontal = horizontalPadding)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
         onClickLabel = "打开趣智校园开热水页",
-        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+        contentPadding = spacing.contentPadding,
         // 用水中把整卡点亮（主色描边）：副行那行小字在半行宽度上不够显眼，
         // 水开着却看不出来是要花钱的
         highlighted = state.watering != null,
@@ -1281,12 +1338,12 @@ private fun QzxyCard(
             tint = primary,
             modifier = Modifier.size(20.dp),
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(spacing.iconGap))
         Column(Modifier.weight(1f)) {
-            WaterCardTitle(if (compact) "趣智" else "趣智校园")
+            WaterCardTitle("趣智校园")
             QzxyCardSubtitle(state, loggedIn)
         }
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(spacing.titleBalanceGap))
         // 右侧余额是面板入口（与胖乖生活卡同口径）：半行宽度放不下第二个按钮，
         // 而余额本来就是这张卡最想被点的地方
         when {
@@ -1298,27 +1355,39 @@ private fun QzxyCard(
                 color = primary,
                 onClickLabel = "登录趣智校园",
                 onClick = onOpenEntrySheet,
+                startPadding = spacing.balanceStartPadding,
+                maxWidth = sideActionMaxWidth,
             )
             state.balance != null -> {
                 val balance = state.balance
                 CardSideActionText(
-                    text = "¥${balance?.text} ›",
+                    text = if (compact) {
+                        halfCardAmountText(balance?.text)
+                    } else {
+                        "¥${cardAmount(balance?.text)} ›"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = primary,
                     fontWeight = FontWeight.SemiBold,
                     onClickLabel = "查看余额与开热水",
                     onClick = onOpenEntrySheet,
+                    startPadding = spacing.balanceStartPadding,
+                    maxWidth = sideActionMaxWidth,
                 )
             }
             state.balanceLoaded -> CardSideActionText(
-                text = "余额暂不可用 ›",
+                // 半行形态写全「余额暂不可用 ›」会把标题挤没，缩成四个字；
+                // 整行形态没这个问题，文案保持原样
+                text = if (compact) "暂不可用" else "余额暂不可用 ›",
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 onClickLabel = "查看余额与开热水",
                 onClick = onOpenEntrySheet,
+                startPadding = spacing.balanceStartPadding,
+                maxWidth = sideActionMaxWidth,
             )
             else -> Text(
-                text = "余额读取中…",
+                text = if (compact) "读取中…" else "余额读取中…",
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
@@ -1358,6 +1427,31 @@ private fun QzxyCardSubtitle(state: QzxyUiState, loggedIn: Boolean) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+/**
+ * 卡上金额：**固定两位小数**（四舍五入）。
+ *
+ * 服务端余额是「3.974」这类原始串（DESIGN §4.30 原本的口径是原样展示），多一位小数，
+ * 半行卡上「趣智校园」四个字就放不下。卡上收成两位，点开的余额面板与趣智校园页
+ * 仍是原始值——那里不差这点宽度，也不该改账单口径。胖乖的小票余额本来就是两位，不受影响。
+ * 解析不出数字（服务端给了别的串）就原样返回，不吞掉。
+ */
+private fun cardAmount(raw: String?): String {
+    val trimmed = raw?.trim().orEmpty()
+    return trimmed.toDoubleOrNull()?.let { "%.2f".format(it) } ?: trimmed
+}
+
+/**
+ * 半行卡右侧的金额文案：两位小数 + 「›」；金额到三位数（¥100 起）时去掉箭头。
+ *
+ * 「¥176.14 ›」比右槽宽度（[HalfCardBalanceMaxWidth]）宽，硬放会把标题挤掉，
+ * 而把金额截成「¥176.1…」比少一个箭头难看得多——舍箭头保金额。
+ * 七个字符（「¥176.14」）是那条界线：短于它连箭头一起放得下。
+ */
+private fun halfCardAmountText(raw: String?): String {
+    val amount = "¥${cardAmount(raw)}"
+    return if (amount.length > 6) amount else "$amount ›"
 }
 
 /**
@@ -1434,13 +1528,14 @@ private fun WaterLoggedOutCard(
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
+    val spacing = if (compact) HalfRowLifeCardSpacing else FullRowLifeCardSpacing
     AppCardRow(
         modifier = Modifier
             .padding(horizontal = horizontalPadding)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
         onClickLabel = "去登录胖乖生活",
-        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+        contentPadding = spacing.contentPadding,
     ) {
         Icon(
             HugeIcons.Droplet,
@@ -1448,10 +1543,12 @@ private fun WaterLoggedOutCard(
             tint = primary,
             modifier = Modifier.size(20.dp),
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(spacing.iconGap))
         Column(Modifier.weight(1f)) {
             Text(
-                text = if (compact) "胖乖 · 未登录" else "胖乖生活 · 未登录",
+                // 半行卡也写全名（2026-09-28）：这里右侧没有金额，四个字放得下，
+                // 与已登录卡的标题口径一致
+                text = "胖乖生活 · 未登录",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -1489,13 +1586,15 @@ private fun WaterQuickEntry(
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
     val haptics = rememberAppHaptics()
+    val spacing = if (compact) HalfRowLifeCardSpacing else FullRowLifeCardSpacing
+    val sideActionMaxWidth = if (compact) HalfCardBalanceMaxWidth else null
     AppCardRow(
         modifier = Modifier
             .padding(horizontal = horizontalPadding)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
         onClickLabel = "打开胖乖生活开水页",
-        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+        contentPadding = spacing.contentPadding,
     ) {
         Icon(
             HugeIcons.Droplet,
@@ -1503,9 +1602,9 @@ private fun WaterQuickEntry(
             tint = primary,
             modifier = Modifier.size(20.dp),
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(spacing.iconGap))
         Column(Modifier.weight(1f)) {
-            WaterCardTitle(if (compact) "胖乖" else "胖乖生活")
+            WaterCardTitle("胖乖生活")
             // 副行：Idle = 设备名（异步取的，占位口径见 [waterDeviceLabel]）；
             // 流程态 = 流程简报（计时/结算文案每秒都在变，不做 Crossfade，会一直闪）。
             // 简报纯展示不可点——进面板走右侧余额，副行不再嵌套 clickable
@@ -1523,7 +1622,7 @@ private fun WaterQuickEntry(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(spacing.titleBalanceGap))
         // 右侧小票余额（进入面板的入口，见 [CardSideActionText]）。
         // 余额没拉过给不可点占位（与生活页一卡通余额卡「读取中…」同口径）
         when {
@@ -1532,7 +1631,7 @@ private fun WaterQuickEntry(
                 val balance = state.balance
                 CardSideActionText(
                     text = if (compact) {
-                        "¥${balance?.ticketText} ›"
+                        halfCardAmountText(balance?.ticketText)
                     } else {
                         "小票 ¥${balance?.ticketText} ›"
                     },
@@ -1541,17 +1640,22 @@ private fun WaterQuickEntry(
                     fontWeight = FontWeight.SemiBold,
                     onClickLabel = "查看小票与开水",
                     onClick = onOpenEntrySheet,
+                    startPadding = spacing.balanceStartPadding,
+                    maxWidth = sideActionMaxWidth,
                 )
             }
             state.balanceLoaded -> CardSideActionText(
-                text = "余额暂不可用 ›",
+                // 半行形态写全「余额暂不可用 ›」会把标题挤没，缩成四个字
+                text = if (compact) "暂不可用" else "余额暂不可用 ›",
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 onClickLabel = "查看小票与开水",
                 onClick = onOpenEntrySheet,
+                startPadding = spacing.balanceStartPadding,
+                maxWidth = sideActionMaxWidth,
             )
             else -> Text(
-                text = "余额读取中…",
+                text = if (compact) "读取中…" else "余额读取中…",
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
@@ -1569,6 +1673,10 @@ private fun WaterQuickEntry(
  * 触达块 = 文字 + 四周内缩（垂直 8dp×2 ≈ 32dp 高满足 M3 最小触达，左侧再扩 12dp），
  * 文字本体位置不变（垂直居中抵消、无 end padding 所以右缘不动）；涟漪被 8dp 圆角收口。
  * 该 clickable 嵌在整卡 clickable 之内，不冒泡触发整卡跳转。
+ *
+ * [startPadding] 与 [maxWidth] 是给半行卡（两张并排）用的：那边宽度不够，
+ * 左侧内缩减到 2dp（文字位置不变，只是热区左缘收窄），整个入口再封顶
+ * [HalfCardBalanceMaxWidth]，把宽度让给标题。
  */
 @Composable
 private fun CardSideActionText(
@@ -1578,6 +1686,8 @@ private fun CardSideActionText(
     fontWeight: FontWeight? = null,
     onClickLabel: String,
     onClick: () -> Unit,
+    startPadding: Dp = 12.dp,
+    maxWidth: Dp? = null,
 ) {
     val haptics = rememberAppHaptics()
     Text(
@@ -1588,12 +1698,13 @@ private fun CardSideActionText(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
+            .then(if (maxWidth == null) Modifier else Modifier.widthIn(max = maxWidth))
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClickLabel = onClickLabel) {
                 haptics.tap()
                 onClick()
             }
-            .padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = startPadding, top = 8.dp, bottom = 8.dp),
     )
 }
 
