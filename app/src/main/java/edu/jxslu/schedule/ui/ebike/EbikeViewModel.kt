@@ -38,7 +38,15 @@ data class EbikeUiState(
     val inputError: String? = null,
 )
 
-/** 页面级偏好快照（自动保存/扫完即焚开关、深浅色、最近车号）。 */
+/**
+ * 页面级偏好快照（自动保存/扫完即焚开关、深浅色、最近车号）。
+ *
+ * 定位是「界面视图 + 兜底值」：它由 `stateIn` 缓存，在 DataStore 首次发射前是这里的
+ * 默认值（冷启动首帧一定命中），**拿它做行为判定会在「进页即出码」这类首帧路径上读错**
+ * ——自动保存被静默跳过、深色主题出一张白底码。需要真值的地方
+ * （[EbikeViewModel.generate] / [EbikeViewModel.saveCurrent] / [EbikeViewModel.burnPending]）
+ * 一律读 `DisplayPrefsStore` 的原始流，快照只在读失败时当兜底。
+ */
 data class EbikePrefsSnapshot(
     val autoSave: Boolean = false,
     val burnAfterScan: Boolean = true,
@@ -223,15 +231,25 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
             }
             return
         }
-        val prefsSnapshot = ebikePrefs.value
         viewModelScope.launch {
+            // 开关真值一律读 DataStore 原始流，**不要**读 [ebikePrefs] 的 stateIn 快照：
+            // 快照在 DataStore 首次发射前是默认值（autoSave=false、dark=false），而
+            // 「进页即出码」（今日页地图选车带 carNum 进页、进程被回收后恢复出码页）
+            // 会在首帧就调到这里——那时快照还没发射，自动保存会被静默跳过（用户看不到
+            // 码没进相册，也没有任何提示），深色主题还会出一张白底码。与 [burnPending]
+            // 读原始流是同一个理由。读失败退回快照兜底：出码是主操作，不能被偏好存储牵连。
+            val snapshot = ebikePrefs.value
+            val autoSave = runCatching { prefs.ebikeAutoSave.first() }
+                .getOrDefault(snapshot.autoSave)
+            val dark = runCatching { prefs.themeMode.first() == ThemeMode.Dark }
+                .getOrDefault(snapshot.dark)
             val bitmap = withContext(Dispatchers.Default) {
-                EbikeQrBitmaps.render(EbikeQr.qrMatrix(url), prefsSnapshot.dark)
+                EbikeQrBitmaps.render(EbikeQr.qrMatrix(url), dark)
             }
             _uiState.update {
                 it.copy(generatedBitmap = bitmap, generatedBikeId = carNum)
             }
-            if (prefsSnapshot.autoSave) saveCurrent()
+            if (autoSave) saveCurrent()
             viewModelScope.launch {
                 prefs.updateEbikeRecentIds { EbikeQr.mergeRecent(it, carNum) }
             }
@@ -253,7 +271,11 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
             }
             when (result) {
                 is EbikeQrBitmaps.SaveResult.Saved -> {
-                    if (ebikePrefs.value.burnAfterScan) {
+                    // 同 [generate]：开关真值读原始流。快照在冷启动首帧还是默认值（true），
+                    // 用户明明关掉了焚毁也会被记上待焚毁 key；读失败按「不记焚毁」兜底
+                    // （宁可在相册留一张码，也不做没把握的删除）
+                    val burn = runCatching { prefs.ebikeBurnAfterScan.first() }.getOrDefault(false)
+                    if (burn) {
                         prefs.updateEbikePendingDelete {
                             EbikeQr.mergePendingDelete(it, result.pendingKey)
                         }
