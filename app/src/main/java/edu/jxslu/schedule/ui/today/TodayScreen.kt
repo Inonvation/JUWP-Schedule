@@ -86,6 +86,7 @@ import edu.jxslu.schedule.domain.dayLabel
 import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
 import edu.jxslu.schedule.ui.qzxy.QzxyUiState
+import edu.jxslu.schedule.ui.qzxy.isQzxyWateringExpired
 import edu.jxslu.schedule.ui.qzxy.rememberQzxyWateringClock
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.domain.metaLine
@@ -1409,7 +1410,12 @@ private fun QzxyCardSubtitle(state: QzxyUiState, loggedIn: Boolean) {
     val watering = state.watering
     val text: String
     if (watering != null) {
-        text = "用水中 ${rememberQzxyWateringClock(watering.startedAtMillis)}"
+        text = if (isQzxyWateringExpired(watering.startedAtMillis)) {
+            // 过期的残留（ViewModel 会清掉 store，这一帧先显示待处理文案）
+            "上次用水待结算"
+        } else {
+            "用水中 ${rememberQzxyWateringClock(watering.startedAtMillis)}"
+        }
     } else {
         val lastUsed = state.lastUsedDevice
         text = when {

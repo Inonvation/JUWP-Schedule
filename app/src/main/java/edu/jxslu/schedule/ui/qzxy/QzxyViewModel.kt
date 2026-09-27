@@ -205,6 +205,8 @@ class QzxyViewModel(
         QzxyUiState(
             loggedIn = repo.localSession() != null,
             accountPhone = repo.localSession()?.telephone.orEmpty(),
+            // 会话失效后重新登录少打 11 位数字；退出登录也留着（手机号不是凭证）
+            phone = debugStore.rememberedPhone,
             boundDevices = deviceStore.list(),
             lastUsedDevice = deviceStore.lastUsed(),
             debugLogEnabled = debugStore.logEnabled,
@@ -316,6 +318,8 @@ class QzxyViewModel(
     private fun loggedOutState(state: QzxyUiState): QzxyUiState = QzxyUiState(
         watering = state.watering,
         lastUsedDevice = state.lastUsedDevice,
+        // 手机号不是凭证，退出后留在输入框里，重新登录少打 11 位
+        phone = debugStore.rememberedPhone,
         boundDevices = deviceStore.list(),
         debugLogEnabled = state.debugLogEnabled,
         debugLog = state.debugLog,
@@ -328,6 +332,19 @@ class QzxyViewModel(
      * 配着另一台设备的名字，结束用水的按钮也会连错设备。想换设备先结束用水。
      */
     private fun applyWatering(watering: QzxyWatering?) {
+        // 过期清理：记账是离线的，设备真实状态只有问了才知道。超过 1 小时的
+        // 「用水中」几乎必然是残留（开完没结算/进程被杀），继续显示进行中的计时
+        // 只会误导。这里就地清掉并给一条提示；设备侧若真还有记录，用户点
+        // 「结束用水」或「清除设备记录」都能解。
+        if (watering != null && watering.isExpired(System.currentTimeMillis())) {
+            wateringStore.clear()
+            notice(
+                "上次 ${QzxyWateringFormat.clockText(watering.startedAtMillis)} 的用水已超过 1 小时，" +
+                    "本地提醒已清除。若设备上还有记录，点「结束用水」结算",
+                NoticeTone.Warning,
+            )
+            return
+        }
         _uiState.update { state ->
             when {
                 watering == null -> state.copy(watering = null)
@@ -423,6 +440,7 @@ class QzxyViewModel(
                 repo.loginByPassword(state.phone, state.password)
             }
         }.onSuccess { session ->
+            debugStore.rememberedPhone = session.telephone
             _uiState.update {
                 it.copy(
                     loggedIn = true,
@@ -494,6 +512,7 @@ class QzxyViewModel(
             repo.validateSession(candidate)
         }.onSuccess { project ->
             repo.adoptSession(candidate)
+            candidate.telephone.takeIf { it.isNotBlank() }?.let { debugStore.rememberedPhone = it }
             _uiState.update {
                 it.copy(
                     loggedIn = true,

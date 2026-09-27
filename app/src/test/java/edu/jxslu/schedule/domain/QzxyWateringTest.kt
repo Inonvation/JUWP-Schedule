@@ -73,4 +73,30 @@ class QzxyWateringTest {
         assertEquals(5, clock.length)
         assertEquals(":", clock.substring(2, 3))
     }
+
+    @Test
+    fun `用水记账一小时后过期`() {
+        val start = 1_700_000_000_000L
+        val watering = QzxyWatering(
+            startedAtMillis = start,
+            deviceAddress = "A4:C1:38:00:00:01",
+            deviceName = "测试热水器",
+        )
+        assertEquals(false, watering.isExpired(start + 59L * 60 * 1000))
+        assertEquals(false, watering.isExpired(start + QzxyWatering.EXPIRE_MILLIS - 1))
+        assertEquals(true, watering.isExpired(start + QzxyWatering.EXPIRE_MILLIS))
+        assertEquals(true, watering.isExpired(start + 2L * 60 * 60 * 1000))
+        assertEquals(3_600_000L, QzxyWatering.EXPIRE_MILLIS)
+    }
+
+    @Test
+    fun `过期判断可用自定义阈值`() {
+        val watering = QzxyWatering(
+            startedAtMillis = 1_000L,
+            deviceAddress = "A4:C1:38:00:00:01",
+            deviceName = "测试热水器",
+        )
+        assertEquals(false, watering.isExpired(nowMillis = 2_000L, expireMillis = 5_000L))
+        assertEquals(true, watering.isExpired(nowMillis = 2_000L, expireMillis = 1_000L))
+    }
 }

@@ -21,6 +21,27 @@ data class QzxyWatering(
 ) {
     /** 已用水时长（毫秒）；起点在未来时按 0 计，防线脏数据。 */
     fun elapsedMillis(nowMillis: Long): Long = (nowMillis - startedAtMillis).coerceAtLeast(0L)
+
+    /**
+     * 是否超过 [expireMillis]（自开阀时刻起算）。
+     *
+     * 用途：本地「用水中」是一条**离线记账**——设备是不是真在放水只有问了才知道。
+     * 记账超时（默认 1 小时）后它更可能是「开完没结算的残留」，提醒文案与
+     * 空闲态自动清理的判断都以它为准，不能永远挂着。
+     */
+    fun isExpired(nowMillis: Long, expireMillis: Long = EXPIRE_MILLIS): Boolean =
+        nowMillis - startedAtMillis >= expireMillis
+
+    companion object {
+        /**
+         * 「用水中」记账的过期时长：1 小时。
+         *
+         * 洗澡以分钟计，1 小时还没结算基本只有两种可能：结算走不通被搁置，
+         * 或者手机没电/进程被杀。过期后界面把这条当残留处理（见
+         * `QzxyViewModel.applyWatering`），不再显示进行中的计时。
+         */
+        const val EXPIRE_MILLIS: Long = 60L * 60 * 1000
+    }
 }
 
 /**

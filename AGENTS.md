@@ -159,7 +159,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
                  + LifeFeed（一卡通与电费流水分段，§3.13）
-                 + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
+ + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
+ + QzxyClData·QzxySessionLink·QzxyPhoneMask·QzxyWatering（会话串 · 手机号遮蔽 · 用水记账）
 data/local/      Room v13：courses / time_slots / semester_config / timetables / scores
                  / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
                  / power_readings（v12 起；房号显示名 roomName）
@@ -178,6 +179,7 @@ data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIG
                  学号 + 查询密码；token 仅内存、无日志拦截器）
 data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
                  QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
+                 QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
 ui/today|week|life|me|water|qzxy|campus|jwvw|score|scholar|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新

@@ -157,53 +157,72 @@ fun QzxyEntrySheet(
                 }
 
                 watering != null -> Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isQzxyWateringExpired(watering.startedAtMillis)) {
+                        // 过期的那一帧（store 清理在 ViewModel 侧异步完成）显示待处理文案，
+                        // 不显示进行中的计时
                         Text(
-                            text = "用水中",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = rememberQzxyWateringClock(watering.startedAtMillis),
-                            // 等宽数字，避免每秒刷新时整行抽动
-                            style = MaterialTheme.typography.titleLarge
-                                .copy(fontFeatureSettings = "tnum"),
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    Text(
-                        text = watering.preDeductMilli?.let {
-                            "服务端预扣 ${QzxyWateringFormat.money(it)}，按实际用量结算"
-                        } ?: "结束后按实际用量结算",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = onSurface.copy(alpha = 0.55f),
-                    )
-                    (flow as? QzxyFlowState.Failed)?.let { failed ->
-                        Text(
-                            text = failed.reason,
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = "上次用水已超过 1 小时，点「结束用水」核对设备记录",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
-                    }
-                    Button(
-                        onClick = onStop,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .height(48.dp),
-                    ) {
-                        Text(if (flow is QzxyFlowState.Failed) "重试结束用水" else "结束用水")
-                    }
-                    Text(
-                        text = "结算要走蓝牙，点之前先站到热水器旁边",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = onSurface.copy(alpha = 0.55f),
-                    )
-                    TextButton(onClick = onAbandon) {
-                        Text("水已经停了，标记为已结束")
+                        Button(
+                            onClick = onStop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .height(48.dp),
+                        ) {
+                            Text("结束用水")
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "用水中",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = rememberQzxyWateringClock(watering.startedAtMillis),
+                                // 等宽数字，避免每秒刷新时整行抽动
+                                style = MaterialTheme.typography.titleLarge
+                                    .copy(fontFeatureSettings = "tnum"),
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        Text(
+                            text = watering.preDeductMilli?.let {
+                                "服务端预扣 ${QzxyWateringFormat.money(it)}，按实际用量结算"
+                            } ?: "结束后按实际用量结算",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = onSurface.copy(alpha = 0.55f),
+                        )
+                        (flow as? QzxyFlowState.Failed)?.let { failed ->
+                            Text(
+                                text = failed.reason,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        Button(
+                            onClick = onStop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .height(48.dp),
+                        ) {
+                            Text(if (flow is QzxyFlowState.Failed) "重试结束用水" else "结束用水")
+                        }
+                        Text(
+                            text = "结算要走蓝牙，点之前先站到热水器旁边",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = onSurface.copy(alpha = 0.55f),
+                        )
+                        TextButton(onClick = onAbandon) {
+                            Text("水已经停了，标记为已结束")
+                        }
                     }
                 }
 

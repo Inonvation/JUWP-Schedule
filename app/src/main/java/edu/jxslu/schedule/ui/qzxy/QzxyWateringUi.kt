@@ -3,6 +3,7 @@ package edu.jxslu.schedule.ui.qzxy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import edu.jxslu.schedule.domain.QzxyWatering
 import edu.jxslu.schedule.domain.QzxyWateringFormat
 import kotlinx.coroutines.delay
 
@@ -25,3 +26,13 @@ fun rememberQzxyWateringClock(startedAtMillis: Long): String {
     }
     return text
 }
+
+/**
+ * 用水状态是否已过期（超过 [QzxyWatering.EXPIRE_MILLIS]，1 小时）。
+ *
+ * 组合期只判定一次就够：过期清理在 [edu.jxslu.schedule.ui.qzxy.QzxyViewModel.applyWatering]
+ * 做（store 层面清掉），这里只是让卡片/面板在「还没清掉的那一帧」也显示过期文案，
+ * 别闪出一个进行中的计时。
+ */
+fun isQzxyWateringExpired(startedAtMillis: Long): Boolean =
+    QzxyWatering(startedAtMillis, "", "").isExpired(System.currentTimeMillis())
