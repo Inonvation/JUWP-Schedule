@@ -83,14 +83,15 @@ import me.rerere.hugeicons.stroke.Wallet01
 private val DATE_FORMAT = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
 
 /**
- * 胖乖开水页（DESIGN 3.4 / 4.16）。
+ * 胖乖生活页（DESIGN §3.4 / §4.16，页内核心动作是开水）。
  * 交互：未登录 → 登录卡（验证码 / Token 两种）；已登录 → 余额行、设备选择、
  * 大按钮开水、状态原地切换（Idle/进行中/成功/失败）、订单快照列表。
  * 风格克制：无大圆角卡片、无 elevation，错误一行主因 + 详情弹窗。
  *
  * 2026-09-20 起「开水设置」子页并入本页尾部（`WaterSettingsSection`，登录与
  * 未登录两态共用）：**显示开水卡片**开关 + **点击方式**（单击/双击）。
- * 「我的」侧入口名「胖乖生活一键开水」，不再有独立设置页。
+ * 「我的」侧入口名 2026-09-20 起为「胖乖生活」，2026-09-26 去掉「一键开水」后缀，
+ * 与页标题、账号卡三格统一；不再有独立设置页。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

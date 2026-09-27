@@ -54,7 +54,7 @@ private enum class Step(val index: Int, val title: String) {
     Welcome(0, "欢迎"),
     Jw(1, "学校统一认证"),
     Ykt(2, "一卡通 · 电费"),
-    Qiekj(3, "胖乖开水"),
+    Qiekj(3, "胖乖生活"),
     Done(4, "完成"),
 }
 
@@ -63,7 +63,7 @@ private const val TOTAL_STEPS = 4
 /**
  * 首次配置引导（DESIGN §3.16 / §4.27）。
  *
- * 五屏：欢迎 → 学校统一认证 → 一卡通·电费 → 胖乖开水 → 完成。**每一步都能跳过**，
+ * 五屏：欢迎 → 学校统一认证 → 一卡通·电费 → 胖乖生活 → 完成。**每一步都能跳过**，
  * 跳过的只是那一步的凭据，不挡后面的步骤，也不挡进主界面。
  *
  * 第 2 步用原生表单收密码，是整个 App 里唯一明确告诉用户「我们会保存这个密码」的地方
@@ -464,7 +464,7 @@ private fun QiekjStep(
         }
     }
 
-    Text("胖乖开水", style = MaterialTheme.typography.titleMedium)
+    Text("胖乖生活", style = MaterialTheme.typography.titleMedium)
     if (tokenMode) {
         Text(
             "粘贴已从其他渠道拿到的 Token 即可，不用再收短信。",
@@ -549,7 +549,7 @@ private fun DoneStep(
         lines = listOf(
             "· 学校统一认证：${if (jwOk) "已配置" else "未配置（导入课表时手动登录）"}",
             "· 一卡通 · 电费：${if (yktOk) "已配置" else "未配置"}",
-            "· 胖乖开水：${if (qiekjOk) "已配置" else "未配置"}",
+            "· 胖乖生活：${if (qiekjOk) "已配置" else "未配置"}",
         ),
     )
     Text(

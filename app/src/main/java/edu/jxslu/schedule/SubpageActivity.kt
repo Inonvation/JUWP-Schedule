@@ -50,7 +50,7 @@ enum class SubpageScreen {
     DATA_SETTINGS,
     /** 我的 → 调课（快捷操作，DESIGN §4.11） */
     COURSE_TWEAK,
-    /** 我的/今日 → 胖乖生活一键开水（开水卡显示与点击方式并入页内，DESIGN §3.4） */
+    /** 我的/今日 → 胖乖生活（开水卡显示与点击方式并入页内，DESIGN §3.4） */
     WATER,
     /** 我的 → 桌面小组件（DESIGN §3.6） */
     WIDGET_SETTINGS,
@@ -117,7 +117,7 @@ enum class SubpageScreen {
  * 数据仍走 Graph 单例 + 响应式流，窗口关闭后主界面自动刷新。
  *
  * 动画（res/anim，平台只有 fade 与左滑资源，右推入必须自备）：
- * 打开 = 新窗口从右缘平移推入覆盖主窗口（slide_in_right，主窗口不传动画、原地不动）；
+ * 打开 = 新窗口从右缘平移推入覆盖主窗口（slide_in_right，主窗口 stay_still、原地不动）；
  * 关闭（页内返回或系统返回）= 向右滑出露出主窗口（slide_out_right），统一从
  * [finish] 出口生效。打开侧由 [start] 出口触发，三个主 Tab 与全部二级页同一规格。
  */
@@ -157,6 +157,15 @@ class SubpageActivity : ComponentActivity() {
         super.onResume()
         // 本页成为「离开 App 时看到的页」，见 SubpageStack 的类 KDoc
         SubpageStack.onWindowResumed()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // 从外部应用（微信 / 浏览器 / 系统设置…）回来时，要等返回过渡放完、窗口重新
+        // 拿到焦点，才能还原推入/滑出覆盖——更早还原会把拉起前换上的静止过渡又改回去，
+        // 被抑制的右推入就重回返回动画（见 WindowTransitions.startActivityOutsideApp）。
+        // 平时焦点恢复（系统弹框关掉、上层二级页关闭）只是重复声明同样的覆盖，无副作用。
+        if (hasFocus) enablePredictiveBackTransitions()
     }
 
     override fun onDestroy() {
@@ -345,7 +354,7 @@ class SubpageActivity : ComponentActivity() {
         // clearTop 与系统回收不走这里，记录必须留着，否则恢复不了。
         SubpageStack.onWindowFinished(request)
         super.finish()
-        // 顶层窗口向右滑出；入场传 0 = 露出的主窗口原地不动（覆盖语义）。
+        // 顶层窗口向右滑出；露出的主窗口原地不动（stay_still / ≤33 的 legacy 路径传 0）。
         // 34+ 由 enablePredictiveBackTransitions 声明，这里不碰旧 API
         applySubpageCloseTransition(this)
     }

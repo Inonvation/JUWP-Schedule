@@ -54,6 +54,7 @@ import edu.jxslu.schedule.domain.Homework
 import edu.jxslu.schedule.domain.dueDetailLabel
 import edu.jxslu.schedule.domain.imageRefs
 import edu.jxslu.schedule.domain.removeImageRef
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
@@ -65,6 +66,7 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.MarkdownEditor
 import edu.jxslu.schedule.ui.common.MarkdownView
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberImageInserter
 import edu.jxslu.schedule.ui.reminder.ClassReminder
@@ -201,6 +203,7 @@ fun HomeworkDetailScreen(
         snackbarHost = { AppSnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text(if (original != null) "作业" else "新建作业") },
                 navigationIcon = {
                     IconButton(
@@ -458,4 +461,6 @@ private const val NO_DUE = Long.MIN_VALUE
 
 /** 详情里打开链接的兜底（与笔记页同口径）。 */
 internal fun openLink(context: android.content.Context, url: String): Boolean =
-    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }.isSuccess
+    runCatching {
+        context.startActivityOutsideApp(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }.isSuccess

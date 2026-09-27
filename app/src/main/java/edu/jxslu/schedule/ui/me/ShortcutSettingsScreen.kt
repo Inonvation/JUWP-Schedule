@@ -78,6 +78,7 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.ShortcutIcon
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.shortcutIconChoices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -209,6 +210,7 @@ fun ShortcutSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text("快捷方式") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {

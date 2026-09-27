@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,6 +94,7 @@ import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.ShortcutIcon
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
@@ -274,7 +274,9 @@ fun TodayScreen(
                 // 顶部 inset 自取（DESIGN §4.22）：外层 JuwApp Scaffold 的 contentWindowInsets 已归零，
                 // 不再垫状态栏高度——课表页要把背景图铺到状态栏，顶部就只能由各页自己让位。
                 // 这里取 statusBars 后顶栏总高与改动前一致，不会出现双倍空白。
-                windowInsets = WindowInsets.statusBars,
+                // 用钉住版：今日页的快捷方式会拉起外部应用，过渡期间系统栏瞬时归零的
+                // insets 不落地（2026-09-26 修「顶栏跳动」，见 pinnedStatusBars 的 KDoc）。
+                windowInsets = pinnedStatusBars(),
                 title = {
                     Column {
                         Text(stringResource(R.string.tab_today))

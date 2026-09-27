@@ -98,10 +98,10 @@ object LoginStateNotifier {
         manager.createNotificationChannel(channel)
     }
 
-    /** 状态卡上的显示名，与 §3.16 三行一致。 */
+    /** 状态卡上的显示名，与 §3.16 三格一致。 */
     private fun LoginTarget.displayName(): String = when (this) {
         LoginTarget.Jw -> "教务"
         LoginTarget.Ykt -> "一卡通"
-        LoginTarget.Qiekj -> "开水"
+        LoginTarget.Qiekj -> "胖乖生活"
     }
 }

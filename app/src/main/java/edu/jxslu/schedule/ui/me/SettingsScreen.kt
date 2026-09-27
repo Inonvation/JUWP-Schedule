@@ -1,12 +1,15 @@
 package edu.jxslu.schedule.ui.me
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -58,9 +63,14 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.stateWord
+import edu.jxslu.schedule.ui.common.tint
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.CreditCard
+import me.rerere.hugeicons.stroke.Droplet
+import me.rerere.hugeicons.stroke.GraduationCap
 import me.rerere.hugeicons.stroke.Book02
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Settings01
@@ -69,12 +79,13 @@ import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 
 /**
- * 「我的」= 账号条 + 六入口（DESIGN §3.3，2026-09-23 改版）。
+ * 「我的」= 账号卡 + 六入口（DESIGN §3.3，2026-09-23 改版）。
  *
  * 每个分区收进独立汇总二级页（`ui/me/hub/`），根页面只留实时副标题——
  * 课表行锚定当前课表名，学习行带笔记/作业计数，其余行给内容概览。
- * 账号条数据源 = 水宝宝一卡通凭证（`YktCredentialStore`），遮罩口径在
+ * 账号卡数据源 = 水宝宝一卡通凭证（`YktCredentialStore`），遮罩口径在
  * `domain/AccountMask`；眼睛只在内存里切换完整学号，不写存储不进剪贴板。
+ * 卡内三个服务格（教务 / 一卡通 / 胖乖生活）是登录入口，见 [ServiceCell]。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,7 +96,7 @@ fun SettingsScreen(
     onOpenWidgetCalendarHub: () -> Unit = {},
     onOpenExtensionServices: () -> Unit = {},
     onOpenAbout: () -> Unit = {},
-    /** 账户卡三行的落点（DESIGN §3.16）：教务导入窗口 / 校园卡设置 / 开水页。 */
+    /** 账户卡三格的落点（DESIGN §3.16）：教务账户页 / 校园卡设置 / 胖乖生活页。 */
     onOpenJwLogin: () -> Unit = {},
     onOpenCampusCard: () -> Unit = {},
     onOpenWater: () -> Unit = {},
@@ -211,12 +222,12 @@ fun SettingsScreen(
                     icon = HugeIcons.GridView,
                     onClick = onOpenWidgetCalendarHub,
                 )
-                SettingItem(
-                    title = "扩展服务",
-                    subtitle = "宿舍报修 · 快捷方式 · 出行码 · 一卡通 · 开水",
-                    icon = HugeIcons.CreditCard,
-                    onClick = onOpenExtensionServices,
-                )
+    SettingItem(
+        title = "扩展服务",
+        subtitle = "宿舍报修 · 快捷方式 · 出行码 · 一卡通 · 胖乖生活",
+        icon = HugeIcons.CreditCard,
+        onClick = onOpenExtensionServices,
+    )
                 SettingItem(
                     title = "关于",
                     subtitle = "版本 v${BuildConfig.VERSION_NAME} · 免责声明 · 权限",
@@ -229,9 +240,9 @@ fun SettingsScreen(
 }
 
 /**
- * 账号条（DESIGN §3.3，2026-09-23 升级为账户卡）：头像圆标 +「姓名 学号」+ 班级副行。
+ * 账号卡（DESIGN §3.3）：头像圆标 +「姓名 学号」+ 班级副行 + 三个服务格。
  * 完整学号只存在 [username] 参数（内存）里，切眼睛不触发任何持久化；
- * 卡片本体不可点（AppCard 不传 onClick，无涟漪），交互面只有眼睛按钮。
+ * 卡片本体不可点（AppCard 不传 onClick，无涟漪），交互面只有眼睛按钮与三个服务格。
  *
  * [name] / [className] 来自教务学籍卡（成绩导入顺带落 DataStore）；缺失时
  * 标题退回遮罩学号（此时学号不再重复跟在旁边），班级缺失则整行副行不显示。
@@ -316,48 +327,78 @@ private fun AccountBar(
             modifier = Modifier.padding(vertical = 10.dp),
             color = MaterialTheme.colorScheme.outlineVariant,
         )
-        StatusRow("教务", jwState, onOpenJw)
-        StatusRow("一卡通", yktState, onOpenYkt)
-        StatusRow("开水", qiekjState, onOpenQiekj)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ServiceCell("教务", HugeIcons.GraduationCap, jwState, onOpenJw, Modifier.weight(1f))
+            ServiceCell("一卡通", HugeIcons.CreditCard, yktState, onOpenYkt, Modifier.weight(1f))
+            ServiceCell("胖乖生活", HugeIcons.Droplet, qiekjState, onOpenQiekj, Modifier.weight(1f))
+        }
     }
 }
 
 /**
- * 登录状态行（DESIGN §3.16）。
+ * 服务格（DESIGN §3.16）：图标 + 名称 + 登录状态点，整格可点，落点由调用方给
+ * （教务账户页 / 校园卡设置 / 胖乖生活页）。
  *
- * 三档颜色：已登录 = 主色、失效 = `error`、未登录 = 灰。**整行可点**，
- * 落点由调用方给（教务导入窗口 / 校园卡设置 / 开水页）。
+ * 状态只给名词，动作提示交给「整格可点」和状态色。**不做后台探测**：没请求过就是
+ * 「未登录」，只有真撞上凭证错才转「已失效」。
  *
- * 状态**不做后台探测**：没请求过就是「未登录」，只有真撞上凭证错才转「失效」。
+ * 格宽约 94dp（360dp 屏），「胖乖生活」在 12sp 下约 50dp，字体放大到 1.3 倍仍放得下。
  */
 @Composable
-private fun StatusRow(label: String, state: LoginState, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun ServiceCell(
+    label: String,
+    icon: ImageVector,
+    state: LoginState,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberAppHaptics()
+    val stateTint = state.tint()
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClickLabel = "$label：${state.stateWord()}") {
+                haptics.tap()
+                onClick()
+            }
+            // 48dp 是 M3 的最小触控目标；这里给到 60dp，三格与卡片同宽、互不挤
+            .heightIn(min = 60.dp)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(52.dp))
-        Text(
-            text = when (state) {
-                LoginState.LoggedIn -> "已登录"
-                LoginState.Expired -> "登录状态已失效，点此更新"
-                LoginState.NotLoggedIn -> "未登录，点此登录"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = when (state) {
-                LoginState.LoggedIn -> MaterialTheme.colorScheme.primary
-                LoginState.Expired -> MaterialTheme.colorScheme.error
-                LoginState.NotLoggedIn -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-            },
-            modifier = Modifier.weight(1f),
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+            modifier = Modifier.size(20.dp),
         )
         Text(
-            "›",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            // 状态点：色觉障碍下「已登录」与「未登录」只靠色相分不开，补一层形状
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .clip(CircleShape)
+                    .background(stateTint),
+            )
+            Text(
+                text = state.stateWord(),
+                style = MaterialTheme.typography.labelSmall,
+                color = stateTint,
+                maxLines = 1,
+            )
+        }
     }
 }

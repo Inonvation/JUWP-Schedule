@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import edu.jxslu.schedule.startActivityOutsideApp
 
 /**
  * 运行时权限的统一检测与跳转（DESIGN §3.12）。
@@ -103,10 +104,12 @@ object AppPermissions {
      *
      * 弹框被系统静默拒绝之后就只剩这一条路能改授权状态，所以拒绝分支、各类兜底
      * 都用它。跳不出去时静默——此时没有任何补救手段，再弹一句提示只是噪音。
+     * 走 [startActivityOutsideApp]：调用方常是二级页窗口，系统设置返回时不重放
+     * 它的右推入过渡（2026-09-26 修「界面跳动」）。
      */
     fun jumpAppDetails(context: Context) {
         runCatching {
-            context.startActivity(
+            context.startActivityOutsideApp(
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                     .setData(Uri.parse("package:${context.packageName}")),
             )
@@ -129,7 +132,7 @@ object AppPermissions {
      */
     fun jumpNotificationListenerSettings(context: Context) {
         runCatching {
-            context.startActivity(
+            context.startActivityOutsideApp(
                 Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )

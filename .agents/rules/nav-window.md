@@ -61,3 +61,44 @@
   **34+ 上调旧 API 会把跟手预览关掉**：它是已废弃 API，调了等于声明「未适配」，
   真机上表现为滑到一半毫无预览、松手才切页。manifest 的 `enableOnBackInvokedCallback`
   别改成 `false`（同一件事的声明）。
+  **不动的那一侧要给 `R.anim.stay_still`，不能传 0**（2026-09-26 修：二级页返回没有
+  跟手预览）：0 = 「这一侧没有动画资源」，跟手预览要两侧都有可按进度驱动的动画才接力得出来；
+  静止动画是 0→0 位移，观感与传 0 一致。
+- **App 接管了返回的页面没有系统跟手预览**：AndroidX activity 1.9.3 在 API 34+ 会把
+  `OnBackPressedDispatcher` 的回调注册成 `OnBackAnimationCallback`（只要该窗口有启用中的
+  回调），系统就不再代播跟手动画，而 `BackHandler` / `NavController` 的返回栈不给动画。
+  所以：页内浮层想要跟手就自己用 `PredictiveBackHandler` 驱动（`DisplaySettingsOverlay`
+  已改）；笔记·作业详情（未保存时）、教务导入·成绩单（WebView 能后退时）、学工表单、
+  首启引导这些接管返回的页面在接管生效期间没有跟手预览，这是平台行为；底栏 Tab 之间的
+  NavHost 返回栈同理（要跟手就得放弃「返回回启动页」的栈语义，未改）。
+
+## 二级页里拉起外部应用一律走 startActivityOutsideApp
+
+- **二级页里拉起 App 之外的界面（微信扫一扫 / 微信支付 / 浏览器 / 快趣出行 /
+  系统设置页…）一律走 `WindowTransitions.startActivityOutsideApp`**，别直接
+  `startActivity`（2026-09-26 修「打开微信后页面跳动」）。根因：二级页声明的
+  OPEN 过渡 enterAnim（右推入）在**从外部应用回到本窗口**时会被系统当作「被打开」
+  的一侧整个重放，页面凭空再滑一次。只有跨 task 的往返才重放，而微信是
+  singleTask、永远开不进调用方的 task——此前「Activity context 不设 NEW_TASK 让
+  外部应用留在本 task」只救了浏览器，救不了微信，别再把那条注释当修复加回来。
+  该出口在拉起前把本窗口的开/关过渡全部临时换成 `stay_still`，返回过渡放完
+  （`SubpageActivity.onWindowFocusChanged(true)`）再还原推入/滑出；启动失败
+  （未装微信等）会立刻还原，异常原样抛出，调用方的 `ActivityNotFoundException`
+  兜底链不受影响。只有 SubpageActivity 参与抑制——MainActivity 没有过渡覆盖，
+  **不能**顺手加（会凭空多一套覆盖、哑掉主窗口自己的预测性返回）。
+  已收口的调用点：出码页微信扫一扫/快趣出行、一卡通与生活页充值的
+  `launchExternal`、生活页电费深链、作业详情链接、快捷方式执行（设置页测试
+  与今日页共用）、`AppPermissions` 两个系统设置跳转。新增外部拉起前先 grep
+  `startActivity(` 确认没绕过这个出口。
+
+- **会拉起外部应用的页面，顶栏 insets 用钉住版 `pinnedStatusBars()`**
+  （`ui/common/StableInsets.kt`，2026-09-26 补）：同一报障的另一半根因——跨 task 过渡
+  期间系统临时改变状态栏可见状态（HyperOS 过渡、微信扫一扫页沉浸式），本窗口收到
+  statusBars 高度**瞬时归零**的 insets，贴实时值让位的顶栏跟着上跳再回落。钉住版只认
+  更大的值（状态栏高度在窗口活着期间不会真变小），瞬时归零与回落都不落地；对静态
+  派发与 `WindowInsetsAnimation` 动画帧都免疫（它在消费端钉，不是在派发端拦）。
+  已接入：出码页、一卡通、缴费账单、作业详情、快捷方式、权限设置、附近单车、
+  今日页、生活页。**新页面顶栏写 `windowInsets` 前先想清楚它会不会拉起外部应用**：
+  会就必须传钉住版；M3 `TopAppBar` 的默认 insets 是实时 systemBars，等于没防。
+  代价：横屏这类状态栏高度真变小的形态，顶栏保留竖屏让位高度——宁可多让，
+  不跟系统栏的瞬时变化跳舞。

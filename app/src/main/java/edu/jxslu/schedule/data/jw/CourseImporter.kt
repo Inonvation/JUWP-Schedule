@@ -177,6 +177,15 @@ object JwUrls {
     fun isExamQueryUrl(url: String?): Boolean =
         url != null && "xsks/xsksap_query" in url
 
+    /**
+     * 成绩查询表单页（学籍成绩 → 我的成绩 → 课程成绩查询）。
+     *
+     * 成绩页不属于 [JwSchedulePage]：课表页那套 `pageKind` 会驱动注入课表适配样式
+     * 与自动导入触发，成绩页混进去会被当成课表页处理。
+     */
+    fun isScoreQueryUrl(url: String?): Boolean =
+        url != null && "kscj/cjcx_frm" in url
+
     /** 当前页属于哪张课表；导入时据此选择解析器。 */
     fun schedulePageKind(url: String?): JwSchedulePage = when {
         isExamQueryUrl(url) -> JwSchedulePage.Exam

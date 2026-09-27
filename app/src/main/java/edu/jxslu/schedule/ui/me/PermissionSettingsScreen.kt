@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.PermissionRow
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.BatteryCharging01
 import me.rerere.hugeicons.stroke.CalendarSetting01
@@ -167,6 +168,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text("权限设置") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {

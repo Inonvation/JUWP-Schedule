@@ -179,7 +179,8 @@ internal fun subpageLaunchIntent(context: Context, request: SubpageRequest): Int
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
 /**
- * 打开一个二级页（新窗口从右缘推入，退场传 0 = 主窗口原地不动）。
+ * 打开一个二级页（新窗口从右缘推入；≤33 的 legacy 退场传 0 = 主窗口原地不动，
+ * 34+ 由 `enablePredictiveBackTransitions` 用 `stay_still` 声明同一件事）。
  * [Activity] context 才有窗口动画可言，非 Activity 只保证页面起得来。
  */
 internal fun openSubpage(context: Context, request: SubpageRequest) {

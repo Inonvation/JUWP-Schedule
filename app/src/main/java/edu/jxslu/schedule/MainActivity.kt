@@ -192,6 +192,15 @@ internal const val ROUTE_LIFE = "life"
 /** [EXTRA_ROUTE] 的取值：我的 Tab（登录失效通知的落点，DESIGN §3.16）。 */
 internal const val ROUTE_ME = "me"
 
+/** [EXTRA_ROUTE] 的取值：校园卡小组件 → 付款码页（DESIGN §3.6 三条目改版，2026-09-27）。 */
+internal const val ROUTE_PAY_CODE = "pay_code"
+
+/** [EXTRA_ROUTE] 的取值：电费小组件 → 缴费账单·用电统计页。 */
+internal const val ROUTE_POWER_BILL = "power_bill"
+
+/** [EXTRA_ROUTE] 的取值：校园卡小组件未开凭证 → 校园卡设置页。 */
+internal const val ROUTE_CAMPUS_CARD = "campus_card"
+
 /**
  * 主题在根上解析：深浅色由显示偏好里的 [ThemeMode] 决定（默认跟随系统），
  * 强制浅/深时忽略系统设置。放在 setContent 最外层，全 App（含弹层）统一生效。
@@ -499,6 +508,17 @@ internal fun JuwApp(
                 restoreState = true
             }
             pendingRoute.value = null
+        } else if (route == ROUTE_PAY_CODE || route == ROUTE_POWER_BILL || route == ROUTE_CAMPUS_CARD) {
+            // 校园卡 / 电费小组件点击（DESIGN §3.6 三条目改版）：落点不是底栏 Tab 而是
+            // 二级页（付款码 / 用电统计 / 校园卡设置）。仍走「先消费再启动」，与上面
+            // 同一套防重组回弹的口径；主界面在底下保持今日页原样
+            pendingRoute.value = null
+            val screen = when (route) {
+                ROUTE_PAY_CODE -> SubpageScreen.PAY_CODE
+                ROUTE_POWER_BILL -> SubpageScreen.POWER_BILL
+                else -> SubpageScreen.CAMPUS_CARD_SETTINGS
+            }
+            openSubpage(context, SubpageRequest(screen = screen))
         }
     }
 
@@ -771,10 +791,8 @@ internal fun JuwApp(
                             onOpenAbout = {
                                 SubpageActivity.start(context, SubpageScreen.ABOUT)
                             },
-                            // 账户卡三行的落点（DESIGN §3.16）：教务走导入窗口（那里能看
-                            // 到真实登录状态），一卡通与开水各自回设置页
-                            // 教务那一行改开原生账户页（DESIGN §3.3）：与「一卡通」一致，
-                            // 先看账号状态；要导入再从页里进（那里也有入口）
+                            // 账户卡三格的落点（DESIGN §3.16）：教务开原生账户页，与
+                            // 「一卡通」一致，先看账号状态；要导入再从页里进（那里也有入口）
                             onOpenJwLogin = {
                                 SubpageActivity.start(context, SubpageScreen.JW_ACCOUNT)
                             },

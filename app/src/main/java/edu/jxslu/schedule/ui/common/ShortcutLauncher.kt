@@ -7,6 +7,7 @@ import android.net.Uri
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutLaunchPlan
 import edu.jxslu.schedule.domain.Shortcuts
+import edu.jxslu.schedule.startActivityOutsideApp
 
 /**
  * 快捷方式执行层（DESIGN §4.16）：domain 折算出的 [ShortcutLaunchPlan] 在这里变成
@@ -14,6 +15,9 @@ import edu.jxslu.schedule.domain.Shortcuts
  *
  * 返回 null = 已拉起；非 null = 错误文案（调用方直接展示）。今日页点击与设置页
  * 「测试」共用这一个入口，两条路径的错误口径才不会漂移。
+ * 拉起一律走 [startActivityOutsideApp]：从设置页（二级页窗口）测试时，外部应用
+ * 返回会重放本窗口的右推入过渡（2026-09-26 修「界面跳动」），拉起前要换静止过渡；
+ * 今日页（主窗口，无过渡覆盖）走它等于普通 startActivity。
  */
 object ShortcutLauncher {
 
@@ -37,7 +41,7 @@ object ShortcutLauncher {
         name: String,
         plan: ShortcutLaunchPlan.ExplicitComponent,
     ): String? = try {
-        context.startActivity(ShortcutIntents.explicit(plan.pkg, plan.activity))
+        context.startActivityOutsideApp(ShortcutIntents.explicit(plan.pkg, plan.activity))
         null
     } catch (_: ActivityNotFoundException) {
         "未安装「$name」，或它的这个页面已不存在"
@@ -54,14 +58,14 @@ object ShortcutLauncher {
     ): String? {
         if (plan.pkg != null) {
             try {
-                context.startActivity(ShortcutIntents.uri(plan.uri, plan.pkg))
+                context.startActivityOutsideApp(ShortcutIntents.uri(plan.uri, plan.pkg))
                 return null
             } catch (_: ActivityNotFoundException) {
                 // 落到无包名重试
             }
         }
         return try {
-            context.startActivity(ShortcutIntents.uri(plan.uri, null))
+            context.startActivityOutsideApp(ShortcutIntents.uri(plan.uri, null))
             null
         } catch (_: ActivityNotFoundException) {
             "没有应用可以打开「$name」的链接"
@@ -77,7 +81,7 @@ object ShortcutLauncher {
         val intent = ShortcutIntents.launcher(context, plan.pkg)
             ?: return "未安装「$name」"
         return try {
-            context.startActivity(intent)
+            context.startActivityOutsideApp(intent)
             null
         } catch (_: ActivityNotFoundException) {
             "未安装「$name」"

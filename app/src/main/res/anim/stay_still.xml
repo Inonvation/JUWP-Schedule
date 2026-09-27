@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 静止动画：0 → 0 位移，视觉上等于「不动」。
+
+     二级页过渡是「覆盖」语义：打开时主窗口不动，关闭时被露出的一侧不动。
+     不动的那一侧**必须给一份真实的动画资源**，不能传 0——0 的含义是「这一侧没有
+     动画」，跟手预览（预测性返回）两边都要有可被按进度驱动的动画资源才能接力出下层页面；
+     缺一侧时手势滑到一半只剩边缘指示条、松手才切页。位移是 0→0，观感与传 0 完全一致。
+
+     时长/插值器照 slide_in_right / slide_out_right 取，避免两侧的过渡曲线对不上。 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <translate
+        android:fromXDelta="0"
+        android:toXDelta="0"
+        android:duration="280"
+        android:interpolator="@android:interpolator/decelerate_quad" />
+</set>

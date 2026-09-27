@@ -55,7 +55,7 @@ sealed interface WaterEvent {
 }
 
 /**
- * 胖乖开水页状态（DESIGN §4.10）。
+ * 胖乖生活页状态（DESIGN §4.10）。
  *
  * 开水流程生命周期与参考实现对齐：
  * - Mutex 防重入，进行中再点直接忽略；

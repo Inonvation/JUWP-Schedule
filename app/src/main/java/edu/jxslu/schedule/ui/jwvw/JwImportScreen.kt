@@ -137,8 +137,9 @@ fun JwImportScreen(
     var statusNote by remember { mutableStateOf("正在打开学校统一身份认证登录…") }
     var autoNavPending by remember { mutableStateOf(false) }
     /**
-     * 一键导入是否已经跑过（自动触发只做第一次，见 [autoImportOnTheoryReady]）。
-     * 手动点按钮也算用掉：导过一次之后再回到理论课表页，不该自己又跑一轮。
+     * 一键导入是否已经跑过（自动触发只做第一次，见 [autoImportOnTheoryReady] /
+     * [autoImportOnScoreReady]；两种模式各开一个窗口，共用这一个标记不会互相干扰）。
+     * 手动点按钮也算用掉：导过一次之后再回到课表页 / 成绩页，不该自己又跑一轮。
      */
     var autoImportTried by remember { mutableStateOf(false) }
     // 主 frame 最近一次失败的 URL，由失败回调写入、由 URL 相同的 onPageFinished 消费。
@@ -556,6 +557,26 @@ fun JwImportScreen(
         }
     }
 
+    /**
+     * 落在成绩查询页就自动跑一次成绩导入（DESIGN §4.15）。
+     *
+     * 与课表模式的 [autoImportOnTheoryReady] 同一个道理：成绩模式下打开这个窗口的目的就是
+     * 导入，而 `xsMainV` → `cjcx_frm` 的导航由 App 自己完成，中间那次「点一下导入成绩」
+     * 是多余的。成绩页不属于 [JwSchedulePage]，所以判 [JwUrls.isScoreQueryUrl]。
+     *
+     * 标记同步置位、与课表模式共用 `autoImportTried`：同一窗口只会是其中一种模式，不会互相干扰；
+     * `busy` 挡住成绩导入自己期间的重复触发，`autoImportTried` 挡住页面重载后的二次触发。
+     * 只省点击，不绕过确认：写库仍要过「确认导入成绩」弹窗。
+     *
+     * 放在 [runScoreImport] 之后：Kotlin 局部函数不能前向引用。
+     */
+    fun autoImportOnScoreReady(u: String) {
+        if (autoImportTried || busy) return
+        if (mode != JwImportMode.Scores || !JwUrls.isScoreQueryUrl(u)) return
+        autoImportTried = true
+        scope.launch { runScoreImport(webView) }
+    }
+
     // 独立 Activity 窗口：inset 全部走 M3 默认——TopAppBar 消费状态栏、
     // Scaffold contentWindowInsets 提供底部导航栏 inset（导入按钮区不压手势条）。
     // 此前为「嵌在外层 Scaffold 里」做的双 inset 规避已随窗口拆分一起移除。
@@ -744,8 +765,11 @@ fun JwImportScreen(
                                                     "实验课表已打开。"
                                                 page == JwSchedulePage.Theory ->
                                                     "理论课表已打开。"
-                                                "cjcx_frm" in u ->
-                                                    "成绩查询页已打开。点下方「导入成绩」。"
+                                                JwUrls.isScoreQueryUrl(u) ->
+                                                    // 首次落页由 autoImportOnScoreReady 自动跑，
+                                                    // 跑过之后再回来就只剩手动入口
+                                                    if (autoImportTried) "成绩查询页已打开。点下方「导入成绩」。"
+                                                    else "成绩查询页已打开，正在自动导入…"
                                                 else -> "已登录教务，点下方「一键导入课表」可同步理论与实验课表"
                                             }
 
@@ -772,6 +796,18 @@ fun JwImportScreen(
                                                 // 理论课表就绪 → 自动跑一次一键导入（DESIGN §4.4.2），
                                                 // 用户不必再点「一键导入课表」
                                                 autoImportOnTheoryReady(page)
+                                                return@checkSessionLost
+                                            }
+                                            // 成绩查询页不是课表页（pageKind = None），单独一条：
+                                            // 成绩模式落到这里就自动跑一次导入（DESIGN §4.15），
+                                            // 与课表模式的 autoImportOnTheoryReady 同构。
+                                            // 提前 return，免得下面的白屏探针把导入中的状态条洗掉。
+                                            if (JwUrls.isScoreQueryUrl(u)) {
+                                                autoNavPending = false
+                                                pageState = PageState.Ready
+                                                applyPageFit(view, u)
+                                                releaseLoadGate(u)
+                                                autoImportOnScoreReady(u)
                                                 return@checkSessionLost
                                             }
                                             applyPageFit(view, u)
@@ -980,7 +1016,7 @@ fun JwImportScreen(
                     } else {
                         ScheduleEntryButton(
                             label = "打开成绩查询页",
-                            active = "cjcx_frm" in currentUrl,
+                            active = JwUrls.isScoreQueryUrl(currentUrl),
                             enabled = !busy,
                             onClick = {
                                 pageState = PageState.Loading

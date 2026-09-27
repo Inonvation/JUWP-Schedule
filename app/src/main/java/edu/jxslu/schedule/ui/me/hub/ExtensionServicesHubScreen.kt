@@ -141,7 +141,7 @@ fun ExtensionServicesHubScreen(
                     onClick = onOpenCampusCard,
                 )
                 SettingItem(
-                    title = "胖乖生活一键开水",
+                    title = "胖乖生活",
                     subtitle = if (waterLoggedIn) "开水 / 余额 / 订单" else "点击登录胖乖生活",
                     icon = HugeIcons.Droplet,
                     onClick = onOpenWater,

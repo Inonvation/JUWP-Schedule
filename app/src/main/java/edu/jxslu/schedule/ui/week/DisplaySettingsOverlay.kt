@@ -1,7 +1,8 @@
 package edu.jxslu.schedule.ui.week
 
-import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -31,10 +32,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -45,6 +48,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -62,6 +67,12 @@ internal val PanelCollapseOverdrag = 64.dp
 
 /** 默认档：0.40（兼顾「看到身后课表」与内容可视面积）。 */
 internal const val PanelDefaultFraction = 0.40f
+
+/** 返回手势中途撤回时，面板位移弹回 0 的时长（毫秒）。 */
+private const val BackCancelReturnMillis = 180
+
+/** 返回手势提交后，面板走完剩下那段位移的时长（毫秒）；已跟到位的这一次动画几乎不占时间。 */
+private const val BackCommitMillis = 90
 
 /**
  * 吸附到最近档位（纯函数，JVM 可测）：返回锚点列表中与 [heightDp] 差值最小的一档。
@@ -127,17 +138,41 @@ internal fun DisplaySettingsOverlay(
     }
     val collapseOverdragPx = with(density) { PanelCollapseOverdrag.toPx() }
 
-    BackHandler { onDismiss() }
-
     // 面板高度（px）：拖动回调同步赋值，measure 阶段读取
     var panelHeightPx by remember(screenHeightDp) { mutableFloatStateOf(startHeightPx) }
 
+    // 预测性返回：手势进度驱动面板跟手下移，松手才真正关闭。
+    //
+    // 用 PredictiveBackHandler 而不是 BackHandler：后者在 API 34+ 上会让 AndroidX 把回调
+    // 注册成 OnBackAnimationCallback（跟手动画归 App 负责），而 BackHandler 自己不给动画，
+    // 结果是返回手势全程没有跟手预览、松手才关面板。这里把进度真的用起来：面板位移 + 遮罩
+    // 淡出都跟着手指走，撤回则弹回原位。
+    //
+    // 位移用 Animatable：手势中逐帧 snapTo（跟手，不带缓动），撤回 / 收尾才跑动画。
+    // 提交时先补完剩余位移再 onDismiss()，避免面板从半途位置整块消失。
+    val backOffsetPx = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    PredictiveBackHandler(enabled = true) { progressEvents ->
+        try {
+            progressEvents.collect { event -> backOffsetPx.snapTo(event.progress * panelHeightPx) }
+            backOffsetPx.animateTo(panelHeightPx, tween(BackCommitMillis))
+            onDismiss()
+        } catch (e: CancellationException) {
+            scope.launch { backOffsetPx.animateTo(0f, tween(BackCancelReturnMillis)) }
+            throw e
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
-        // 遮罩：点它就关。用无波纹 clickable，避免整屏按下时出现大面积涟漪
+        // 遮罩：点它就关。用无波纹 clickable，避免整屏按下时出现大面积涟漪。
+        // 返回手势进行中跟着面板一起淡出（读的是同一份位移，不额外开动画）。
         Box(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.32f))
+                .graphicsLayer {
+                    alpha = 1f - (backOffsetPx.value / panelHeightPx).coerceIn(0f, 1f)
+                }
                 .clickable(
                     onClickLabel = "关闭显示设置",
                     role = Role.Button,
@@ -164,7 +199,9 @@ internal fun DisplaySettingsOverlay(
                 modifier = Modifier
                     .fillMaxWidth()
                     // 高度在 measure 阶段从 state 读取：拖动每帧只重测、不重组
-                    .panelHeight(panelHeightPx),
+                    .panelHeight(panelHeightPx)
+                    // 返回手势的位移：layer 里读 state，只失效图层、不进重组
+                    .graphicsLayer { translationY = backOffsetPx.value },
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),

@@ -2,7 +2,7 @@
 
 作用域：找「某个行为被哪个测试钉住」时读。跑法与结果汇总见 `AGENTS.md`「常用命令」。
 
-现数（2026-09-24 实测）：**80 个测试类 / 807 个 `@Test`**。改动后现查，不要手改这个数字：
+现数（2026-09-26 实测）：**81 个测试类 / 811 个 `@Test`**。改动后现查，不要手改这个数字：
 
 ```powershell
 (Get-ChildItem -Recurse app\src\test -Filter *.kt).Count
@@ -25,6 +25,7 @@
 `ImportJsonShapeTest`、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest`、
 `CourseTweakTest`（调课规划：拆分/覆盖/交换/同格去重）、`TodayBoundaryTest`（小组件边界闹钟时刻）、
 `WidgetModelTest`（小组件：尺寸分档/行数预算/**明日接棒**/周网格列序与去重叠/旧 JSON 兼容）、
+`LifeWidgetModelsTest`（校园卡/电费小组件纯逻辑：2 小时取数闸门含时钟回拨/分转元与度数格式化/快照 codec round-trip）、、
 `ExamMapperTest`（考试→课条目映射，含历史学期估算）、
 `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 解析）、`ScoreCalculatorTest`（学期/学年汇总）、
 `ScoreGroupsTest`（成绩学年分组与年级标签）、
@@ -49,6 +50,7 @@
 `PanelSnapTest`（面板高度吸附）、`CompactPositionTest`（地点压缩）、
 `SubpageStackTest`（二级页离开位置：链增删/重建不重复/活窗口门控）、
 `JsStringDecodeTest`（evaluateJavascript 返回值解码）、`JwImportDiagnosisTest`（导入失败诊断契约）、
+`JwUrlsTest`（教务 URL 判定：成绩页不并进课表页 / 各类页面归类）、
 `QiekjModelsTest`（胖乖响应包脏数据容错）、`YktPayCodeTest`（付款码矩阵参数）、
 `YktRechargeSignTest`（充值下单签名）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
 、`ScheduleBackgroundTest`（背景图：默认值/模糊档位到解码尺寸/文件名白名单）
@@ -58,7 +60,8 @@
 `Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）、
 `PowerModelsTest`（电费响应解析：项目/读数/流水 + 500 与 401 外壳 + 剩余电量键回退）、
 `PowerUsageTest`（用电统计：差分/充值折算/退款扣回/单价缺失两分支/算不出的段跳过/跨天均摊/周月桶/房间过滤）、
-`LifeFeedTest`（一卡通与电费流水混排：排序/限量/同刻稳定/解析失败沉底）、
+`LifeFeedTest`（一卡通与电费流水分段：按来源分组、段内倒序、限量按段算、同刻稳定、
+解析失败沉底、只有一段有内容不算空态）、
 `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
 `StartPageTest`（启动页：显示名/选项顺序/生活页关掉时不列/落回今日/脏值回退）、
 `PowerClientUrlTest`（缴费页/账单页深链形态与 feeitemid 钉子）、
@@ -74,4 +77,4 @@
 、`YktArrivalTest`（充值到账判定：余额涨满订单额/多卡与缺基线不判定）
 、`YktPayWatchTest`（付款码消费监听：水位之后命中/收入不算/同批不重复）
 、`YktSyncGateTest`（流水同步闸门：进页间隔十分钟量级）
-等 **80 个测试类 / 807 个用例**（2026-09-24 实测）。
+等 **81 个测试类 / 811 个用例**（2026-09-26 实测）。
