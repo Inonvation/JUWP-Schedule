@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  02「W 双浪」 b-waves-w
+  JUWP 的 W，写成两道连续的圆底波浪：一个字母，既是缩写又是水波。
+  白色圆头粗线，一笔成形。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgB" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E7CF6"/>
+      <stop offset="1" stop-color="#0B3FA8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bgB)"/>
+  <path fill="none" stroke="#FFFFFF" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"
+        d="M160,200 C176,258 196,320 216,320 C236,320 244,230 256,230 C268,230 276,320 296,320 C316,320 336,258 352,200"/>
+</svg>

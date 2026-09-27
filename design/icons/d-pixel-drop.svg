@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  04「课时水滴」 d-pixel-drop
+  用 11 块圆角课时块拼出一颗水滴：课表块就是水的分子。
+  由深到浅的色阶做出下坠感，中心白块是高光。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#EAF4FF"/>
+  <!-- 行1 -->
+  <rect x="229" y="100" width="54" height="54" rx="15" fill="#0B47B8"/>
+  <!-- 行2 -->
+  <g fill="#1257D6">
+    <rect x="165" y="164" width="54" height="54" rx="15"/>
+    <rect x="229" y="164" width="54" height="54" rx="15"/>
+    <rect x="293" y="164" width="54" height="54" rx="15"/>
+  </g>
+  <!-- 行3（中块为高光） -->
+  <rect x="165" y="228" width="54" height="54" rx="15" fill="#4E97F2"/>
+  <rect x="229" y="228" width="54" height="54" rx="15" fill="#FFFFFF"/>
+  <rect x="293" y="228" width="54" height="54" rx="15" fill="#4E97F2"/>
+  <!-- 行4 -->
+  <g fill="#6FABF6">
+    <rect x="165" y="292" width="54" height="54" rx="15"/>
+    <rect x="229" y="292" width="54" height="54" rx="15"/>
+    <rect x="293" y="292" width="54" height="54" rx="15"/>
+  </g>
+  <!-- 行5 -->
+  <rect x="229" y="356" width="54" height="54" rx="15" fill="#A9CDFC"/>
+</svg>
