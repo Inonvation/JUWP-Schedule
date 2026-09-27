@@ -1,6 +1,6 @@
 package edu.jxslu.schedule.ui.life
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,12 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -28,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,9 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -50,29 +50,43 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.data.power.PowerBill
 import edu.jxslu.schedule.data.power.PowerModels
 import edu.jxslu.schedule.data.power.PowerTurnover
+import edu.jxslu.schedule.ui.common.AppBarChart
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.BarChartItem
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.MonthNavRow
+import edu.jxslu.schedule.ui.common.MonthPickerDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import java.time.YearMonth
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Bolt
 
 /**
- * 缴费账单页（DESIGN §3.13「缴费账单页」，2026-09-24）。
+ * 缴费账单页（DESIGN §3.13「缴费账单页」）。
  *
- * 原先这一格跳平台 `/bill` 网页（要重新登录、字号与操作都不是本 App 的），
+ * 原先「缴费账单」跳平台 `/bill` 网页（要重新登录、字号与操作都不是本 App 的），
  * 现在在 App 内看：月切换 + 当月汇总 + 近 12 个月柱状 + 该月明细。
  * 数据来自与生活页「最近流水」同一条流水接口（仓库内存缓存 2 分钟，从生活页点进来通常不发请求）。
  *
- * 两个分页（2026-09-24 加入第二个）：**充值账单**（本文件，平台流水）与**用电统计**
- * （`PowerUsagePanel.kt`，本机读数差分）。两者数据源完全不同，所以分页而不是混成一条列表。
+ * 两个分页：**用电统计**（`PowerUsagePanel.kt`，本机读数差分）与**充值账单**（本文件，平台流水）。
+ * 数据源完全不同，所以分页而不是混成一条列表。
  *
- * 页脚留一个「在缴费平台打开」的兜底入口：平台改版或要看别的收费项目时还有一条路。
+ * 2026-09-26 排版与交互重构：
+ *
+ * 1. 汇总从「充值 / 退款 / 笔数」改成**充值 / 净额 / 笔数**——退款是低频事件，与充值并排
+ *    占同样位宽没有意义，现在降成充值下方一行小注，净额直接给出。
+ * 2. 明细行**进一张卡**（行间细线）并且**可点开详情**：房间、费用所属月、订单号原先在
+ *    数据里却没有出口。
+ * 3. 月份导航与柱状图换成与消费流水页同一套组件（`MonthNavRow` / `AppBarChart`）。
+ * 4. 页签对调：**用电统计**放第一页、进页默认显示（用户拍板），充值账单退到第二页。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,8 +103,10 @@ fun PowerBillScreen(
     val haptics = rememberAppHaptics()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    // 分页选择是页面局部状态：离开页面就回到默认的「充值账单」，不值得持久化
-    var showUsage by remember { mutableStateOf(false) }
+    // 分页选择是页面局部状态：离开页面就回到默认的「用电统计」，不值得持久化
+    var showUsage by remember { mutableStateOf(true) }
+    var showMonthPicker by remember { mutableStateOf(false) }
+    var detail by remember { mutableStateOf<PowerTurnover?>(null) }
 
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
         scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
@@ -105,10 +121,13 @@ fun PowerBillScreen(
         }
     }
 
+    val months = remember(state.monthKeys) { state.monthKeys.toYearMonths() }
+
     Scaffold(
         snackbarHost = { AppSnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text("缴费账单") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -123,19 +142,19 @@ fun PowerBillScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // 两个分页：充值账单（平台流水）与用电统计（本机读数差分）——数据源完全不同，
-            // 所以分页而不是同一条列表里换口径
+            // 两个分页：用电统计（本机读数差分）与充值账单（平台流水）——数据源完全不同，
+            // 所以分页而不是同一条列表里换口径。用电统计在第一页、进页默认显示（2026-09-26）
             SingleChoiceSegmentedButtonRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
             ) {
-                listOf("充值账单", "用电统计").forEachIndexed { index, label ->
+                listOf("用电统计", "充值账单").forEachIndexed { index, label ->
                     SegmentedButton(
-                        selected = showUsage == (index == 1),
+                        selected = showUsage == (index == 0),
                         onClick = {
                             haptics.tap()
-                            showUsage = index == 1
+                            showUsage = index == 0
                         },
                         // 不显示选中对勾：选中段自带填充色（与设置页分段控件同口径）
                         icon = {},
@@ -166,13 +185,15 @@ fun PowerBillScreen(
                         powerUsageItems(
                             state = state.usage,
                             onSelectRange = { range -> viewModel.selectUsageRange(range) },
+                            onSelectBucket = { key -> viewModel.selectUsageBucket(key) },
                         )
                         return@LazyColumn
                     }
 
-                    item {
+                    item(key = "month") {
                         MonthCard(
                             state = state,
+                            months = months,
                             onPrev = {
                                 haptics.tap()
                                 viewModel.prevMonth()
@@ -181,11 +202,13 @@ fun PowerBillScreen(
                                 haptics.tap()
                                 viewModel.nextMonth()
                             },
+                            onPick = { showMonthPicker = true },
+                            onSelectMonth = { viewModel.selectMonth(monthKeyOf(it)) },
                         )
                     }
 
                     when {
-                        state.noCredentials -> item {
+                        state.noCredentials -> item(key = "no-credentials") {
                             NoticeBlock(
                                 message = "凭证未配置或已清除，请先在「我的 → 校园卡」开启并验证",
                                 actionLabel = "去设置",
@@ -193,7 +216,7 @@ fun PowerBillScreen(
                             )
                         }
 
-                        state.error != null && state.rows.isEmpty() -> item {
+                        state.error != null && state.rows.isEmpty() -> item(key = "error") {
                             NoticeBlock(
                                 message = state.error.orEmpty(),
                                 actionLabel = "重试",
@@ -204,21 +227,24 @@ fun PowerBillScreen(
                         else -> {
                             // 有数据时失败提示不挡列表：留着上次取到的账单，配一条提示
                             state.error?.let { message ->
-                                item {
+                                item(key = "inline-error") {
                                     InlineNoticeRow(message = message, tone = NoticeTone.Warning)
                                 }
                             }
                             if (state.visibleRows.isEmpty()) {
-                                item { EmptyMonth(loading = !state.loaded) }
+                                item(key = "empty") { EmptyMonth(loading = !state.loaded) }
                             } else {
-                                items(state.visibleRows, key = { row -> rowKey(row) }) { row ->
-                                    BillRow(row)
+                                item(key = "rows") {
+                                    BillsCard(
+                                        rows = state.visibleRows,
+                                        onOpenDetail = { detail = it },
+                                    )
                                 }
                             }
                         }
                     }
 
-                    item {
+                    item(key = "footer") {
                         Footer(
                             onOpenPlatform = {
                                 haptics.tap()
@@ -230,80 +256,119 @@ fun PowerBillScreen(
             }
         }
     }
+
+    if (showMonthPicker) {
+        MonthPickerDialog(
+            months = months,
+            selected = runCatching { YearMonth.parse(state.monthKey) }.getOrDefault(YearMonth.now()),
+            onDismiss = { showMonthPicker = false },
+            onSelect = {
+                viewModel.selectMonth(monthKeyOf(it))
+                showMonthPicker = false
+            },
+        )
+    }
+
+    detail?.let { row ->
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(onDismissRequest = { detail = null }, sheetState = sheetState) {
+            TurnoverDetail(row)
+        }
+    }
 }
 
-/** 列表 key：`turnoverid` 是平台主键，缺失（脏数据）时退到「时间 + 金额」，避免重复键崩列表。 */
-private fun rowKey(row: PowerTurnover): String =
-    row.turnoverId?.toString() ?: "${row.dateText}|${row.amountFen}|${row.refund}"
+private fun List<String>.toYearMonths(): List<YearMonth> =
+    mapNotNull { runCatching { YearMonth.parse(it) }.getOrNull() }
+
+private fun monthKeyOf(month: YearMonth): String = "%04d-%02d".format(month.year, month.monthValue)
 
 /**
- * 页头卡：月切换 + 当月汇总 + 近 12 个月充值柱状。
+ * 页头卡：月切换 + 当月汇总 + 近 12 个月充值柱状（`AppBarChart`，与消费流水页同一套）。
  *
  * 汇总与柱状都在本地算（`PowerBill`），切月零网络——这一页只有进页那一次取数。
  */
 @Composable
 private fun MonthCard(
     state: PowerBillUiState,
+    months: List<YearMonth>,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onPick: () -> Unit,
+    onSelectMonth: (YearMonth) -> Unit,
 ) {
-    AppCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = onPrev, enabled = state.canPrev) { Text("‹") }
-            Text(
-                text = PowerBill.monthLabel(state.monthKey),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            TextButton(onClick = onNext, enabled = state.canNext) { Text("›") }
-        }
+    val month = state.month
+    val rechargeFen = month?.rechargeFen ?: 0L
+    val refundFen = month?.refundFen ?: 0L
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val currentKey = state.monthKeys.last()
 
-        val month = state.month
+    AppCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
+        MonthNavRow(
+            label = PowerBill.monthLabel(state.monthKey),
+            onPrev = onPrev,
+            onNext = onNext,
+            onPick = onPick,
+            prevEnabled = state.canPrev,
+            nextEnabled = state.canNext,
+            showThisMonth = state.monthKey != currentKey,
+            onThisMonth = { onSelectMonth(months.last()) },
+        )
+
+        Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(28.dp),
         ) {
-            AmountItem(
-                label = "充值",
-                text = PowerBill.amountText(month?.rechargeFen ?: 0L),
-                color = MaterialTheme.colorScheme.primary,
-            )
-            AmountItem(
-                label = "退款",
-                text = PowerBill.amountText(month?.refundFen ?: 0L),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            AmountItem(
-                label = "笔数",
-                text = "${month?.count ?: 0} 笔",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            AmountItem("充值", PowerBill.amountText(rechargeFen), MaterialTheme.colorScheme.primary)
+            AmountItem("净额", PowerBill.amountText(rechargeFen - refundFen), onSurface)
+            AmountItem("笔数", "${month?.count ?: 0} 笔", onSurface.copy(alpha = 0.7f))
+        }
+        if (refundFen > 0L) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "其中退款 ${PowerBill.amountText(refundFen)}，净额已扣除",
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurface.copy(alpha = 0.5f),
             )
         }
 
-        MonthlyBars(
-            monthlyRechargeFen = state.monthlyRechargeFen,
-            monthKeys = state.monthKeys,
-            currentKey = state.monthKeys.last(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
+        val items = months.mapIndexed { index, item ->
+            val key = monthKeyOf(item)
+            BarChartItem(
+                key = key,
+                value = (state.monthlyRechargeFen[key] ?: 0L).toFloat(),
+                title = PowerBill.monthLabel(key),
+                axisLabel = when (index) {
+                    0 -> "%d.%d".format(item.year, item.monthValue)
+                    months.lastIndex -> "%d.%d（今）".format(item.year, item.monthValue)
+                    else -> "%d".format(item.monthValue)
+                },
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        AppBarChart(
+            items = items,
+            selectedKey = state.monthKey,
+            header = "近 12 个月充值",
+            selectedText = if (rechargeFen > 0L) {
+                "${PowerBill.monthLabel(state.monthKey)} · ${PowerBill.amountText(rechargeFen)}"
+            } else {
+                null
+            },
+            emptyText = "还没有充值记录",
+            onSelect = { key ->
+                months.firstOrNull { monthKeyOf(it) == key }?.let(onSelectMonth)
+            },
         )
     }
 }
 
 @Composable
-private fun AmountItem(
-    label: String,
-    text: String,
-    color: Color,
-) {
+private fun AmountItem(label: String, text: String, color: Color) {
     Column {
         Text(
             text = text,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = color,
         )
@@ -315,116 +380,127 @@ private fun AmountItem(
     }
 }
 
-/**
- * 近 12 个月充值柱状（自绘 `Canvas`，与消费流水页同款口径，无图表库依赖）。
- *
- * 无记录的月留空位不画柱：柱子的存在本身就表示「那个月交过费」。
- * 当月柱用主题色，其余 35% 透明度；最大值动态缩放，免得某月峰值把其余柱压扁。
- */
+/** 该月明细：一张卡装全部行，行间细线；整行可点开详情。 */
 @Composable
-private fun MonthlyBars(
-    monthlyRechargeFen: Map<String, Long>,
-    monthKeys: List<String>,
-    currentKey: String,
-    modifier: Modifier = Modifier,
-) {
-    val maxFen = monthlyRechargeFen.values.maxOrNull() ?: 0L
-    Column(modifier) {
-        Text(
-            text = "近 12 个月充值",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        )
-        Spacer(Modifier.height(8.dp))
-        if (maxFen <= 0L) {
-            Text(
-                text = "还没有充值记录",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
-            return@Column
-        }
-        val barColor = MaterialTheme.colorScheme.primary
-        val dimColor = barColor.copy(alpha = 0.35f)
-        val outline = MaterialTheme.colorScheme.outlineVariant
-        // 柱序 = 月切换窗口，同一份口径
-        val keys = monthKeys
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-        ) {
-            val slot = size.width / keys.size
-            val barWidth = slot * 0.55f
-            keys.forEachIndexed { index, key ->
-                val fen = monthlyRechargeFen[key] ?: 0L
-                val h = if (fen > 0) (fen.toFloat() / maxFen) * (size.height - 2f) else 0f
-                if (h <= 0f) return@forEachIndexed
-                val x = slot * index + slot / 2
-                drawLine(
-                    color = if (key == currentKey) barColor else dimColor,
-                    start = Offset(x, size.height),
-                    end = Offset(x, size.height - h),
-                    strokeWidth = barWidth,
-                    cap = StrokeCap.Round,
-                )
-            }
-            drawLine(outline, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), 1f)
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "${PowerBill.shortMonthLabel(keys.first())} 月",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "${PowerBill.shortMonthLabel(keys.last())} 月（今）",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-            )
+private fun BillsCard(rows: List<PowerTurnover>, onOpenDetail: (PowerTurnover) -> Unit) {
+    AppCard(contentPadding = PaddingValues(0.dp)) {
+        rows.forEachIndexed { index, row ->
+            if (index > 0) AppCardDivider()
+            BillRow(row = row, onClick = { onOpenDetail(row) })
         }
     }
 }
 
 /** 一条缴费记录：时间 · 房间 / 金额（充值 `+` 主色、退款 `−` 常规色）。 */
 @Composable
-private fun BillRow(row: PowerTurnover) {
-    AppCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (row.refund) "电费退款" else "电费充值",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                val secondary = listOfNotNull(
-                    // 「2026-08-25 12:20:23」→「08-25 12:20」：月份已在页头，不重复
-                    row.dateText.take(16).substringAfter('-', "").takeIf { it.isNotBlank() },
-                    PowerModels.roomLabelOf(row.room),
-                ).joinToString(" · ")
-                if (secondary.isNotEmpty()) {
-                    Text(
-                        text = secondary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+private fun BillRow(row: PowerTurnover, onClick: () -> Unit) {
+    val haptics = rememberAppHaptics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = "查看详情") {
+                haptics.tap()
+                onClick()
             }
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = HugeIcons.Bolt,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.tertiary,
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
             Text(
-                text = (if (row.refund) "−" else "+") + PowerBill.amountText(row.amountFen),
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = if (row.refund) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
+                text = if (row.refund) "电费退款" else "电费充值",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
             )
+            val secondary = listOfNotNull(
+                // 「2026-08-25 12:20:23」→「08-25 12:20」：月份已在页头，不重复
+                row.dateText.take(16).substringAfter('-', "").takeIf { it.isNotBlank() },
+                PowerModels.roomLabelOf(row.room),
+            ).joinToString(" · ")
+            if (secondary.isNotEmpty()) {
+                Text(
+                    text = secondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = (if (row.refund) "−" else "+") + PowerBill.amountText(row.amountFen),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (row.refund) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+        )
+    }
+}
+
+/** 详情弹层：完整时间 / 金额 / 房间 / 费用所属月 / 订单号。 */
+@Composable
+private fun TurnoverDetail(row: PowerTurnover) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = if (row.refund) "电费退款" else "电费充值",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        DetailRow("交易时间", row.dateText)
+        DetailRow("金额", (if (row.refund) "−" else "+") + PowerBill.amountText(row.amountFen))
+        PowerModels.roomLabelOf(row.room)?.let { DetailRow("房间", it) }
+        feeRangeLabel(row.month)?.let { DetailRow("费用所属月", it) }
+        row.turnoverId?.let { DetailRow("订单号", it.toString()) }
+    }
+}
+
+/**
+ * `feerange` 的 `202608` 形态 → 「2026 年 8 月」；认不出就原样给（有值才显示）。
+ *
+ * 这里是展示口径：与 `PowerBill.monthKeyOf` 的**归属**口径无关（那条是「账单算到哪个月」，
+ * 取缴费日期），详情里这一行就是平台登记的「费用所属月」原文。
+ */
+private fun feeRangeLabel(raw: String?): String? {
+    val text = raw.orEmpty().trim()
+    if (text.isEmpty()) return null
+    if (text.length == 6 && text.all { it.isDigit() }) {
+        val month = text.substring(4).trimStart('0').ifEmpty { "0" }
+        return "${text.take(4)} 年 $month 月"
+    }
+    return text
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            modifier = Modifier.width(92.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -440,15 +516,17 @@ private fun EmptyMonth(loading: Boolean) {
         )
         return
     }
-    Text(
-        text = "该月没有缴费记录",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        textAlign = TextAlign.Center,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 24.dp),
-    )
+    AppCard {
+        Text(
+            text = "该月没有缴费记录",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+        )
+    }
 }
 
 /** 提示块（凭证缺失 / 取数失败）：一句话 + 一个出口。 */

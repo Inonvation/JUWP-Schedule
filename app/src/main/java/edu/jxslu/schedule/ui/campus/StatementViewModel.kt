@@ -99,11 +99,21 @@ class StatementViewModel(
     private val _events = Channel<StatementEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    /** 年视图：近 12 个月键（含当月，倒序生成后转正序给柱状）。 */
-    private val recentMonthKeys: List<String> = run {
+    /**
+     * 年视图窗口：近 12 个月（含当月，升序）。
+     *
+     * 柱状图与「选择月份」弹窗共用这一份，别再在 UI 里按 `YearMonth.now()` 另算一次——
+     * 两处各算一遍，跨月时弹窗会给出一组和柱子对不上的月份。
+     */
+    private val window: List<YearMonth> = run {
         val now = YearMonth.now()
-        (11 downTo 0).map { offset -> monthKeyOf(now.minusMonths(offset.toLong())) }
+        (11 downTo 0).map { offset -> now.minusMonths(offset.toLong()) }
     }
+
+    private val recentMonthKeys: List<String> = window.map { monthKeyOf(it) }
+
+    /** 月份选择弹窗与柱状图的月份窗口（升序，最后一个是当月）。 */
+    fun windowMonths(): List<YearMonth> = window
 
     /** 近 12 个月支出（suspend 一次性查；同步完成后由 syncInBackground 触发重查）。 */
     private val _monthlyExpenses = MutableStateFlow<Map<String, Long>>(emptyMap())

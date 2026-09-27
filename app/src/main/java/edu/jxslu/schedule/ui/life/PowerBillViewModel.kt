@@ -38,6 +38,8 @@ data class PowerUsageUiState(
     val range: PowerUsageRange = PowerUsageRange.Day,
     /** 统计结果；本机没有读数时为 null（页面给「还没攒到读数」的空态）。 */
     val summary: PowerUsageSummary? = null,
+    /** 柱状图选中的桶键；null = 跟随窗口最后一格（切档位时不保留，免得选到别的档的键）。 */
+    val selectedKey: String? = null,
 )
 
 /** 缴费账单页状态（DESIGN §3.13）。 */
@@ -191,8 +193,19 @@ class PowerBillViewModel(
     /** 切统计粒度（日 / 周 / 月）；窗口长度在 `PowerUsage.windowOf`，本地重算零网络。 */
     fun selectUsageRange(range: PowerUsageRange) {
         if (_uiState.value.usage.range == range) return
-        _uiState.update { it.copy(usage = it.usage.copy(range = range)) }
+        _uiState.update { it.copy(usage = it.usage.copy(range = range, selectedKey = null)) }
         recomputeUsage()
+    }
+
+    /**
+     * 选中柱状图里的某一格：桶列表的高亮与标题行的数值都跟着它走。
+     *
+     * 视图层在 [PowerUsageUiState.selectedKey] 为 null 时把选中态落在窗口最后一格（今天 / 本周 /
+     * 本月），所以这里不用预先塞一个初值。
+     */
+    fun selectUsageBucket(key: String) {
+        if (_uiState.value.usage.selectedKey == key) return
+        _uiState.update { it.copy(usage = it.usage.copy(selectedKey = key)) }
     }
 
     /**

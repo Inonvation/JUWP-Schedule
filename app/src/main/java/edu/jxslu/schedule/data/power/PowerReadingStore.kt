@@ -24,6 +24,9 @@ class PowerReadingStore(private val dao: PowerReadingDao) {
     /** 一次性取全部读数（升序）。 */
     suspend fun all(): List<PowerReading> = dao.getAll().map { it.toDomain() }
 
+    /** 最新一条读数（电费小组件渲染用，DESIGN §3.6 三条目改版；无读数返回 null）。 */
+    suspend fun latest(): PowerReading? = dao.latest()?.toDomain()
+
     /**
      * 记一条读数。返回是否真的写进去了（`false` = 认不出电量/房间、时刻无效，
      * 或这一读数已经在库里——`(epochMs, roomId)` 唯一索引 + IGNORE）。

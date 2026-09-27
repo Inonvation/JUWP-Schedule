@@ -1,6 +1,6 @@
 package edu.jxslu.schedule.ui.life
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,8 +20,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,7 +30,10 @@ import edu.jxslu.schedule.domain.PowerUsage
 import edu.jxslu.schedule.domain.PowerUsageBucket
 import edu.jxslu.schedule.domain.PowerUsageRange
 import edu.jxslu.schedule.domain.PowerUsageSummary
+import edu.jxslu.schedule.ui.common.AppBarChart
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDivider
+import edu.jxslu.schedule.ui.common.BarChartItem
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeTone
 import java.time.Instant
@@ -40,27 +41,37 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * 缴费账单页的「用电统计」分页（DESIGN §3.13，2026-09-24）。
+ * 缴费账单页的「用电统计」分页（DESIGN §3.13）。
  *
  * 数字全部来自 `domain/PowerUsage`（本机读数差分 + 跨天均摊），这里只管画：
- * 一张汇总卡（剩余电量 + 窗口合计 + 档位 + 柱状）＋ 一份逐桶列表 ＋ 口径说明。
+ * 一张汇总卡（剩余电量 + 档位 + 窗口合计 + 柱状）＋ 一份逐桶列表 ＋ 口径说明。
  * 没有读数时给的是「怎么才能有数据」的空态，而不是一行「暂无数据」。
+ *
+ * 2026-09-26 改：柱状换 `AppBarChart`（与另两处统计同款），柱子可点、选中格在标题行显示数值；
+ * 逐桶列表收进一张卡（行间细线），选中的那一行带一层浅底——此前一行一张卡，纵向浪费一半。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 internal fun LazyListScope.powerUsageItems(
     state: PowerUsageUiState,
     onSelectRange: (PowerUsageRange) -> Unit,
+    onSelectBucket: (String) -> Unit,
 ) {
     val summary = state.summary
-    item { UsageSummaryCard(state = state, onSelectRange = onSelectRange) }
+    item(key = "usage-summary") {
+        UsageSummaryCard(
+            state = state,
+            onSelectRange = onSelectRange,
+            onSelectBucket = onSelectBucket,
+        )
+    }
 
     if (summary == null || summary.readingCount < 2) {
-        item { UsageEmptyHint(hasReading = summary != null) }
+        item(key = "usage-empty") { UsageEmptyHint(hasReading = summary != null) }
         return
     }
 
     summary.skippedSegments.takeIf { it > 0 }?.let { skipped ->
-        item {
+        item(key = "usage-skipped") {
             InlineNoticeRow(
                 message = "有 $skipped 段读数对不上（充值流水缺失或电表改过数），这几段的用量没计入",
                 tone = NoticeTone.Warning,
@@ -69,8 +80,9 @@ internal fun LazyListScope.powerUsageItems(
     }
 
     val recorded = summary.buckets.filter { it.usedKwh > 0.0 || it.rechargeFen != 0L }
+    val selectedKey = state.selectedKey ?: summary.buckets.lastOrNull()?.key
     if (recorded.isEmpty()) {
-        item {
+        item(key = "usage-none") {
             Text(
                 text = "这段时间还没有可用量",
                 style = MaterialTheme.typography.bodySmall,
@@ -82,10 +94,30 @@ internal fun LazyListScope.powerUsageItems(
             )
         }
     } else {
-        items(recorded.reversed(), key = { "usage-${it.key}" }) { bucket -> UsageBucketRow(state.range, bucket) }
+        item(key = "usage-header") {
+            Text(
+                text = "逐${rangeLabel(state.range)}用量",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 8.dp),
+            )
+        }
+        item(key = "usage-rows") {
+            AppCard(contentPadding = PaddingValues(0.dp)) {
+                recorded.reversed().forEachIndexed { index, bucket ->
+                    if (index > 0) AppCardDivider()
+                    UsageBucketRow(
+                        range = state.range,
+                        bucket = bucket,
+                        selected = bucket.key == selectedKey,
+                    )
+                }
+            }
+        }
     }
 
-    item { UsageFootnote(summary) }
+    item(key = "usage-footnote") { UsageFootnote(summary) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,9 +125,11 @@ internal fun LazyListScope.powerUsageItems(
 private fun UsageSummaryCard(
     state: PowerUsageUiState,
     onSelectRange: (PowerUsageRange) -> Unit,
+    onSelectBucket: (String) -> Unit,
 ) {
     val summary = state.summary
     val range = state.range
+    val onSurface = MaterialTheme.colorScheme.onSurface
     AppCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
         val latest = summary?.latest
         if (latest == null) {
@@ -109,25 +143,25 @@ private fun UsageSummaryCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = "${PowerUsage.kwhText(latest.remainKwh)} 度",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = "剩余电量 · ${readTimeText(latest.epochMs)} 读数",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        color = onSurface.copy(alpha = 0.55f),
                     )
                 }
                 // 折算口径与生活页电费卡同一处（domain/BalanceAlert.remainingYuan）：
                 // 单价缺失就不给金额，不按默认单价编一个数
                 BalanceAlert.remainingYuan(latest.remainKwh, latest.priceYuan.takeIf { it > 0 })
                     ?.let { yuan ->
-                    Text(
-                        text = "≈ ${PowerBill.amountText(PowerModels.fen(yuan))}",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
+                        Text(
+                            text = "≈ ${PowerBill.amountText(PowerModels.fen(yuan))}",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
             }
         }
 
@@ -158,14 +192,37 @@ private fun UsageSummaryCard(
                 Text(
                     text = "期间充值 ${PowerBill.amountText(recharge)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    color = onSurface.copy(alpha = 0.55f),
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            UsageBars(
-                buckets = summary.buckets,
-                range = range,
-                modifier = Modifier.fillMaxWidth(),
+
+            val buckets = summary.buckets
+            val selectedKey = state.selectedKey ?: buckets.lastOrNull()?.key
+            val selectedBucket = buckets.firstOrNull { it.key == selectedKey }
+            val today = LocalDate.now()
+            Spacer(Modifier.height(14.dp))
+            AppBarChart(
+                items = buckets.mapIndexed { index, bucket ->
+                    BarChartItem(
+                        key = bucket.key,
+                        value = bucket.usedKwh.toFloat(),
+                        title = PowerUsage.labelOf(range, bucket.key, today),
+                        axisLabel = when (index) {
+                            0 -> axisText(range, bucket.key)
+                            buckets.lastIndex -> "${axisText(range, bucket.key)}（今）"
+                            else -> axisText(range, bucket.key)
+                        },
+                    )
+                },
+                selectedKey = selectedKey,
+                header = "用电量（度）",
+                selectedText = selectedBucket?.let { bucket ->
+                    val head = "${PowerUsage.labelOf(range, bucket.key, today)} · " +
+                        "${PowerUsage.kwhText(bucket.usedKwh)} 度"
+                    bucket.usedYuan?.let { yuan -> "$head · ≈ ${PowerBill.amountText(PowerModels.fen(yuan))}" } ?: head
+                },
+                emptyText = "这段时间还没有可用量",
+                onSelect = onSelectBucket,
             )
         }
     }
@@ -179,93 +236,52 @@ private fun windowTotalText(summary: PowerUsageSummary, range: PowerUsageRange):
 }
 
 /**
- * 逐桶柱状（自绘 `Canvas`，与账单页的月度充值柱、消费流水页同款口径，无图表库依赖）。
+ * 一个桶一行：标签 · 度数 / 金额（充值另起一行小注）。
  *
- * 没有用量的桶留空位不画柱：柱子的存在本身表示「那个桶里有用量」。
- * 当前桶用主题色，其余 35% 透明度；最大值动态缩放，免得某个峰值把其余柱压扁。
+ * [selected] 是柱状图选中的那一格：加一层浅底，柱与行互相对得上。
  */
 @Composable
-private fun UsageBars(
-    buckets: List<PowerUsageBucket>,
-    range: PowerUsageRange,
-    modifier: Modifier = Modifier,
-) {
-    val maxKwh = buckets.maxOfOrNull { it.usedKwh } ?: 0.0
-    if (maxKwh <= 0.0) return
-    val barColor = MaterialTheme.colorScheme.primary
-    val dimColor = barColor.copy(alpha = 0.35f)
-    val outline = MaterialTheme.colorScheme.outlineVariant
-    val currentKey = buckets.lastOrNull()?.key
-    Column(modifier) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-        ) {
-            val slot = size.width / buckets.size
-            buckets.forEachIndexed { index, bucket ->
-                if (bucket.usedKwh <= 0.0) return@forEachIndexed
-                val h = (bucket.usedKwh / maxKwh).toFloat() * (size.height - 2f)
-                val x = slot * index + slot / 2
-                drawLine(
-                    color = if (bucket.key == currentKey) barColor else dimColor,
-                    start = Offset(x, size.height),
-                    end = Offset(x, size.height - h),
-                    strokeWidth = slot * 0.55f,
-                    cap = StrokeCap.Round,
-                )
-            }
-            drawLine(outline, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), 1f)
-        }
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = axisText(range, buckets.first().key),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "${axisText(range, buckets.last().key)}（今）",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-            )
-        }
-    }
-}
-
-/** 一个桶一行：标签 · 度数 / 金额（充值另起一行小注）。 */
-@Composable
-private fun UsageBucketRow(range: PowerUsageRange, bucket: PowerUsageBucket) {
+private fun UsageBucketRow(range: PowerUsageRange, bucket: PowerUsageBucket, selected: Boolean) {
     val today = LocalDate.now()
-    AppCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                } else {
+                    androidx.compose.ui.graphics.Color.Transparent
+                },
+            )
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = PowerUsage.labelOf(range, bucket.key, today),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            if (bucket.rechargeFen != 0L) {
                 Text(
-                    text = PowerUsage.labelOf(range, bucket.key, today),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
+                    text = "充值 ${PowerBill.amountText(bucket.rechargeFen)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
                 )
-                if (bucket.rechargeFen != 0L) {
-                    Text(
-                        text = "充值 ${PowerBill.amountText(bucket.rechargeFen)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
-            Column(horizontalAlignment = Alignment.End) {
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = "${PowerUsage.kwhText(bucket.usedKwh)} 度",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            bucket.usedYuan?.let { yuan ->
                 Text(
-                    text = "${PowerUsage.kwhText(bucket.usedKwh)} 度",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "≈ ${PowerBill.amountText(PowerModels.fen(yuan))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
-                bucket.usedYuan?.let { yuan ->
-                    Text(
-                        text = "≈ ${PowerBill.amountText(PowerModels.fen(yuan))}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
             }
         }
     }

@@ -60,6 +60,10 @@ interface PowerReadingDao {
     @Query("SELECT * FROM power_readings ORDER BY epochMs, id")
     suspend fun getAll(): List<PowerReadingEntity>
 
+    /** 最新一条读数（电费小组件渲染用，DESIGN §3.6 三条目改版；无读数返回 null）。 */
+    @Query("SELECT * FROM power_readings ORDER BY epochMs DESC, id DESC LIMIT 1")
+    suspend fun latest(): PowerReadingEntity?
+
     /** 追加一条读数；`(epochMs, roomId)` 撞上已有行时静默跳过（重复快照不重复记）。 */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(reading: PowerReadingEntity): Long
