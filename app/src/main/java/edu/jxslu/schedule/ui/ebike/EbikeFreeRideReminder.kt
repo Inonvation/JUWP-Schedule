@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
@@ -175,6 +176,9 @@ object EbikeFreeRideReminder {
                 prefs.setEbikeRideStartAt(0L)
                 prefs.updateEbikeFreeNotifiedKeys { emptySet() }
             }
+            // 计时段落已经收干净（或根本没有计时）：扫完即焚的码此刻删除。
+            // 无计时的 check（进页/冷启动）也走这里，与出码页 ON_RESUME 的兜底同语义
+            burnSavedCodes(context)
             return@guarded Outcome.Nothing
         }
 
@@ -199,6 +203,11 @@ object EbikeFreeRideReminder {
             if (key !in sent && EbikeFreeRideNotifier.postEndReminder(context)) {
                 sent += key
             }
+            // 免费时长已结束（结束提醒窗口内）：扫完即焚的码此刻删除。
+            // 删除跟计时段落走、不跟提醒发没发成功走；正常时序下免费结束闹钟到点
+            // 就是这里的第一次 check，用户骑车期间的任何回 App 都删不掉（VM 兜底见
+            // EbikeViewModel.burnPending 的计时判断）
+            burnSavedCodes(context)
         }
         prefs.updateEbikeFreeNotifiedKeys { sent }
 
@@ -259,6 +268,28 @@ object EbikeFreeRideReminder {
         cancelPeriodicWork(context)
         EbikeFreeRideService.stop(context)
         EbikeFreeRideNotifier.cancelReminders(context)
+    }
+
+    /**
+     * 扫完即焚的到点执行（DESIGN §3.9，2026-09-27 口径）：删除所有记录在案的待焚毁
+     * 二维码，删成功的移出记录。**删除时机跟计时段落走**——扫码用车期间图要留在相册
+     * 反复扫，免费时长结束（[check] 的结束分支）或计时段落收干净时才清；无计时在案时
+     * 等价于旧「回 App 即删」。手动结束骑行走 `EbikeViewModel.onEndRide` → VM 的
+     * `burnPending(force)`。开关关着时不删不清。与 VM 的焚毁并发安全：同一条 key
+     * 第二次删除返回 false，记录更新是 DataStore 原子变换。
+     */
+    private suspend fun burnSavedCodes(context: Context) {
+        val prefs = Graph.displayPrefs(context)
+        if (!prefs.ebikeBurnAfterScan.first()) return
+        val pending = prefs.ebikePendingDelete.first()
+        if (pending.isEmpty()) return
+        val deleted = withContext(Dispatchers.IO) {
+            pending.filterTo(mutableSetOf()) { key ->
+                EbikeQrBitmaps.deletePending(context.applicationContext, key)
+            }
+        }
+        if (deleted.isEmpty()) return
+        prefs.updateEbikePendingDelete { it - deleted }
     }
 
     private fun alarmPendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(

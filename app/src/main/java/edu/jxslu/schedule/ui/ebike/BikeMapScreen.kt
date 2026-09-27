@@ -50,10 +50,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +74,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.BikeCluster
@@ -85,6 +90,7 @@ import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.delay
@@ -183,6 +189,9 @@ fun BikeMapScreen(
             userHalo = scheme.primary.copy(alpha = 0.22f).toArgb(),
             centerMark = scheme.onSurface.toArgb(),
             centerHalo = scheme.surface.toArgb(),
+            // 围栏填充要"一眼看出整片包裹"（仿官方小程序）：0.16 太淡，2026-09-27 两轮真机反馈后加重到 0.32
+            fenceStroke = scheme.primary.copy(alpha = 0.80f).toArgb(),
+            fenceFill = scheme.primary.copy(alpha = 0.32f).toArgb(),
         )
     }
 
@@ -227,10 +236,13 @@ fun BikeMapScreen(
     }
 
     // API 31+ 的对话框会分开问「精确 / 大致」，两个都申请，给哪个都够用（粗略坐标也能定位到那一片）
+    var locationGranted by remember { mutableStateOf(BikeLocator.hasPermission(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
-        if (result.values.any { it }) {
+        // 进状态是为了让下面的连续定位流跟着重启：授权后不用等下次进页蓝点就活了
+        locationGranted = result.values.any { it }
+        if (locationGranted) {
             locate(false)
         } else {
             scope.launch { notifyLocateIssue(DENIED_HINT) }
@@ -249,6 +261,22 @@ fun BikeMapScreen(
         }
     }
 
+    // 蓝点实时更新（DESIGN §3.9）：页面可见期间挂平台定位流，只挪蓝点与「距你」距离，
+    // 不移镜头也不重查接口（那是「定位」按钮那次一次性定位与用户动作的职责）。
+    // 失败静默：看得见的失败提示都长在一次性定位那条路上。
+    // 退到后台 repeatOnLifecycle 会取消收集、注销系统定位监听，不在后台耗电。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, locationGranted) {
+        if (!locationGranted) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            BikeLocator.updates(context).collect { result ->
+                if (result is LocateResult.Ok) {
+                    viewModel.onUserLocationChanged(result.lat, result.lng)
+                }
+            }
+        }
+    }
+
     Scaffold(
         // 页面自己吃掉窗口底：面板底色要一直铺到屏幕底边，中间不能留系统栏那一条缝
         // （2026-09-23 之前用 Scaffold 默认的 inset，缝里会透出地图）。
@@ -256,6 +284,7 @@ fun BikeMapScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text("附近单车") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -362,6 +391,10 @@ fun BikeMapScreen(
                         haptics.tap()
                         viewModel.setOnlyAvailable(!state.onlyAvailable)
                     },
+                    onToggleOnlyOurCampus = {
+                        haptics.tap()
+                        viewModel.setOnlyOurCampus(!state.onlyOurCampus)
+                    },
                     onResetToCampus = {
                         haptics.tap()
                         viewModel.onResetToCampus()
@@ -446,6 +479,7 @@ private fun BikePanel(
     onResizeFinished: () -> Unit,
     onRefresh: () -> Unit,
     onToggleOnlyAvailable: () -> Unit,
+    onToggleOnlyOurCampus: () -> Unit,
     onResetToCampus: () -> Unit,
     onClusterTap: (String) -> Unit,
     onPick: (String) -> Unit,
@@ -481,6 +515,7 @@ private fun BikePanel(
                     text = when {
                         !state.queried -> "附近单车"
                         state.onlyAvailable -> "可用 ${state.bikeCount} 辆"
+                        state.onlyOurCampus -> "本校 ${state.bikeCount} 辆"
                         else -> "附近 ${state.bikeCount} 辆"
                     },
                     style = MaterialTheme.typography.titleSmall,
@@ -496,6 +531,13 @@ private fun BikePanel(
                     },
                 )
             }
+            // 只看本校：快趣同时服务隔壁江西师大，不筛的话师大校园的车也会画进来
+            FilterChip(
+                selected = state.onlyOurCampus,
+                onClick = onToggleOnlyOurCampus,
+                label = { Text("只看本校") },
+            )
+            Spacer(Modifier.width(8.dp))
             // 只看可用的车：校园里总有几辆离线或电量见底的，混在列表里要一行行看状态
             FilterChip(
                 selected = state.onlyAvailable,
@@ -559,10 +601,15 @@ private fun BikePanel(
 
                 state.clusters.isEmpty() -> item {
                     EmptyState(
-                        message = if (state.onlyAvailable) {
-                            "这一带没有可用的车，关掉「只看可用」看看全部"
-                        } else {
-                            "这一带暂时没有车，把地图拖到别处再看看"
+                        message = when {
+                            state.onlyOurCampus && state.onlyAvailable ->
+                                "这一带没有可用的本校车，可关掉「只看本校」或「只看可用」看看全部"
+                            state.onlyOurCampus ->
+                                "这一带没有本校的车，关掉「只看本校」看看全部"
+                            state.onlyAvailable ->
+                                "这一带没有可用的车，关掉「只看可用」看看全部"
+                            else ->
+                                "这一带暂时没有车，把地图拖到别处再看看"
                         },
                         onResetToCampus = onResetToCampus,
                     )

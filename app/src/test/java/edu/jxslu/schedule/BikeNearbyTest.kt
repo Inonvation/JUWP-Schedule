@@ -398,4 +398,100 @@ class BikeNearbyTest {
         val bike = ok(response(car(battery = "92.8"))).first()
         assertEquals("93%", bike.batteryText)
     }
+
+    // ---- 校区过滤与围栏（DESIGN §3.9「只看本校」） ----
+
+    @Test
+    fun `校区名白名单按关键词匹配`() {
+        // 2026-09-27 实测：本校车辆台账里是旧校名「南昌工程学院」
+        assertTrue(BikeNearby.isOurCampus("南昌工程学院"))
+        // 学校已更名「江西水利电力大学」，运营方将来更新台账也要认
+        assertTrue(BikeNearby.isOurCampus("江西水利电力大学"))
+        // 隔壁江西师大与快趣可能铺到的第三所学校都要挡掉
+        assertFalse(BikeNearby.isOurCampus("江西师大"))
+        assertFalse(BikeNearby.isOurCampus("江西外语外贸职业学院"))
+        // 缺数据按本校算：不能因为台账没填就把一辆可能是本校的车藏掉
+        assertTrue(BikeNearby.isOurCampus(""))
+    }
+
+    @Test
+    fun `围栏覆盖本校停车点`() {
+        // 取自 2026-09-27 探测的车队坐标四至与贴边停车点
+        val oursInside = listOf(
+            28.688320 to 116.028466, // 教学北大楼（默认中心）
+            28.686400 to 116.024500, // 西大门
+            28.685673 to 116.024845, // 南缘
+            28.694637 to 116.031595, // 北缘（瑶湖西二路南侧停车带）
+            28.687906 to 116.035264, // 东缘（三食堂一带）
+            28.691195 to 116.026486, // 西北宿舍区（天祥大道贴边）
+            28.693116 to 116.033746, // 东北
+            // 东南角落：v4 南边曾在此偏北约 60 米、把校园南带漏在栏外（2026-09-27 真机反馈）
+            28.684110 to 116.037800,
+        )
+        oursInside.forEach { (lat, lng) ->
+            assertTrue("($lat, $lng) 应在围栏内", BikeNearby.inCampusFence(lat, lng))
+        }
+    }
+
+    @Test
+    fun `围栏覆盖全部实测车辆点位`() {
+        // 2026-09-27 探测到的 131 个本校车队坐标（测试资源文件，头注释有说明）。
+        // 上面那组代表点只防大偏移，这份全量清单才是围栏顶点真正的"验收线"：
+        // 拟合顶点时就是按"131 点全在栏内"收的口，挑点改动后重跑本用例即可回归。
+        val text = checkNotNull(javaClass.getResourceAsStream("/campus_fence_bikes_20260927.txt")) {
+            "缺少测试资源 campus_fence_bikes_20260927.txt"
+        }.bufferedReader().use { it.readText() }
+        val points = text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map { line ->
+                val parts = line.split(Regex("\\s+"))
+                parts[0].toDouble() to parts[1].toDouble()
+            }
+            .toList()
+        assertTrue("fixture 应含全部实测点位（≥100），当前 ${points.size}", points.size >= 100)
+        val outside = points.filter { (lat, lng) -> !BikeNearby.inCampusFence(lat, lng) }
+        assertTrue("实测点位应全部在栏内，栏外 ${outside.size} 个：$outside", outside.isEmpty())
+    }
+
+    @Test
+    fun `围栏挡住师大与周边院校`() {
+        val outsiders = listOf(
+            28.684281 to 116.029508, // 师大北缘（两校车队坐标最近处）
+            28.683300 to 116.033500, // 师大宿舍区（17栋一带）
+            28.681465 to 116.024354, // 师大西侧
+            28.690000 to 116.023000, // 江西工业职院（天祥大道西侧）
+            28.682000 to 116.009000, // 远处（校外）
+            // 东北角路口东北侧：v4 的东北角曾越过路口伸到这里（2026-09-27 真机反馈）
+            28.693650 to 116.037700,
+            // 西北角路口外（天祥大道×瑶湖西二路 西北象限）
+            28.696200 to 116.027300,
+        )
+        outsiders.forEach { (lat, lng) ->
+            assertFalse("($lat, $lng) 应在围栏外", BikeNearby.inCampusFence(lat, lng))
+        }
+    }
+
+    @Test
+    fun `只看本校要求车队与围栏双条件都过`() {
+        // 本校的车停在校内：过
+        assertTrue(BikeNearby.isOurCampusBike(28.68832, 116.028466, "南昌工程学院"))
+        // 校区名没填但停在校内：围栏兜底放行
+        assertTrue(BikeNearby.isOurCampusBike(28.68832, 116.028466, ""))
+        // 台账挂了本校名但停在师大校园（挂错或骑走未回桩）：围栏拦下
+        assertFalse(BikeNearby.isOurCampusBike(28.6833, 116.0335, "南昌工程学院"))
+        // 师大的车就算坐标落进围栏也进不来：车队归属不过
+        assertFalse(BikeNearby.isOurCampusBike(28.68832, 116.028466, "江西师大"))
+        // 校区名缺失又停在栏外：两个条件都不过
+        assertFalse(BikeNearby.isOurCampusBike(28.6843, 116.0295, ""))
+    }
+
+    @Test
+    fun `解析层保留校区字段供过滤`() {
+        val ours = ok(response(car(campus = "南昌工程学院"))).first()
+        assertEquals("南昌工程学院", ours.campusName)
+        val jxnu = ok(response(car(campus = "江西师大"))).first()
+        assertEquals("江西师大", jxnu.campusName)
+        assertFalse(BikeNearby.isOurCampus(jxnu.campusName))
+    }
 }

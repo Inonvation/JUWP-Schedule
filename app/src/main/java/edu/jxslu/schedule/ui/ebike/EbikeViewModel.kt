@@ -64,8 +64,8 @@ sealed interface EbikeEvent {
  *
  * 生成 = 拼 URL（[EbikeQr.bikeUrl] 校验，非法输入不出码）→ zxing 矩阵 → 位图；
  * 自动保存开关开着时，生成即落相册（后台线程，结果经 [events] 提示）；
- * 扫完即焚开着时，保存成功记录待焚毁 key，回到 App（页面 ON_RESUME）后
- * 由 [burnPending] 从相册删除；最近车号历史随生成更新（DataStore，上限 8）。
+ * 扫完即焚开着时，保存成功记录待焚毁 key，删除时机见 [burnPending]（免费时长结束 /
+ * 手动结束骑行 / 无计时回 App 兜底）；最近车号历史随生成更新（DataStore，上限 8）。
  * 二维码内容不含个人信息，历史也不出本机。
  */
 class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
@@ -146,10 +146,11 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
         }
     }
 
-    /** 结束骑行：清起点、撤闹钟、停常驻倒计时、清通知栏上的提醒。 */
+    /** 结束骑行：清起点、撤闹钟、停常驻倒计时、清通知栏上的提醒，并焚毁已保存的二维码。 */
     fun onEndRide() {
         viewModelScope.launch {
             val outcome = EbikeFreeRideReminder.endRide(Graph.appContext)
+            burnPending(force = true)
             _events.send(
                 when (outcome) {
                     is EbikeFreeRideReminder.Outcome.Failed ->
@@ -267,13 +268,19 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
 
     /**
      * 扫完即焚（DESIGN §3.9）：删除所有记录在案的待焚毁二维码，成功才移出记录。
-     * 由页面 ON_RESUME 触发（从微信/桌面回到 App 时）；开关关闭时不删不清——
-     * 关掉 = 完全回到旧语义。防重入：进行中的焚毁不叠跑。
+     * 开关关闭时不删不清——关掉 = 完全回到旧语义。防重入：进行中的焚毁不叠跑。
+     *
+     * 触发时机（2026-09-27 用户拍板改口径）：旧版「回 App 即删」会把用户还没扫完的码
+     * 清掉（保存 → 切微信 → 中途回 App 一眼，图就没了）。现在 [force] 为 false 时
+     * 先看计时：**免费时长还在跑就不删**（图要留着反复扫），删除交给
+     * `EbikeFreeRideReminder.check`（免费结束闹钟/周期核对）或手动结束骑行；
+     * 无计时在案（没点「打开微信扫一扫」）才维持「回 App 即删」——码是开锁耗材，
+     * 没有计时段落兜着就不能留在相册。force = true 用于手动结束骑行，无条件删。
      */
     @Volatile
     private var burning = false
 
-    fun burnPending() {
+    fun burnPending(force: Boolean = false) {
         if (burning) return
         burning = true
         viewModelScope.launch {
@@ -282,6 +289,10 @@ class EbikeViewModel(private val prefs: DisplayPrefsStore) : ViewModel() {
                 // 首次发射前是默认值（true），冷启动恢复的首帧竞态下会误删
                 // 「用户已关闭焚毁」时留下的记录。
                 if (!prefs.ebikeBurnAfterScan.first()) return@launch
+                if (!force) {
+                    val startAt = prefs.ebikeRideStartAt.first()
+                    if (EbikeFreeRide.isActive(startAt, System.currentTimeMillis())) return@launch
+                }
                 val appContext = Graph.appContext
                 while (true) {
                     val pending = prefs.ebikePendingDelete.first()

@@ -68,6 +68,12 @@ data class BikeMapUiState(
      */
     val onlyAvailable: Boolean = true,
     /**
+     * 只看本校的车（快趣同时服务隔壁江西师大，两校坐标只隔一条马路）。
+     * 默认开（2026-09-27 用户拍板）：筛的是车队归属 + 校区围栏双条件
+     * （[BikeNearby.isOurCampusBike]），开关态进 DataStore，下次进页保持。
+     */
+    val onlyOurCampus: Boolean = true,
+    /**
      * 需要在列表里定位过去的停车点；[focusNonce] 递增用来区分"又点了一次同一个点"。
      *
      * 点地图标记时列表要滚到对应的卡片并高亮（DESIGN §3.9）——标记在屏幕中央，
@@ -84,7 +90,7 @@ data class BikeMapUiState(
      */
     val panelHeightDp: Float = DEFAULT_PANEL_HEIGHT_DP,
 ) {
-    /** 列表里的车辆总数（跨停车点，已按 [onlyAvailable] 过滤）。 */
+    /** 列表里的车辆总数（跨停车点，已按 [onlyOurCampus] 与 [onlyAvailable] 过滤）。 */
     val bikeCount: Int get() = clusters.sumOf { it.bikes.size }
 
     /** 距离是否以用户位置为参照。false = 以地图中心为参照（还没定位）。 */
@@ -146,6 +152,9 @@ class BikeMapViewModel(
         }
         viewModelScope.launch {
             setOnlyAvailable(prefs.ebikeMapOnlyAvailable.first())
+        }
+        viewModelScope.launch {
+            setOnlyOurCampus(prefs.ebikeMapOnlyOurCampus.first())
         }
         viewModelScope.launch {
             val saved = prefs.ebikeMapViewport.first()
@@ -254,6 +263,17 @@ class BikeMapViewModel(
     }
 
     /**
+     * 只看本校的车。与 [setOnlyAvailable] 同一套口径：数据已在手上，重算簇即可，
+     * 不重新请求接口；进页时也会拿 DataStore 存的值同步一遍。
+     */
+    fun setOnlyOurCampus(value: Boolean) {
+        if (_uiState.value.onlyOurCampus == value) return
+        _uiState.update { it.copy(onlyOurCampus = value) }
+        rebuildClusters()
+        viewModelScope.launch { prefs.setEbikeMapOnlyOurCampus(value) }
+    }
+
+    /**
      * 点标记或列表分组：展开/收起该停车点。
      *
      * 展开时顺手把地图移过去：列表给的是查询半径内的车，远的那些确实在屏幕外，
@@ -310,6 +330,22 @@ class BikeMapViewModel(
     }
 
     /**
+     * 连续定位的最新读数（坐标已是 GCJ-02，DESIGN §3.9「蓝点实时更新」）：
+     * **只挪蓝点**、按新参照点重算「距你」距离。
+     *
+     * 与 [onLocated] 的分工：镜头与重查仍归一次性定位（进页 / 点「定位」按钮）管。
+     * 这里不移镜头——用户刚拖好的视野不能被走动的自己抢回去；也不重查接口——
+     * 车辆列表是用户动作驱动（DESIGN §3.9 禁止轮询第三方接口），下次拖动 / 点刷新
+     * 自然用上最新的参照点。
+     */
+    fun onUserLocationChanged(lat: Double, lng: Double) {
+        if (!lat.isFinite() || !lng.isFinite()) return
+        locatedOnce = true
+        _uiState.update { it.copy(userLat = lat, userLng = lng) }
+        rebuildClusters()
+    }
+
+    /**
      * 地图执行完一次镜头移动后回调，把请求清掉。
      *
      * 不清的话，Activity 一重建（转屏、内存回收、改字号）新组合就会拿同一个 nonce
@@ -347,6 +383,14 @@ class BikeMapViewModel(
         val shown = anchored
             // 撒点采样会把两公里外的车也捞回来，那些不算"附近"
             .filter { it.distanceMeters <= BikeNearby.MAX_NEARBY_DISTANCE_METERS }
+            // 只看本校：车队归属 + 围栏双条件（师大校园的车在这里被挡掉）
+            .let { list ->
+                if (state.onlyOurCampus) {
+                    list.filter { BikeNearby.isOurCampusBike(it.lat, it.lng, it.campusName) }
+                } else {
+                    list
+                }
+            }
             .let { list -> if (state.onlyAvailable) list.filter { it.available } else list }
         val clusters = BikeNearby.cluster(shown)
         _uiState.update { current ->

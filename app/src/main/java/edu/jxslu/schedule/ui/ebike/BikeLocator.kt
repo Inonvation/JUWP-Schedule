@@ -10,11 +10,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import androidx.core.content.ContextCompat
+import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.Gcj02
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** 一次定位的结果。 */
@@ -25,6 +28,15 @@ internal sealed interface LocateResult {
     /** 失败，[message] 直接给 Snackbar 用。 */
     data class Failed(val message: String) : LocateResult
 }
+
+/** 一次定位的原始读数（WGS84），只留挪蓝点要看的字段，纯数据可单测。 */
+internal data class LocationFix(
+    val lat: Double,
+    val lng: Double,
+    /** 精度半径（米）；0 = 系统没给。 */
+    val accuracyMeters: Float,
+    val timeMillis: Long,
+)
 
 /**
  * 单车地图页的一次性定位（DESIGN §3.9）。放在 UI 层而不是 `data/`：
@@ -43,6 +55,12 @@ internal object BikeLocator {
 
     /** 缓存定位可接受的新鲜度：两分钟内的上次定位直接拿来用，省一次等待。 */
     private const val MAX_LAST_KNOWN_AGE_MS = 2 * 60_000L
+
+    /** 连续定位流的请求节奏：2 秒一次对步行速度绰绰有余，再密只是费电。 */
+    private const val STREAM_MIN_TIME_MS = 2_000L
+
+    /** 位移门槛交给 [shouldMoveDot] 在内存里滤，平台层不再按距离截流。 */
+    private const val STREAM_MIN_DISTANCE_M = 0f
 
     /** 精确或粗略任一授权即可（API 31+ 用户可能只给「大致位置」）。 */
     fun hasPermission(context: Context): Boolean =
@@ -68,12 +86,53 @@ internal object BikeLocator {
             return LocateResult.Failed("手机定位服务未开启，请打开后重试")
         }
 
-        freshLastKnown(manager)?.let { return toResult(it) }
+        freshLastKnown(manager)?.let { return toResult(it.toFix()) }
 
         val providers = enabledProviders(manager)
         val fix = awaitFix(manager, providers)
             ?: return LocateResult.Failed("暂时取不到位置，可手动拖动地图找车")
-        return toResult(fix)
+        return toResult(fix.toFix())
+    }
+
+    /**
+     * 页面可见期间的连续定位（DESIGN §3.9「蓝点实时更新」）。与 [currentLocation] 的分工：
+     * 一次性定位管「把镜头带过去 + 重查」，这条流只管用户走动时蓝点不掉队——
+     * 挪镜头、重查车辆接口都不是它的事（镜头会把用户拖好的视野抢回来；接口禁止轮询）。
+     *
+     * 先发两分钟内的缓存定位（蓝点立刻出现，不等 GPS 慢慢找），再挂网络与 GPS 两条更新，
+     * 经 [shouldMoveDot] 滤掉原地抖动后逐条发 GCJ-02 结果。权限缺失、定位服务关闭这类
+     * 硬失败发一条 [LocateResult.Failed] 后结束：看得见的失败提示是「定位」按钮那条路的
+     * 职责，这条流静默结束即可。取消（页面退后台 / 离开页面）由 `awaitClose` 注销监听。
+     */
+    fun updates(context: Context): Flow<LocateResult> = flow {
+        if (!hasPermission(context)) {
+            emit(LocateResult.Failed("没有定位权限，请在系统设置里允许后再试"))
+            return@flow
+        }
+        val manager = context.getSystemService(LocationManager::class.java)
+        if (manager == null) {
+            emit(LocateResult.Failed("这台设备没有定位服务"))
+            return@flow
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && !manager.isLocationEnabled) {
+            emit(LocateResult.Failed("手机定位服务未开启，请打开后重试"))
+            return@flow
+        }
+
+        val cached = freshLastKnown(manager)?.toFix()
+        var shown: LocationFix? = cached
+        cached?.let { fix -> emit(toResult(fix)) }
+
+        val providers = enabledProviders(manager)
+        if (providers.isEmpty()) return@flow
+        locationUpdates(manager, providers, STREAM_MIN_TIME_MS, STREAM_MIN_DISTANCE_M)
+            .collect { location ->
+                val next = location.toFix()
+                if (shouldMoveDot(shown, next)) {
+                    shown = next
+                    emit(toResult(next))
+                }
+            }
     }
 
     /** GPS 与网络定位都给上次结果，取最新的那条；只看两分钟以内的。 */
@@ -104,7 +163,7 @@ internal object BikeLocator {
     private suspend fun awaitFix(manager: LocationManager, providers: List<String>): Location? =
         withTimeoutOrNull(FIX_TIMEOUT_MS) {
             if (providers.isEmpty()) return@withTimeoutOrNull null
-            locationUpdates(manager, providers).firstOrNull()
+            locationUpdates(manager, providers, minTimeMs = 0L, minDistanceMeters = 0f).firstOrNull()
         }
 
     /**
@@ -114,7 +173,12 @@ internal object BikeLocator {
      * 编译期不写也能过；但 26~29 的设备上框架会真的调用 `onStatusChanged` 等，
      * 类里没有实现就抛 `AbstractMethodError`。这类崩溃只在低版本机器上出现。
      */
-    private fun locationUpdates(manager: LocationManager, providers: List<String>): Flow<Location> =
+    private fun locationUpdates(
+        manager: LocationManager,
+        providers: List<String>,
+        minTimeMs: Long,
+        minDistanceMeters: Float,
+    ): Flow<Location> =
         callbackFlow {
             val registered = providers.map { provider ->
                 val listener = object : LocationListener {
@@ -132,8 +196,8 @@ internal object BikeLocator {
                 val ok = try {
                     manager.requestLocationUpdates(
                         provider,
-                        0L,
-                        0f,
+                        minTimeMs,
+                        minDistanceMeters,
                         listener,
                         Looper.getMainLooper(),
                     )
@@ -162,10 +226,13 @@ internal object BikeLocator {
             }
         }
 
-    private fun toResult(location: Location): LocateResult {
-        val gcj = Gcj02.toGcj02(location.latitude, location.longitude)
+    private fun toResult(fix: LocationFix): LocateResult {
+        val gcj = Gcj02.toGcj02(fix.lat, fix.lng)
         return LocateResult.Ok(gcj.lat, gcj.lng)
     }
+
+    private fun Location.toFix(): LocationFix =
+        LocationFix(latitude, longitude, accuracy, time)
 
     /** 缓存定位的三个来源，`PASSIVE` 是别的应用请求定位时顺带拿到的结果。 */
     private val ALL_PROVIDERS = listOf(
@@ -173,4 +240,30 @@ internal object BikeLocator {
         LocationManager.NETWORK_PROVIDER,
         LocationManager.PASSIVE_PROVIDER,
     )
+}
+
+/** 蓝点至少挪了这么多米才真的动。 */
+internal const val DOT_MOVE_MIN_METERS = 4f
+
+/** 原地没动时，新读数比正在画的那个准到这个倍数（如 20m → 10m）才值得换。 */
+private const val DOT_ACCURACY_GAIN_RATIO = 0.6f
+
+/**
+ * 连续定位流里决定「这个新读数要不要真的挪蓝点」（DESIGN §3.9，纯逻辑可单测）。
+ *
+ * 两条通过口径：
+ * 1. 挪了够远（≥ [DOT_MOVE_MIN_METERS]）——走路时蓝点跟着人走；
+ * 2. 原地没动但精度显著提升——从网络点换到 GPS 点时换上更准的位置。
+ *
+ * 其余一律不挪：GPS 与网络双源交替回读数，站定时每个读数都带几米随机抖动，
+ * 不滤的话蓝点会在原地颤，列表里的「距你」也跟着一跳一跳。
+ */
+internal fun shouldMoveDot(previous: LocationFix?, next: LocationFix): Boolean {
+    if (previous == null) return true
+    val moved = BikeNearby.distanceMeters(previous.lat, previous.lng, next.lat, next.lng)
+    if (moved >= DOT_MOVE_MIN_METERS) return true
+    val accuracy = next.accuracyMeters
+    val shownAccuracy = previous.accuracyMeters
+    return accuracy > 0f && shownAccuracy > 0f &&
+        accuracy <= shownAccuracy * DOT_ACCURACY_GAIN_RATIO
 }

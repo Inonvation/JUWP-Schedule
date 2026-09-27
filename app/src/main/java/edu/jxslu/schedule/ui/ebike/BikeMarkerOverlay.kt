@@ -2,6 +2,7 @@ package edu.jxslu.schedule.ui.ebike
 
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Point
@@ -36,6 +37,10 @@ internal data class BikeMarkerColors(
     val centerMark: Int,
     /** 针的描边色，压在地图内容上保证任何时候都看得见。 */
     val centerHalo: Int,
+    /** 校区围栏描边色（半透明主色）。 */
+    val fenceStroke: Int,
+    /** 校区围栏填充色（更淡的主色）。 */
+    val fenceFill: Int,
 )
 
 /**
@@ -54,6 +59,9 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     /** 待绘制的停车点。 */
     var clusters: List<BikeCluster> = emptyList()
 
+    /** 校区围栏顶点（GCJ-02，DESIGN §3.9「只看本校」）；不足 3 个点不画。 */
+    var fence: List<GcjPoint> = emptyList()
+
     /** 当前展开的簇键；只有它画加粗描边。 */
     var selectedKey: String? = null
 
@@ -71,6 +79,8 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         userHalo = Color.LTGRAY,
         centerMark = Color.DKGRAY,
         centerHalo = Color.WHITE,
+        fenceStroke = Color.GRAY,
+        fenceFill = Color.LTGRAY,
     )
 
     /** 点中标记的回调；Compose 侧每次重组刷新，避免闭包捕获旧状态。 */
@@ -101,9 +111,20 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
     private val pinPath = Path()
 
+    /** 围栏描边：虚线更有「边界」的感觉，实线像在画一块行政区。dash/空 7/4dp，偏密（2026-09-27 真机反馈调密）。 */
+    private val fenceStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(7f * density, 4f * density), 0f)
+    }
+
+    /** 围栏路径，每帧按投影重算（缩放时屏幕坐标全变）。 */
+    private val fencePath = Path()
+
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow) return
         val out = Point()
+        drawFence(canvas, mapView, out)
         clusters.forEach { cluster ->
             mapView.projection.toPixels(GeoPoint(cluster.lat, cluster.lng), out)
             val x = out.x.toFloat()
@@ -171,6 +192,29 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         cluster.bikes.any { it.available } -> colors.available
         cluster.bikes.any { it.status == BikeStatus.LowBattery } -> colors.lowBattery
         else -> colors.unavailable
+    }
+
+    /**
+     * 校区围栏画在**最底层**（簇标记、蓝点、中心针都要压在它上面）：
+     * 它是背景信息，盖住任何一辆车都是本末倒置。
+     */
+    private fun drawFence(canvas: Canvas, mapView: MapView, out: Point) {
+        if (fence.size < 3) return
+        fencePath.reset()
+        fence.forEachIndexed { index, point ->
+            mapView.projection.toPixels(GeoPoint(point.lat, point.lng), out)
+            if (index == 0) {
+                fencePath.moveTo(out.x.toFloat(), out.y.toFloat())
+            } else {
+                fencePath.lineTo(out.x.toFloat(), out.y.toFloat())
+            }
+        }
+        fencePath.close()
+        fill.color = colors.fenceFill
+        canvas.drawPath(fencePath, fill)
+        fenceStroke.color = colors.fenceStroke
+        fenceStroke.strokeWidth = 2f * density
+        canvas.drawPath(fencePath, fenceStroke)
     }
 
     /**

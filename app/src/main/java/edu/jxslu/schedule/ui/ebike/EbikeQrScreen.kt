@@ -75,6 +75,7 @@ import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.openSubpageForResult
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -86,6 +87,7 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -106,7 +108,8 @@ import me.rerere.hugeicons.stroke.ScooterElectric
  * [EbikeQr.resolveCarNum] + [EbikeQr.bikeUrl]，校验只有一处。
  *
  * 其余更新逻辑：生成骑行二维码、自动保存（开关默认关）/手动保存、扫完即焚
- * （开关默认开：回到 App 即清除已保存的码）、微信扫一扫 best-effort。
+ * （开关默认开：免费时长结束或手动结束骑行后清除已保存的码，计时中回 App 不删，
+ * 见 [EbikeViewModel.burnPending]）、微信扫一扫 best-effort。
  * 结果提示走页面 Snackbar（二级页窗口内无更高层弹层，不会穿透问题）。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -190,8 +193,9 @@ fun EbikeQrScreen(
         if (!carNum.isNullOrBlank()) viewModel.onPickCarNum(carNum)
     }
 
-    // 扫完即焚触发点（DESIGN §3.9）：从微信/桌面回到 App（ON_RESUME）时清掉
-    // 已保存的二维码。 DisposableEffect 组合提交晚于 ON_RESUME 的场景（冷启动恢复）
+    // 扫完即焚的兜底触发点（DESIGN §3.9）：从微信/桌面回到 App（ON_RESUME）时尝试
+    // 清掉已保存的二维码——计时中（免费时长未结束）不删，见 [EbikeViewModel.burnPending]。
+    // DisposableEffect 组合提交晚于 ON_RESUME 的场景（冷启动恢复）
     // 用 isAtLeast(RESUMED) 兜底执行一次；pending 为空时 burnPending 是 no-op，天然幂等。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -212,6 +216,7 @@ fun EbikeQrScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                windowInsets = pinnedStatusBars(),
                 title = { Text("快趣出行码") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -422,8 +427,8 @@ fun EbikeQrScreen(
                     },
                 )
                 SettingSwitchRow(
-                    title = "扫完码返回后自动删除",
-                    subtitle = "保存到相册的二维码会在回到 App 后自动清除",
+                    title = "骑完车自动删除",
+                    subtitle = "免费时长结束或手动结束骑行后，自动清除相册里的二维码",
                     checked = burnChecked,
                     onCheckedChange = { checked ->
                         burnChecked = checked
@@ -694,13 +699,16 @@ private fun QrPanel(bitmap: Bitmap?, bikeId: String?) {
  * 2. `BIZSHORTCUT` + `LauncherUI.From.Scaner.Shortcut`——旧式快捷入口，部分版本
  *    只落微信首页（真机实测），仅作兜底；
  * 3. 打开微信首页给手动引导——出码本身已成功，这一步只是省一次手动切 App。
+ *
+ * 三级都走 [startActivityOutsideApp]：微信是 singleTask、永远开不进本 task，
+ * 从它返回时本页的右推入过渡会被重放（用户报「界面跳动」），拉起前要换静止过渡。
  */
 private fun openWechatScan(context: android.content.Context, onError: (String) -> Unit) {
     val dispatchScan = Intent("com.tencent.mm.ui.ShortCutDispatchAction")
         .setPackage("com.tencent.mm")
         .putExtra("LauncherUI.Shortcut.LaunchType", "launch_type_scan_qrcode")
     try {
-        context.startActivity(dispatchScan)
+        context.startActivityOutsideApp(dispatchScan)
         return
     } catch (_: Exception) {
         // 落到下一级
@@ -710,19 +718,22 @@ private fun openWechatScan(context: android.content.Context, onError: (String) -
         .addFlags(0x14000000) // NEW_TASK | CLEAR_TOP（沿用微信 shortcut 的 launchFlags）
         .putExtra("LauncherUI.From.Scaner.Shortcut", true)
     try {
-        context.startActivity(bizShortcut)
+        context.startActivityOutsideApp(bizShortcut)
         return
     } catch (_: Exception) {
         // 落到手动引导
     }
-    try {
-        context.startActivity(
-            context.packageManager.getLaunchIntentForPackage("com.tencent.mm"),
-        )
-        onError("微信已打开，请在「发现 → 扫一扫」对准二维码")
-    } catch (e2: Exception) {
-        onError("无法自动打开微信，请手动打开「扫一扫」扫码")
+    val launch = context.packageManager.getLaunchIntentForPackage("com.tencent.mm")
+    if (launch != null) {
+        try {
+            context.startActivityOutsideApp(launch)
+            onError("微信已打开，请在「发现 → 扫一扫」对准二维码")
+            return
+        } catch (_: Exception) {
+            // 落到统一失败文案
+        }
     }
+    onError("无法自动打开微信，请手动打开「扫一扫」扫码")
 }
 
 /** 「快趣出行」App 包名（DESIGN §3.9）。 */
@@ -749,7 +760,7 @@ private fun openKvcoo(context: android.content.Context, onError: (String) -> Uni
         return
     }
     try {
-        context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivityOutsideApp(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (_: Exception) {
         onError("打开快趣出行失败，请手动打开")
     }

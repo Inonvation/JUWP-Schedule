@@ -33,11 +33,16 @@ import java.io.File
  * 高德栅格瓦片（DESIGN §4.23）：512 像素档，主中国大陆路网底图，坐标基准 GCJ-02，
  * 与运营方给的车辆坐标同一基准，因此**不用做任何坐标转换**。
  *
+ * `scl=2` 必须要：不带它服务器回的是 256px 图，而瓦片按 512 声明渲染，每张图会被
+ * 拉大 2 倍、整张地图发虚（2026-09-27 抓包发现并修）。单张约 46KB vs 11KB，有缓存兜着。
+ * 数据源名从 `AmapRoadHD` 改为 `AmapRoadHD512`：osmdroid 的瓦片缓存按**源名**分键，
+ * 换名让旧的 256px 缓存自然失效，不会和新图混着画。
+ *
  * 地址是高德的非公开栅格接口：不接官方 SDK、不申请 key。属于灰色用法，页面免责声明
  * 已写明；地址失效时地图白板，底部车辆列表照常可用（降级路径见 BikeMapScreen）。
  */
 private val AMAP_TILE_SOURCE: OnlineTileSourceBase = object : OnlineTileSourceBase(
-    "AmapRoadHD",
+    "AmapRoadHD512",
     /* aZoomMinLevel = */ 1,
     /* aZoomMaxLevel = */ 19,
     /* aTileSizePixels = */ 512,
@@ -53,7 +58,7 @@ private val AMAP_TILE_SOURCE: OnlineTileSourceBase = object : OnlineTileSourceBa
         baseUrl + "appmaptile?x=" + MapTileIndex.getX(pMapTileIndex) +
             "&y=" + MapTileIndex.getY(pMapTileIndex) +
             "&z=" + MapTileIndex.getZoom(pMapTileIndex) +
-            "&lang=zh_cn&size=1&style=7"
+            "&lang=zh_cn&size=1&scl=2&style=7"
 }
 
 /** osmdroid 自己的偏好文件（只有瓦片缓存路径这类项，与 App 的 DataStore 无关）。 */
@@ -62,13 +67,17 @@ private const val OSMDROID_PREFS = "osmdroid"
 private var osmdroidConfigured = false
 
 /**
- * 全局初始化（DESIGN §4.23 的三个坑）。进程内只做一次。
+ * 全局初始化（DESIGN §4.23 的四个坑）。进程内只做一次。
  *
  * 1. 缓存路径必须指到应用私有目录：默认值指向外部存储，Android 10 起那套缓存在
  *    不少机型上静默失效（瓦片每次重下）。
  * 2. 路径要在 `load()` **前后各设一次**：`load()` 会把当时的 basePath 写进偏好，
  *    也会把偏好里的旧值读回来覆盖内存值。夹着设两遍，无论偏好里是什么都落在私有目录。
  * 3. `userAgentValue` 不设成默认值时部分瓦片服务会回 403。
+ * 4. 瓦片过期时间必须自己设：高德响应带 `Cache-Control: max-age=3600`，但 osmdroid
+ *    6.1.18 不解析任何缓存头（拆包确认：expires / cache-control 字符串为 0），默认
+ *    不过期——旧图不会随时间换新，只等缓存超容量被清。设 7 天覆盖一次，高德改了
+ *    路网/校名之类，最迟一周内能跟上。
  */
 private fun ensureOsmdroidConfiguration(context: Context) {
     if (osmdroidConfigured) return
@@ -85,7 +94,11 @@ private fun ensureOsmdroidConfiguration(context: Context) {
     config.osmdroidTileCache = tiles
     config.userAgentValue = context.packageName
     config.setTileDownloadThreads(4.toShort())
+    config.expirationOverrideDuration = TILE_EXPIRATION_MS
 }
+
+/** 瓦片过期时间：7 天（理由见 [ensureOsmdroidConfiguration] 第 4 条）。 */
+private const val TILE_EXPIRATION_MS = 7L * 24 * 60 * 60 * 1000
 
 /**
  * 附近单车地图（DESIGN §3.9）。
@@ -128,7 +141,10 @@ internal fun OsmMapView(
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
 
     val overlay = remember {
-        BikeMarkerOverlay(context.resources.displayMetrics.density)
+        BikeMarkerOverlay(context.resources.displayMetrics.density).apply {
+            // 围栏顶点是常量（BikeNearby.CAMPUS_FENCE），进页面就有，不随状态变
+            fence = BikeNearby.CAMPUS_FENCE
+        }
     }
     val mapView = remember {
         ensureOsmdroidConfiguration(context)

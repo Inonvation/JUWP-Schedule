@@ -19,6 +19,9 @@ __pycache__/
 docs/
 scripts/gen_week_layout_preview.py
 
+# 围栏复核工具的瓦片缓存与预览图（临时产物，脚本按需重抓）
+tools/campus-fence/_tiles/
+
 # ============ Android / Gradle ============
 .gradle/
 build/

@@ -491,6 +491,17 @@ class DisplayPrefsStore(private val context: Context) {
     }.distinctUntilChanged()
 
     /**
+     * 附近单车地图「只看本校」筛选的记住开关（DESIGN §3.9）。
+     *
+     * 默认开（2026-09-27 用户拍板）：快趣出行同时服务隔壁江西师范大学，两校车辆
+     * 坐标只隔一条马路，不筛的话师大校园的车会成片出现在地图上。
+     * 筛选口径（车队归属 + 地理围栏双条件）在 [edu.jxslu.schedule.domain.BikeNearby.isOurCampusBike]。
+     */
+    val ebikeMapOnlyOurCampus: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_MAP_ONLY_OUR_CAMPUS] ?: true
+    }.distinctUntilChanged()
+
+    /**
      * 附近单车地图的底部面板高度（dp，DESIGN §3.9）；null = 没拖过，用默认值。
      *
      * 只做范围校验，窗口缩放导致的"放不下"由渲染时再夹一道，不覆写用户拖出来的值。
@@ -855,6 +866,11 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_MAP_ONLY_AVAILABLE] = value }
     }
 
+    /** 记住附近单车地图「只看本校」筛选（DESIGN §3.9），见 [ebikeMapOnlyOurCampus]。 */
+    suspend fun setEbikeMapOnlyOurCampus(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_MAP_ONLY_OUR_CAMPUS] = value }
+    }
+
     /** 记住附近单车地图的最后视野（DESIGN §3.9），见 [ebikeMapViewport]。 */
     suspend fun setEbikeMapViewport(lat: Double, lng: Double, zoom: Double) {
         if (!lat.isFinite() || !lng.isFinite() || !zoom.isFinite()) return
@@ -1112,6 +1128,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
         val KEY_EBIKE_LOCATION_ASKED = booleanPreferencesKey("ebike_location_asked")
         val KEY_EBIKE_MAP_ONLY_AVAILABLE = booleanPreferencesKey("ebike_map_only_available")
+        val KEY_EBIKE_MAP_ONLY_OUR_CAMPUS = booleanPreferencesKey("ebike_map_only_our_campus")
         val KEY_EBIKE_VIEW_LAT = floatPreferencesKey("ebike_view_lat")
         val KEY_EBIKE_VIEW_LNG = floatPreferencesKey("ebike_view_lng")
         val KEY_EBIKE_VIEW_ZOOM = floatPreferencesKey("ebike_view_zoom")
