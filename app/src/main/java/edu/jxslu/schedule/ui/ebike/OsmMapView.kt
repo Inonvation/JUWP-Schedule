@@ -30,19 +30,21 @@ import org.osmdroid.views.MapView
 import java.io.File
 
 /**
- * 高德栅格瓦片（DESIGN §4.23）：512 像素档，主中国大陆路网底图，坐标基准 GCJ-02，
- * 与运营方给的车辆坐标同一基准，因此**不用做任何坐标转换**。
+ * 高德栅格瓦片（DESIGN §4.23）：512 像素档声明，主中国大陆路网底图（带注记），
+ * 坐标基准 GCJ-02，与运营方给的车辆坐标同一基准，因此**不用做任何坐标转换**。
  *
- * `scl=2` 必须要：不带它服务器回的是 256px 图，而瓦片按 512 声明渲染，每张图会被
- * 拉大 2 倍、整张地图发虚（2026-09-27 抓包发现并修）。单张约 46KB vs 11KB，有缓存兜着。
- * 数据源名从 `AmapRoadHD` 改为 `AmapRoadHD512`：osmdroid 的瓦片缓存按**源名**分键，
- * 换名让旧的 256px 缓存自然失效，不会和新图混着画。
+ * **不要加 `scl=2`**（2026-09-27 试过又撤）：带了它服务器回的是"无注记纯底图"——
+ * 路网、绿地块全有，**地名一个都没有**，真机上用户第一眼就报"名称没了"。
+ * 不带它回的是 256px 带注记图，按 512 声明渲染会被拉大 2 倍、略有发虚——这是当前
+ * 的取舍：注记优先，发虚先接受；要又高清又有注记，栅格这条路没有（得换矢量/付费）。
+ * 源名保持 `AmapRoadHD`：osmdroid 瓦片缓存按源名分键，名字不变则此前缓存的 256px
+ * 带注记图还能继续用，回退后不用重新下载。
  *
  * 地址是高德的非公开栅格接口：不接官方 SDK、不申请 key。属于灰色用法，页面免责声明
  * 已写明；地址失效时地图白板，底部车辆列表照常可用（降级路径见 BikeMapScreen）。
  */
 private val AMAP_TILE_SOURCE: OnlineTileSourceBase = object : OnlineTileSourceBase(
-    "AmapRoadHD512",
+    "AmapRoadHD",
     /* aZoomMinLevel = */ 1,
     /* aZoomMaxLevel = */ 19,
     /* aTileSizePixels = */ 512,
@@ -58,7 +60,7 @@ private val AMAP_TILE_SOURCE: OnlineTileSourceBase = object : OnlineTileSourceBa
         baseUrl + "appmaptile?x=" + MapTileIndex.getX(pMapTileIndex) +
             "&y=" + MapTileIndex.getY(pMapTileIndex) +
             "&z=" + MapTileIndex.getZoom(pMapTileIndex) +
-            "&lang=zh_cn&size=1&scl=2&style=7"
+            "&lang=zh_cn&size=1&style=7"
 }
 
 /** osmdroid 自己的偏好文件（只有瓦片缓存路径这类项，与 App 的 DataStore 无关）。 */

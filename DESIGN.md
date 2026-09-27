@@ -3293,15 +3293,15 @@ X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room
 
 - 依赖 `org.osmdroid:osmdroid-android:6.1.18`（Maven Central，AAR，POM 无 `<dependencies>`）。
   加入后**第一次构建需要联网 resolve 一次**，之后 `--offline` 照常用。
-- 瓦片源用 `OnlineTileSourceBase` 自定义：512 像素档（源名 `AmapRoadHD512`），四个域名
+- 瓦片源用 `OnlineTileSourceBase` 自定义：512 像素档声明（源名 `AmapRoadHD`），四个域名
   `wprd0[1-4].is.autonavi.com` 轮询，路径
-  `appmaptile?x=&y=&z=&lang=zh_cn&size=1&scl=2&style=7`，配 `setTilesScaledToDpi(false)`。
-  **`scl=2` 不能省**：不带它服务器回的是 256px 图，按 512 声明渲染会被拉大 2 倍、整张地图
-  发虚（2026-09-27 抓包发现并修）；单张 ≈46KB vs 11KB，有缓存兜着。源名从 `AmapRoadHD`
-  改成 `AmapRoadHD512` 是配套动作——osmdroid 瓦片缓存按源名分键，换名让旧的 256px 缓存
-  自然失效，不会和新图混着画。该地址实测返回 200 `image/png`。它是高德的非公开栅格接口：
-  不接官方 SDK、不申请 key，属于灰色用法，页面免责声明要写清；地址失效时地图页降级为纯
-  列表（瓦片加载失败不影响列表）。
+  `appmaptile?x=&y=&z=&lang=zh_cn&size=1&style=7`，配 `setTilesScaledToDpi(false)`。
+  **不要加 `scl=2`**：2026-09-27 试过又撤——它回的是"无注记纯底图"（512px，路网齐全、
+  一个地名都没有），真机上用户第一眼就报"名称没了"。当前口径：不带 scl 的 256px 带注记图
+  按 512 声明渲染（拉大 2 倍、略有发虚），**注记优先**；要又高清又有注记得换矢量/付费方案，
+  栅格这条路没有。该地址实测返回 200 `image/png`。它是高德的非公开栅格接口：不接官方
+  SDK、不申请 key，属于灰色用法，页面免责声明要写清；地址失效时地图页降级为纯列表
+  （瓦片加载失败不影响列表）。
 - 初始化四个坑，按顺序：
   1. `Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", MODE_PRIVATE))`，
      用平台 `SharedPreferences` 而非 `PreferenceManager`，免得为一个可选项拉进 `androidx.preference`；
@@ -4160,10 +4160,11 @@ P6 追加（2026-09-27，附近单车：只看本校与校区围栏重建，§3.
 131 个实测车辆点全在栏内、师大车队全在栏外。提取/复核工具归档
 `tools/campus-fence/extract_fence.py`，131 点落成测试 fixture 并接入 `BikeNearbyTest`
 （新增「围栏覆盖全部实测车辆点位」；本次 83 类 / **833 例**全绿）。视觉两轮真机反馈：
-填充 alpha 0.16 → 0.26 → 0.32、虚线 dash/空 9/7 → 7/4dp；瓦片源修 `scl=2`（此前
-服务器回 256px 图却按 512 渲染，整图发虚）+ 瓦片缓存 7 天过期（osmdroid 6.1.18 不解析
-缓存头，拆包确认）。**围栏四边与四角已真机过目（"可以"）；fill 0.32 / 虚线 7-4 /
-scl=2 清晰度与缓存过期是最新一轮，待真机复核。**
+填充 alpha 0.16 → 0.26 → 0.32、虚线 dash/空 9/7 → 7/4dp；瓦片缓存加 7 天过期
+（osmdroid 6.1.18 不解析缓存头，拆包确认）。**`scl=2` 高清瓦片同日试了又撤**：实测它是
+无注记纯底图（路网齐全、地名全没），真机上用户第一眼就否，回退保留带注记的 256 底图
+（拉伸发虚暂接受；要高清注记得换矢量/付费方案）。**围栏四边与四角已真机过目（"可以"）；
+fill 0.32 / 虚线 7-4 / 缓存过期待真机复核。**
 
 ---
 
