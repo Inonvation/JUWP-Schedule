@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -98,11 +99,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.font.FontWeight
 
 /**
- * 我的 → 校园卡（DESIGN §3.10）。管开关、凭证与两个余额提醒，不看付款码。
+ * 我的 → 校园卡（DESIGN §3.10）。管开启状态、凭证与两个余额提醒，不看付款码。
  *
- * 凭证交互与「调课自动检测」（§4.17）同口径（用户拍板的文案语义）：
- * **默认关闭**；开启 = 输入学号密码先真实登录验证一次，成功才落库并置开关；
- * 关闭 = 二次确认后清除凭证。密码框留空 = 沿用已保存的密码（覆盖场景才需要重输）。
+ * 凭证交互（2026-09-28 改：开关换成按钮）：**默认关闭**；在「校园卡账号」卡里填好学号密码
+ * 点「保存并开启」，先真实登录验证一次，成功才落库并置开启；已开启后同一颗按钮变成「保存」
+ * （覆盖更新凭证），卡头的「关闭并清除」二次确认后清除凭证。密码框留空 = 沿用已保存的
+ * 密码（覆盖场景才需要重输）。
  *
  * 2026-09-24 追加：**已保存的学号明文回填到输入框**（用户拍板），以及
  * **寝室电费提醒 / 一卡通余额提醒**两个设置项（DESIGN §3.13）——它们共用本页这份凭证，
@@ -268,30 +270,26 @@ fun CampusCardSettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("在今日页显示付款码入口", style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                if (enabled) "已开启 · 今日页底部显示入口" else "默认关闭",
+                                if (enabled) "已开启" else "未开启",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                if (enabled) {
+                                    "生活页可用付款码、钱包与电费"
+                                } else {
+                                    "在下方填入学号与查询密码，保存并验证成功后即开启"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                             )
                         }
-                        if (busy) {
-                            // size 而非 height：height-only 约束下 40×40 的圆环被画成 40×24 椭圆
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                            Spacer(Modifier.width(12.dp))
+                        if (enabled) {
+                            TextButton(
+                                onClick = { confirmDisable = true },
+                                enabled = !busy,
+                            ) { Text("关闭并清除") }
                         }
-                        Switch(
-                            checked = enabled,
-                            onCheckedChange = { wantOn ->
-                                if (busy) return@Switch
-                                if (wantOn) {
-                                    busy = true
-                                    viewModel.saveAndEnable(username, password, ::feedback)
-                                } else {
-                                    confirmDisable = true
-                                }
-                            },
-                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -402,6 +400,29 @@ fun CampusCardSettingsScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Spacer(Modifier.height(12.dp))
+                    // 保存即开启（2026-09-28 改）：填完学号密码点这一颗，先真实登录验证一次，
+                    // 成功才落库并置开启；已开启时按钮只作「覆盖更新凭证」用，关闭走上方那张卡。
+                    Button(
+                        onClick = {
+                            if (busy) return@Button
+                            busy = true
+                            viewModel.saveAndEnable(username, password, ::feedback)
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (busy) {
+                            // size 而非 height：height-only 约束下 40×40 的圆环被画成 40×24 椭圆
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (enabled) "保存" else "保存并开启")
+                    }
                 },
             )
 
@@ -468,10 +489,10 @@ fun CampusCardSettingsScreen(
     if (confirmDisable) {
         AlertDialog(
             onDismissRequest = { confirmDisable = false },
-            title = { Text("关闭校园卡付款码？") },
+            title = { Text("关闭并清除凭证？") },
             text = {
                 Text(
-                    "将清除已保存的学号密码，付款码入口同时隐藏，寝室电费与余额提醒也会一并关闭" +
+                    "将清除已保存的学号密码，生活页的付款码与钱包回到未开启状态，寝室电费与余额提醒也会一并关闭" +
                         "（它们都要用这份凭证）；重新开启时需要重新输入并验证。",
                 )
             },
@@ -666,7 +687,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     val savedUsername: String? get() = credentialStore.read()?.username
 
     /**
-     * 一卡通开关（付款码条、钱包卡与充值入口的总闸）。
+     * 一卡通开启状态（付款码条、钱包卡与充值入口的总闸）。不再是 UI 上的一个 Switch：
+     * 「保存并开启」写凭证时置 true，「关闭并清除」写 false，两者成对。
      *
      * **初值不许写 false**（2026-09-24 修「冷启动首次切到生活页整页跳一下」）：`stateIn` 的初值
      * 就是首帧读到的值，而 DataStore 的第一份数据必然晚于首帧。写 false 的话生活页先按
@@ -907,7 +929,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         }
         credentialStore.save(user, pwd)
         prefs.setCampusCardEnabled(true)
-        return NoticeFeedback("已开启，付款码入口已显示在今日页", NoticeTone.Success)
+        return NoticeFeedback("已开启，生活页已可使用付款码、钱包与电费", NoticeTone.Success)
     }
 
     /**
