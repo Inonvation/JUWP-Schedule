@@ -26,7 +26,7 @@
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 | `.agents/rules/ebike.md` |
-| 生活页 / 一卡通 / 电费 / 胖乖开水 | `.agents/rules/life-power.md` |
+| 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
 | 学工表单 / 盖章成绩单 | `.agents/rules/xg-transcript.md` |
 
 其他只读参考：
@@ -158,7 +158,7 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
                  + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
-                 + LifeFeed（一卡通与电费流水混排，§3.13）
+                 + LifeFeed（一卡通与电费流水分段，§3.13）
 data/local/      Room v11：courses / time_slots / semester_config / timetables / scores
                  / ykt_turnovers / notes / homework / power_readings（v11）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
@@ -205,7 +205,8 @@ P1 脚手架 · P2 Room+UI · P3 我的页导入导出/学期 · P4 胖乖（已
 P5 教务 WebView · P5b 实验课表导入 — **已完成**
 
 P6 打磨 — **进行中**。2026-09-21 起陆续落地：笔记与作业（自研 Markdown/TeX）、课表页背景图、
-免费时长提醒、生活页（一卡通 · 寝室电费）、统一登录会话层、首启引导、学工表单、盖章成绩单导出。
+免费时长提醒、生活页（一卡通 · 寝室电费）、统一登录会话层、首启引导、学工表单、盖章成绩单导出、
+桌面小组件三条目（校园卡 · 电费，2026-09-27，红线见 `.agents/rules/widget.md`）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

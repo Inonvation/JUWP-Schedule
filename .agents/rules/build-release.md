@@ -11,7 +11,7 @@
 
 - **release 自 2026-09-21 起开启 R8（`isMinifyEnabled` + `isShrinkResources`）**：体积 17.9MB → 3.6MB。
   混淆规则改动（`proguard-rules.pro`）后**必须装 release 包冒烟**，且要冒到真实网络路径
-  （胖乖开水这类 Retrofit 接口）——R8 的问题不在编译期暴露。已踩的三个坑：
+  （胖乖生活这类 Retrofit 接口）——R8 的问题不在编译期暴露。已踩的三个坑：
   1. Tink 引用的 errorprone 注解、KeysDownloader 的可选依赖缺失 → `-dontwarn` 收口；
      **不要**写成 `-keep class com.google.crypto.tink.**`，那会把缺口一起保住；
   2. **只被泛型签名引用的模型类被整类删除**（2026-09-21 开水接口的真实根因，别再按"签名被剥"查）：

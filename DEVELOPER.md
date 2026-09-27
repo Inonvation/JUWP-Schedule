@@ -593,7 +593,8 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
   `KqcxBikeClientTest`（失败分类：超时不能吃成网络不可达）、
   `Gcj02Test`（WGS84 → GCJ-02：境外不偏移 / 境内偏移量级 / 邻近两点相对距离不变）、
   `PowerModelsTest`（电费响应解析：项目 / 读数 / 流水 + 500 与 401 外壳 + 剩余电量键回退）、
-  `LifeFeedTest`（一卡通与电费流水混排：排序 / 限量 / 同刻稳定 / 解析失败沉底）、
+  `LifeFeedTest`（一卡通与电费流水分段：按来源分组 / 段内倒序 / 限量按段算 / 同刻稳定 /
+  解析失败沉底 / 只有一段有内容不算空态）、
   `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
   `PowerClientUrlTest`（缴费页 / 账单页深链形态与 feeitemid 钉子）；
 - **UI 边界**：`WidgetModelTest`（小组件分档/行数/明日接棒）、`ParseWeeksInputTest`、
