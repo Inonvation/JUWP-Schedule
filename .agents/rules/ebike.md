@@ -59,8 +59,9 @@
   现行围栏与 131 点 fixture，跑法见脚本头；fixture 在 `app/src/test/resources/`，
   `BikeNearbyTest` 全量回归）。瑶湖西二路
   东段与瑶湖西大道同时是师大活动区域的边界，两校围栏相邻不重叠。地图上围栏由
-  `BikeMarkerOverlay` **常驻**画在最底层（半透明主色填充 alpha 0.32 + 虚线 dash/空 7/4dp，仿官方包裹
-  样式），开关只管过滤不管画不画。
+  `BikeMarkerOverlay` **常驻**画在最底层（半透明填充 = **浅蓝 #64B5F6 alpha 0.30** + 蓝描边 #3D8BEF，
+  dash/空 7/4dp，仿官方包裹样式；**别用主题深青**——深青 0.32 / 提亮 30% 的青真机都嫌"深、压暗"，
+  2026-09-27 定稿直接换浅蓝色系），开关只管过滤不管画不画。
 
 ## 车号口径
 
@@ -70,6 +71,15 @@
   **不要再按 `EbikeQr.TEMPLATE + 尾部` 拼 URL**。
 
 ## 扫完即焚（2026-09-27 改口径）
+
+- **出码页两个开关的「行为判定」读原始流，不读页面快照**（2026-09-27 修「开了自动保存
+  却无效」）：`EbikeViewModel.generate` / `saveCurrent` 读 `prefs.ebikeAutoSave.first()` /
+  `prefs.ebikeBurnAfterScan.first()`，**不要**读 `ebikePrefs`（`stateIn` 缓存快照，
+  DataStore 首次发射前是构造时的默认值，冷启动首帧一定命中）。踩坑路径是「进页即出码」
+  （今日页地图选车带 `carNum` 进页、进程被回收后恢复出码页）：`generate` 在首帧就跑到，
+  快照那时还是默认值（`autoSave=false`、`dark=false`），自动保存被静默跳过（相册没图、
+  也没有任何提示），深色主题还会出一张白底码。快照现在只用于界面展示与读失败兜底；
+  同一个坑 `burnPending` 早就改过了，理由写在它里面的注释。
 
 - 删除时机**跟计时段落走，不跟「回到 App」走**（用户拍板，修「保存后相册里没有图」的
   bug：旧版 ON_RESUME 无条件删，用户保存 → 切微信 → 中途回 App 一眼，码就被清了）。

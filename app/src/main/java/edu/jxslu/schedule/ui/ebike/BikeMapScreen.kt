@@ -189,9 +189,11 @@ fun BikeMapScreen(
             userHalo = scheme.primary.copy(alpha = 0.22f).toArgb(),
             centerMark = scheme.onSurface.toArgb(),
             centerHalo = scheme.surface.toArgb(),
-            // 围栏填充要"一眼看出整片包裹"（仿官方小程序）：0.16 太淡，2026-09-27 两轮真机反馈后加重到 0.32
-            fenceStroke = scheme.primary.copy(alpha = 0.80f).toArgb(),
-            fenceFill = scheme.primary.copy(alpha = 0.32f).toArgb(),
+            // 围栏填充：要"一眼看出整片包裹"（仿官方小程序）又不能"压暗/太深"——深青 primary 加到
+            // 0.32、以及提亮 30% 的青，真机上都嫌深（2026-09-27 多轮反馈），最后**换色系**：
+            // 直接用浅蓝（材质蓝 300）配更深一档的蓝描边；品牌深青不往地图上套。
+            fenceStroke = Color(0xFF3D8BEF).copy(alpha = 0.85f).toArgb(),
+            fenceFill = Color(0xFF64B5F6).copy(alpha = 0.30f).toArgb(),
         )
     }
 
