@@ -5,7 +5,7 @@
 ## 胖乖（P4）开水
 
 - 参考 `F:\light-life-v3.0`；Base `https://userapi.qiekj.com/`
-- 只做：登录、开水、余额、订单；签到默认关；禁止刷积分
+- 只做：登录、开水、余额、订单、充值深链；签到默认关；禁止刷积分
 - 实现在 `data/qiekj/` + `ui/water/`；Token 走 EncryptedSharedPreferences，禁止进日志
 - **登录态只有一份**（2026-09-27）：`QiekjRepository.loggedIn`（StateFlow，`saveToken` /
   `logout` 就地翻转）。今日页开水卡与开水页各持一份 `WaterViewModel`，**别在 VM 里另存布尔**：
@@ -15,6 +15,27 @@
   组合期读一次 / ON_RESUME 重读 token。
 - **退出要二次确认**（2026-09-27）：胖乖生活页顶栏的退出图标先弹 `AlertDialog`。确认后
   token 与开水订单快照一起清，重新登录要再收一次短信——代价不对等，别改回一点就走。
+- **充值是深链不是 REST**（2026-09-28）：QiekjApi 没有充值端点，余额行的「充值」走
+  `ui/water/QiekjRecharge` 深链拉支付宝的胖乖生活小程序充值页（口径与实现细节同
+  DESIGN §6「2026-09-28 胖乖生活充值入口与页内打磨」：分享短链剥埋点、page 值整体
+  编码、`alipays` scheme queries 声明与趣智共用）。深链整串被 `QiekjRechargeTest`
+  钉死，别改字符串；返回本页的 ON_RESUME 余额重拉挂在 `WaterScreen` 的
+  `awaitingRecharge` 上，别挪进 VM。小注里「核对小程序账号与本 App 登录手机号一致」
+  是防充错账户的用户要求（2026-09-28），别删。Token 登录**拿不到**手机号：已知接口面
+  （QiekjApi 与参考工程逐端点对过）没有任何按 token 查用户的端点，响应里也无手机号
+  字段，只能沿用短信登录记住的号码——别为它硬猜第三方接口。
+- **刷新是整页下拉，不是按钮**（2026-09-28）：余额行的刷新图标已删，下拉刷新走
+  `PullToRefreshBox` + `WaterViewModel.refresh()`（余额、设备两轮 join 完才收指示器；
+  进页首载与各登录路径仍直调 refreshBalance / refreshDevices）。
+  `WaterUiState.refreshing` 只归下拉刷新，别拿来当一般 loading 用。
+- **登录手机号默认遮蔽**（2026-09-28）：余额行下显示 `accountPhone` = 仓库记住的
+  登录手机号（短信登录落盘、Token 登录沿用旧值、没有就不显示），遮蔽复用 domain 的
+  `QzxyPhoneMask`（名字带 Qzxy 但是通用工具），点眼睛才展开。它与登录输入框的
+  `phone` 字段是两回事——那个值用户随时在改，别把两处合并。
+- **复制 Token 的出口在顶栏**（2026-09-28）：已登录时顶栏 `Copy01` 图标 →
+  `WaterViewModel.exportToken()`（= `QiekjRepository.readToken()`，只读、不走网络）
+  进剪贴板，snackbar 按「账号通行证，只粘到本应用的『Token 登录』」口径提示
+  （对齐趣智「复制会话串」）。这是 token 唯一的主动出 App 通道，别再加别的口。
 - 一卡通付款码（DESIGN §3.10/§4.19）：密码字段 = 安全键盘密文（字形 MD5 表一次替换）+ `$1$` + uuid；
   **未知字形/非双射/样板自检不过 = 立即报错不猜**；登录密码仅数字（键盘只映射 0-9）；
   token 只存内存不落盘；付款码不进日志/剪贴板/相册；凭证交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）

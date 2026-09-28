@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.ui.water
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,11 +35,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,8 +51,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
@@ -55,11 +65,13 @@ import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.UnlockResult
+import edu.jxslu.schedule.domain.QzxyPhoneMask
 import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.domain.cashPaidAmount
 import edu.jxslu.schedule.domain.ticketPaidAmount
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
@@ -71,14 +83,18 @@ import java.math.RoundingMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.GlassWater
 import me.rerere.hugeicons.stroke.History
 import me.rerere.hugeicons.stroke.Logout04
-import me.rerere.hugeicons.stroke.Refresh
+import me.rerere.hugeicons.stroke.View
+import me.rerere.hugeicons.stroke.ViewOff
 import me.rerere.hugeicons.stroke.Wallet01
+import me.rerere.hugeicons.stroke.WalletAdd01
 
 private val DATE_FORMAT = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
 
@@ -113,6 +129,7 @@ fun WaterScreen(
     var detailItem by remember { mutableStateOf<Any?>(null) }
     var confirmLogout by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -121,6 +138,60 @@ fun WaterScreen(
                 // 事件都源自页面内的点击与随后的异步回调，此刻不会有我们的弹层盖在上面
                 is WaterEvent.Notice -> snackbar.showSnackbar(
                     AppNoticeVisuals(event.text, tone = event.tone),
+                )
+            }
+        }
+    }
+
+    // 充值在支付宝里完成，回到本页（ON_RESUME）时余额要重拉，否则还显示充值前的数。
+    // 与趣智页（QzxyScreen）同一套 awaiting + ON_RESUME 模式；走 refresh() 让下拉指示器跟着转。
+    var awaitingRecharge by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && awaitingRecharge) {
+                awaitingRecharge = false
+                viewModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val openRecharge: () -> Unit = {
+        if (QiekjRecharge.open(context)) {
+            awaitingRecharge = true
+        } else {
+            scope.launch {
+                snackbar.showSnackbar(
+                    AppNoticeVisuals(
+                        "没找到能打开支付宝的应用。充值在支付宝的胖乖生活小程序里完成，先装一个支付宝。",
+                        tone = NoticeTone.Warning,
+                    ),
+                )
+            }
+        }
+    }
+
+    // 复制 Token，供另一台设备在「Token 登录」里粘贴（换机不用再收一次短信）。
+    // 与趣智「复制会话串」同口径：提示按凭据写——它等于账号通行证，别让用户顺手外发。
+    val copyToken: () -> Unit = {
+        val token = viewModel.exportToken()
+        if (token == null) {
+            scope.launch {
+                snackbar.showSnackbar(
+                    AppNoticeVisuals("当前没有登录 Token", tone = NoticeTone.Warning),
+                )
+            }
+        } else {
+            val clipboard = context.getSystemService(ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(ClipData.newPlainText("胖乖生活 Token", token))
+            scope.launch {
+                snackbar.showSnackbar(
+                    AppNoticeVisuals(
+                        "Token 已复制。它等于账号通行证，只粘到本应用的「Token 登录」，别发到别处",
+                        tone = NoticeTone.Warning,
+                    ),
                 )
             }
         }
@@ -140,6 +211,9 @@ fun WaterScreen(
                 },
                 actions = {
                     if (state.loggedIn) {
+                        IconButton(onClick = copyToken) {
+                            Icon(HugeIcons.Copy01, contentDescription = "复制 Token")
+                        }
                         IconButton(onClick = { confirmLogout = true }) {
                             Icon(HugeIcons.Logout04, contentDescription = "退出登录")
                         }
@@ -169,15 +243,32 @@ fun WaterScreen(
                 Disclaimer()
             }
         } else {
-            Column(
+            // 下拉刷新：与趣智页 / 消费流水页同一套 PullToRefreshBox（2026-09-28 起，
+            // 余额行的刷新按钮随之删除）。padding 收在刷新容器上而不是列表上：Scaffold 的
+            // 内容从 (0,0) 铺满整屏、顶栏压在它上面，指示器挂在容器顶边时整条滑入轨迹
+            // 都在顶栏后面，得拖过阈值一大截才露出半圈。
+            PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = {
+                    haptics.tap()
+                    viewModel.refresh()
+                },
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .padding(padding),
             ) {
-                BalanceRow(state = state, onRefresh = { viewModel.refreshBalance(); viewModel.refreshDevices() })
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    BalanceRow(
+                        state = state,
+                        onRecharge = openRecharge,
+                        onToggleShowPhone = { viewModel.toggleShowPhone() },
+                    )
 
                 // 设备行
                 Row(
@@ -264,6 +355,7 @@ fun WaterScreen(
                 )
                 Disclaimer()
                 Spacer(Modifier.height(24.dp))
+                }
             }
         }
     }
@@ -433,32 +525,69 @@ private fun Disclaimer() {
 // ── 已登录内容 ──
 
 @Composable
-private fun BalanceRow(state: WaterUiState, onRefresh: () -> Unit) {
+private fun BalanceRow(state: WaterUiState, onRecharge: () -> Unit, onToggleShowPhone: () -> Unit) {
     val balance = state.balance
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            HugeIcons.Wallet01,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = "小票 ¥${balance?.ticketText ?: "-"} · 积分 ${balance?.pointsText ?: "-"}",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.weight(1f))
-        IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-            if (state.loadingBalance || state.loadingDevices) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(HugeIcons.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                HugeIcons.Wallet01,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "小票 ¥${balance?.ticketText ?: "-"} · 积分 ${balance?.pointsText ?: "-"}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            FilledTonalButton(onClick = onRecharge) {
+                Icon(
+                    HugeIcons.WalletAdd01,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("充值")
             }
         }
+        // 登录手机号默认遮蔽，点眼睛才展开：页面会被截图、会被旁人瞥见，
+        // 与趣智账号行 / 「我的」页学号同一个口径（QzxyPhoneMask 是通用遮蔽工具）
+        if (state.accountPhone.isNotBlank()) {
+            Row(
+                modifier = Modifier.padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "登录手机号 " +
+                        if (state.showPhone) state.accountPhone else QzxyPhoneMask.mask(state.accountPhone),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+                Icon(
+                    imageVector = if (state.showPhone) HugeIcons.ViewOff else HugeIcons.View,
+                    contentDescription = if (state.showPhone) "隐藏手机号" else "显示手机号",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .padding(start = 6.dp)
+                        .size(16.dp)
+                        .clickable { onToggleShowPhone() },
+                )
+            }
+        }
+        Text(
+            text = "点「充值」跳到支付宝的胖乖生活小程序，钱进胖乖账户；充值与退款由胖乖官方负责。" +
+                "小程序按支付宝的登录态进账号，充值前先核对它与本 App 登录的手机号一致，避免充错账户。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 

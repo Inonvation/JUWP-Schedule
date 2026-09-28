@@ -42,6 +42,14 @@ data class WaterUiState(
     val loadingBalance: Boolean = false,
     /** 余额是否至少拉过一次（成功失败都算）：卡片副行区分「读取中」与「拉过但没有」用。 */
     val balanceLoaded: Boolean = false,
+    /** 下拉刷新进行中（余额 + 设备两轮都算）；进页首载不算，别拿它当 loading 用。 */
+    val refreshing: Boolean = false,
+    /**
+     * 账户手机号：取自仓库记住的登录手机号（短信登录成功时落盘）。Token 登录不更新它，
+     * 沿用记住的值；没有就不显示。与登录输入框的 [phone] 是两回事——那个值用户随时在改。
+     */
+    val accountPhone: String = "",
+    val showPhone: Boolean = false,
     // ── 开水流程 ──
     val flow: UnlockFlowState = UnlockFlowState.Idle,
     val usePoints: Boolean = true,
@@ -76,6 +84,7 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
             // 初始值取自仓库那条流，[syncLoginState] 的相等判断才有意义（两处口径一致）
             loggedIn = repo.loggedIn.value,
             phone = repo.readPhone() ?: "",
+            accountPhone = repo.readPhone().orEmpty(),
             orderHistory = if (repo.loggedIn.value) repo.orderHistory() else emptyList(),
         ),
     )
@@ -113,7 +122,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
     private fun syncLoginState(loggedIn: Boolean) {
         if (loggedIn == _uiState.value.loggedIn) return
         if (loggedIn) {
-            _uiState.update { it.copy(loggedIn = true, orderHistory = repo.orderHistory()) }
+            _uiState.update {
+                it.copy(loggedIn = true, accountPhone = repo.readPhone().orEmpty(), orderHistory = repo.orderHistory())
+            }
             refreshBalance()
             refreshDevices()
         } else {
@@ -175,6 +186,8 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
             repo.login(s.phone, s.code)
         }.onSuccess {
             repo.savePhone(s.phone)
+            // syncLoginState(true) 可能在 savePhone 前就被流翻转触发、读到旧手机号，这里以刚登录的为准
+            _uiState.update { it.copy(accountPhone = s.phone) }
             onLoginSuccess("登录成功")
         }.onFailure {
             _uiState.update { it.copy(loggingIn = false) }
@@ -275,6 +288,26 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
     }
 
     fun selectDevice(device: DeviceItem) = _uiState.update { it.copy(selectedDevice = device) }
+
+    /** 已保存的登录 token，给「复制 Token」用（另一台设备粘贴 Token 登录）；未登录返回 null。 */
+    fun exportToken(): String? = repo.readToken()
+
+    fun toggleShowPhone() = _uiState.update { it.copy(showPhone = !it.showPhone) }
+
+    /**
+     * 下拉刷新：余额与设备各拉一轮，任一在途就不重复发起（对齐趣智页 refreshAccount 的
+     * 防重入口径）。refreshBalance / refreshDevices 各自返回 Job，这里 join 两轮都结束后
+     * 才收 [WaterUiState.refreshing]——指示器不能在设备还没回来时就停。
+     */
+    fun refresh() = viewModelScope.launch {
+        if (_uiState.value.refreshing) return@launch
+        _uiState.update { it.copy(refreshing = true) }
+        val balanceJob = refreshBalance()
+        val devicesJob = refreshDevices()
+        balanceJob.join()
+        devicesJob.join()
+        _uiState.update { it.copy(refreshing = false) }
+    }
 
     fun toggleUsePoints() = _uiState.update { it.copy(usePoints = !it.usePoints) }
 

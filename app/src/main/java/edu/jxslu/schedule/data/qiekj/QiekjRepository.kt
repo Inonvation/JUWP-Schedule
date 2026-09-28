@@ -64,6 +64,9 @@ class QiekjRepository(
 
     fun readPhone(): String? = tokenStore.readPhone()
 
+    /** 只读口：已登录的 token，供「复制 Token」迁移到另一台设备用。不走网络、不打日志。 */
+    fun readToken(): String? = tokenStore.readToken()?.takeIf { it.isNotBlank() }
+
     /** 落盘 token 并翻转登录态。只在**已确认 token 有效**时调用，见 [validateToken]。 */
     fun saveToken(token: String) {
         tokenStore.saveToken(token)
