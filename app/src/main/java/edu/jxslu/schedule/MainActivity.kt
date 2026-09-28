@@ -229,6 +229,31 @@ internal const val ROUTE_WATER_START = "water_start"
 internal const val ROUTE_QZXY_START = "qzxy_start"
 
 /**
+ * 主题首帧快照（进程级，2026-09-28）。
+ *
+ * DataStore 第一份数据必然晚于任何窗口的首帧，而「通用设置」这类二级页每次打开都是
+ * 新建的独立窗口、都要过一次空窗期。没有快照时首帧只能按默认值渲染——用户会看到
+ * 「先闪一下默认主题、再跳成自己选的配色」（2026-09-28 用户反馈）。动态取色开关与
+ * 深浅模式同理，一并快照。做法与 [floatingNavBarEffective] 同源：首次同步读一份真值，
+ * 此后每个窗口真值到达时回写刷新，后续窗口直接吃缓存、不再阻塞主线程。
+ *
+ * 与 [floatingNavBarEffective] 的区别：主题**不冻结**——它本就实时生效，快照只在
+ * 首帧与真值之间垫一脚；用户改完配色，下一个窗口的首帧就用新值。
+ */
+private data class ThemeSnapshot(
+    val themeMode: ThemeMode,
+    val dynamicColor: Boolean,
+    val palette: ThemePalette,
+)
+
+private var themeSnapshot: ThemeSnapshot? = null
+
+private fun readThemeSnapshotBlocking(): ThemeSnapshot = runBlocking {
+    val prefs = Graph.repository(Graph.appContext).displayPrefs.first()
+    ThemeSnapshot(prefs.themeMode, prefs.dynamicColor, prefs.themePalette)
+}
+
+/**
  * 主题在根上解析：深浅色由显示偏好里的 [ThemeMode] 决定（默认跟随系统），
  * 强制浅/深时忽略系统设置。放在 setContent 最外层，全 App（含弹层）统一生效。
  * 主界面与教务导入 Activity 共用，保证两个窗口深浅色一致。
@@ -237,16 +262,25 @@ internal const val ROUTE_QZXY_START = "qzxy_start"
 internal fun JuwRoot(content: @Composable () -> Unit) {
     val prefs by Graph.repository(LocalContext.current).displayPrefs
         .collectAsStateWithLifecycle(initialValue = null)
-    val darkTheme = when (prefs?.themeMode) {
+    // 真值到达前用进程快照兜首帧（不是默认值，见 ThemeSnapshot 的 KDoc）
+    val snapshot = themeSnapshot ?: readThemeSnapshotBlocking().also { themeSnapshot = it }
+    val themeMode = prefs?.themeMode ?: snapshot.themeMode
+    val dynamicColor = prefs?.dynamicColor ?: snapshot.dynamicColor
+    val palette = prefs?.themePalette ?: snapshot.palette
+    // 真值到达（或用户改了）就回写快照，供下一个窗口的首帧直接用
+    if (prefs != null) {
+        themeSnapshot = ThemeSnapshot(themeMode, dynamicColor, palette)
+    }
+    val darkTheme = when (themeMode) {
         ThemeMode.Light -> false
         ThemeMode.Dark -> true
-        ThemeMode.System, null -> isSystemInDarkTheme()
+        ThemeMode.System -> isSystemInDarkTheme()
     }
     // 动态取色开着（默认）跟壁纸；关掉后用内置配色里选中的那套，品牌青是默认值
     JuwTheme(
         darkTheme = darkTheme,
-        dynamicColor = prefs?.dynamicColor ?: true,
-        palette = prefs?.themePalette ?: ThemePalette.Brand,
+        dynamicColor = dynamicColor,
+        palette = palette,
     ) {
         content()
     }

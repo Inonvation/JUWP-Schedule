@@ -559,10 +559,17 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
   **启动页**（`DisplayPrefs.startPage`，**重启生效**，默认「今日」，见下）
 - **主题配色**（2026-09-28，`domain/ThemePalette` + `ui/theme/Palettes.kt`）：
   内置六套——水电青（默认，即品牌色）· 晴空蓝 · 暮山紫 · 樱花粉 · 落日橙 · 森野绿，
-  每套深浅两份方案，角色口径与品牌青一致（9 角色，tertiary/error 等仍走 M3 基线兜底）。
+  每套深浅两份方案，**全角色落值**（2026-09-28 补齐：此前每套只填 9 个角色，
+  surfaceContainer* / onSurfaceVariant / outline* / tertiary / secondaryContainer /
+  inverse* 全落到 M3 紫色基线——卡片、弹层、次要文字、分割线、Snackbar 与主色系不搭，
+  用户反馈「和各种组件都不搭配」；补的值由各配色主色按 M3 TONALSPOT 标准色板生成
+  （material-color-utilities，contrast 0，浅色 primary 作种子），色相与主色同源，
+  原 9 角色保持不变；容器亮度单调与关键对比度由 `PaletteContractTest` 钉住，单测红着别合入）。
   **动态取色优先**：开着时配色被忽略、设置行置灰提示「关闭动态取色后生效」；
   关掉后按所选配色渲染。选中即写偏好（DataStore 键 `theme_palette`，存稳定 id，
-  未知值回落水电青——单测钉死），**实时生效**（`JuwRoot` 统一 collect，含弹层窗口）。
+  未知值回落水电青——单测钉死），**实时生效**（`JuwRoot` 统一 collect，含弹层窗口；
+  每个窗口首帧用进程级 `ThemeSnapshot` 兜底——二级页每次新建都要等 DataStore
+  第一份数据，没有它进「通用设置」会先闪默认主题再跳到所选配色，2026-09-28 修复）。
   选择器 = 色卡弹层（`ImeAwareModalBottomSheet`）：每行 4 色点（主色/容器/次要/底色，
   浅色系）+ 名称 + 选中勾，选中不关层、可连续试色。小组件三卡（合并卡 + 开水两卡）
   的胶囊/「用水中」强调色跟随所选配色的**浅色主色**（白字对比度各配色都够，不随系统
