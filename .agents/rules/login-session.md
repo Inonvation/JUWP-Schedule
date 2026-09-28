@@ -102,6 +102,62 @@
   凭证错**，token 过期走 401 重登、**不标失效**），教务走 `CasSession` 的闸门。后台任务
   （`BalanceAlertReminder`）调同一批方法，因此自动获得上报、不需要单独埋点。
 
+## 前置登录与补存凭据（2026-09-28，堵「跳过首启」的洞）
+
+- **`vault.saveCas` 曾只有引导页一个调用点**：首启跳过教务 → 之后在导入页 WebView 手登成功
+  → 只回灌 cookie、凭据永不落库 → 会话过期后自动填表读不到凭据直接放弃，且「我的」页
+  没有任何补存入口。修复为**两层闭环**，共享组件 `ui/common/CasLoginDialog`：
+  ① **进窗前置**——需要教务数据的窗口（课表导入 / 报修请假 / 成绩单授权）打开时无凭据
+  就先弹一次，输学号密码**先经 `cas.tryLogin` 验证、通过才落库**（坏凭据存进去会让自动
+  续登反复撞 CAS 失败计数直至停用）；保存成功 OkHttp 会话即就绪，WebView 落 CAS 页由
+  自动填表接管，之后一直自动登录。② **手登成功后补存**（兜底）——跳过前置层的用户在
+  网页里登成功后（`checkSessionLost` 通过 + 教务域）再给一次机会。
+- **「先跳过 / 暂不」只挡本窗口**（`casLoginDeclined`，进程内标记），不写任何闸门；
+  下个窗口还会再问。保存成功立即刷新 `savedCas`（各页已从 `val` 改 `var`）。
+- 新 WebView 入口要接同款弹窗时照这个模式；**别在「自动填表失败」路径里弹**
+  （那时用户还没登成功，弹了也存不了正确的密码）。
+- **前置层保存成功后必须重载入口 URL + 复位 `autoLoginTried`**：WebView 此刻多半停在
+  CAS 登录页，不重载用户就得退出重进（实测踩过）。三个入口各自的 URL 见
+  DESIGN §4.27（`SSO_WARMUP` / `XgUrls.SSO_LOGIN` / `PtworkTranscript.CAS_ENTRY`）。
+
+## 退出登录两侧同清（2026-09-28）
+
+- `CasSession.logout` 是**挂起函数**：依次清 OkHttp jar → **WebView `CookieManager`
+  （`webCookies.clearAll()`）** → 凭据 → 闸门/节流。WebView 那侧不清的话，手登/自动填表
+  留下的会话仍有效——导入页照常直进教务、状态卡 `hasAnyCookie` 一直「已登录」，
+  退出形同虚设（用户实测踩过）。
+- UI 调用点必须放在协程里（`CookieManager` 读写要有 Looper，桥内部切 Main）；
+  清完再 `onBack()`，状态卡重读时看到的才是真的「未登录」。
+- `CookieManager` 没有按域删除的公开 API，`clearAll` 是整库清——App 内 WebView 只访问
+  学校域，不会误伤第三方登录态；别为了「只清学校域」去手写过期 cookie 拼装。
+
+## 登录链路审查结论（2026-09-28，改动前先读）
+
+- **加密 prefs 创建必须带自愈**（`CredentialVault`/`QiekjTokenStore`/`QzxySessionStore` 三处）：
+  Keystore 损坏（换机/云备份恢复后常见）时裸 `EncryptedSharedPreferences.create` 会抛异常，
+  而读取都在 Compose 组合期 = 启动即循环崩溃。修法：失败删文件重建（一次性丢该份凭证）→
+  再失败退明文空 prefs（等同未登录）。**新增加密存储必须带这个兜底**。
+- **`logout` 必须在 `loginMutex` 里**：否则与在途登录并发时，登录成功回调会把会话写回 jar、
+  闸门记成成功——退出被悄悄撤销。
+- **保存凭据成功后必须调 `onCredentialsUpdated()`**（不只刷新 `savedCas`）：自动填表失败一次
+  就消耗进程级 5 分钟节流窗口，刚验证保存的正确密码会被它压住。
+- **UI 层吞异常别用 `runCatching`/`catch (Exception)`**：会把 CancellationException 一起吞，
+  窗口销毁后登录链还在后台跑完。要 rethrow `CancellationException`。
+- **`CasLoginDialog` 的失败文案按 `CasEnsureResult` 分类**（对齐引导页 JwStep）：
+  Failed 文案透传 / NeedsManualLogin 与 Suspended 各自的下一步动作 / 加 3~5 秒冷却防连点。
+  全吞成「密码错」会把开着 VPN 的用户往改密码方向带。
+- ykt 的内存 `cachedToken` 在退出时要一起清（`clearTokenCache`）；qiekj/qzxy 无此问题。
+
+## 登录页判据只用 userPassword（2026-09-28，LoginToXk 误伤已修）
+
+- `JwHttpSession.looksLikeLoginPage` 的特征**只有** `userPassword`（登录页密码框的
+  id/name，实测 11 处）与历史兜底「用户没有登录」。**`LoginToXk` 不能当特征**——它是
+  强智选课入口的通用路径，**已登录主页的「退出登录」隐藏表单 action 就是
+  `/jsxsd/xk/LoginToXk?method=exit`**（实测 2 次）。把它当特征会把每个正常主页判成
+  登录页：探针永远失败 → 完整登录 → 第 6 步校验又失败，「教务登录没走通」必现，
+  自动续登整条瘫痪。回归单测 `loggedInHomeWithLogoutForm_isNotALoginPage` 钉住。
+- 判据再改时必须先抓「已登录主页 + 未登录登录页」两份快照对照，不能只看登录页。
+
 ## 落在统一认证登录页时自动填表登录
 
 - **落在统一认证登录页时自动填表登录**（2026-09-24，DESIGN §4.27「落登录页自动填表」）：三个 WebView 入口

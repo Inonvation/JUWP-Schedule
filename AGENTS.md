@@ -22,7 +22,7 @@
 | 卡片 / 弹层 / 一次性提示 | `.agents/rules/ui-common.md` |
 | 今日页 / 课表网格 / 作息表 / 课程时间 | `.agents/rules/today-ui.md` |
 | 桌面小组件 | `.agents/rules/widget.md` |
-| 教务课表导入 / 考试 / 成绩 | `.agents/rules/import-jw.md` |
+| 教务课表导入 / 考试 / 成绩 / 教材 | `.agents/rules/import-jw.md` |
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 | `.agents/rules/ebike.md` |
@@ -52,7 +52,7 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 | AGP | **8.7.3** |
 | Kotlin | **2.1.21**（compose / serialization 同版本；KSP `2.1.21-2.0.1`） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
-| Room DB | **v13**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃 |
+| Room DB | **v14**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑） |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN §3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**）。**不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不存在）；不要打开传递依赖（会拉 `androidx.core` 1.17，AGP 8.7 / compileSdk 35 编不过） |
@@ -104,7 +104,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 
 ## 爬虫脚本（scripts/）
 
-正式脚本 7 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 8 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
@@ -113,6 +113,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 | `fetch_lab_courses.py` | 实验课表（实践实验 → 实验课表查询，`--term` 可选） | `scripts/out/lab_courses.json` |
 | `fetch_exams.py` | 考试安排（`--term` 可选，缺省取教务当前学期；JSON 接口） | `scripts/out/exams.json` |
 | `fetch_scores.py` | 课程成绩（`--term` 可选，缺省全部学期；JSON 接口） | `scripts/out/scores.json` |
+| `fetch_textbooks.py` | 学生教材确认（`--term` 可选，缺省教务当前学期；JSON 接口 `/jsxsd/nxsjc/xsjcqr`） | `scripts/out/textbooks.json` |
 | `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9A101`） | `scripts/out/power.json` |
 | `fetch_transcript.py` | 教务处**盖章成绩单**（金格签章系统 `jwxyxx.juwp.edu.cn`，**非强智教务**；`--list` / `--term` 可多个 / `--out`） | `scripts/out/transcript_<标签>.pdf` |
 
@@ -124,6 +125,7 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py
+.\.venv-scraper\Scripts\python.exe scripts\fetch_textbooks.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py --list   # 出单：--term 2025-2026-2
 ```
@@ -145,6 +147,8 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 - 考试安排/成绩走**不带 .do 的 layui JSON 接口**（`xsks/xsksap_list`、`kscj/cjcx_list`，参数
   `xnxqid`/`kksj` + 分页 `pageNum/pageSize`）；带 .do 的同名地址返回「系统功能暂未开放」no-open 页，
   不要把「功能被校方关闭」误判成「暂无数据」。学期参数：课表页 `xnxq01id`，考试 `xnxqid`，成绩 `kksj`。
+- 教材确认同款 layui 接口 `/jsxsd/nxsjc/xsjcqr`（`xnxqid` + 分页；`fetch_textbooks.py` §5.7）。
+  **`xsjcisxy.do` 是征订确认写操作（POST），脚本与 App 只读 `xsjcqr`，绝不触碰**。
 - 登录链路、DOM 规则、排错表、WebView 注入 JS：**`scripts/README.md`**（比 DESIGN 更细）。
 
 ## 架构（改代码前对齐）
@@ -156,21 +160,24 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
+                 + Textbook（§4.31：挂 courseName 带 term，教务教材确认）
                  + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
                  + LifeFeed（一卡通与电费流水分段，§3.13）
  + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
  + QzxyClData·QzxySessionLink·QzxyPhoneMask·QzxyWatering（会话串 · 手机号遮蔽 · 用水记账）
-data/local/      Room v13：courses / time_slots / semester_config / timetables / scores
+data/local/      Room v14：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
                  / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
-                 / power_readings（v12 起；房号显示名 roomName）
+                 / power_readings（v12 起；房号显示名 roomName）/ textbooks（v14）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
                  ScholarProgressRepository；ScoreSync / ScholarProgressSync（自动导入，DESIGN §4.29）
+                 TextbookSync（导入课表后抓教材，§4.31）
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
                  + ScholarProgressParser（学业完成情况 = 教务返 HTML，按表头名映射，非 JSON）
+                 + TextbookParser（教材 = layui JSON 接口，§4.31）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
@@ -216,6 +223,8 @@ P6 打磨 — **进行中**。2026-09-21 起陆续落地：笔记与作业（自
 免费时长提醒、生活页（一卡通 · 寝室电费）、统一登录会话层、首启引导、学工表单、盖章成绩单导出、
 桌面小组件两条目（课表 / 校园卡 · 电费合并卡，2026-09-27，红线见 `.agents/rules/widget.md`）。
 学业完成情况与成绩自动导入（2026-09-27，DESIGN §3.17 / §4.29：首启登录成功与冷启动各抓一次，OkHttp 直取不依赖 WebView）。
+教材与导入学期选择（2026-09-28，DESIGN §4.31 / §4.4.2：导入写库成功后自动抓导入学期教材并显示在课程详情，
+一键导入确认弹窗支持切换学期自动重爬；红线见 `.agents/rules/import-jw.md`「教材」节）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版
