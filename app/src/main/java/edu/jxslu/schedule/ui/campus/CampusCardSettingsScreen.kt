@@ -95,6 +95,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.font.FontWeight
 
@@ -706,17 +707,36 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
     // ---- 余额提醒（DESIGN §3.13）：默认关；两个来源各自独立，但共用同一份凭证 ----
 
+    // 余额提醒初值阻塞读真值（同 [MeViewModel] 2026-09-28 的修法）：stateIn 初值若写
+    // false/默认阈值，开过提醒的用户进设置页开关会先按关渲染、真值到达后再跳。
+    // DataStore 读过一次后常驻内存，这里只是再收一次缓存。
     val powerAlertEnabled: StateFlow<Boolean> = prefs.powerAlertEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { prefs.powerAlertEnabled.first() },
+        )
 
     val powerAlertYuan: StateFlow<Int> = prefs.powerAlertYuan
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BalanceAlert.DEFAULT_POWER_YUAN)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { prefs.powerAlertYuan.first() },
+        )
 
     val yktAlertEnabled: StateFlow<Boolean> = prefs.yktAlertEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { prefs.yktAlertEnabled.first() },
+        )
 
     val yktAlertYuan: StateFlow<Int> = prefs.yktAlertYuan
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BalanceAlert.DEFAULT_YKT_YUAN)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { prefs.yktAlertYuan.first() },
+        )
 
     fun setPowerAlertEnabled(value: Boolean) {
         viewModelScope.launch {

@@ -3,6 +3,7 @@ package edu.jxslu.schedule.ui.today
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.Course
@@ -19,11 +20,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 
 /**
@@ -95,9 +98,22 @@ class TodayViewModel(
     /**
      * 今日页快捷方式（DESIGN §3.8）。不并进 [uiState]：那是课表数据的派生状态，
      * 快捷方式是纯设置值，分开订阅免得改一条快捷方式把整页状态重算一遍。
+     * 初值阻塞读真值（见 [initialPrefs]）：否则改过快捷方式的用户首帧先见默认网格。
      */
     val shortcuts: StateFlow<ShortcutSettings> = repo.shortcutSettings
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShortcutSettings())
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { repo.shortcutSettings.first() },
+        )
+
+    /**
+     * 卡片开关的首帧初值。这三个开关独立于 [ready] 门闸（那管的是 Room 派生状态），
+     * DataStore 的真值必然晚于首帧：初值写 true 的话，关过卡的用户冷启动会先渲染出
+     * 卡片、真值到达后再消失（跳一下，2026-09-28 通用设置页同款反馈）。
+     * 构造时阻塞读一次真值当初值，与 MainActivity 启动链的 runBlocking 读同一模式。
+     */
+    private val initialPrefs: DisplayPrefs = runBlocking { repo.displayPrefs.first() }
 
     /**
      * 今日页开水卡片开关（DESIGN §3.3 底部固定区）。与 [shortcuts] 同理单独订阅：
@@ -105,7 +121,7 @@ class TodayViewModel(
      */
     val waterCardEnabled: StateFlow<Boolean> = repo.displayPrefs
         .map { it.waterCardEnabled }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialPrefs.waterCardEnabled)
 
     /**
      * 今日页趣智校园卡片开关（DESIGN §4.30）。与 [waterCardEnabled] 同口径：
@@ -113,7 +129,7 @@ class TodayViewModel(
      */
     val qzxyCardEnabled: StateFlow<Boolean> = repo.displayPrefs
         .map { it.qzxyCardEnabled }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialPrefs.qzxyCardEnabled)
 
     /**
      * 今日页共享单车卡开关（DESIGN §3.9）。与 [waterCardEnabled] 同口径：
@@ -121,7 +137,7 @@ class TodayViewModel(
      */
     val ebikeCardEnabled: StateFlow<Boolean> = repo.displayPrefs
         .map { it.ebikeCardEnabled }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialPrefs.ebikeCardEnabled)
 
     /**
      * 今日页校园卡付款码卡开关（DESIGN §3.10）。默认关（涉及凭证与资金），

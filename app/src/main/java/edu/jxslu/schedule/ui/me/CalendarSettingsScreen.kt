@@ -58,9 +58,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.CalendarAdd01
 import me.rerere.hugeicons.stroke.CalendarClock
@@ -301,9 +303,13 @@ class CalendarSettingsViewModel(
     private val repo: ScheduleRepository,
 ) : ViewModel() {
 
-    /** 提前提醒分钟数（全局）。 */
+    /** 提前提醒分钟数（全局）。初值阻塞读真值，改过的用户进页不会先显示默认再跳。 */
     val reminderMinutes: StateFlow<Int> = repo.calendarReminderMinutes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CalendarSyncDefaults.DEFAULT_REMINDER_MINUTES)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { repo.calendarReminderMinutes.first() },
+        )
 
     /** 就绪状态随学期/课表数据自动刷新；null = 还在算。展开是纯 JVM 计算，放 Default 池。 */
     val readiness: StateFlow<SyncReadiness?> = combine(

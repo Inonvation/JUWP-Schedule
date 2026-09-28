@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
@@ -105,6 +106,15 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         }
     }
 
+    /**
+     * uiState 的首帧初值。DataStore 的第一份数据必然晚于 UI 首帧，stateIn 的初值
+     * 若写 `DisplayPrefs()` 默认值，通用设置页的开关（动态取色、悬浮导航栏等）会先按
+     * 默认渲染、真值到达后再跳一次（2026-09-28 用户反馈）。构造时阻塞读一次真值作初值，
+     * 与 MainActivity 启动链的 runBlocking 读同一模式；DataStore 读过一次后常驻内存，
+     * 这次收集走的是缓存，不额外读盘。
+     */
+    private val initialPrefs: DisplayPrefs = runBlocking { repo.displayPrefs.first() }
+
     val uiState: StateFlow<MeUiState> = combine(
         configFlow,
         repo.currentTimetableId,
@@ -130,7 +140,13 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
             configWeek = target.semester
                 ?.let { ScheduleCalculator.weekNumberOf(it, LocalDate.now()) } ?: 0,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MeUiState())
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        // 只冻结偏好两件（开关行首帧直接渲染的就是它们）；课表/学期等 Room 派生字段
+        // 首帧保持默认空值，loading 仍是 true，页面自己的骨架逻辑照旧
+        MeUiState(displayPrefs = initialPrefs, themeMode = initialPrefs.themeMode),
+    )
 
     private val _oneShot = MutableStateFlow<OneShot?>(null)
     val oneShot: StateFlow<OneShot?> = _oneShot

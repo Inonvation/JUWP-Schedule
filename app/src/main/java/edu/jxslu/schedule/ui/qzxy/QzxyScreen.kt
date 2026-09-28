@@ -80,7 +80,9 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Droplet
@@ -1393,7 +1395,11 @@ private fun DiagnosticEntry(onOpen: () -> Unit) {
 private fun DisplaySettingSection() {
     val context = LocalContext.current
     val prefs = remember(context) { Graph.displayPrefs(context) }
-    val enabled by prefs.qzxyCardEnabled.collectAsStateWithLifecycle(initialValue = true)
+    // 初值阻塞读真值：写 true 的话，关过趣智卡片的用户进页开关先按开渲染、真值到达
+    // 后再跳（MeViewModel 2026-09-28 同款反馈）。remember 挡住重组重复读。
+    val enabled by prefs.qzxyCardEnabled.collectAsStateWithLifecycle(
+        initialValue = remember { runBlocking { prefs.qzxyCardEnabled.first() } },
+    )
     val scope = rememberCoroutineScope()
     SettingsSection(title = "显示") {
         SettingSwitchRow(

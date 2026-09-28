@@ -58,8 +58,10 @@ import edu.jxslu.schedule.ui.reminder.ClassReminder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AlarmClock
 import me.rerere.hugeicons.stroke.BellRing
@@ -273,15 +275,30 @@ class ReminderSettingsViewModel(
     private val repo: ScheduleRepository,
 ) : ViewModel() {
 
+    // 初值阻塞读真值：stateIn 初值若写 false/默认分钟，开过提醒的用户进页会先看到
+    // 关、真值到达后再跳开（MeViewModel 2026-09-28 同款反馈）。DataStore 读过一次后
+    // 常驻内存，这里只是再收一次缓存。
     val enabled: StateFlow<Boolean> = repo.reminderEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { repo.reminderEnabled.first() },
+        )
 
     val leadMinutes: StateFlow<Int> = repo.reminderLeadMinutes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReminderDefaults.DEFAULT_LEAD_MINUTES)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { repo.reminderLeadMinutes.first() },
+        )
 
     /** 作业截止提醒开关（DESIGN §3.11）。与上课提醒开关互相独立，默认关。 */
     val homeworkEnabled: StateFlow<Boolean> = repo.homeworkReminderEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { repo.homeworkReminderEnabled.first() },
+        )
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message

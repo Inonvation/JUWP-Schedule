@@ -86,6 +86,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
@@ -794,10 +795,12 @@ private fun InstalledAppPicker(
 
 class ShortcutSettingsViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
+    // 初值阻塞读真值：写默认值的话，改过快捷方式（尤其关过总开关）的用户进页会先按
+    // 默认渲染再跳（MeViewModel 2026-09-28 同款反馈）。DataStore 缓存后开销可忽略。
     val settings: StateFlow<ShortcutSettings> = repo.shortcutSettings.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        ShortcutSettings(),
+        runBlocking { repo.shortcutSettings.first() },
     )
 
     fun setEnabled(value: Boolean) {
