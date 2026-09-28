@@ -29,6 +29,7 @@ import edu.jxslu.schedule.data.repo.ScholarProgressRepository
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.repo.ScoreSync
+import edu.jxslu.schedule.data.repo.TextbookSync
 import edu.jxslu.schedule.data.jw.TranscriptClient
 import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.repo.TranscriptStore
@@ -91,6 +92,9 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var scoreSync: ScoreSync? = null
+
+    @Volatile
+    private var textbookSync: TextbookSync? = null
 
     @Volatile
     private var noteRepository: NoteRepository? = null
@@ -193,6 +197,16 @@ private var qzxyRepository: QzxyRepository? = null
                 repo = scoreRepository(context),
                 prefs = displayPrefs(context),
             ).also { scoreSync = it }
+        }
+
+    /** 教材抓取单例（DESIGN §4.31）：教务导入课表成功后顺带抓对应学期，静默失败。 */
+    fun textbookSync(context: Context): TextbookSync =
+        textbookSync ?: synchronized(this) {
+            textbookSync ?: TextbookSync(
+                cas = casSession(context),
+                repo = repository(context),
+                prefs = displayPrefs(context),
+            ).also { textbookSync = it }
         }
 
     /** 笔记·课件仓库单例（DESIGN §4.20）：归属键是课程名，与课表无关。 */

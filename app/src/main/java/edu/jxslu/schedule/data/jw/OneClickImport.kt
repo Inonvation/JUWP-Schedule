@@ -19,6 +19,11 @@ data class ImportSource(
     val term: String?,
     /** 页面/解析层面识别成功；false = 大概率不是这张课表（结构变了，或根本没打开）。 */
     val recognized: Boolean,
+    /**
+     * 学期下拉的全部选项（理论课表页才有）。确认弹窗用它渲染学期切换；
+     * 实验页不产出（学期跟理论页走），旧脚本/异常页面为空。
+     */
+    val termOptions: List<TermOption> = emptyList(),
 )
 
 /**
@@ -33,6 +38,8 @@ data class OneClickResult(
     val breakdown: List<Pair<String, Int>>,
     val note: String?,
     val blocked: String? = null,
+    /** 理论课表页学期下拉的选项，供确认弹窗切换学期后带着新学期重爬。 */
+    val termOptions: List<TermOption> = emptyList(),
 )
 
 object OneClickImport {
@@ -49,6 +56,7 @@ object OneClickImport {
             courses = courses,
             term = extractTermField(json),
             recognized = meta.ok && meta.cells > 0,
+            termOptions = extractTermOptions(json),
         )
     }
 
@@ -110,6 +118,7 @@ object OneClickImport {
             term = term,
             breakdown = breakdown,
             note = notes.takeIf { it.isNotEmpty() }?.joinToString(" "),
+            termOptions = theory.termOptions,
         )
     }
 }

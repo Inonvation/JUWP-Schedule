@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -71,15 +74,18 @@ import edu.jxslu.schedule.data.jw.OneClickImport
 import edu.jxslu.schedule.data.jw.QiangzhiScheduleParser
 import edu.jxslu.schedule.data.jw.ScoreParser
 import edu.jxslu.schedule.data.jw.SyjxScheduleParser
+import edu.jxslu.schedule.data.jw.TermOption
 import edu.jxslu.schedule.data.jw.unwrapJsString
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.ExamMapper
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.data.session.CasEnsureResult
+import edu.jxslu.schedule.data.session.CredentialVault
 import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.CasLoginDialog
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.resolveImportTarget
 import kotlinx.coroutines.CompletableDeferred
@@ -113,7 +119,20 @@ fun JwImportScreen(
     // 会话层单例（DESIGN §4.27）：打开前准备、登录后回灌都走它
     val cas = remember { Graph.casSession(context) }
     // 存下来的统一认证凭证：落在登录页时用它自动登一次（读一次就够，别在回调里重复读加密存储）
-    val savedCas = remember { Graph.credentialVault(context).readCas() }
+    var savedCas by remember { mutableStateOf(Graph.credentialVault(context).readCas()) }
+    /**
+     * 统一认证登录弹窗（DESIGN §4.27，2026-09-28 用户提议的前置口径）：
+     *
+     * 两层闭环：① 进窗时本地没有凭据 → 先弹 [edu.jxslu.schedule.ui.common.CasLoginDialog]
+     * （common 共享组件），输入学号密码验证落库，之后 WebView 落 CAS 页自动填表提交，
+     * 全程免手输；② 用户跳过 ①、在网页里手登成功 → 手登成功处再给一次补存机会（同组件）。
+     * 「先跳过」只挡本窗口，下个导入窗口还会再问。
+     */
+    var showCasLoginDialog by remember { mutableStateOf(false) }
+    /** 本窗口已拒绝过登录弹窗：不再重复弹，打扰比缺失更糟。 */
+    var casLoginDeclined by remember { mutableStateOf(false) }
+    /** 手登成功后的补存弹窗（同一组件，文案不同）；进窗时跳过了前置层才会用到。 */
+    var showSaveCredentialPrompt by remember { mutableStateOf(false) }
     /** 自动登录只做一次：失败就交给用户手登，反复试只会撞风控。 */
     var autoLoginTried by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -125,6 +144,8 @@ fun JwImportScreen(
     var canGoBack by remember { mutableStateOf(false) }
     // 弹窗直接持有解析草稿：courses 之外还要带上页面学期（term）与识别分项供确认弹窗展示
     var importDraft by remember { mutableStateOf<ImportDraft?>(null) }
+    /** 弹窗里切换学期后的重爬进行中：期间「导入」禁用、学期行不可点。 */
+    var termSwitching by remember { mutableStateOf(false) }
     /** 一键导入的页面加载闸门：`loadUrl` 之后等目标页面加载完（或失败），见 [PageLoadGate]。 */
     var pageLoadGate by remember { mutableStateOf<PageLoadGate?>(null) }
     /** 考试导入的原始行 + 学期：确认弹窗选定目标课后按**目标课表**的开学日重映射（DESIGN §4.14）。 */
@@ -162,6 +183,12 @@ fun JwImportScreen(
     // 根因：系统返回手势默认直接 popBackStack，会把 WebView 的历史连同登录进度一起丢掉，
     // 和左上角箭头的行为不一致。
     BackHandler(enabled = canGoBack) { webView?.goBack() }
+
+    // 前置登录（DESIGN §4.27，2026-09-28）：本地没有凭据时进窗先问一次。
+    // 用户在引导里跳过教务、或从没填过密码的，从此不必先撞一次 CAS 登录页才知道要存。
+    LaunchedEffect(Unit) {
+        if (savedCas == null && !casLoginDeclined) showCasLoginDialog = true
+    }
 
     /**
      * 统一失败出口：置错误浮层 + 状态条，并记下失败 URL。
@@ -309,18 +336,26 @@ fun JwImportScreen(
      *    学期根本导不进来。区分「这张表没课」与「拿到的不是这张表」由 [OneClickImport]
      *    按页面形态判定，结论写进识别结果弹窗，让用户在写库前看到。
      * 2. **实验页跟着理论页的学期走**——两页各有一套默认学期，不一致时合并出来的表会跨学期。
+     *
+     * [forceTerm] 非空 = 确认弹窗里切换了学期（DESIGN §4.31 前置的学期选择）：带着
+     * `xnxq01id` 参数强制重载理论页（此时不能沿用「已在理论页就不重载」的捷径——
+     * 页面要渲染的就是这个学期的数据），实验页同样跟这个学期。
      */
-    suspend fun runOneClickImport() {
+    suspend fun runOneClickImport(forceTerm: String? = null) {
         val wv = webView ?: return
         if (busy) return
         // 自动触发与手动点击共用这一条「跑过了」的标记
         autoImportTried = true
         busy = true
         try {
-            // 已经在理论课表页就不重复加载：用户可能自己在下拉里选了学期，重新加载会把这个
-            // 选择打回教务默认，还白等一次页面加载
-            if (JwUrls.schedulePageKind(currentUrl) != JwSchedulePage.Theory) {
-                if (!openPageAndWait(JwUrls.SCHEDULE_LIST, THEORY_URL_PART, "学期理论课表")) return
+            // 带学期参数的 URL：学期已过调用方白名单校验，这里直接拼
+            val theoryUrl = forceTerm
+                ?.takeIf { JwUrls.TERM_PATTERN.matches(it) }
+                ?.let { "${JwUrls.SCHEDULE_LIST}&xnxq01id=$it" }
+            // 没指定学期且已在理论课表页就不重复加载：用户可能自己在下拉里选了学期，
+            // 重新加载会把这个选择打回教务默认，还白等一次页面加载
+            if (theoryUrl != null || JwUrls.schedulePageKind(currentUrl) != JwSchedulePage.Theory) {
+                if (!openPageAndWait(theoryUrl ?: JwUrls.SCHEDULE_LIST, THEORY_URL_PART, "学期理论课表")) return
             }
             statusNote = "正在读取学期理论课表…"
             val theory = OneClickImport.theorySource(
@@ -328,7 +363,7 @@ fun JwImportScreen(
             )
 
             statusNote = "正在读取实验课表…"
-            if (!openPageAndWait(JwUrls.labScheduleUrl(theory.term), LAB_URL_PART, "实验课表")) return
+            if (!openPageAndWait(JwUrls.labScheduleUrl(forceTerm ?: theory.term), LAB_URL_PART, "实验课表")) return
             val lab = OneClickImport.labSource(
                 unwrapJsString(evalJs(wv, SyjxScheduleParser.EXTRACT_JS)).orEmpty(),
             )
@@ -346,6 +381,7 @@ fun JwImportScreen(
                 breakdown = result.breakdown,
                 // 两张表的数据一起进来，覆盖会连用户自建/调课过的行一起清掉：默认合并
                 defaultMerge = true,
+                termOptions = result.termOptions,
             )
         } finally {
             busy = false
@@ -742,6 +778,15 @@ fun JwImportScreen(
                                             if (JwUrls.isJwHost(u)) {
                                                 scope.launch { runCatching { cas.adoptFromWebView() } }
                                             }
+                                            // 手登成功且本地没有凭据：给一次「保存账号密码」的机会
+                                            //（第二层兜底；进窗时已弹过前置层、用户跳过才走到这）。
+                                            // 教务域（会话在教务手里才叫登录成功）+ 用户没存过 + 没拒绝过
+                                            if (JwUrls.isJwHost(u) &&
+                                                savedCas == null &&
+                                                !casLoginDeclined
+                                            ) {
+                                                showSaveCredentialPrompt = true
+                                            }
                                             // 注意：两张课表的 URL 都含 "xskb"（理论 xskb_list、实验 toXskb），
                                             // 不能用子串判断，必须按页面类型区分，否则会互相误判
                                             val page = JwUrls.schedulePageKind(u)
@@ -1077,6 +1122,18 @@ fun JwImportScreen(
             term = draft.result.term,
             note = draft.result.note,
             breakdown = draft.breakdown,
+            availableTerms = draft.termOptions.takeIf { it.isNotEmpty() },
+            switching = termSwitching,
+            onTermSelected = { opt ->
+                // 切学期 = 带着新学期参数重爬两张表（DESIGN §4.4）：
+                // 重爬成功时 importDraft 被替换（弹窗数据随之刷新），失败时保持原草稿
+                // （失败提示由 runOneClickImport 内部的错误浮层/状态条给出）
+                termSwitching = true
+                scope.launch {
+                    runOneClickImport(forceTerm = opt.value)
+                    termSwitching = false
+                }
+            },
             title = when {
                 // 一键导入：识别的来源是两张课表，分项条数在弹窗正文里逐项列出
                 draft.breakdown != null -> "识别到 ${courses.size} 条课次"
@@ -1096,6 +1153,9 @@ fun JwImportScreen(
                 importDraft = null
                 val examDraft = pendingExamImport
                 pendingExamImport = null
+                // 导入学期：一键导入的数据学期（重爬切换后就是用户选中的学期）；
+                // 它会写进目标课表（Timetable.term），成为课程详情查教材的钥匙
+                val importTerm = draft.result.term
                 scope.launch {
                     val targetId = resolveImportTarget(repo, target)
                     // 考试导入按目标课表的开学日重算周次（DESIGN §4.14）：
@@ -1111,9 +1171,14 @@ fun JwImportScreen(
                     } else {
                         courses
                     }
-                    val imported = repo.importParsedCourses(toImport, merge, targetId)
+                    val imported = repo.importParsedCourses(toImport, merge, targetId, importTerm)
                     // 导入到非当前课表后切过去，返回主界面直接看到结果
                     repo.setCurrentTimetable(targetId)
+                    // 教材顺带抓（DESIGN §4.31）：挂进程级作用域，不随本页面销毁中断；
+                    // 静默失败，绝不影响导入主流程与「导入完成」弹窗
+                    Graph.appScope.launch {
+                        Graph.textbookSync(context).syncForTerm(importTerm)
+                    }
                     // 终态反馈后再返回（DESIGN §3.3）：此前导入成功直接 onBack，
                     // 「到底导没导成、导了几门」全靠回主界面猜
                     importSuccess = imported to merge
@@ -1185,6 +1250,57 @@ fun JwImportScreen(
             },
         )
     }
+
+    // 前置登录弹窗（进窗触发，见 LaunchedEffect）：保存成功 = 凭据落库 + OkHttp 会话就绪。
+    // **保存后立刻重载预热入口**：WebView 可能已停在 CAS 登录页，凭据是刚存进去的，
+    // 不重载它就一直停在那（用户要退出重进才生效——2026-09-28 用户实测）。
+    // 重载后落 CAS 页时自动填表（读新存的凭据）接管提交，全程免手输。
+    if (showCasLoginDialog) {
+        CasLoginDialog(
+            cas = cas,
+            vault = Graph.credentialVault(context),
+            title = "登录学校统一认证",
+            description = "保存后，课表导入、报修、成绩单等教务功能会自动登录，" +
+                "不再需要每次输入。密码加密存本机，可随时在「我的 → 学校统一认证」退出并清除。",
+            onSaved = {
+                savedCas = Graph.credentialVault(context).readCas()
+                showCasLoginDialog = false
+                // 自动填表的页面级标记要复位：本轮导航还没用它
+                // 清自动填表的 5 分钟进程级节流：自动填表失败一次就消耗窗口，
+                // 用户刚验证保存的正确密码不该被它压住（对齐引导页 onCredentialsUpdated 口径）
+                cas.onCredentialsUpdated()
+                autoLoginTried = false
+                webView?.loadUrl(JwUrls.SSO_WARMUP)
+            },
+            onSkip = {
+                casLoginDeclined = true
+                showCasLoginDialog = false
+            },
+        )
+    }
+
+    // 手登成功后的补存弹窗（第二层兜底，见手登成功处注释）。
+    // 保存成功同样重载：此时 WebView 停在教务域内、会话本身是好的，但凭据已入库，
+    // 重载预热入口让下一次会话失效时自动填表立即可用；当前页面不强制打断
+    if (showSaveCredentialPrompt) {
+        CasLoginDialog(
+            cas = cas,
+            vault = Graph.credentialVault(context),
+            title = "保存账号密码？",
+            description = "刚刚登录成功。保存后，会话过期时 App 会自动重新登录，" +
+                "不再需要手动输入。密码加密存本机，可随时在「我的 → 学校统一认证」退出并清除。",
+            onSaved = {
+                // 立刻刷新：同一窗口内再落登录页时自动填表就能用上新存的凭据
+                savedCas = Graph.credentialVault(context).readCas()
+                showSaveCredentialPrompt = false
+                autoLoginTried = false
+            },
+            onSkip = {
+                casLoginDeclined = true
+                showSaveCredentialPrompt = false
+            },
+        )
+    }
 }
 
 /**
@@ -1245,6 +1361,8 @@ private data class ImportDraft(
     val result: ImportParseResult.Success,
     val breakdown: List<Pair<String, Int>>? = null,
     val defaultMerge: Boolean = false,
+    /** 理论课表页学期下拉的选项；确认弹窗的学期切换数据源（JSON/考试路径没有）。 */
+    val termOptions: List<TermOption> = emptyList(),
 )
 
 /**

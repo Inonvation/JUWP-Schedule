@@ -2,16 +2,22 @@ package edu.jxslu.schedule.ui.common
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -29,10 +35,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import edu.jxslu.schedule.data.jw.TermOption
 import edu.jxslu.schedule.data.repo.ImportStats
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.Timetable
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowDown01
+import me.rerere.hugeicons.stroke.Tick02
 
 /**
  * 导入目标。用户拍板：导入落点**每次强制选择**——既可导入已有课表，也可新建一张。
@@ -72,6 +82,16 @@ fun ImportTargetDialogHost(
      * 其余调用点（JSON / 剪贴板 / 考试）不传，行为不变。
      */
     breakdown: List<Pair<String, Int>>? = null,
+    /**
+     * 教务学期下拉的全部选项（一键导入才有）。非空时「数据学期」行变成可点下拉：
+     * 选中其他学期经 [onTermSelected] 触发重爬，默认选中就是当前爬到的学期
+     * （[term]）。JSON / 剪贴板 / 考试路径不传，学期保持纯文本展示，行为不变。
+     */
+    availableTerms: List<TermOption>? = null,
+    /** 学期重爬进行中：下拉不可点、「导入」按钮禁用。 */
+    switching: Boolean = false,
+    /** 用户选了另一个学期；触发方负责重爬并替换草稿。 */
+    onTermSelected: ((TermOption) -> Unit)? = null,
 ) {
     val timetables by repo.timetables.collectAsStateWithLifecycle(emptyList())
     val currentId by repo.currentTimetableId.collectAsStateWithLifecycle(0L)
@@ -107,11 +127,71 @@ fun ImportTargetDialogHost(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!term.isNullOrBlank()) {
-                    Text(
-                        "数据学期：$term",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
+                    val termPicker = availableTerms != null && onTermSelected != null
+                    if (termPicker) {
+                        // 学期切换（DESIGN §4.4）：教务的学期下拉选项原样列进来，
+                        // 默认停在当前爬到的学期；选别的学期由调用方带着该学期重爬
+                        var termMenuOpen by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .clickable(enabled = !switching) { termMenuOpen = true },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "数据学期：$term",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                if (switching) {
+                                    Spacer(Modifier.size(8.dp))
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                } else {
+                                    Spacer(Modifier.size(2.dp))
+                                    Icon(
+                                        HugeIcons.ArrowDown01,
+                                        contentDescription = "切换学期",
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    )
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = termMenuOpen,
+                                onDismissRequest = { termMenuOpen = false },
+                            ) {
+                                availableTerms?.forEach { opt ->
+                                    DropdownMenuItem(
+                                        text = { Text(opt.text) },
+                                        trailingIcon = {
+                                            if (opt.text == term || opt.value == term) {
+                                                Icon(
+                                                    HugeIcons.Tick02,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(15.dp),
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            termMenuOpen = false
+                                            if (opt.text != term && opt.value != term) {
+                                                onTermSelected?.invoke(opt)
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            "数据学期：$term",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
                 }
                 breakdown?.forEach { (label, count) ->
                     Text(
@@ -221,7 +301,8 @@ fun ImportTargetDialogHost(
             }
         },
         confirmButton = {
-            val enabled = if (createNew) newName.isNotBlank() else selectedId != null
+            // 学期重爬进行中禁止导入：写库要的是用户确认的那一学期，此刻数据还没落定
+            val enabled = !switching && if (createNew) newName.isNotBlank() else selectedId != null
             TextButton(
                 enabled = enabled,
                 onClick = {

@@ -44,6 +44,14 @@ object QiangzhiScheduleParser {
     if (termSel && termSel.selectedIndex >= 0 && termSel.options) {
       term = (termSel.options[termSel.selectedIndex].textContent || '').trim();
     }
+    // 学期下拉的全部选项（value + 文本 + 是否选中）：导入确认弹窗据此渲染学期切换
+    var terms = [];
+    if (termSel && termSel.options) {
+      for (var ti = 0; ti < termSel.options.length; ti++) {
+        var to = termSel.options[ti];
+        terms.push({ v: (to.value || '').trim(), t: (to.textContent || '').trim(), s: ti === termSel.selectedIndex });
+      }
+    }
     var rows = document.querySelectorAll('tbody tr');
     var carry = {};
     var cellCount = 0;
@@ -78,7 +86,7 @@ object QiangzhiScheduleParser {
         col += colspan;
       }
     }
-    return JSON.stringify({ ok: true, items: out, term: term, cells: cellCount, title: document.title || '', url: location.href });
+    return JSON.stringify({ ok: true, items: out, term: term, terms: terms, cells: cellCount, title: document.title || '', url: location.href });
   } catch (e) {
     return JSON.stringify({ ok: false, error: String(e) });
   }

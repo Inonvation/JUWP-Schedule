@@ -3,6 +3,8 @@ package edu.jxslu.schedule.data.jw
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.ScholarDimension
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -30,6 +32,36 @@ sealed interface ImportParseResult {
 
 /** 只用于读注入 JSON 的顶层 term 字段；宽松解析，任何异常都降级为 null。 */
 private val termExtractJson = Json { ignoreUnknownKeys = true }
+
+/**
+ * 教务学期下拉的一个选项。理论课表页 `select#xnxq01id` 的 options 会随抽取 JSON 一起
+ * 回来（`terms`），导入确认弹窗用它渲染「数据学期」下拉——切换学期后 App 带着该学期
+ * 参数重载课表页重新解析，不必回 WebView 里手动换学期。
+ *
+ * [value] 是 `xnxq01id` 参数值，[text] 是显示文本（教务两者一般同值，取 text 兜底）。
+ */
+data class TermOption(
+    val value: String,
+    val text: String,
+)
+
+/**
+ * 从注入 JSON 读顶层 `terms`（学期下拉全部选项）。宽松解析：缺失、结构不符、
+ * value 不满足 [JwUrls.TERM_PATTERN] 白名单的条目一律丢弃——value 会被拼进重载 URL，
+ * 白名单与 [JwUrls.labScheduleUrl] 同一把尺子。任何异常都降级为空列表（弹窗退回纯文本）。
+ */
+fun extractTermOptions(jsonText: String): List<TermOption> = try {
+    val root = termExtractJson.parseToJsonElement(jsonText).jsonObject
+    val arr = root["terms"]?.jsonArray ?: return emptyList()
+    arr.mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        val v = o["v"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val t = o["t"]?.jsonPrimitive?.content?.trim().orEmpty()
+        if (v.isEmpty()) null else TermOption(v, t.ifEmpty { v })
+    }.filter { JwUrls.TERM_PATTERN.matches(it.value) }
+} catch (_: Exception) {
+    emptyList()
+}
 
 /**
  * 从注入 JS 返回的 JSON 里读顶层 `term`（两个课表解析器共用）。
@@ -188,6 +220,16 @@ object JwUrls {
      * 个人资料头像不落盘——「我的」账号条只用向量图标。
      */
     const val STUDENT_CARD = "$XSD_BASE/jsxsd/grxx/xsxx"
+
+    /**
+     * 学生教材确认壳页（教材管理 → 学生教材确认，DESIGN §4.31）。
+     * 菜单 data-id = `NEW_XSD_PYGL_NJCGL_XSJCQR`，data-src 指向本壳页（layui 表格），
+     * 数据接口 [TEXTBOOK_LIST_API] 的学期参数名是 `xnxqid`（同考试页，不是课表的 xnxq01id）。
+     */
+    const val TEXTBOOK_QUERY = "$XSD_BASE/jsxsd/nxsjc/jccx"
+
+    /** 教材数据接口（不带 .do，与考试/成绩同一套 layui 形态；OkHttp 直抓用）。 */
+    const val TEXTBOOK_LIST_API = "$XSD_BASE/jsxsd/nxsjc/xsjcqr"
 
     /** 主页（SSO 落地） */
     const val STUDENT_HOME = "$XSD_BASE/jsxsd/framework/xsMainV.htmlx"

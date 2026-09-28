@@ -203,6 +203,53 @@ class OneClickImportTest {
         )
     }
 
+    // ---- 学期选项：确认弹窗的学期切换数据源 ---------------------------------------
+
+    @Test
+    fun theorySourceCarriesTermOptions() {
+        val source = OneClickImport.theorySource(
+            theoryJson(
+                items = theoryItem("高等数学", day = 1),
+                cells = 41,
+                terms = """[{"v":"2026-2027-1","t":"2026-2027-1","s":true},""" +
+                    """{"v":"2025-2026-2","t":"2025-2026-2","s":false}]""",
+            ),
+        )
+        assertEquals(2, source.termOptions.size)
+        assertEquals("2025-2026-2", source.termOptions[1].value)
+    }
+
+    @Test
+    fun termOptionsDroppedWithoutWhitelistMatch() {
+        assertEquals(
+            "value 不满足学期白名单的选项整条丢弃（value 要拼进重载 URL）",
+            emptyList<TermOption>(),
+            extractTermOptions("""{"terms":[{"v":"1' or '1'='1","t":"脏值","s":false}]}"""),
+        )
+        assertEquals(
+            "terms 缺失/结构异常降级为空列表，弹窗退回纯文本展示",
+            emptyList<TermOption>(),
+            extractTermOptions("""{"items":[]}"""),
+        )
+        assertEquals(
+            emptyList<TermOption>(),
+            extractTermOptions("<html>不是 JSON</html>"),
+        )
+    }
+
+    @Test
+    fun combinePassesTheoryTermOptionsThrough() {
+        val theory = OneClickImport.theorySource(
+            theoryJson(
+                items = theoryItem("高等数学", day = 1),
+                cells = 41,
+                terms = """[{"v":"2026-2027-1","t":"2026-2027-1","s":true}]""",
+            ),
+        )
+        val result = OneClickImport.combine(theory, OneClickImport.labSource(labJson(items = "")))
+        assertEquals("学期选项来自理论页（实验页跟随理论页学期）", 1, result.termOptions.size)
+    }
+
     // ---- fixture ---------------------------------------------------------------
 
     private fun theoryItem(name: String, day: Int, detail: String = "老师:张;时间:1-8周[1-2节];地点:A101") =
@@ -211,8 +258,15 @@ class OneClickImportTest {
     private fun labItem(name: String, day: Int, week: Int, sections: String) =
         """{"name":"$name","position":"工程训练中心207","day":$day,"week":$week,"sections":"$sections"}"""
 
-    private fun theoryJson(items: String, cells: Int, term: String = "2026-2027-1") =
-        """{"ok":true,"items":[$items],"term":"$term","cells":$cells}"""
+    private fun theoryJson(
+        items: String,
+        cells: Int,
+        term: String = "2026-2027-1",
+        terms: String = "",
+    ): String {
+        val termsField = if (terms.isEmpty()) "" else ""","terms":$terms"""
+        return """{"ok":true,"items":[$items],"term":"$term","cells":$cells$termsField}"""
+    }
 
     private fun labJson(items: String, container: Boolean = true, term: String = "2026-2027-1") =
         """{"ok":true,"items":[$items],"term":"$term","container":$container}"""
