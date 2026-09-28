@@ -942,6 +942,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             prefs.setPowerAlertEnabled(false)
             prefs.setYktAlertEnabled(false)
             credentialStore.clear()
+            // 连内存里的 token 缓存一起清：敏感值不留进程内存（2026-09-28 审查补）
+            repo.clearTokenCache()
             // 两个提醒都关了 → 内部会撤销每日周期任务，不白唤醒设备
             BalanceAlertReminder.ensurePeriodicWork(appContext)
             onDone()

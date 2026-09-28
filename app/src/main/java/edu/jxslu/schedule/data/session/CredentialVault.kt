@@ -29,7 +29,30 @@ class CredentialVault(context: Context) : CredentialStore, YktTokenCache {
     }
     private val tokenPrefs: SharedPreferences by lazy { encrypted(FILE_YKT_TOKENS) }
 
-    private fun encrypted(name: String): SharedPreferences = EncryptedSharedPreferences.create(
+    /**
+     * 加密 prefs 的**带自愈**创建（DESIGN §4.27，2026-09-28 审查补）。
+     *
+     * 裸 `EncryptedSharedPreferences.create` 在 Keystore 损坏时（小米换机、云备份恢复后
+     * 常见：`AEADBadTagException` / `GeneralSecurityException`）直接抛异常，而凭证读取
+     * 都发生在 Compose 组合期——App 启动即崩、循环崩溃，用户唯一出路是清数据（丢课表
+     * 与笔记）。自愈策略：失败 → **删除该 prefs 文件重建**（一次性丢失该份凭证，换
+     * 功能可用）→ 再失败退回普通明文 prefs 兜底（只存「空」，等同未登录，绝不再抛）。
+     *
+     * 只影响本文件（jw / ykt / ykt_tokens 三份）；qiekj/qzxy 有同款问题，各自修。
+     */
+    private fun encrypted(name: String): SharedPreferences {
+        runCatching { return create(name) }
+        // 首次创建失败：删文件重建（密钥损坏时这是唯一出路）
+        runCatching {
+            appContext.deleteSharedPreferences(name)
+            return create(name)
+        }
+        // 仍失败（系统级问题）：明文空 prefs 兜底——读到的都是空 = 未登录，不再抛
+        android.util.Log.e("CredentialVault", "encrypted prefs $name unrecoverable, fallback to plain")
+        return appContext.getSharedPreferences("$name.fallback", Context.MODE_PRIVATE)
+    }
+
+    private fun create(name: String): SharedPreferences = EncryptedSharedPreferences.create(
         appContext,
         name,
         MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),

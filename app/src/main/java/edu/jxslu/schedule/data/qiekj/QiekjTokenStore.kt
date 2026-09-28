@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.data.qiekj
 
 import android.content.Context
+import android.util.Log
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -12,13 +14,29 @@ import androidx.security.crypto.MasterKey
  * 排除出云备份与设备迁移，避免 token 泄漏到备份体系。
  */
 class QiekjTokenStore(context: Context) {
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "secure_token",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private val appContext = context.applicationContext
+
+    /**
+     * 带自愈的加密 prefs 创建（2026-09-28 审查补）：Keystore 损坏时（换机/云备份恢复后
+     * 常见）裸 create 会抛异常且调用点在组合期——App 启动即循环崩溃。失败先删文件重建
+     * （一次性丢 token，换功能可用），仍失败退明文空 prefs（等同未登录）。
+     */
+    private val prefs: SharedPreferences by lazy {
+        fun create(): SharedPreferences = EncryptedSharedPreferences.create(
+            appContext,
+            "secure_token",
+            MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+        runCatching { return@lazy create() }
+        runCatching {
+            appContext.deleteSharedPreferences("secure_token")
+            return@lazy create()
+        }
+        android.util.Log.e("QiekjTokenStore", "secure_token unrecoverable, fallback to plain")
+        appContext.getSharedPreferences("secure_token.fallback", Context.MODE_PRIVATE)
+    }
 
     fun readToken(): String? = prefs.getString(KEY_TOKEN, null)
 

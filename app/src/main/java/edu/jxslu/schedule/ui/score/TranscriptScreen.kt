@@ -84,6 +84,7 @@ import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SectionHeader
+import edu.jxslu.schedule.ui.common.CasLoginDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -570,8 +571,15 @@ private fun AuthorizationOverlay(
     // 停在统一认证登录页时用保存的凭证自动登一次（DESIGN §4.25）。只试一次：
     // 失败（结构变了 / 有验证码）就交给用户手登，反复试只会撞风控。
     val context = LocalContext.current
-    val savedCas = remember { Graph.credentialVault(context).readCas() }
+    var savedCas by remember { mutableStateOf(Graph.credentialVault(context).readCas()) }
     var autoLoginTried by remember { mutableStateOf(false) }
+    // 前置登录（DESIGN §4.27，2026-09-28）：本地没有凭据时进授权层先问一次，
+    // 保存验证通过后 WebView 落 CAS 页由自动填表接管（与教务导入同一套闭环）
+    var showCasLoginDialog by remember { mutableStateOf(false) }
+    var casLoginDeclined by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (savedCas == null && !casLoginDeclined) showCasLoginDialog = true
+    }
 
     // 自动识别会连着触发多次（落地后还有后续页面加载与非主框架回调），只认第一次
     var fired by remember { mutableStateOf(false) }
@@ -713,6 +721,31 @@ private fun AuthorizationOverlay(
             Spacer(Modifier.weight(1f))
             Button(onClick = authorizeOnce) { Text("已登录，继续") }
         }
+    }
+
+    if (showCasLoginDialog) {
+        CasLoginDialog(
+            cas = Graph.casSession(context),
+            vault = Graph.credentialVault(context),
+            title = "登录学校统一认证",
+            description = "导出盖章成绩单需要统一认证账号。保存后 App 会自动登录，" +
+                "不再需要每次输入。密码加密存本机，可随时在「我的 → 学校统一认证」退出并清除。",
+            onSaved = {
+                savedCas = Graph.credentialVault(context).readCas()
+                showCasLoginDialog = false
+                // 保存后立刻重载统一认证入口：WebView 可能已停在 CAS 登录页，
+                // 凭据是刚存的，重载后自动填表接管提交（用户不必退出重进）
+                // 清自动填表的 5 分钟进程级节流：自动填表失败一次就消耗窗口，
+                // 用户刚验证保存的正确密码不该被它压住（对齐引导页 onCredentialsUpdated 口径）
+                Graph.casSession(context).onCredentialsUpdated()
+                autoLoginTried = false
+                webView?.loadUrl(PtworkTranscript.CAS_ENTRY)
+            },
+            onSkip = {
+                casLoginDeclined = true
+                showCasLoginDialog = false
+            },
+        )
     }
 }
 

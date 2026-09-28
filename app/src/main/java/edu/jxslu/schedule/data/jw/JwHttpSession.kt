@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.jw
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import edu.jxslu.schedule.data.session.CasLoginClassifier
@@ -58,6 +59,8 @@ class JwHttpSession private constructor(
     }
 
     companion object {
+        private const val TAG = "JwHttpSession"
+
         private const val CAS = "https://eapp2.juwp.edu.cn:9443"
         private const val PORTAL = "http://portal.juwp.edu.cn"
         private const val JW_SSO_SERVICE = "http://jiaowu.juwp.edu.cn/sso.jsp"
@@ -80,9 +83,16 @@ class JwHttpSession private constructor(
          * 学籍卡抓回来一张登录页（解析必失败），而「今天试过」的闸门又把重试挡到第二天。
          *
          * 顺带记一笔：`用户没有登录` 这个文案按 DESIGN §4.17 的实测在真实页面上出现 **0 次**，
-         * 它只是历史兜底；真正认得出登录页的是这两个表单特征。
+         * 它只是历史兜底；真正认得出登录页的是密码框特征。
+         *
+         * **⚠️ `LoginToXk` 不能当登录页特征（2026-09-28 真机实证）**：它是强智选课入口的
+         * 通用路径——**已登录主页（151KB）的「退出登录」隐藏表单 action 也是
+         * `/jsxsd/xk/LoginToXk?method=exit`**（实测出现 2 次）。把它当特征会把每一个
+         * 正常登录的主页判成登录页：探针永远失败 → 完整登录 → 第 6 步再校验又失败 →
+         * 「教务登录没走通」必现，整条自动续登链路瘫痪。唯一可靠的区分特征是
+         * `userPassword`（登录页密码框的 id/name，实测 11 处；已登录主页为 **0**）。
          */
-        private val LOGIN_PAGE_MARKERS = listOf("LoginToXk", "userPassword")
+        private val LOGIN_PAGE_MARKERS = listOf("userPassword")
 
         /**
          * 页面是不是登录页：既含 860 字节的提示页，也含就地渲染的登录页。
@@ -215,7 +225,17 @@ class JwHttpSession private constructor(
             getFollowRedirects(ssoLocation)
             val home = getFollowRedirects(STUDENT_HOME)
             val homeOk = home.length >= HOME_MIN_BYTES && !looksLikeLoginPage(home)
-            if (!homeOk) throw JwHttpException.Protocol("教务会话无效（已退回登录页）")
+            if (!homeOk) {
+                // 每一环都可能独立坏掉（ticket 校验、预热 cookie、主页渲染），
+                // 不落日志的话「教务会话无效」永远查不出是哪一环（2026-09-28 用户复现）。
+                // 只记字节数与是否登录页形态，**不记任何 cookie 或页面内容**。
+                Log.w(
+                    TAG,
+                    "login step6 home check failed: bytes=${home.length} " +
+                        "looksLogin=${looksLikeLoginPage(home)} notLogged=${NOT_LOGGED in home}",
+                )
+                throw JwHttpException.Protocol("教务登录没走通（CAS 已通过，教务侧会话未建立）。请在导入页手动登录一次，或稍后重试。")
+            }
         } catch (e: IOException) {
             throw JwHttpException.Network(e)
         } catch (e: JwHttpException) {

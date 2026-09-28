@@ -304,6 +304,9 @@ private fun JwStep(
             cas.onCredentialsUpdated()
             val result = try {
                 cas.tryLogin(user, password)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 窗口销毁（用户退出引导）时取消必须原样抛，别把登录链拖完
+                throw e
             } catch (e: Exception) {
                 CasEnsureResult.Failed(e.message ?: "登录异常")
             }

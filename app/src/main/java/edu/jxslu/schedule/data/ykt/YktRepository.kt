@@ -514,6 +514,17 @@ class YktRepository(
     private var cachedToken: String? = tokenCache?.readToken(clock())
 
     /**
+     * 清进程内 token 缓存（2026-09-28 审查补，退出登录时调）。
+     *
+     * 落盘 token 由 [edu.jxslu.schedule.data.session.CredentialVault.clearYkt] 清，
+     * 但这份内存缓存不会自动失效：残留值敏感（进程存活期内驻留），且重新开启校园卡后
+     * 第一次请求会拿旧 token 白试一次 401 才重登。敏感值不留内存。
+     */
+    fun clearTokenCache() {
+        cachedToken = null
+    }
+
+    /**
      * 余额快照的内存缓存（DESIGN §4.24「请求节流」）。
      *
      * 生活页一次进页原本要打两条余额请求（`queryCard` + `queryCard?scene=recharge`），

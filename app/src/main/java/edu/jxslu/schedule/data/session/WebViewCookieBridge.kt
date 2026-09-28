@@ -29,6 +29,20 @@ interface WebCookieBridge {
      * 抄一份没有会话的 cookie 只会让 `CasSession` 白探一次教务。
      */
     fun hasAnyCookie(urls: List<String> = CasSession.ADOPT_URLS): Boolean
+
+    /**
+     * 清掉 WebView 的全部 cookie（2026-09-28，退出登录用）。
+     *
+     * `CookieManager` 没有按域删除的公开 API（`removeAllCookies` 是整库、
+     * `setCookie` 只能覆写单条且要求完整的过期属性拼装）。取**整库清空**：
+     * App 内 WebView 只访问学校域（教务导入 / 学工表单 / 成绩单授权三个入口），
+     * 整库清掉不会误伤第三方登录态；各入口下次打开时按需重建会话。
+     *
+     * 不清这里的代价：用户「退出登录并清除密码」后，WebView 里留着的手登会话
+     * 仍然有效——导入页探针通过照常直进教务，「我的」页状态卡也一直「已登录」，
+     * 退出形同虚设。
+     */
+    suspend fun clearAll()
 }
 
 /** 真机实现：`CookieManager` 的读写都要在有 Looper 的线程上，所以全部包 `Dispatchers.Main`。 */
@@ -81,5 +95,10 @@ object WebViewCookieBridge : WebCookieBridge {
             val header = runCatching { manager.getCookie(url) }.getOrNull()
             SessionCookieRules.hasSessionCookie(header)
         }
+    }
+
+    override suspend fun clearAll() = withContext(Dispatchers.Main) {
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
     }
 }

@@ -115,5 +115,25 @@ class JwHttpSessionTest {
         assertTrue(!JwHttpSession.looksLikeLoginPage(home))
     }
 
+    /**
+     * 关键回归（2026-09-28 真机实证）：**已登录主页也含 `LoginToXk`**——那是「退出登录」
+     * 隐藏表单的 action（`/jsxsd/xk/LoginToXk?method=exit`，实测出现 2 次）。
+     * 把它当登录页特征会把每个正常主页判成登录页：探针永远失败 → 完整登录 →
+     * 第 6 步校验再失败 → 「教务登录没走通」必现，自动续登整条瘫痪。
+     * 唯一可靠特征是 `userPassword`（登录页密码框 id/name；已登录主页实测 0 处）。
+     */
+    @Test
+    fun loggedInHomeWithLogoutForm_isNotALoginPage() {
+        val home = """
+            <html><head><title>学生端</title></head><body>
+            <div id='xsMainV'>我的课表</div>
+            <form id="Form1" name="Form1" action="" target="hideFrame" method="post"></form>
+            <script>function tcdl(){ window.Form1.action="/jsxsd/xk/LoginToXk?method=exit";
+            window.Form1.submit(); }</script>
+            </body></html>
+        """.trimIndent()
+        assertTrue("含 LoginToXk 退出表单的主页不是登录页", !JwHttpSession.looksLikeLoginPage(home))
+    }
+
     private fun String.toHttpUrlForTest(): HttpUrl = toHttpUrl()
 }

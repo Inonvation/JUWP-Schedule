@@ -343,6 +343,10 @@ class CasSessionTest {
         assertFalse(http.cookiePresent)
         assertEquals(null, store.cas)
         assertEquals(0, store.gate.consecutiveCredentialFailures)
+        assertEquals(
+            "WebView 的 CookieManager 必须一起清（否则手登会话还在，退出形同虚设）",
+            1, web.clearAllCalls,
+        )
     }
 }
 
@@ -413,6 +417,7 @@ private class FakeWebCookieBridge : WebCookieBridge {
     var adoptCalls = 0
     /** null = 按 [adoptResult] 是否为空推，够用；要单独造「有 cookie 但不是会话」时显式赋值。 */
     var hasAnyCookieResult: Boolean? = null
+    var clearAllCalls = 0
 
     override suspend fun adopt(urls: List<String>): List<Cookie> {
         adoptCalls++
@@ -421,4 +426,10 @@ private class FakeWebCookieBridge : WebCookieBridge {
 
     override fun hasAnyCookie(urls: List<String>): Boolean =
         hasAnyCookieResult ?: adoptResult.isNotEmpty()
+
+    override suspend fun clearAll() {
+        clearAllCalls++
+        hasAnyCookieResult = false
+        adoptResult = emptyList()
+    }
 }

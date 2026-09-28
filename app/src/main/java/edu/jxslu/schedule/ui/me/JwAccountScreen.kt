@@ -61,6 +61,8 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.CalendarSetting01
@@ -83,6 +85,7 @@ import me.rerere.hugeicons.stroke.ViewOff
 @Composable
 fun JwAccountScreen(onBack: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val vault = remember { Graph.credentialVault(context) }
     val prefs = remember { Graph.displayPrefs(context) }
     val cas = remember { Graph.casSession(context) }
@@ -213,8 +216,12 @@ fun JwAccountScreen(onBack: () -> Unit) {
                 TextButton(
                     onClick = {
                         confirmLogout = false
-                        cas.logout()
-                        onBack()
+                        // logout 现在挂起：清 WebView cookie 要切主线程（桥内部处理）。
+                        // 清完再返回，状态卡重读时看到的才是真的「未登录」
+                        scope.launch {
+                            cas.logout()
+                            onBack()
+                        }
                     },
                 ) { Text("退出并清除") }
             },

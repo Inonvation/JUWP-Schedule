@@ -226,9 +226,23 @@ class CasSession(
         SessionStatus.clearAutoLoginThrottle()
     }
 
-    /** 退出教务登录：清会话与凭证（一卡通那套不受影响）。 */
-    fun logout() {
+    /**
+     * 退出教务登录：清 OkHttp 会话、WebView cookie、凭证（一卡通那套不受影响）。
+     *
+     * **WebView 那侧必须一起清**（2026-09-28 用户实测）：不清的话，之前手登/自动填表
+     * 留在 `CookieManager` 里的会话仍然有效——导入页探针通过照常直进教务，
+     * 「我的」页状态卡（`hasAnyCookie`）也一直报「已登录」，退出形同虚设。
+     * 挂起因为 `CookieManager` 的读写要在有 Looper 的线程上（桥内部已切 Main）。
+     *
+     * **必须在 [loginMutex] 里做**（2026-09-28 审查）：否则与在途登录并发时，
+     * 登录协程返回成功后会把 cookie 写回 jar、闸门记成 `afterSuccess`——
+     * 凭证已清但会话复活，10 分钟信任期内取数照常跑，退出被悄悄撤销。
+     * 与 `ensureValid`/`tryLogin` 串行化后，要么登录先完成退出再清，要么退出先完成
+     * 登录后拿到「凭证不存在」自然放弃。
+     */
+    suspend fun logout() = loginMutex.withLock {
         http.clearCookies()
+        webCookies.clearAll()
         vault.clearCas()
         onCredentialsUpdated()
     }
