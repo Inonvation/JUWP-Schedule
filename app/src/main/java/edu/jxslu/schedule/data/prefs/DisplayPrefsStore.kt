@@ -394,6 +394,18 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_SCORE_SYNC_DATE] = dateKey }
     }
 
+    /**
+     * 教材的上次成功抓取日期（ISO）。空 = 从没成功过。
+     * 教材跟着「导入课表」走（一学期一次），这里只做记录与展示，不做时间闸门。
+     */
+    val textbookSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_TEXTBOOK_SYNC_DATE].orEmpty()
+    }
+
+    suspend fun setTextbookSyncDate(dateKey: String) {
+        context.displayDataStore.edit { it[KEY_TEXTBOOK_SYNC_DATE] = dateKey }
+    }
+
     /** 开水双击确认。全局项，默认双击防误触。 */
     val waterRequireDoubleClick: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_WATER_REQUIRE_DOUBLE_CLICK] ?: true
@@ -1232,6 +1244,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCHOLAR_PLAN_NAME = stringPreferencesKey("scholar_plan_name")
         val KEY_SCHOLAR_SYNC_DATE = stringPreferencesKey("scholar_sync_date")
         val KEY_SCORE_SYNC_DATE = stringPreferencesKey("score_sync_date")
+        val KEY_TEXTBOOK_SYNC_DATE = stringPreferencesKey("textbook_sync_date")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

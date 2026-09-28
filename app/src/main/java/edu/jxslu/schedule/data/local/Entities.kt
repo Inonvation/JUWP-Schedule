@@ -12,6 +12,7 @@ import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
+import edu.jxslu.schedule.domain.Textbook
 import java.time.LocalDate
 
 /**
@@ -31,6 +32,11 @@ data class TimetableEntity(
     val slotsCustomized: Boolean = false,
     /** 【退役列】v3 的课表级显示偏好 JSON。仅历史迁移（globalizeViewPrefs）还会读。 */
     val prefsJson: String,
+    /**
+     * 课表数据的学年学期（如 2026-2027-1，Room v14）。教务导入时写入；
+     * null = 旧数据或手工建表，课程详情不查教材（没有学期钥匙，查了会串学期）。
+     */
+    val term: String? = null,
 ) {
     fun toDomain(): Timetable = Timetable(
         id = id,
@@ -38,6 +44,7 @@ data class TimetableEntity(
         createdAt = createdAt,
         sortOrder = sortOrder,
         slotsCustomized = slotsCustomized,
+        term = term,
     )
 }
 
@@ -322,6 +329,65 @@ data class HomeworkEntity(
             doneAt = homework.doneAt,
             createdAt = homework.createdAt,
             updatedAt = homework.updatedAt,
+        )
+    }
+}
+
+/**
+ * 教材（DESIGN §4.31，Room v14）。来自教务「学生教材确认」，归属口径同 [NoteEntity]：
+ * 挂课程名、不带 timetableId（覆盖导入会换 id）。多带 [term] 区分学期——
+ * 教材按学期替换（同 note 的「用户自写数据」不同，它是教务口径的快照），
+ * 课程详情按「当前课表的 term + 课程名」查询。
+ *
+ * 展示列全部可空转空串：教务没填的列直接空着，不猜测补全。
+ * 索引名由 Room 生成（`index_textbooks_term_courseName`），迁移里的 CREATE INDEX
+ * 必须逐字对齐，否则迁移校验崩溃。
+ */
+@Entity(
+    tableName = "textbooks",
+    indices = [Index(value = ["term", "courseName"])],
+)
+data class TextbookEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 学年学期（如 2026-2027-1）。 */
+    val term: String,
+    /** 课程名称，与课表课名逐字一致（同一教务课程库）。 */
+    val courseName: String,
+    /** 教材名称（jcmc）。 */
+    val title: String,
+    /** 主编（jczz）。 */
+    val author: String = "",
+    /** 出版社（cbsmc）。 */
+    val press: String = "",
+    /** 版次（jcbc）。 */
+    val edition: String = "",
+    val isbn: String = "",
+    /** 定价（jcdj）。 */
+    val price: String = "",
+) {
+    fun toDomain(): Textbook = Textbook(
+        id = id,
+        term = term,
+        courseName = courseName,
+        title = title,
+        author = author,
+        press = press,
+        edition = edition,
+        isbn = isbn,
+        price = price,
+    )
+
+    companion object {
+        fun fromDomain(textbook: Textbook): TextbookEntity = TextbookEntity(
+            id = textbook.id.takeIf { it > 0 } ?: 0,
+            term = textbook.term,
+            courseName = textbook.courseName,
+            title = textbook.title,
+            author = textbook.author,
+            press = textbook.press,
+            edition = textbook.edition,
+            isbn = textbook.isbn,
+            price = textbook.price,
         )
     }
 }

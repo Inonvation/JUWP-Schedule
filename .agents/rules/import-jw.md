@@ -21,6 +21,29 @@
   理论课表」不能换成「URL 含 `xskb`」（实验页 URL 也含它，会变成自动死循环），一次性标记
   `autoImportTried` 同步置位、并在 `runOneClickImport` 入口消费（手动点按钮也算用掉）。
 
+## 确认弹窗支持切换学期（2026-09-28）
+
+- 弹窗的「数据学期」行在**一键导入路径**下是可点下拉（`ImportTargetDialogHost` 新参
+  `availableTerms/switching/onTermSelected`，其余调用点不传行为不变）。数据源是抽取脚本
+  额外输出的 `terms:[{v,t,s}]`（理论页学期下拉全部选项），经 `extractTermOptions` 宽松解析，
+  **value 必须过 `TERM_PATTERN` 白名单**（value 要拼进重载 URL），异常降级为空列表。
+- 切学期 = `runOneClickImport(forceTerm)` 带着 `xnxq01id` **强制重载**理论页再抽两张表——
+  此时不能沿用「已在理论页就不重载」的捷径（那条只适用于没指定学期的默认路径）；
+  重爬中 `switching` 置位（下拉不可点、「导入」禁用），失败保持原草稿。
+- **导入学期写进目标课表**：`importParsedCourses(..., term)` 会把数据学期写进 `Timetable.term`
+  （Room v14）。这列是课程详情查教材的钥匙（DESIGN §4.31）——动导入写库口径时别把它弄丢。
+
+## 教材（2026-09-28）
+
+- 教材来自「教材管理 → 学生教材确认」：壳页 `/jsxsd/nxsjc/jccx` + 数据接口
+  `/jsxsd/nxsjc/xsjcqr`（layui 形态，参数 `xnxqid` + `pageNum/pageSize`，**不带 .do**）。
+  解析在 `data/jw/TextbookParser.kt`（照 ScoreParser 的三道检查），同步器 `data/repo/TextbookSync.kt`。
+- **触发点只有一个**：教务/JSON 导入写库成功后 `Graph.appScope.launch { textbookSync().syncForTerm(term) }`
+  （`ui/jwvw/JwImportScreen.kt`）。静默失败、成功才记日期，**没有 7 天闸门**（教材跟导入走，
+  天然低频；`prefs.textbookSyncDate` 只做记录）。
+- **`xsjcisxy.do` 是征订确认的写操作（POST），任何路径都不碰**——教材功能只读 `xsjcqr`。
+- 查询口径：详情面板按「当前课表 `Timetable.term` + 课程名」过滤；term 为空（旧课表）不显示。
+
 ## 成绩导入也自动跑（2026-09-26）
 
 - **落到成绩查询页就自动导入**：成绩模式（`JwImportMode.Scores`）下 `xsMainV` → `cjcx_frm`

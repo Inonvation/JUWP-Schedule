@@ -22,8 +22,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         PowerReadingEntity::class,
         ScholarGroupEntity::class,
         ScholarCourseEntity::class,
+        TextbookEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -38,6 +39,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun homeworkDao(): HomeworkDao
     abstract fun powerReadingDao(): PowerReadingDao
     abstract fun scholarProgressDao(): ScholarProgressDao
+    abstract fun textbookDao(): TextbookDao
 
     companion object {
 
@@ -394,6 +396,40 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v13 → v14：教材（DESIGN §4.31）+ 课表学期号。
+         *
+         * `timetables.term` 记这张课表的数据学期（教务导入时写入），是课程详情查教材的
+         * 钥匙；ALTER TABLE 加可空列，历史行落 null（不显示教材，导入后自动补）。
+         * `textbooks` 全局挂 courseName（同 notes/homework，不挂 timetableId），
+         * 另按 term 过滤。索引名必须与实体 `@Index(value=["term","courseName"])`
+         * 生成的 `index_textbooks_term_courseName` 逐字对齐。
+         */
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE timetables ADD COLUMN term TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS textbooks (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "term TEXT NOT NULL, " +
+                        "courseName TEXT NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        // author/press/edition/isbn/price 在实体里带 Kotlin 默认值 ""——
+                        // Room 会把构造默认值写进预期 schema 的 DEFAULT，这里必须逐字带
+                        // DEFAULT ''，否则迁移校验崩溃（v7→v8 remark、v11→v12 roomName 同坑）
+                        "author TEXT NOT NULL DEFAULT '', " +
+                        "press TEXT NOT NULL DEFAULT '', " +
+                        "edition TEXT NOT NULL DEFAULT '', " +
+                        "isbn TEXT NOT NULL DEFAULT '', " +
+                        "price TEXT NOT NULL DEFAULT '')",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_textbooks_term_courseName " +
+                        "ON textbooks(term, courseName)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -417,6 +453,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_10_11,
                         MIGRATION_11_12,
                         MIGRATION_12_13,
+                        MIGRATION_13_14,
                     )
                     .build()
                     .also { instance = it }

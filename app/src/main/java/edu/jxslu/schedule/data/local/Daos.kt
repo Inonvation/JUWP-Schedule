@@ -253,3 +253,38 @@ interface ScholarProgressDao {
     @Query("DELETE FROM scholar_courses")
     suspend fun deleteCourses()
 }
+
+/**
+ * 教材（DESIGN §4.31，Room v14）。归属口径同 [NoteDao]（挂课程名、不带 timetableId），
+ * 另按 term 过滤——课程详情查「当前课表学期 + 课程名」，跨学期的教材互不可见。
+ */
+@Dao
+interface TextbookDao {
+
+    @Query(
+        "SELECT * FROM textbooks WHERE term = :term AND courseName = :courseName " +
+            "ORDER BY id",
+    )
+    fun observeForCourse(term: String, courseName: String): Flow<List<TextbookEntity>>
+
+    @Query("SELECT * FROM textbooks WHERE term = :term ORDER BY courseName, id")
+    suspend fun getForTerm(term: String): List<TextbookEntity>
+
+    /** 备份导出的来源：全部学期一起带走（与成绩同口径，教材全局归属学生）。 */
+    @Query("SELECT * FROM textbooks ORDER BY term, courseName, id")
+    suspend fun getAll(): List<TextbookEntity>
+
+    @Query("SELECT COUNT(*) FROM textbooks")
+    suspend fun count(): Int
+
+    /** 整批写入（配合 [deleteForTerm] 在事务里做按学期替换）。 */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(books: List<TextbookEntity>)
+
+    @Query("DELETE FROM textbooks WHERE term = :term")
+    suspend fun deleteForTerm(term: String)
+
+    /** 备份恢复用：整体替换（先清全部再插，与成绩恢复同一口径）。 */
+    @Query("DELETE FROM textbooks")
+    suspend fun deleteAll()
+}

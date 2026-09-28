@@ -24,6 +24,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py   # 实验课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py         # 考试安排（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py        # 课程成绩（缺省全部学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_textbooks.py     # 学生教材确认（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py         # 寝室电费（非教务，无 --term；本人绑定房间剩余电量）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history   # 追加电费充值流水
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py    # 教务处盖章成绩单 PDF（非强智教务，见 §5.6）
@@ -39,6 +40,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `scripts/out/lab_courses.json` | 实验课表，同上 + `kind: "lab"` |
 | `scripts/out/exams.json` | 考试安排（考试时间已拆成 date/startTime/endTime） |
 | `scripts/out/scores.json` | 课程成绩（`term` + `terms` 双口径；`pendingReview` 标记评教锁定） |
+| `scripts/out/textbooks.json` | 学生教材确认书目（课程名与课表课名逐字一致，可直接关联） |
 | `scripts/out/xskb_vt0.html` | 理论课表页快照 |
 | `scripts/out/syxkb.html` | 实验课表页快照 |
 | `scripts/out/*_raw.json` / `exams_raw.json` / `scores_raw.json` | 解析中间产物（含原始文本，排错用） |
@@ -57,6 +59,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `fetch_lab_courses.py` | 实验课表 → JSON（含周次聚合） | 纯解析，不做登录 |
 | `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
 | `fetch_scores.py` | 课程成绩 → JSON | 同上；`--term` 缺省查全部学期 |
+| `fetch_textbooks.py` | 学生教材确认 → JSON | layui JSON 接口；`--term` 缺省当前学期；学期校验用行内 `xnxq01id`，见 §5.7 |
 | `fetch_power.py` | 寝室电费 → JSON | 新开普缴费平台，学号 + 查询密码；**与教务链路无关** |
 | `fetch_transcript.py` | 教务处盖章成绩单 → PDF | 金格签章系统（`jwxyxx`）；共用 CAS，但**不经过强智教务**，见 §5.6 |
 | `gen_week_layout_preview.py` | 生成课表排版提案 HTML | 与爬取无关 |
@@ -358,6 +361,26 @@ App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blad
 红线：这份 PDF 含姓名、学号、证件照与全部成绩，**只落 `scripts/out/`（已 gitignore），不要外传、不要入公开仓库**；
 签章系统只有 HTTP 明文（443 实测连接超时），CAS 票据与成绩单都明文回传，脚本不做任何规避。
 
+### 5.7 学生教材确认（2026-09-28 实测）
+
+教务「教材管理 → 学生教材确认」（菜单 data-id `NEW_XSD_PYGL_NJCGL_XSJCQR`），与考试/成绩
+同一套 **layui JSON 接口**形态：
+
+```
+壳页  GET /jsxsd/nxsjc/jccx              （layui 表格 + 学期下拉 select#xnxqid）
+数据  GET /jsxsd/nxsjc/xsjcqr?xnxqid=<学期>&pageNum=1&pageSize=200
+```
+
+- 响应 `{code:0, count, data:[…]}`，分页 `pageNum/pageSize`；学期参数名是 `xnxqid`
+  （同考试页），**不是**课表页的 `xnxq01id`。
+- 字段：`kcmc`=课程名称（**与课表课名逐字一致**，可当关联键）、`jcmc`=教材名称、
+  `jczz`=主编、`cbsmc`=出版社、`jcbc`=版次、`isbn`、`jcdj`=定价、`skjs`=上课教师、
+  `zdzt`=征订状态、行内 `xnxq01id`=数据学期（脚本据此校验「请求学期=返回学期」）。
+- `kcmc` 或 `jcmc` 为空的行丢弃（教务未定教材的占位行没有产出价值）。
+- 空学期参数返回 `code=0 count=0`；学期无教材属正常。
+- **红线**：壳页里另有 `xsjcisxy.do`（征订/不征订确认，**POST**）——那是学生向教务确认
+  订购的写操作，脚本与 App 只读 `xsjcqr`，绝不触碰。
+
 ---
 
 ## 6. 故障排查
@@ -370,6 +393,7 @@ App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blad
 | 课表页无「个人课表」标记 | 页面结构变更 | 重新抓快照，对比 §5 的类名与列序 |
 | 考试/成绩接口返回「系统功能暂未开放」 | 用了带 `.do` 的地址，或校方关闭了功能 | 改用不带 `.do` 的接口地址；仍 no-open 则是校方侧开关，等开放 |
 | 考试/成绩接口返回空但 len 也异常小 | 分页参数用了 `page/limit` | 改成 `pageNum` / `pageSize`（§5.4） |
+| 教材接口行内 `xnxq01id` 与请求学期不一致 | 教务没按参数过滤 / 学期号写错 | 脚本会直接报错；核对 `--term` 取值（§5.7） |
 | 课程全部堆在周一 | 用了 `qz-hasCourse-N` 当星期 | 改回按 `<td>` 列序 + carry |
 | 周次解析为空 | 详情文本格式变化 | 看 `out/*_raw.json` 里的 `detail_raw` / `weeks_raw` |
 | 电费登录返回 `{"error":"unauthorized"}` | 用了教务密码 | 填缴费平台查询密码（`powerPassword`），两套密码不通用（§5.5） |

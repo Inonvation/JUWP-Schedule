@@ -487,10 +487,16 @@ fun TodayScreen(
     // 只读详情（与课表页同口径）：编辑/删除是详情里的二级动作；
     // 2026-09-21 起弹窗内还有「笔记·课件 / 作业」两个入口（DESIGN §3.11）
     detailCourse?.let { course ->
+        // 教材（DESIGN §4.31）：按当前课表学期 + 课程名查；无学期号的课表给空，不显示
+        val detailRepo = remember(context) { Graph.repository(context) }
+        val detailTextbooks by remember(course.name) {
+            detailRepo.textbooksFor(course.name)
+        }.collectAsStateWithLifecycle(initialValue = emptyList())
         CourseDetailSheet(
             course = course,
             slots = state.slots,
             currentWeek = state.week,
+            textbooks = detailTextbooks,
             onEdit = {
                 detailCourse = null
                 editing = course

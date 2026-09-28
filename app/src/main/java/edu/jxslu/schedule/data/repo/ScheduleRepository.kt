@@ -7,6 +7,7 @@ import edu.jxslu.schedule.data.local.ScoreEntity
 import edu.jxslu.schedule.data.local.ScholarCourseEntity
 import edu.jxslu.schedule.data.local.ScholarGroupEntity
 import edu.jxslu.schedule.data.local.SemesterConfigEntity
+import edu.jxslu.schedule.data.local.TextbookEntity
 import edu.jxslu.schedule.data.local.TimeSlotEntity
 import edu.jxslu.schedule.data.local.TimetableEntity
 import edu.jxslu.schedule.data.local.courseKindFromName
@@ -37,6 +38,7 @@ import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
+import edu.jxslu.schedule.domain.Textbook
 import edu.jxslu.schedule.domain.TimetablePrefs
 import edu.jxslu.schedule.domain.TimeSlotRules
 import edu.jxslu.schedule.domain.TweakMode
@@ -48,6 +50,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -108,6 +111,11 @@ data class CourseExport(
      */
     val scholarGroups: List<ScholarGroupBackupJson> = emptyList(),
     val scholarCourses: List<ScholarCourseBackupJson> = emptyList(),
+    /**
+     * 教材备份段（DESIGN §4.31）：换机/重装随备份一起恢复。与成绩同理，
+     * 旧版 App 忽略该段、新版读旧文件缺省为空，两版互不破坏。
+     */
+    val textbooks: List<TextbookBackupJson> = emptyList(),
     /**
      * 学期配置备份段（DESIGN §4.3）：导出当前课表、导入恢复到目标课表。
      * 旧文件没有此键 → 不动目标课表的学期配置。
@@ -197,6 +205,41 @@ data class ScholarCourseBackupJson(
     val scoreText: String = "",
     val remark: String = "",
     val degreeCourse: Boolean? = null,
+)
+
+/** 备份文件里的单条教材（DESIGN §4.31）：字段与 [Textbook] 对齐、全带默认值。 */
+@Serializable
+data class TextbookBackupJson(
+    val term: String = "",
+    val courseName: String = "",
+    val title: String = "",
+    val author: String = "",
+    val press: String = "",
+    val edition: String = "",
+    val isbn: String = "",
+    val price: String = "",
+)
+
+fun Textbook.toBackupJson(): TextbookBackupJson = TextbookBackupJson(
+    term = term,
+    courseName = courseName,
+    title = title,
+    author = author,
+    press = press,
+    edition = edition,
+    isbn = isbn,
+    price = price,
+)
+
+fun TextbookBackupJson.toTextbook(): Textbook = Textbook(
+    term = term,
+    courseName = courseName,
+    title = title,
+    author = author,
+    press = press,
+    edition = edition,
+    isbn = isbn,
+    price = price,
 )
 
 fun ScholarGroupBackupJson.toScholarGroup(): ScholarGroup = ScholarGroup(
@@ -997,12 +1040,58 @@ class ScheduleRepository(
         }
     }
 
-    /** 教务解析结果入库；merge=false 全量覆盖目标课表 */
-    suspend fun importParsedCourses(courses: List<Course>, merge: Boolean, timetableId: Long? = null): Int {
-        if (merge) return mergeCourses(courses, timetableId)
-        replaceAllCourses(courses, timetableId)
-        return courses.size
+    /**
+     * 教务解析结果入库；merge=false 全量覆盖目标课表。
+     * [term] 是本次数据的学年学期，写进目标课表（[Timetable.term]）——它是课程详情查
+     * 教材（[textbooksFor]）的钥匙；null 表示这次导入不带学期口径（旧调用路径），不动课表的 term。
+     */
+    suspend fun importParsedCourses(
+        courses: List<Course>,
+        merge: Boolean,
+        timetableId: Long? = null,
+        term: String? = null,
+    ): Int {
+        val ttId = timetableId ?: currentTimetableId.first()
+        if (!term.isNullOrBlank()) {
+            db.timetableDao().getById(ttId)?.let {
+                db.timetableDao().upsert(it.copy(term = term))
+            }
+        }
+        return if (merge) mergeCourses(courses, ttId) else {
+            replaceAllCourses(courses, ttId)
+            courses.size
+        }
     }
+
+    // ------------------------------------------------------------------
+    // 教材（DESIGN §4.31）
+    // ------------------------------------------------------------------
+
+    /** 按学期整批替换教材（教务口径的快照；事务里先清后插，防中途读到半套）。 */
+    suspend fun replaceTextbooks(term: String, books: List<Textbook>) {
+        db.withTransaction {
+            db.textbookDao().deleteForTerm(term)
+            db.textbookDao().insertAll(books.map { TextbookEntity.fromDomain(it) })
+        }
+    }
+
+    /**
+     * 某门课在**当前课表学期**下的教材流。课表没有学期号（旧数据/手工建表）时永远给空——
+     * 没有学期钥匙就查教材会串学期（同一门课不同学期教材不同），宁可少显示。
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun textbooksFor(courseName: String): Flow<List<Textbook>> =
+        combine(currentTimetableId, db.timetableDao().observeAll()) { id, list ->
+            list.firstOrNull { it.id == id }?.term
+        }.distinctUntilChanged().flatMapLatest { term ->
+            if (term.isNullOrBlank()) {
+                kotlinx.coroutines.flow.flowOf(emptyList())
+            } else {
+                db.textbookDao().observeForCourse(term, courseName).map { list ->
+                    list.map { it.toDomain() }
+                }
+            }
+        }
 
     // 调课自动检测（DESIGN §4.17）的基线/报告读写与应用已随功能移除（2026-09-24，
     // 见 JuwDatabase.MIGRATION_9_10）；detect_baselines / detect_reports 两表一并 DROP。
@@ -1130,6 +1219,8 @@ class ScheduleRepository(
         // 导入侧对空段不动作，不会把新设备上已有的数据清掉
         val scholarGroups = db.scholarProgressDao().getGroups().map { it.toDomain().toBackupJson() }
         val scholarCourses = db.scholarProgressDao().getCourses().map { it.toDomain().toBackupJson() }
+        // 教材（DESIGN §4.31）：同样全局归属学生，全学期一起带走
+        val textbooks = db.textbookDao().getAll().map { it.toDomain().toBackupJson() }
         // 学期配置与作息按课表（DESIGN §4.3）：导出的就是这份课表的时间口径，恢复时跟课表走
         val ttId = timetableId ?: currentTimetableId.first()
         val semester = db.semesterConfigDao().getForTimetable(ttId)?.toDomain()?.let {
@@ -1145,6 +1236,7 @@ class ScheduleRepository(
                 scores = scores,
                 scholarGroups = scholarGroups,
                 scholarCourses = scholarCourses,
+                textbooks = textbooks,
                 semester = semester,
                 timeSlots = slots,
             ),
@@ -1205,6 +1297,13 @@ class ScheduleRepository(
                 return ImportResult.Failure("第 ${index + 1} 条学业课程缺少 dimension 或 name")
             }
         }
+        // 教材段同样先全量校验（DESIGN §4.31）：缺学期/课程名/书名的行没意义，一律整体拒绝
+        val backupTextbooks = export.textbooks.map { it.toTextbook() }
+        backupTextbooks.forEachIndexed { index, b ->
+            if (b.term.isBlank() || b.courseName.isBlank() || b.title.isBlank()) {
+                return ImportResult.Failure("第 ${index + 1} 条教材缺少 term、courseName 或 title")
+            }
+        }
         // 学期/作息段同样先全量校验（DESIGN §4.3）：宁可整体拒绝，不留「课程对了时间错」的半套
         val backupSemester = export.semester?.let { s ->
             val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
@@ -1245,6 +1344,18 @@ class ScheduleRepository(
             }
             scholarCourses.size
         }
+        // 教材（DESIGN §4.31）：与成绩同一口径——带数据才整体替换，空段不动现有数据
+        val restoredTextbooks = if (backupTextbooks.isEmpty()) {
+            0
+        } else {
+            db.withTransaction {
+                db.textbookDao().deleteAll()
+                db.textbookDao().insertAll(
+                    backupTextbooks.map { TextbookEntity.fromDomain(it) },
+                )
+            }
+            backupTextbooks.size
+        }
         // 配置恢复到**目标课表**（与课程同落点）；恢复作息视为用户数据，置位防结构性迁移覆盖
         val ttId = timetableId ?: currentTimetableId.first()
         var restoredSemester = false
@@ -1267,6 +1378,13 @@ class ScheduleRepository(
                 }
             }
         }
+        // 备份顶层 term 是数据的学年学期：恢复时写进目标课表，教材查询才有学期钥匙。
+        // 文件没带 term 就不动课表现有值
+        if (!export.term.isNullOrBlank()) {
+            db.timetableDao().getById(ttId)?.let {
+                db.timetableDao().upsert(it.copy(term = export.term))
+            }
+        }
         return if (merge) {
             val added = mergeCourses(domain, timetableId)
             ImportResult.Success(
@@ -1275,6 +1393,7 @@ class ScheduleRepository(
                 merge = true,
                 restoredScores = restoredScores,
                 restoredScholarCourses = restoredScholar,
+                restoredTextbooks = restoredTextbooks,
                 restoredSemester = restoredSemester,
                 restoredSlots = restoredSlots,
             )
@@ -1286,6 +1405,7 @@ class ScheduleRepository(
                 merge = false,
                 restoredScores = restoredScores,
                 restoredScholarCourses = restoredScholar,
+                restoredTextbooks = restoredTextbooks,
                 restoredSemester = restoredSemester,
                 restoredSlots = restoredSlots,
             )
@@ -1367,6 +1487,8 @@ sealed interface ImportResult {
         val restoredSemester: Boolean = false,
         /** 随文件恢复的作息条数；0 = 文件没带作息段。 */
         val restoredSlots: Int = 0,
+        /** 随文件整体替换的教材条数；0 = 文件没带教材段。 */
+        val restoredTextbooks: Int = 0,
     ) : ImportResult
     data class Failure(val message: String) : ImportResult
 }

@@ -16,6 +16,11 @@ data class Timetable(
     val sortOrder: Int,
     /** 用户是否手工改过这张课表的作息表；为 true 时结构性作息迁移不再覆盖它。 */
     val slotsCustomized: Boolean,
+    /**
+     * 课表数据的学年学期（如 2026-2027-1）。教务导入时随导入学期写入，是课程详情查
+     * 教材（[Textbook]）的钥匙；旧数据 / 手工建的课表为 null，详情里不显示教材。
+     */
+    val term: String? = null,
 )
 
 /**
@@ -289,6 +294,34 @@ fun Course.mergeKey(): String = listOf(
     teacher,
     kind.name,
 ).joinToString("|")
+
+/**
+ * 教材（DESIGN §4.31）：来自教务「教材管理 → 学生教材确认」（`/jsxsd/nxsjc/xsjcqr`）。
+ *
+ * 归属口径与笔记/作业一致：全局数据、挂 [courseName] 而非课程行 id（覆盖导入会换 id），
+ * 另带 [term] 区分学期——同一门课不同学期的教材可能完全不同。
+ * 字段是教务返回的展示口径，全部可空：教务没填的列直接空着，不做猜测性补全。
+ */
+data class Textbook(
+    val id: Long = 0,
+    /** 学年学期（如 2026-2027-1）。 */
+    val term: String,
+    /** 课程名称，与课表课名逐字一致（同一教务课程库，实测可精确匹配）。 */
+    val courseName: String,
+    /** 教材名称（jcmc）。 */
+    val title: String,
+    /** 主编（jczz）。 */
+    val author: String = "",
+    /** 出版社（cbsmc）。 */
+    val press: String = "",
+    /** 版次（jcbc）。 */
+    val edition: String = "",
+    /** ISBN 书号。 */
+    val isbn: String = "",
+    /** 定价（jcdj）。 */
+    val price: String = "",
+)
+
 data class TimeSlot(
     val number: Int,
     val startTime: String,

@@ -678,10 +678,15 @@ fun WeekScreen(
     }
 
     detailCourse?.let { course ->
+        // 教材（DESIGN §4.31）：按当前课表学期 + 课程名查；无学期号的课表给空，不显示
+        val detailTextbooks by remember(course.name) {
+            repo.textbooksFor(course.name)
+        }.collectAsStateWithLifecycle(initialValue = emptyList())
         CourseDetailSheet(
             course = course,
             slots = state.slots,
             currentWeek = state.week,
+            textbooks = detailTextbooks,
             onEdit = {
                 detailCourse = null
                 editing = course

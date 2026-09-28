@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.Textbook
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.compactPosition
 import me.rerere.hugeicons.HugeIcons
@@ -43,6 +44,9 @@ import me.rerere.hugeicons.stroke.Task01
  *
  * 2026-09-21：加「笔记·课件 / 作业」两个入口（等宽描边按钮，在「删除/编辑」之上，
  * DESIGN §3.11）——今日页与课表页同源共用，改一处两边同时生效。
+ *
+ * 2026-09-28：加「教材」区块（DESIGN §4.31）——教务「学生教材确认」里这门课的书，
+ * 按「当前课表学期 + 课程名」查；有数据才显示，空列表不占行（与备注同口径）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,6 +59,7 @@ fun CourseDetailSheet(
     onDismiss: () -> Unit,
     onOpenNotes: (() -> Unit)? = null,
     onOpenHomework: (() -> Unit)? = null,
+    textbooks: List<Textbook> = emptyList(),
 ) {
     val accent = courseColor(course.colorIndex)
     val start = slots.firstOrNull { it.number == course.startSection }
@@ -114,6 +119,13 @@ fun CourseDetailSheet(
                 CourseKind.Lab -> DetailRow("类型", "实验课（实验课表页不含教师信息）")
                 CourseKind.Exam -> DetailRow("类型", "考试（考场即「地点」）")
                 else -> Unit
+            }
+            // 教材（DESIGN §4.31）：教务口径的书目，多本时逐行；首行带「教材」标签
+            textbooks.forEachIndexed { index, book ->
+                DetailRow(
+                    if (index == 0) "教材" else "",
+                    textbookLine(book),
+                )
             }
             Spacer(Modifier.height(18.dp))
             // 笔记·课件 / 作业（DESIGN §3.11）：等宽描边按钮，与下方「删除/编辑」同规格但
@@ -208,3 +220,14 @@ private fun DetailRow(label: String, value: String) {
         )
     }
 }
+
+/**
+ * 一本教材压缩成一行展示文本：书名 · 主编 · 出版社 · 版次（空段跳过）。
+ * ISBN 与定价不进详情弹窗——教务清单里有，但识别一本书用不着它们，堆上只会长行换行。
+ */
+private fun textbookLine(book: Textbook): String = listOf(
+    book.title,
+    book.author,
+    book.press,
+    book.edition,
+).filter { it.isNotBlank() }.joinToString(" · ")
