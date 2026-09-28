@@ -424,6 +424,9 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     /** 今日页开水卡片开关（DESIGN §3.3 底部固定区）。 */
     fun setWaterCardEnabled(value: Boolean) = viewModelScope.launch { repo.setWaterCardEnabled(value) }
 
+    /** 今日页趣智校园卡片开关（DESIGN §4.30）。 */
+    fun setQzxyCardEnabled(value: Boolean) = viewModelScope.launch { repo.setQzxyCardEnabled(value) }
+
     /** 今日页共享单车卡开关（DESIGN §3.9）。 */
     fun setEbikeCardEnabled(value: Boolean) = viewModelScope.launch { repo.setEbikeCardEnabled(value) }
 

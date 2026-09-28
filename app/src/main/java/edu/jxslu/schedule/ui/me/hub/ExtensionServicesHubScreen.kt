@@ -22,48 +22,45 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.xg.XgForm
 import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.ui.common.SettingItem
-import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
-import edu.jxslu.schedule.ui.me.MeViewModel
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.ClipboardList
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Droplet
-import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.Repair
-import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
 
 /**
- * 我的 → 扩展服务（DESIGN §3.3）：学校系统 + 第三方服务，开关原样。
+ * 我的 → 校园服务（DESIGN §3.3，2026-09-28 自「扩展服务」改名瘦身）。
  *
- * 分成两张卡而不是一张，是因为两者的数据去向不同：前者的账号与内容都在学校服务器上
- * （走统一身份认证），后者的凭证在第三方手里。混在一起用户没法判断哪个能放心填。
+ * 本页只剩两类**要登录的系统**：学校系统（统一身份认证，账号与内容都在学校服务器上）
+ * 与第三方账号（凭证在第三方手里）。节标题即数据去向声明——分开列，用户才知道
+ * 哪个能放心填（2026-09-23 改版定下的原则，原样保留）。
+ *
+ * 本轮迁出的东西：「今日页」节（快捷方式入口 + 快趣出行码开关）整体迁往
+ * 通用设置的「功能开关」节，本页不再管「功能是否出现」，只管登录与服务本身。
+ *
+ * 三方账号行右侧带登录态（实时订阅仓库流）。胖乖 / 趣智被功能开关关掉后，
+ * 本页入口**仍然显示**：这里是重新打开服务的入口，否则关掉后唯一入口在
+ * 通用设置会造成死路。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExtensionServicesHubScreen(
     onBack: () -> Unit,
-    onOpenShortcuts: () -> Unit,
     onOpenCampusCard: () -> Unit,
     onOpenWater: () -> Unit,
-    /** 趣智校园开热水（DESIGN §4.30）。今日页卡片关掉后，这里是唯一的入口。 */
+    /** 趣智校园开热水（DESIGN §4.30）。登录 / 余额 / 账单都在这一页。 */
     onOpenQzxy: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
-    viewModel: MeViewModel = viewModel(
-        factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
-    ),
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    // 胖乖登录态订阅仓库的流（2026-09-27）：此前是 ON_RESUME 时重读一次 token，
-    // 只覆盖「从开水页返回」这一条路径；直接订阅后登录/退出在任何窗口发生都即时生效。
     val context = LocalContext.current
+    // 三方登录态订阅仓库的流（2026-09-27 口径）：登录 / 退出在任何窗口发生都即时生效
     val waterLoggedIn by remember { Graph.qiekj(context).loggedIn }
         .collectAsStateWithLifecycle()
     val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
@@ -72,7 +69,7 @@ fun ExtensionServicesHubScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("扩展服务") },
+                title = { Text("校园服务") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -91,7 +88,7 @@ fun ExtensionServicesHubScreen(
         ) {
             SettingsSection(
                 title = "学校系统",
-                subtitle = "江西水利电力大学 · 统一身份认证登录",
+                subtitle = "统一身份认证登录 · 账号与内容都在学校服务器",
             ) {
                 // 清单来自 XgUrls.FORMS：加一个新表单只需在那边加一条，入口自动出现
                 XgUrls.FORMS.forEach { form ->
@@ -105,42 +102,28 @@ fun ExtensionServicesHubScreen(
             }
 
             SettingsSection(
-                title = "今日页",
-                subtitle = "第三方服务 · 非学校官方功能",
+                title = "第三方账号",
+                subtitle = "凭证存于第三方 · 非学校官方功能",
             ) {
                 SettingItem(
-                    title = "快捷方式",
-                    subtitle = "今日页快捷入口 · 添加与编辑",
-                    icon = HugeIcons.Flash,
-                    onClick = onOpenShortcuts,
-                )
-                SettingSwitchRow(
-                    title = "快趣出行码",
-                    subtitle = "今日页骑行二维码入口 · 非学校官方功能",
-                    checked = state.displayPrefs.ebikeCardEnabled,
-                    onCheckedChange = viewModel::setEbikeCardEnabled,
-                    icon = HugeIcons.ScooterElectric,
-                )
-            }
-
-            SettingsSection(title = "校园服务") {
-                SettingItem(
                     title = "水宝宝一卡通",
-                    subtitle = "攻破水宝宝，一键启动！",
+                    subtitle = "余额 · 付款码 · 流水 · 充值",
                     icon = HugeIcons.CreditCard,
                     onClick = onOpenCampusCard,
                 )
                 SettingItem(
                     title = "胖乖生活",
-                    subtitle = if (waterLoggedIn) "开水 / 余额 / 订单" else "点击登录胖乖生活",
+                    subtitle = "开水 · 余额 · 订单",
                     icon = HugeIcons.Droplet,
+                    value = if (waterLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenWater,
                 )
                 SettingItem(
                     title = "趣智校园",
-                    subtitle = if (qzxyLoggedIn) "开热水 / 余额 / 账单" else "点击登录趣智校园",
+                    subtitle = "开热水 · 余额 · 账单",
                     // 花洒：这是「洗澡开热水」，不是喝水（与账户卡那一格同图标）
                     icon = HugeIcons.ShowerHead,
+                    value = if (qzxyLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenQzxy,
                 )
             }

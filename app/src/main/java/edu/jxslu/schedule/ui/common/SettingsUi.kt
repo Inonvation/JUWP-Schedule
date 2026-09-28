@@ -98,6 +98,24 @@ fun SettingsSection(
 }
 
 /**
+ * 设置行标题 + 可选标签的统一排布（2026-09-28 我的改版）：
+ * 标签用 [SettingsTag]，与标题同行、基线对齐、可换行兜底（长标题 + 标签在
+ * 小屏不会溢出，标签整体折到下一行）。
+ */
+@Composable
+private fun TaggedTitle(title: String, tag: String?) {
+    if (tag == null) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(6.dp))
+            SettingsTag(tag)
+        }
+    }
+}
+
+/**
  * 单条设置行：标题 + 说明 + 尾部（值文本 / 箭头 / 自定义槽位）。
  * 可点时整行响应并附带触感反馈；不可点（纯展示）时忽略点击。
  */
@@ -114,6 +132,8 @@ fun SettingItem(
     trailing: (@Composable () -> Unit)? = null,
     /** false 时整行置灰且不响应点击（如前置条件未满足 / 动作进行中）。 */
     enabled: Boolean = true,
+    /** 标题右侧的作用域 / 生效时机标签（如「当前课表」），见 [SettingsTag]。 */
+    titleTag: String? = null,
 ) {
     val haptics = rememberAppHaptics()
     Row(
@@ -139,7 +159,7 @@ fun SettingItem(
             SettingsIconBadge(icon)
         }
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            TaggedTitle(title = title, tag = titleTag)
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodySmall,
@@ -205,6 +225,8 @@ fun SettingSwitchRow(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     subtitle: String? = null,
+    /** 标题右侧的作用域 / 生效时机标签（如「重启生效」），见 [SettingsTag]。 */
+    titleTag: String? = null,
 ) {
     val haptics = rememberAppHaptics()
     Row(
@@ -219,7 +241,7 @@ fun SettingSwitchRow(
             SettingsIconBadge(icon)
         }
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            TaggedTitle(title = title, tag = titleTag)
             if (subtitle != null) {
                 Text(
                     subtitle,
@@ -253,6 +275,8 @@ fun SettingChoiceRow(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     subtitle: String? = null,
+    /** 标题右侧的作用域 / 生效时机标签（如「重启生效」），见 [SettingsTag]。 */
+    titleTag: String? = null,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         // 标题块与 [SettingSwitchRow] / [SettingItem] 同行高：图标底座与标题的落点
@@ -269,7 +293,7 @@ fun SettingChoiceRow(
                 SettingsIconBadge(icon)
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
+                TaggedTitle(title = title, tag = titleTag)
                 if (subtitle != null) {
                     Text(
                         subtitle,

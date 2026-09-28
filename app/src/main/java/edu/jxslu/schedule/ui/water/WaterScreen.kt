@@ -242,7 +242,6 @@ fun WaterScreen(
                 Spacer(Modifier.height(24.dp))
                 WaterSettingsSection(
                     prefs = prefsState.displayPrefs,
-                    onSetCardEnabled = prefsViewModel::setWaterCardEnabled,
                     onSetRequireDoubleClick = prefsViewModel::setWaterRequireDoubleClick,
                     onToggleHaptics = { haptics.toggle() },
                 )
@@ -356,7 +355,6 @@ fun WaterScreen(
                 Spacer(Modifier.height(8.dp))
                 WaterSettingsSection(
                     prefs = prefsState.displayPrefs,
-                    onSetCardEnabled = prefsViewModel::setWaterCardEnabled,
                     onSetRequireDoubleClick = prefsViewModel::setWaterRequireDoubleClick,
                     onToggleHaptics = { haptics.toggle() },
                 )
@@ -485,27 +483,19 @@ private fun LoginSection(state: WaterUiState, viewModel: WaterViewModel) {
 
 /**
  * 开水设置区（原「开水设置」子页主体，2026-09-20 并入本页，DESIGN §3.4）。
- * 放在页面尾部，登录与未登录两态共用——均不依赖登录态：未登录也能关今日页
- * 卡片显示（此时展示未登录态卡片）与调点击方式；登录/退出在上面完成，本区不涉及 token。
+ * 放在页面尾部，登录与未登录两态共用。2026-09-28：「显示开水卡片」开关收进
+ * 「我的 → 通用设置 → 功能开关」（功能可见性一处管理），本区只留行为项。
  */
 @Composable
 private fun WaterSettingsSection(
     prefs: DisplayPrefs,
-    onSetCardEnabled: (Boolean) -> Unit,
     onSetRequireDoubleClick: (Boolean) -> Unit,
     onToggleHaptics: () -> Unit,
 ) {
     SettingsSection(
         title = "开水卡设置",
-        subtitle = "今日页开水卡片的行为，与登录状态无关。",
+        subtitle = "卡片显隐在「我的 → 通用设置 → 功能开关」；本节只管开水卡行为。",
     ) {
-        SettingSwitchRow(
-            title = "显示开水卡片",
-            subtitle = "关闭后今日页底部不再显示开水入口",
-            checked = prefs.waterCardEnabled,
-            onCheckedChange = onSetCardEnabled,
-            icon = HugeIcons.Droplet,
-        )
         SettingChoiceRow(
             title = "点击方式",
             subtitle = "双击确认防误触，对上方「开水」大按钮生效（今日页余额面板固定单击）",

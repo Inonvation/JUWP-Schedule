@@ -1031,7 +1031,7 @@ class QzxyViewModel(
     fun dismissSettlement() = _uiState.update { it.copy(lastSettlement = null) }
 
     /**
-     * 上次用过的设备。诊断页从开热水页进来时带着地址，单独打开（比如从「扩展服务」）
+     * 上次用过的设备。诊断页从开热水页进来时带着地址，单独打开（比如从「校园服务」）
      * 时没有地址可带，用它兜底——诊断的对象永远是「当前这台」。
      */
     fun lastUsedDevice(): QzxyBoundDevice? = deviceStore.lastUsed()

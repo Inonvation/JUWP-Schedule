@@ -48,7 +48,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,12 +76,11 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeTone
-import edu.jxslu.schedule.ui.common.SettingSwitchRow
+import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
-import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Droplet
@@ -1393,22 +1391,12 @@ private fun DiagnosticEntry(onOpen: () -> Unit) {
 
 @Composable
 private fun DisplaySettingSection() {
-    val context = LocalContext.current
-    val prefs = remember(context) { Graph.displayPrefs(context) }
-    // 初值阻塞读真值：写 true 的话，关过趣智卡片的用户进页开关先按开渲染、真值到达
-    // 后再跳（MeViewModel 2026-09-28 同款反馈）。remember 挡住重组重复读。
-    val enabled by prefs.qzxyCardEnabled.collectAsStateWithLifecycle(
-        initialValue = remember { runBlocking { prefs.qzxyCardEnabled.first() } },
-    )
-    val scope = rememberCoroutineScope()
+    // 2026-09-28：卡片显隐开关收进「我的 → 通用设置 → 功能开关」（功能可见性
+    // 一处管理），这里改为指路说明——登录 / 退出仍在本页，语义分离。
     SettingsSection(title = "显示") {
-        SettingSwitchRow(
+        SettingItem(
             title = "在今日页显示趣智校园卡片",
-            subtitle = "关掉后今日页只剩胖乖生活卡，独占一整行",
-            checked = enabled,
-            onCheckedChange = { value ->
-                scope.launch { Graph.repository(context).setQzxyCardEnabled(value) }
-            },
+            subtitle = "开关在「我的 → 通用设置 → 功能开关」；关掉后今日页与「我的」账号卡同步隐藏",
         )
     }
 }

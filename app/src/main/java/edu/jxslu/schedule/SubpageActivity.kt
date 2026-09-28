@@ -89,9 +89,9 @@ enum class SubpageScreen {
     TIMETABLE_HUB,
     /** 我的 → 学习汇总页（笔记·课件 / 作业，DESIGN §3.3） */
     LEARNING_HUB,
-    /** 我的 → 小组件与日历汇总页（DESIGN §3.3） */
+    /** 我的 → 提醒与桌面汇总页（2026-09-28 自「小组件与日历」改名，DESIGN §3.3） */
     WIDGET_CALENDAR_HUB,
-    /** 我的 → 扩展服务汇总页（第三方服务，DESIGN §3.3） */
+    /** 我的 → 校园服务汇总页（2026-09-28 自「扩展服务」改名瘦身，DESIGN §3.3） */
     EXT_SERVICES_HUB,
     /** 我的 → 关于页（版本 · 免责 · 仓库 · 权限入口，DESIGN §3.3） */
     ABOUT,
@@ -262,11 +262,12 @@ class SubpageActivity : ComponentActivity() {
                 },
                 onOpenDataSettings = { SubpageActivity.start(this, SubpageScreen.DATA_SETTINGS) },
                 onOpenCourseTweak = { SubpageActivity.start(this, SubpageScreen.COURSE_TWEAK) },
-                onOpenReminderSettings = {
-                    SubpageActivity.start(this, SubpageScreen.REMINDER_SETTINGS)
-                },
             )
-            SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(onBack = onBack)
+            SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(
+                onBack = onBack,
+                // 功能开关节 → 快捷方式编辑页（2026-09-28 自扩展服务迁入）
+                onOpenShortcuts = { SubpageActivity.start(this, SubpageScreen.SHORTCUTS) },
+            )
             SubpageScreen.WIDGET_CALENDAR_HUB -> WidgetCalendarHubScreen(
                 onBack = onBack,
                 onOpenWidgetSettings = {
@@ -275,15 +276,21 @@ class SubpageActivity : ComponentActivity() {
                 onOpenCalendarSettings = {
                     SubpageActivity.start(this, SubpageScreen.CALENDAR_SETTINGS)
                 },
+                // 上课提醒 2026-09-28 自课表 hub 迁入（与小组件、日历同属「课表送达渠道」）
+                onOpenReminderSettings = {
+                    SubpageActivity.start(this, SubpageScreen.REMINDER_SETTINGS)
+                },
+                onOpenPermissionSettings = {
+                    SubpageActivity.start(this, SubpageScreen.PERMISSION_SETTINGS)
+                },
             )
             SubpageScreen.EXT_SERVICES_HUB -> ExtensionServicesHubScreen(
                 onBack = onBack,
-                onOpenShortcuts = { SubpageActivity.start(this, SubpageScreen.SHORTCUTS) },
                 onOpenCampusCard = {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS)
                 },
-                        onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
-                        onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
+                onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
+                onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

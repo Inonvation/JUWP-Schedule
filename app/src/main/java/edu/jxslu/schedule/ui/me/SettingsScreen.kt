@@ -68,6 +68,7 @@ import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.common.stateWord
 import edu.jxslu.schedule.ui.common.tint
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Droplet
@@ -76,15 +77,19 @@ import me.rerere.hugeicons.stroke.Book02
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Settings01
-import me.rerere.hugeicons.stroke.GridView
 import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 
 /**
- * 「我的」= 账号卡 + 六入口（DESIGN §3.3，2026-09-23 改版）。
+ * 「我的」= 账号卡 + 六入口（DESIGN §3.3，2026-09-28 二次改版）。
+ *
+ * 骨架不变，本轮只换两个入口的名字与职责：
+ * 「小组件与日历」→「提醒与桌面」（上课提醒自课表 hub 迁入，与小组件、日历同属
+ * 「课表数据送到哪里」——通知栏 / 桌面 / 日历）；「扩展服务」→「校园服务」
+ * （快捷方式与三个功能开关迁往通用设置，本页只剩要登录的系统）。
  *
  * 每个分区收进独立汇总二级页（`ui/me/hub/`），根页面只留实时副标题——
- * 课表行锚定当前课表名，学习行带笔记/作业计数，其余行给内容概览。
+ * 课表行锚定当前课表名与周次，学习行带笔记/作业计数，其余行给职责描述。
  * 账号卡数据源 = 水宝宝一卡通凭证（`YktCredentialStore`），遮罩口径在
  * `domain/AccountMask`；眼睛只在内存里切换完整学号，不写存储不进剪贴板。
  * 卡内服务格（教务 / 一卡通 / 胖乖生活 / 趣智校园）是登录入口，见 [ServiceCell]；
@@ -233,13 +238,14 @@ fun SettingsScreen(
             SettingsSection(title = "设置") {
                 SettingItem(
                     title = "通用设置",
-                    subtitle = "主题 · 触感 · 悬浮导航栏 · 生活页",
+                    subtitle = "外观 · 布局 · 页面 · 功能开关",
                     icon = HugeIcons.Settings01,
                     onClick = onOpenGeneralSettings,
                 )
+                val weekSuffix = if (state.currentWeek > 0) " · 第 ${state.currentWeek} 周" else ""
                 SettingItem(
                     title = "课表",
-                    subtitle = "当前：${state.timetableName.ifBlank { "—" }}",
+                    subtitle = "当前：${state.timetableName.ifBlank { "—" }}$weekSuffix",
                     icon = HugeIcons.CalendarSetting01,
                     onClick = onOpenTimetableHub,
                 )
@@ -256,17 +262,17 @@ fun SettingsScreen(
                     onClick = onOpenLearningHub,
                 )
                 SettingItem(
-                    title = "小组件与日历",
-                    subtitle = "桌面小组件 · 课程进系统日历",
-                    icon = HugeIcons.GridView,
+                    title = "提醒与桌面",
+                    subtitle = "上课提醒 · 桌面小组件 · 日历同步",
+                    icon = HugeIcons.BellRing,
                     onClick = onOpenWidgetCalendarHub,
                 )
-    SettingItem(
-        title = "扩展服务",
-        subtitle = "宿舍报修 · 快捷方式 · 出行码 · 一卡通 · 胖乖生活",
-        icon = HugeIcons.CreditCard,
-        onClick = onOpenExtensionServices,
-    )
+                SettingItem(
+                    title = "校园服务",
+                    subtitle = "学校系统 · 一卡通 · 胖乖 · 趣智",
+                    icon = HugeIcons.CreditCard,
+                    onClick = onOpenExtensionServices,
+                )
                 SettingItem(
                     title = "关于",
                     subtitle = "版本 v${BuildConfig.VERSION_NAME} · 免责声明 · 权限",
