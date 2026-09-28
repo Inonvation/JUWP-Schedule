@@ -130,6 +130,14 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        // 引导窗口还活着时，小组件 / 通知跳板 / 桌面快捷方式再把 MainActivity 叠上来，
+        // 会在底下那层引导没退场的情况下浮出一个新的今日页；引导完成后一按返回就
+        // 露出僵尸引导（2026-09-28 真机踩过）。此时直接退位，让底下的引导继续——
+        // 引导期间小组件的跳转路由本来就无处可去（课表还没导入）。
+        if (savedInstanceState == null && OnboardingActivity.liveInstances > 0) {
+            finish()
+            return
+        }
         if (savedInstanceState == null) {
             // task 与进程都是新的：窗口链只可能是「用户把 App 从最近任务划掉」留下的残影，
             // 留着会让下一次点图标凭空落进某个二级页。只在真是根实例时清——

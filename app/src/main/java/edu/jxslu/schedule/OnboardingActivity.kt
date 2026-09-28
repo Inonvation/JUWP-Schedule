@@ -28,6 +28,7 @@ class OnboardingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        liveInstances++
         enableEdgeToEdge()
         setContent {
             JuwRoot {
@@ -36,12 +37,31 @@ class OnboardingActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        liveInstances--
+    }
+
     companion object {
         private const val EXTRA_START_AT_JW = "start_at_jw"
+
+        /**
+         * 本进程内活着的引导实例数（onCreate / onDestroy 夹逼，回调全在主线程）。
+         * MainActivity 拉新窗口前看它：>0 说明任务里还有一层没退场的引导，此时再把
+         * 主窗口叠上来，引导完成后一按返回就会露出这具「僵尸引导」（2026-09-28 真机
+         * 踩过：任务叠成 [主窗口1, 引导1, 主窗口2, 引导2]，完成的是上面一对，返回
+         * 露出引导1 的欢迎页）。
+         */
+        internal var liveInstances = 0
+            private set
 
         fun start(context: Context, startAtJw: Boolean = false) {
             context.startActivity(
                 Intent(context, OnboardingActivity::class.java)
+                    // 引导已在任务里时提到前台复用，别再叠一个新实例（正常路径到不了
+                    // 这里——活着的引导挡住一切入口；这层是兜底）。REORDER 不回传 intent，
+                    // 所以 startAtJw 只在「没有活实例」的常规路径生效。
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                     .putExtra(EXTRA_START_AT_JW, startAtJw),
             )
         }

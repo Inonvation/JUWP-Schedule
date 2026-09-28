@@ -1,8 +1,12 @@
 package edu.jxslu.schedule.ui.common
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -14,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Disclaimer
 import edu.jxslu.schedule.domain.OpenSourceLicenses
@@ -77,10 +83,36 @@ fun DisclaimerDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss, enabled = canDismiss) {
+                if (!canDismiss) {
+                    // 强制阅读的进度画在确认键上：环走完 = 可关闭，比干等一串秒数更可感
+                    CountdownRing(
+                        remaining = remaining,
+                        total = readSeconds,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(if (canDismiss) confirmLabel else "$remaining 秒后可关闭")
             }
         },
     )
+}
+
+/** 强制阅读倒计时环：剩余比例 = 弧长，随倒计时线性耗尽。 */
+@Composable
+private fun CountdownRing(remaining: Int, total: Int, modifier: Modifier = Modifier) {
+    val color = MaterialTheme.colorScheme.primary
+    Canvas(modifier) {
+        val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        drawCircle(color = color.copy(alpha = 0.25f), style = stroke)
+        drawArc(
+            color = color,
+            startAngle = -90f,
+            sweepAngle = 360f * remaining.coerceAtLeast(0).toFloat() / total.coerceAtLeast(1),
+            useCenter = false,
+            style = stroke,
+        )
+    }
 }
 
 /**
