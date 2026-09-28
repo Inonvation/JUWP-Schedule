@@ -81,6 +81,7 @@ import edu.jxslu.schedule.ui.week.ScheduleBackgroundLayer
 import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
+import edu.jxslu.schedule.domain.ThemePalette
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Settings01
@@ -217,8 +218,12 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
         ThemeMode.Dark -> true
         ThemeMode.System, null -> isSystemInDarkTheme()
     }
-    // 动态取色可关（我的 → 通用）：用户想要固定的品牌蓝绿而不是壁纸色
-    JuwTheme(darkTheme = darkTheme, dynamicColor = prefs?.dynamicColor ?: true) {
+    // 动态取色开着（默认）跟壁纸；关掉后用内置配色里选中的那套，品牌青是默认值
+    JuwTheme(
+        darkTheme = darkTheme,
+        dynamicColor = prefs?.dynamicColor ?: true,
+        palette = prefs?.themePalette ?: ThemePalette.Brand,
+    ) {
         content()
     }
 }

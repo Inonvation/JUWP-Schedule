@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.repo.ImportPreview
 import edu.jxslu.schedule.data.repo.ImportResult
@@ -18,6 +19,7 @@ import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
+import edu.jxslu.schedule.domain.ThemePalette
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TimeSlotRules
 import edu.jxslu.schedule.domain.Timetable
@@ -358,6 +360,15 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     /** 动态取色开关（全局，Material You）。 */
     fun setDynamicColor(value: Boolean) {
         viewModelScope.launch { repo.setDynamicColor(value) }
+    }
+
+    /** 内置主题配色（全局）。动态取色关闭时生效，改完实时生效；小组件胶囊色跟着重渲染。 */
+    fun setThemePalette(value: ThemePalette) {
+        viewModelScope.launch {
+            repo.setThemePalette(value)
+            // 推送点先例：写完立即重渲染（LifeWidgetSync 零网络重跑快照），桌面马上换色
+            runCatching { LifeWidgetSync.onThemePaletteChanged(Graph.appContext) }
+        }
     }
 
     /** 悬浮导航栏（DESIGN §4.22）。 */

@@ -36,6 +36,7 @@ import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
+import edu.jxslu.schedule.domain.ThemePalette
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
 import edu.jxslu.schedule.domain.Textbook
@@ -452,7 +453,7 @@ class ScheduleRepository(
      * 2026-09-19 起全部字段全局，不再依赖当前课表——换课表不换观感。
      * 对 UI 仍暴露合并后的 [DisplayPrefs]，调用点签名与分层时期一致。
      */
-    val displayPrefs: Flow<DisplayPrefs> = combine(
+    private val baseDisplayPrefs: Flow<DisplayPrefs> = combine(
         // 全局项先合成一层：combine 的类型安全重载最多 5 参，全局项已满员
         combine(
             prefs.themeMode,
@@ -541,6 +542,16 @@ class ScheduleRepository(
         // 去重：combine 每次发射都 new 一个 DisplayPrefs，值实际没变（如写库后回读同值）
         // 时下游两个 VM 不必整体重算
     }.distinctUntilChanged()
+
+    /**
+     * 内置主题配色并入基础偏好（DESIGN §3.3）：外层 combine 五参已满员，
+     * 单独并一层，copy 改动只在配色真的变了时透传（data class equals 去重）。
+     */
+    val displayPrefs: Flow<DisplayPrefs> = combine(
+        baseDisplayPrefs,
+        prefs.themePalette,
+    ) { base, palette -> base.copy(themePalette = palette) }
+        .distinctUntilChanged()
 
     /**
      * 今日页快捷方式（DESIGN §3.8/§4.16）。全局 DataStore 项，与当前课表无关，直接透传 store。
@@ -680,6 +691,9 @@ class ScheduleRepository(
 
     /** 动态取色开关（全局，默认开）。 */
     suspend fun setDynamicColor(value: Boolean) = prefs.setDynamicColor(value)
+
+    /** 内置主题配色（DESIGN §3.3）。动态取色开着时被 UI 置灰提示、实际不生效。 */
+    suspend fun setThemePalette(value: ThemePalette) = prefs.setThemePalette(value)
 
     /** 悬浮导航栏（DESIGN §4.22）：底栏半透明磨砂，课表背景图透到屏幕底部。默认关。 */
     suspend fun setFloatingNavBar(value: Boolean) = prefs.setFloatingNavBar(value)

@@ -20,21 +20,25 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
+import edu.jxslu.schedule.domain.ThemePalette
+import edu.jxslu.schedule.ui.theme.paletteScheme
 
 /**
  * 生活小组件（校园卡 + 电费合并卡）的渲染小件（DESIGN §3.6 二条目改版）。
  *
- * 配色口径：底与文字走 `GlanceTheme`（深浅色跟随系统）；胶囊按钮用品牌青固定色——
- * 两个深浅模式下 #0F7C7C 上白字对比度都够，不必引入动态色依赖。
+ * 配色口径：底与文字走 `GlanceTheme`（深浅色跟随系统）；胶囊按钮跟随「我的 → 通用设置」
+ * 里选中的内置配色——固定取该配色**浅色方案的主色**（tone 40 上白字对比度各配色都够，
+ * 与旧品牌青 #0F7C7C 两模式通用的口径一致），不随系统深浅切换，也不吃 Material You。
  */
-internal val WidgetAccentColor: ColorProvider = ColorProvider(Color(0xFF0F7C7C))
+internal fun widgetAccentColor(palette: ThemePalette): ColorProvider =
+    ColorProvider(paletteScheme(palette, dark = false).primary)
 
 /** 圆角胶囊按钮（「出示付款码」/「用电统计」/「去设置」）：实心底 + 白字。 */
 @Composable
-internal fun WidgetPill(text: String) {
+internal fun WidgetPill(text: String, accent: ColorProvider) {
     Box(
         modifier = GlanceModifier
-            .background(WidgetAccentColor)
+            .background(accent)
             .cornerRadius(14.dp)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         contentAlignment = Alignment.Center,

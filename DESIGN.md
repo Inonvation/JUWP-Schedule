@@ -96,7 +96,7 @@
       │    眼睛切换完整学号；2026-09-23 升级 = 校徽圆标 + 姓名 + 学号 + 班级副行，
       │    数据来自教务导入；2026-09-24 加登录状态入口，2026-09-26 由三行列表改为
       │    **三格**（教务 / 一卡通 / 胖乖生活），见 §3.16）
-      ├── 通用设置   → GeneralSettingsScreen（主题/触感/动态取色/悬浮导航栏/生活页/启动页）
+      ├── 通用设置   → GeneralSettingsScreen（主题/配色/触感/动态取色/悬浮导航栏/生活页/启动页）
       ├── 课表       → TimetableHubScreen（副标题「当前：课表名」；成绩查询 2026-09-24 挪入学习页）
       ├── 学习       → LearningHubScreen（笔记·课件 / 作业 / 成绩查询）
       ├── 小组件与日历 → WidgetCalendarHubScreen
@@ -155,7 +155,8 @@
 
 **我的**（入口列表，2026-09-21 起 6 分区；2026-09-23 起每个分区收进独立汇总二级页）
 
-- 通用设置（`GENERAL_SETTINGS`，全局观感）：外观主题、动态取色（Material You）、触感反馈、
+- 通用设置（`GENERAL_SETTINGS`，全局观感）：外观主题、主题配色（§3.3「主题配色」）、
+  动态取色（Material You）、触感反馈、
   悬浮导航栏（§4.22，**重启生效**）、生活页开关（§3.13）、启动页（**重启生效**，
   默认「今日」，选项 = 底栏 Tab 集，生活页关掉时该项同步不列——见 §3.3）
 - 课表（`TIMETABLE_HUB`，副标题「当前：课表名」，组内按「配置 → 使用 → 数据」流排）：
@@ -315,7 +316,7 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
 | 项 | 规格 |
 |----|------|
 | 风格 | 极简校园工具；低装饰；信息密度高但不挤 |
-| 色彩 | Material You 动态取色默认开、可关（§3.3 通用）；课程色**按课程名排序顺序分配调色板下标**（16 色，同一周内不同课不撞色——12 色时代理论+实验课名超 12 必回绕撞色，已扩容并带启动自愈重排）；强调色默认蓝绿（水电意象） |
+| 色彩 | Material You 动态取色默认开、可关；关掉后按**内置六套配色**之一渲染（2026-09-28，§3.3「主题配色」，默认蓝绿·水电意象）；课程色**按课程名排序顺序分配调色板下标**（16 色，同一周内不同课不撞色——12 色时代理论+实验课名超 12 必回绕撞色，已扩容并带启动自愈重排） |
 | 圆角 | 课表色块 **6dp**；卡片 **14dp**（唯一出处：`ui/common/AppCard.kt` 的 `AppCardDefaults.Shape`） |
 | 卡片（2026-09-22 统一） | 描边卡统一走 `AppCard` / `AppCardRow`：14dp 圆角、1dp `outlineVariant` 描边、`surface` 底、内间距 14/12dp、外间距由调用方的 `modifier` 给。此前两套并存——12dp + `outline` 22%（笔记 / 作业 / 课程库 / 今日页作业卡）与 14dp + `outlineVariant`（今日页底部服务卡），同屏两种观感，且 22% 描边在浅色主题下几乎看不见。已迁移：今日页全部卡片、笔记·课件与作业的全部页面。未迁移（各自私有 shape，后续按需）：水卡页、付款码页、流水页、成绩页、设置类页面。改规格只动 `AppCardDefaults`；点击涟漪与触感由 `AppCard` 统一处理，调用方不要再自己包 `clickable` | 
 | 卡片内内容 | `AppCardRow`（单行卡）的纵向排列固定为 `Arrangement.Center`：调用方常配 `heightIn(min = …)` 让一排卡片等高（今日页服务格 / 开水卡 58dp），Column 默认的 Top 会把"卡片比内容高出来的那几 dp"全留在底部，观感就是文字偏上（2026-09-22 用户反馈两次，根因在这）。`AppCard`（多行卡）仍按调用方给的排列走 |
@@ -528,10 +529,21 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
 
 **我的**（入口列表，2026-09-21 起 6 分区）
 
-- 通用（全局观感）：外观主题、动态取色（Material You，默认开可关）、触感反馈、
+- 通用（全局观感）：外观主题、**主题配色**（2026-09-28，规格见下条）、动态取色
+  （Material You，默认开可关）、触感反馈、
   悬浮导航栏（§4.22，**默认关**：底栏半透明磨砂，课表背景图透到屏幕底部，
   **重启生效**——切完当场提示「重启应用后生效」，理由见 §4.22）、
   **启动页**（`DisplayPrefs.startPage`，**重启生效**，默认「今日」，见下）
+- **主题配色**（2026-09-28，`domain/ThemePalette` + `ui/theme/Palettes.kt`）：
+  内置六套——水电青（默认，即品牌色）· 晴空蓝 · 暮山紫 · 樱花粉 · 落日橙 · 森野绿，
+  每套深浅两份方案，角色口径与品牌青一致（9 角色，tertiary/error 等仍走 M3 基线兜底）。
+  **动态取色优先**：开着时配色被忽略、设置行置灰提示「关闭动态取色后生效」；
+  关掉后按所选配色渲染。选中即写偏好（DataStore 键 `theme_palette`，存稳定 id，
+  未知值回落水电青——单测钉死），**实时生效**（`JuwRoot` 统一 collect，含弹层窗口）。
+  选择器 = 色卡弹层（`ImeAwareModalBottomSheet`）：每行 4 色点（主色/容器/次要/底色，
+  浅色系）+ 名称 + 选中勾，选中不关层、可连续试色。小组件三卡（合并卡 + 开水两卡）
+  的胶囊/「用水中」强调色跟随所选配色的**浅色主色**（白字对比度各配色都够，不随系统
+  深浅切换），切换配色即时重渲染（`LifeWidgetSync.onThemePaletteChanged`，零网络）
 - **权限设置**（2026-09-23 新增，§3.12）：忽略电池优化 / 允许自启动 / 锁后台 /
   通知 / 日历 / 定位（Android 9 及以下再加相册写入）
   —— 全局，与课表无关，放「通用」分区，进子页逐项申请或跳系统设置
@@ -2836,7 +2848,7 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
 | 周网格 | `ui/widget/WidgetModel.kt` 的纯函数 builder（`buildWeekModel`）：列取 `ScheduleCalculator.visibleDays`、行取小节号、重叠同列只画一门、高亮列按「今天还有课 → 今天；否则明天」 |
 | 边界计算 | `domain/TodayBoundary.kt` 的 `nextTodayBoundaryMinutes()`（纯 JVM，单测钉死） |
 | 格式化 | `domain/TodayFormat.kt`（由 `TodayScreen.kt` 提出，`compactPosition` 一并下移）；校园卡 / 电费数字与时刻在 `ui/widget/LifeWidgetModels.kt` 的 `LifeWidgetFormat`（Locale.US） |
-| 配色 | 复用 `ui/common/CourseUi.kt` 的 `courseColor()`（16 色粉彩）；进度条为 12 段分色（Glance 无 `fillMaxWidth(fraction)`）；校园卡 / 电费的胶囊按钮用品牌青 `#0F7C7C` 固定色 |
+| 配色 | 复用 `ui/common/CourseUi.kt` 的 `courseColor()`（16 色粉彩）；进度条为 12 段分色（Glance 无 `fillMaxWidth(fraction)`）；胶囊/强调色（合并卡按钮、开水两卡胶囊与「用水中」大字）跟随「我的 → 通用设置」所选**主题配色**的浅色主色（`widgetAccentColor`，2026-09-28；此前固定品牌青 `#0F7C7C`），切换配色即时重渲染 |
 | 数据读取 | `Graph.repository(appContext)` + `repo.ensureDefaults()`，全部 applicationContext，无跨进程 |
 | 添加 | `AppWidgetManager.requestPinAppWidget`（API 26+）；不支持时降级为桌面长按引导 |
 | 点击 | 课表：整卡 → 今日页、4×4 网格区 → 课表页；校园卡 → 付款码页（未开凭证 → 校园卡设置页）；电费 → 用电统计页（`MainActivity` 的 route extra：`pay_code` / `power_bill` / `campus_card`，消费后起 `SubpageActivity`） |

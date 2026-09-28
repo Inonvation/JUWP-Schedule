@@ -26,6 +26,7 @@ import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.Shortcuts
 import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
+import edu.jxslu.schedule.domain.ThemePalette
 import edu.jxslu.schedule.domain.TimetablePrefs
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -52,8 +53,10 @@ enum class ReminderKeyKind(val prefix: String) {
 data class DisplayPrefs(
     /** 应用主题模式。System = 跟随系统深浅色。全局项。 */
     val themeMode: ThemeMode = ThemeMode.System,
-    /** 动态取色（Material You）。全局项；false = 用回内置蓝绿方案。 */
+    /** 动态取色（Material You）。全局项；false = 用回内置配色方案。 */
     val dynamicColor: Boolean = true,
+    /** 内置主题配色（DESIGN §3.3）。全局项；动态取色开着时被忽略。 */
+    val themePalette: ThemePalette = ThemePalette.Brand,
     /**
      * 悬浮导航栏（DESIGN §4.22）。全局项，**默认关**：底栏半透明磨砂，
      * 课表页背景图透到屏幕底部。关 = 保持原样（不透明底栏）。
@@ -279,9 +282,14 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_HAPTICS_ENABLED] ?: true
     }
 
-    /** 动态取色（Material You）。全局项，默认开；关 = 用回内置蓝绿方案。 */
+    /** 动态取色（Material You）。全局项，默认开；关 = 用回内置配色方案。 */
     val dynamicColor: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_DYNAMIC_COLOR] ?: true
+    }
+
+    /** 内置主题配色。全局项，默认品牌青；动态取色开着时忽略本项。 */
+    val themePalette: Flow<ThemePalette> = context.displayDataStore.data.map { p ->
+        ThemePalette.fromId(p[KEY_THEME_PALETTE])
     }
 
     /** 悬浮导航栏（DESIGN §4.22）。默认关：不透明底栏是既有观感，用户显式开启才改。 */
@@ -758,6 +766,10 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_DYNAMIC_COLOR] = value }
     }
 
+    suspend fun setThemePalette(value: ThemePalette) {
+        context.displayDataStore.edit { it[KEY_THEME_PALETTE] = value.id }
+    }
+
     suspend fun setFloatingNavBar(value: Boolean) {
         context.displayDataStore.edit { it[KEY_FLOATING_NAV_BAR] = value }
     }
@@ -1171,6 +1183,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
+        val KEY_THEME_PALETTE = stringPreferencesKey("theme_palette")
         val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")
         val KEY_LIFE_TAB_ENABLED = booleanPreferencesKey("life_tab_enabled")
         val KEY_START_PAGE = stringPreferencesKey("start_page")

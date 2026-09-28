@@ -87,6 +87,14 @@ internal object LifeWidgetSync {
         runCatching { refreshLifeWidgets(context.applicationContext) }
     }
 
+    /**
+     * 主题配色切换（通用设置，DESIGN §3.3）：胶囊色跟随所选配色，切换后立即重渲染
+     * （零网络重跑同一份快照；配色偏好先落盘，`provideGlance` 重跑时读到新值）。
+     */
+    suspend fun onThemePaletteChanged(context: Context) {
+        runCatching { refreshLifeWidgets(context.applicationContext) }
+    }
+
     // ------------------------------------------------------------------
     // 刷新（本地数据 → Glance 状态 → update；零网络）
     // ------------------------------------------------------------------

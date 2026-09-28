@@ -39,6 +39,9 @@ import androidx.glance.unit.ColorProvider
 import edu.jxslu.schedule.ROUTE_CAMPUS_CARD
 import edu.jxslu.schedule.ROUTE_PAY_CODE
 import edu.jxslu.schedule.ROUTE_POWER_BILL
+import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.ThemePalette
+import kotlinx.coroutines.flow.first
 
 /**
  * 生活小组件（校园卡余额 + 寝室电费，DESIGN §3.6 二条目改版，2026-09-27）。
@@ -73,11 +76,14 @@ class CampusCardWidget : GlanceAppWidget() {
         // 首帧：读权威快照写进实例状态并捕获进组合（会话的状态先于 provideGlance 读取，
         // 这里写入的值首帧读不到——与课表小组件同一坑，见其类 KDoc 第 1 条）
         val initial = LifeCardSnapshotStore.computeAndStore(context, id)
+        // 胶囊色跟随所选主题配色（DESIGN §3.3）：纯本地偏好读取，零网络；
+        // provideGlance 在每次渲染（首帧 + update 重跑）时现读，改完配色重渲染即跟上
+        val palette = Graph.displayPrefs(context).themePalette.first()
 
         provideContent {
             // currentState 只承接后续 update() 推来的新状态；解码失败退回首帧快照
             val snapshot = LifeCardSnapshotStore.read() ?: initial
-            CampusCardContent(snapshot)
+            CampusCardContent(snapshot, palette)
         }
     }
 }
@@ -123,7 +129,7 @@ internal object LifeCardSnapshotStore {
 }
 
 @Composable
-private fun CampusCardContent(snapshot: LifeCardSnapshot) {
+private fun CampusCardContent(snapshot: LifeCardSnapshot, palette: ThemePalette) {
     val context = LocalContext.current
     val campus = snapshot.campus
     // 点击落点跟着凭证态走：没凭证时进设置页开启，而不是把用户丢进付款码页报错
@@ -202,7 +208,7 @@ private fun CampusCardContent(snapshot: LifeCardSnapshot) {
                 modifier = GlanceModifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.Horizontal.End,
             ) {
-                WidgetPill(if (campus.hasCredentials) "出示付款码" else "去设置")
+                WidgetPill(if (campus.hasCredentials) "出示付款码" else "去设置", widgetAccentColor(palette))
             }
         }
     }
