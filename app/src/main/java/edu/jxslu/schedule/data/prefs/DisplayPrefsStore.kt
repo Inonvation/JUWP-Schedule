@@ -465,7 +465,8 @@ class DisplayPrefsStore(private val context: Context) {
      * 「精确倒计时」开关（DESIGN §3.9，2026-09-24）。**默认关**：它需要「通知使用权」
      * ——读取用户**全部**通知，是 Android 上隐私敏感度最高的一类权限，必须用户自己
      * 去系统设置里开。开了之后由 `WechatRentListener` 识别微信的租车成功通知，
-     * 把计时起点从「点扫一扫的时刻」校准到「真正开始计费的那一刻」。
+     * 把计时起点从「点扫一扫的时刻」校准到「真正开始计费的那一刻」；
+     * 2026-09-28 起兼听「服务完成通知」，还车后自动结束计时。
      */
     val ebikePreciseCountdownEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_PRECISE_COUNTDOWN] ?: false

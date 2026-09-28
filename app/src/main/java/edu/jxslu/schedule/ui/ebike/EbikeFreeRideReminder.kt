@@ -156,6 +156,35 @@ object EbikeFreeRideReminder {
     }
 
     /**
+     * 「精确倒计时」的另一半（2026-09-28）：收到微信的「[先享后付]服务完成通知」后
+     * **自动结束计时**——终点原本只能等免费结束闹钟或用户手动点「结束骑行」，现在取
+     * 真正还车的时刻。返回 true = 这次真的结束了。
+     *
+     * 三道闸，缺一不可：
+     * 1. 开关开着（与起点校准同一开关：走的是同一条「通知使用权」授权，不另设项）；
+     * 2. 有在案计时——**这一条同时就是幂等闸**：微信对同一笔订单可能重复推送完成通知，
+     *    第一次结束已把起点清成 0，重复通知在这里被挡住，不需要额外的已结束标记；
+     * 3. 通知落在「点扫一扫」之后的 [WechatRentNotice.COMPLETION_WINDOW_MS] 内（15 分钟
+     *    免费时长 + 5 分钟结束迟到窗口）：**不能**复用起点校准的 5 分钟窗口——正常骑行
+     *    routinely 超过 5 分钟，复用它自动结束就只在超短骑行下生效。这个上限与 `check`
+     *    把过期计时收干净的视界一致；骑得更久时起点已被收干净，第 2 道闸挡住。
+     *
+     * 结束 = [endRide] 全套清理 + [burnSavedCodes]：手动结束（`EbikeViewModel.onEndRide`）
+     * 会 `burnPending(force = true)`，通知链路没有 VM 在场，与 `check` 的结束分支同口径
+     * 到点即焚——免费时段用完了，码没有留下来的理由。
+     */
+    suspend fun endRideFromNotice(context: Context, noticeAtMillis: Long): Boolean = guardedBool {
+        val prefs = Graph.displayPrefs(context)
+        if (!prefs.ebikePreciseCountdownEnabled.first()) return@guardedBool false
+        val startAt = prefs.ebikeRideStartAt.first()
+        if (startAt <= 0L) return@guardedBool false
+        if (!WechatRentNotice.isWithinCompletionWindow(startAt, noticeAtMillis)) return@guardedBool false
+        endRide(context)
+        burnSavedCodes(context)
+        true
+    }
+
+    /**
      * 兜底核对（闹钟落点 / 进页 / 冷启动 / 周期任务）：把该发的提醒发出去、
      * 重排下一个闹钟、按需起停服务、把过期状态收干净。**幂等**，可任意重复调用。
      *

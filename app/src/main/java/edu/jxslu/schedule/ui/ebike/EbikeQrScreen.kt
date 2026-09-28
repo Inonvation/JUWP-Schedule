@@ -480,13 +480,14 @@ fun EbikeQrScreen(
 
                     // 「精确倒计时」（DESIGN §3.9，2026-09-24）：默认关，开启后要「通知使用权」。
                     // 计时起点原本只能取「点打开微信扫一扫」的时刻（比真正开车早 1~2 分钟），
-                    // 开了它就能拿微信的租车成功通知把起点校准到真正开始计费那一刻。
+                    // 开了它就能拿微信的租车成功通知把起点校准到真正开始计费那一刻；
+                    // 2026-09-28 起兼听完成通知，还车后自动结束计时。
                     var preciseEnabled by remember(prefs.preciseCountdownEnabled) {
                         mutableStateOf(prefs.preciseCountdownEnabled)
                     }
                     SettingSwitchRow(
                         title = "精确倒计时",
-                        subtitle = "识别微信的租车成功通知，把计时起点校准到真正开始计费那一刻",
+                        subtitle = "识别微信的先享后付通知：租车成功校准计时起点，还车后自动结束计时",
                         checked = preciseEnabled,
                         onCheckedChange = { checked ->
                             preciseEnabled = checked

@@ -150,3 +150,14 @@
   `onStartCommand` 重建 tick，起点没变才跳过。**别退回「服务在跑就跳过」**——上一轮没结束
   就换车时 tick 循环握着旧起点，倒计时不会重置（2026-09-24 用户报的 bug，当时是我加的
   `running` 幂等标记惹的）。换车（`startRide`）还要顺手清掉上一轮挂在通知栏的提醒与校准标记。
+
+- 自动结束（2026-09-28）：骑行结束微信再推一条「[先享后付]服务完成通知」（标题与「服务使用
+  通知」只差两个字），`WechatRentListener` 识别后走 `EbikeFreeRideReminder.endRideFromNotice`
+  自动结束计时（= `endRide` 全套清理 + `burnSavedCodes` 焚码，与 `check` 结束分支同口径）。
+  **分流必须先判完成、再判开始**：完成通知正文同样含「先享后付」，`matches` 已排除含
+  「服务完成通知」的文本——别把这个排除当冗余删掉，删了短骑行（完成通知落在 5 分钟窗口内）
+  会把起点校准到骑行的结尾。`endRideFromNotice` 的幂等靠「起点清零」：微信重复推送完成通知时
+  第二次在 `startAt <= 0` 被挡，**不要**再加已结束标记；完成通知窗口是专用的
+  `isWithinCompletionWindow`（`COMPLETION_WINDOW_MS` = 20 分钟 = 免费 15 + 结束迟到窗口 5，
+  与 `check` 收干净过期计时的视界一致）——**别复用起点校准的 `isWithinWindow`（5 分钟）**，
+  正常骑行 routinely 超过 5 分钟，复用它自动结束就只在超短骑行下生效。
