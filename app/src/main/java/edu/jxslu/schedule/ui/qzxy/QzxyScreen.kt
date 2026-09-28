@@ -107,6 +107,8 @@ fun QzxyScreen(
     onBack: () -> Unit = {},
     /** 打开诊断页。带当前设备地址过去，诊断页据此选中同一台。 */
     onOpenDiagnostics: (String?) -> Unit = {},
+    /** 小组件「去开水」直达（WaterAutoStart）：进页自动开阀一次；普通入口保持 false。 */
+    autoStart: Boolean = false,
     viewModel: QzxyViewModel = viewModel(
         factory = QzxyViewModel.Factory(
             Graph.qzxy(LocalContext.current),
@@ -130,6 +132,11 @@ fun QzxyScreen(
     // 发起过充值才在下次 ON_RESUME 刷余额：页面里还有权限弹窗等其他 resume 路径，
     // 无条件刷新会多打两轮请求（见下面的生命周期观察者）
     var awaitingRecharge by remember { mutableStateOf(false) }
+
+    // 桌面胶囊直达：首帧触发一次（VM 内有防重入，未登录 / 用水中 / 流程进行中会自行跳过）
+    LaunchedEffect(autoStart) {
+        if (autoStart) viewModel.requestAutoOpen()
+    }
 
     // 蓝牙扫描要运行时权限（Android 12+ 是「附近的设备」，更低版本是定位）。
     // 授权完直接接上这次点击要做的扫描，省得用户再点一次。

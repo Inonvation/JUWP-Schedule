@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  胖乖开水小组件（DESIGN §3.6「开水两卡」，2026-09-28）：固定 2×2，小票余额大字 +
+  积分副行。点击分区：胶囊「去开水」→ 进开水页并自动开水（页面 VM 内跑完整下单链）；
+  整卡其余位置 → 只进开水页。渲染零网络：余额由开水页 / 今日页开水卡顺手推送 +
+  后台 2 小时闸门兜底（见 ui/widget/WaterWidgetSync.kt）。
+
+  **固定尺寸**：resizeMode="none"，用户要求这张卡不给拖动——与可拖的课表 /
+  校园卡条目不同，没有宽窄两档排版，固定按 2 格（真机实测约 150×178dp）设计。
+  minWidth/minHeight 是 Android 11 及以下的回退尺寸（110dp ≈ 2 格，
+  与 widget_info.xml 同口径）。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:resizeMode="none"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="0"
+    android:description="@string/widget_water_qiekj_description"
+    android:previewImage="@mipmap/ic_launcher"
+    android:initialLayout="@layout/glance_default_loading_layout" />

@@ -208,6 +208,34 @@
                 android:resource="@xml/widget_campus_info" />
         </receiver>
 
+        <!-- 开水两卡小组件（DESIGN §3.6「开水两卡」，2026-09-28）：胖乖开水 + 趣智开水，
+             都**固定 2×2**（provider XML resizeMode="none"，不给拖动），整卡点击各自进
+             开水页 / 趣智校园页。渲染路径零网络：余额由页面取数链路顺手推送（2 小时
+             闸门在 WaterWidgetSync），趣智「用水中」是本地记账镜像。
+             exported=false：系统按 AppWidget 机制拉起，不需要对外暴露。 -->
+        <receiver
+            android:name=".ui.widget.QiekjWaterWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_water_qiekj_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_water_qiekj" />
+        </receiver>
+        <receiver
+            android:name=".ui.widget.QzxyWaterWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_water_qzxy_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_water_qzxy" />
+        </receiver>
+
         <!-- 小组件边界闹钟落点（上下课时刻刷新），仅内部广播 -->
         <receiver
             android:name=".ui.widget.WidgetBoundaryReceiver"

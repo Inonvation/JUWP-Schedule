@@ -15,4 +15,12 @@
     <string name="widget_description">正在上的课、今日剩余与本周课表，拖大拖小自适应；点开进 App</string>
     <string name="widget_campus_label">水贝贝 · 校园卡 · 电费</string>
     <string name="widget_campus_description">校园卡余额 + 寝室电费；点卡片出示付款码，点电费行进用电统计</string>
+
+    <!-- 开水两卡小组件（DESIGN §3.6「开水两卡」，2026-09-28）：胖乖开水 + 趣智开水，
+         都固定 2×2（resizeMode none 不给拖动）。点击分区：胶囊「去开水」→ 进页面并
+         自动开水；整卡其余位置 → 只进对应页面。 -->
+    <string name="widget_water_qiekj_label">水贝贝 · 胖乖开水</string>
+    <string name="widget_water_qiekj_description">小票余额与积分；点「去开水」直达开水，点其余位置进开水页</string>
+    <string name="widget_water_qzxy_label">水贝贝 · 趣智开水</string>
+    <string name="widget_water_qzxy_description">趣智余额与用水状态；点「去开水」直达开阀，点其余位置进趣智页</string>
 </resources>

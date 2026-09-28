@@ -191,6 +191,29 @@ internal fun openSubpage(context: Context, request: SubpageRequest) {
 }
 
 /**
+ * 小组件「去开水」直达令牌（DESIGN §3.6 开水两卡，2026-09-28 用户拍板）：
+ * 点胶囊「去开水」= 进对应页面并**自动开水**；点卡片其余位置只进页面。
+ *
+ * 信号走**一次性令牌**而不是 [SubpageRequest] 的字段：窗口链恢复
+ * （`pendingRestore`）重建页面时**不得**重触发开水——那会在用户不知情时
+ * 开阀计费。进程内单槽：武装 → 新窗口 onCreate 消费，没消费即作废由下次武装覆盖。
+ */
+internal object WaterAutoStart {
+    private var pending: SubpageScreen? = null
+
+    fun arm(screen: SubpageScreen) {
+        pending = screen
+    }
+
+    /** 是否该为 [screen] 自动开水；无论命中与否都清槽（一次性，防滞后误触发）。 */
+    fun consume(screen: SubpageScreen): Boolean = synchronized(this) {
+        val hit = pending == screen
+        pending = null
+        hit
+    }
+}
+
+/**
  * [openSubpage] 的「要拿返回值」版本：页面得用 `registerForActivityResult` 的 launcher
  * 启动（普通 `startActivity` 收不到结果），所以启动动作交给调用方，转场仍在这里补
  * ——DESIGN §3.1 要求二级页入口一律右滑推入，漏一处就是一次硬切。

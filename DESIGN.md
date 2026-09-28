@@ -676,7 +676,7 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
 保存时写 `time_slots` 并把 DataStore 的 `slot_customized` 置位，此后 `migrateTimeSlotSchema` 直接跳过，
 避免下一次结构性迁移把用户改过的作息悄悄改回默认值。「恢复默认作息」会清掉该标记，重新交回迁移管辖。
 
-### 3.6 桌面小组件（2026-09-18，P6；2026-09-20 单条目自适应；2026-09-27 二条目改版）
+### 3.6 桌面小组件（2026-09-18，P6；2026-09-20 单条目自适应；2026-09-27 二条目改版；2026-09-28 开水两卡）
 
 入口：**我的 → 桌面小组件**（独立二级页，`SubpageScreen.WIDGET_SETTINGS`）。
 
@@ -736,6 +736,52 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
 - 空态：主区 =「余额待更新 / 未开启校园卡凭证」，副行 =「寝室电费 · 暂无读数」，
   都给一句能照着做的引导；「近 7 日日均」为后续可加项（需与账单页同口径接 `PowerUsage`，
   2026-09-27 未实现）。
+
+#### 开水两卡（胖乖开水 + 趣智开水，固定 2×2，2026-09-28）
+
+选择器里再加两条**内容**条目：胖乖开水（`QiekjWaterWidgetReceiver` +
+`widget_water_qiekj.xml`）与趣智开水（`QzxyWaterWidgetReceiver` +
+`widget_water_qzxy.xml`）。两张卡都**固定 2×2**（provider XML
+`resizeMode="none"`，用户要求不给拖动；真机 2 格实测约 150×178dp，天然落在
+窄档排版），机制仍是单条目 + `SizeMode.Exact`，Glance 两条硬约束原样适用。
+
+| 条目 | 格位 | 显示 | 点击 |
+|------|------|------|------|
+| 水贝贝 · 胖乖开水 | 固定 2×2 | 主区：小票余额大字（能付水钱的那个）+ 副行「小票 · 积分 N」 | 胶囊「去开水」→ 开水页并**自动开水**；整卡其余位置 → 只进开水页 |
+| 水贝贝 · 趣智开水 | 固定 2×2 | 主区：余额大字；**用水中时整卡切成「用水中」大字 + 设备 · 已 N 分钟副行**；空闲副行给上次设备名 | 胶囊「去开水」→ 趣智页并**自动开阀**；整卡其余位置 → 只进趣智页 |
+
+口径（编排层唯一入口 `WaterWidgetSync`，`ui/widget/WaterWidgetSync.kt`；快照模型
+与文案在 `WaterWidgetModels.kt`，单测钉死）：
+
+- **权威快照在 DataStore**（`water_widget_prefs`），Glance 状态只是渲染镜像，与合并卡
+  同一套；登录态不落盘，构建快照时现算（胖乖 token / 趣智会话是唯一真相源）；
+- **渲染路径零网络**。胖乖余额推送点 = 开水页 / 今日页开水卡 `refreshBalance` 成功
+  （数据在手上零额外请求）+ 2 小时闸门（复用 `CampusBalanceGate`——名字带 Campus 是
+  历史沿革，语义 = 小组件余额类取数的「距上次成功 ≥2 小时」闸门；失败不重试不落时刻，
+  与校园卡同口径）；趣智余额推送点 = 趣智页 / 今日页卡片 `refreshAccount` 成功 + 同款
+  2 小时闸门（只调 `balance()`，不带学校名查询）；
+- **「用水中」是本地记账镜像**（Room 之外的 `QzxyWateringStore`，零网络）：开阀 /
+  结算 / 手动标记 / 过期清理时即时推送（`QzxyViewModel.pushWaterWidget`）；超过
+  1 小时未结算视为残留不上桌面（与趣智页 `applyWatering` 同一条过期规则）；
+- **登录态翻转即时上卡**：两边 ViewModel 的登录态分支各推一次，桌面立即切
+  「未登录」引导态；后台闸门取数遇到会话失效只当失败，**不代用户登出**；
+- **胶囊直达开水（2026-09-28 用户拍板，替代当日早先的「阀不预开」）**：点「去开水」
+  胶囊 = 进对应页面并**自动开水 / 开阀**；点卡片其余位置只进页面。实现三件套：
+  ① route `water_start` / `qzxy_start` 与普通 `water` / `qzxy` 分开，前者在
+  `MainActivity` 进页前武装一次性令牌 `WaterAutoStart`（`SubpageStack.kt`，进程内单槽、
+  消费即清、**不进 `SubpageRequest`**——窗口链恢复重建页面时不得重触发开水）；
+  ② `SubpageActivity` 在 composable 外消费令牌，传 `autoStart` 进页面首帧触发；
+  ③ 动作全在页面 VM：`WaterViewModel.requestAutoUnlock`（等 init 的设备请求回来选
+  「最近使用」那台，`devicesJob` 不重发；**绕过双击确认设置**——那颗开关只管页面里的
+  大按钮，桌面胶囊是更明确的主动手势）与 `QzxyViewModel.requestAutoOpen`（设备口径同
+  `openValveFromCard`：上次那台 → 唯一绑定那台；已在用水 / 流程进行中 / 未登录静默
+  跳过）。未登录 / 无设备时页面自行引导或提示，直达不跳过登录表单。胶囊的
+  `clickable` 盖住整卡那层（合并卡 PowerLine 同款 PendingIntent 覆盖）；
+- 副行/时刻口径：时长按渲染时刻算，两次刷新之间不跳动（与课表卡「还有 N 分钟」同款）；
+  趣智服务端余额全空时 `text` 退成 "-"，视为未取到（「余额待更新」），不把 `¥-` 渲染上桌面；
+- 点击路由：`EXTRA_ROUTE` 开水相关共 `water` / `qzxy` / `water_start` / `qzxy_start`
+  四个值，与付款码等同一套「先消费再启动」口径，落 `SubpageScreen.WATER` /
+  `SubpageScreen.QZXY`。
 
 #### 课表条目：一个条目，尺寸自适应
 
@@ -854,21 +900,26 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
   `LifeWidgetSync.onPeriodicTick`——电费副行的本地镜像（零网络）+ 校园卡余额的
   2 小时闸门取数；边界闹钟只属课表条目（合并卡不随上下课变样）。冷启动侧
   `JuwApplication` 追加 `LifeWidgetSync.onColdStart`，口径相同。
+- **开水两卡同样共用第 2 层**（2026-09-28）：`WidgetRefreshWorker` 再追加
+  `WaterWidgetSync.onPeriodicTick`（本地镜像 + 胖乖 / 趣智余额 2 小时闸门），
+  `JuwApplication` 追加 `WaterWidgetSync.onColdStart`；固定 2×2 不随上下课变样，
+  边界闹钟与它们无关。无实例 / 未登录 / 闸门未到都是廉价空跑，内部各自吞错。
 
 #### 设置页（我的 → 桌面小组件）
 
 页面结构（`ui/me/WidgetSettingsScreen.kt`，2026-09-27 二条目改版）：
 
-1. **添加到桌面**：两行添加条目（图标徽标 + 名称 + 内容摘要 + 已添加徽标 + 「添加」），
+1. **添加到桌面**：四行添加条目（图标徽标 + 名称 + 内容摘要 + 已添加徽标 + 「添加」），
    每条各自 `AppWidgetManager.requestPinAppWidget`（API 26+）、各自 receiver 计数。
    桌面不支持应用内 pin 时换成「长按桌面空白处 → 小组件」的引导文案，按钮隐藏
 2. **课表尺寸形态**：四张预览（2×2 / 4×2 / 2×4 / 4×4，同一份快照按四档裁剪，非可添加
    条目）收进 **2×2 网格**省纵向空间——用户在选择器里看不到「能拖多大」，预览补上这一课
 3. **校园卡（主区）/ 电费（副行）「数据与点击」**：口径、更新时机、点击行为 bullets；
    校园卡节内含「在小组件中隐藏余额」开关（默认关，写完立即重渲染桌面）
-4. **后台及时性（可选）**：`忽略电池优化`、`允许自启动` 两行，每行显示当前状态 +
-   「去开启」按钮；两条目共用，文案明确「不开也能用，只是刷新可能延迟几分钟」
-5. **说明**：两条目可同上桌面 + 跟随系统深浅色 + 内容与 App 内一致 + 负一屏限制（见上）
+4. **开水卡（胖乖 · 趣智）**：口径 / 更新时机 / 「只是启动器」bullets（2026-09-28）
+5. **后台及时性（可选）**：`忽略电池优化`、`允许自启动` 两行，每行显示当前状态 +
+   「去开启」按钮；各条目共用，文案明确「不开也能用，只是刷新可能延迟几分钟」
+6. **说明**：四条目可同上桌面 + 跟随系统深浅色 + 内容与 App 内一致 + 负一屏限制（见上）
 
 **首次进入自动引导**：DataStore 键 `widget_setup_seen` 沿用；首次进入自动弹一次说明
 弹层（两条目各一句、可跳过），确认键直接尝试钉一个**课表**条目（默认 4×2）。这是
@@ -2834,24 +2885,24 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
   新增「日历权限」状态行（ON_RESUME 重读，未授予时点行发起授权；只有从「同步」行
   发起的授权才在授予后自动续跑同步）。
 
-### 4.13 桌面小组件（2026-09-18，P6；2026-09-20 单条目自适应；2026-09-27 二条目改版）
+### 4.13 桌面小组件（2026-09-18，P6；2026-09-20 单条目自适应；2026-09-27 二条目改版；2026-09-28 开水两卡）
 
 规格见 §3.6。技术落位：
 
 | 项 | 值 |
 |----|-----|
 | 库 | `androidx.glance:glance-appwidget:1.2.0`（要求 compileSdk 35 / AGP 8.6+ / minSdk 23，本项目 35 / 8.7.3 / 26 均满足） |
-| 刷新 | 边界闹钟（`setAlarmClock` 精确闹钟，2026-09-24 起，理由见 §3.6）+ WorkManager 15 分钟周期 + 冷启动/数据变更主动刷；后台刷新 = 写状态 + `widget.update()` 双步（光写状态不重绘），首帧快照由 `provideGlance` 直接捕获进组合。15 分钟 Worker 里追加 `LifeWidgetSync.onPeriodicTick`（电费本地镜像 + 校园卡闸门取数，2026-09-27） |
+| 刷新 | 边界闹钟（`setAlarmClock` 精确闹钟，2026-09-24 起，理由见 §3.6）+ WorkManager 15 分钟周期 + 冷启动/数据变更主动刷；后台刷新 = 写状态 + `widget.update()` 双步（光写状态不重绘），首帧快照由 `provideGlance` 直接捕获进组合。15 分钟 Worker 里追加 `LifeWidgetSync.onPeriodicTick`（电费本地镜像 + 校园卡闸门取数，2026-09-27）与 `WaterWidgetSync.onPeriodicTick`（开水两卡本地镜像 + 胖乖/趣智余额闸门取数，2026-09-28） |
 | 尺寸 | **`SizeMode.Exact`**（2026-09-20）：宿主给多少 dp 就按多少算，`LocalSize` 量实测宽高后按 `WidgetScale` 分档（Compact / List / Week）；旧版是 `SizeMode.Responsive` 四档就近吸附 |
-| 条目 | **两条（按内容拆，2026-09-27）**：2 个 `GlanceAppWidgetReceiver`（`ScheduleWidgetReceiver` / `CampusCardWidgetReceiver`）+ `res/xml/widget_info.xml` / `widget_campus_info.xml`，`updatePeriodMillis="0"`；课表单条目自适应不变，校园卡条目承载合并卡（余额主区 + 电费副行）。删条目会让桌面上旧实例失效，需重新添加——原 `PowerWidgetReceiver` 当天拆出来又合并回去，若桌面上加过电费条目需手动删掉 |
-| 状态源 | 课表：`domain/TodayState.kt` 的 `buildTodayState()`（由 `ui/today` 下移，今日页与 widget 共用）。校园卡 / 电费：`ui/widget/LifeWidgetModels.kt` 快照（DataStore `life_widget_prefs` 权威 + Room `power_readings` 最新读数镜像），编排 `LifeWidgetSync`；取数闸门 `CampusBalanceGate` 纯函数（`LifeWidgetModelsTest`） |
+| 条目 | **四条（按内容拆，2026-09-27 / 2026-09-28）**：4 个 `GlanceAppWidgetReceiver`——课表（`ScheduleWidgetReceiver` + `widget_info.xml`）、合并卡（`CampusCardWidgetReceiver` + `widget_campus_info.xml`）、胖乖开水（`QiekjWaterWidgetReceiver` + `widget_water_qiekj.xml`）与趣智开水（`QzxyWaterWidgetReceiver` + `widget_water_qzxy.xml`），`updatePeriodMillis="0"`；开水两卡**固定 2×2**（`resizeMode="none"`），前两条可拖。删条目会让桌面上旧实例失效，需重新添加——原 `PowerWidgetReceiver` 当天拆出来又合并回去，若桌面上加过电费条目需手动删掉 |
+| 状态源 | 课表：`domain/TodayState.kt` 的 `buildTodayState()`（由 `ui/today` 下移，今日页与 widget 共用）。校园卡 / 电费：`ui/widget/LifeWidgetModels.kt` 快照（DataStore `life_widget_prefs` 权威 + Room `power_readings` 最新读数镜像），编排 `LifeWidgetSync`；取数闸门 `CampusBalanceGate` 纯函数（`LifeWidgetModelsTest`）。开水两卡：`ui/widget/WaterWidgetModels.kt` 快照（DataStore `water_widget_prefs` 权威 + `QzxyWateringStore` 本地用水镜像），编排 `WaterWidgetSync`，2 小时闸门复用 `CampusBalanceGate`（`WaterWidgetModelsTest`） |
 | 周网格 | `ui/widget/WidgetModel.kt` 的纯函数 builder（`buildWeekModel`）：列取 `ScheduleCalculator.visibleDays`、行取小节号、重叠同列只画一门、高亮列按「今天还有课 → 今天；否则明天」 |
 | 边界计算 | `domain/TodayBoundary.kt` 的 `nextTodayBoundaryMinutes()`（纯 JVM，单测钉死） |
 | 格式化 | `domain/TodayFormat.kt`（由 `TodayScreen.kt` 提出，`compactPosition` 一并下移）；校园卡 / 电费数字与时刻在 `ui/widget/LifeWidgetModels.kt` 的 `LifeWidgetFormat`（Locale.US） |
 | 配色 | 复用 `ui/common/CourseUi.kt` 的 `courseColor()`（16 色粉彩）；进度条为 12 段分色（Glance 无 `fillMaxWidth(fraction)`）；胶囊/强调色（合并卡按钮、开水两卡胶囊与「用水中」大字）跟随「我的 → 通用设置」所选**主题配色**的浅色主色（`widgetAccentColor`，2026-09-28；此前固定品牌青 `#0F7C7C`），切换配色即时重渲染 |
 | 数据读取 | `Graph.repository(appContext)` + `repo.ensureDefaults()`，全部 applicationContext，无跨进程 |
 | 添加 | `AppWidgetManager.requestPinAppWidget`（API 26+）；不支持时降级为桌面长按引导 |
-| 点击 | 课表：整卡 → 今日页、4×4 网格区 → 课表页；校园卡 → 付款码页（未开凭证 → 校园卡设置页）；电费 → 用电统计页（`MainActivity` 的 route extra：`pay_code` / `power_bill` / `campus_card`，消费后起 `SubpageActivity`） |
+| 点击 | 课表：整卡 → 今日页、4×4 网格区 → 课表页；校园卡 → 付款码页（未开凭证 → 校园卡设置页）；电费 → 用电统计页；胖乖开水 / 趣智开水：胶囊「去开水」→ 页面并自动开水（`water_start` / `qzxy_start` + `WaterAutoStart` 一次性令牌）、整卡其余 → 页面（route extra 共 `pay_code` / `power_bill` / `campus_card` / `water` / `qzxy` / `water_start` / `qzxy_start`，消费后起 `SubpageActivity`） |
 
 **依赖影响**（加 glance 时实测）：传递引入 `androidx.work:work-runtime`、`androidx.core:core-remoteviews`，
 `androidx.compose.runtime` 由 BOM 的 1.7.4 抬到 1.7.8（同 1.7 线，`dependencyInsight` 复核通过，
@@ -5073,6 +5124,19 @@ P6 追加（2026-09-27，桌面小组件二条目改版，§3.6 / §4.13）：�
 2 小时闸门 + 失败不重试 + 验证码接口不碰、码不预取不变。本地 `testDebugUnitTest`
 **914 例**全绿，`assembleDebug` 通过；release 包已装真机，合并卡 2×2 / 4×2 排版与点击
 分区待逐项点验。
+
+P6 追加（2026-09-28，桌面小组件开水两卡，§3.6 / §4.13）：新增**胖乖开水**与
+**趣智开水**两条固定 2×2 小组件（`resizeMode="none"` 不给拖动，用户要求）。胖乖卡主区 =
+小票余额大字 + 「小票 · 积分」副行；趣智卡主区 = 余额，**用水中时整卡切「用水中」+
+设备与已用时长副行**（本地 `QzxyWateringStore` 镜像，开阀 / 结算 / 过期清理即时推送）。
+编排层 `WaterWidgetSync`：权威快照 DataStore `water_widget_prefs`、渲染零网络、余额取数走
+App 内顺手推送 + 2 小时闸门（复用 `CampusBalanceGate`，失败不重试不落时刻）。
+设置页扩到四行添加条目 + 开水卡说明节。当天用户追加拍板**点击分区直达**：
+点胶囊「去开水」= 进页面并自动开水 / 开阀（route `water_start` / `qzxy_start` +
+一次性令牌 `WaterAutoStart`，窗口链恢复不重触发；胖乖沿用「最近使用」设备并绕过
+双击确认设置，趣智设备口径同今日页面板），点整卡其余位置只进页面（route `water` /
+`qzxy`）。本地 `testDebugUnitTest` 全绿，`assembleDebug` 通过，debug 包已装真机；
+两张卡各态（未登录 / 待更新 / 有余额 / 用水中）与两种点击落点待真机逐项点验。
 
 P6 追加（2026-09-27，附近单车：只看本校与校区围栏重建，§3.9 / §4.23）：面板新增
 **「只看本校」**（默认开、记住选择，`ebike_map_only_our_campus`），筛选 = 车队归属

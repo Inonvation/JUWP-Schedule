@@ -52,6 +52,43 @@
 - 小组件周网格的列取 `ScheduleCalculator.visibleDays`，与课表页同一口径（不要 `day - 1`）；
   高亮列规则是「今天还有课 → 今天，否则明天」，改这条前先读 DESIGN §3.6 的「明日接棒」。
 
+## 开水两卡（胖乖开水 + 趣智开水，2026-09-28）
+
+- 选择器里另两条**内容**条目：胖乖开水（`QiekjWaterWidgetReceiver`）与趣智开水
+  （`QzxyWaterWidgetReceiver`）。都**固定 2×2**（provider XML `resizeMode="none"`，
+  用户要求不给拖动）——「不要再加按尺寸拆的 receiver」的老规矩不变，这两条是按内容拆。
+  机制仍是单条目 + `SizeMode.Exact`，「写状态 + `update()`」两步与首帧捕获原样适用。
+- **编排层唯一入口 `WaterWidgetSync`**（`ui/widget/WaterWidgetSync.kt`）：权威快照在
+  DataStore（`water_widget_prefs`），Glance 状态只是渲染镜像；登录态不落盘，构建快照
+  时现算。纯逻辑（快照 / 文案 / codec）在 `WaterWidgetModels.kt`，单测
+  `WaterWidgetModelsTest` 钉死。
+- **渲染路径零网络**：胖乖余额由 `WaterViewModel.refreshBalance` 成功顺手推；趣智余额
+  由 `QzxyViewModel.refreshAccount` 成功顺手推；后台 2 小时闸门（复用
+  `CampusBalanceGate`——名字带 Campus 是历史沿革，语义是通用的小组件余额闸门）
+  走 15 分钟 tick 与冷启动。**失败不重试、不落时刻**；趣智会话失效只当失败，
+  **不代用户登出**。
+- **趣智「用水中」是本地镜像**（`QzxyWateringStore`）：开阀 / 结算 / 手动标记 / 过期
+  清理即时推（`QzxyViewModel.pushWaterWidget`）；超 1 小时视为残留不上桌面（与页面
+  `applyWatering` 同一条过期规则，别在卡片另定阈值）。
+- **点击分区（2026-09-28 用户拍板）**：胶囊「去开水」→ 进页面并**自动开水 / 开阀**
+  （route `water_start` / `qzxy_start` + 一次性令牌 `WaterAutoStart`，`SubpageStack.kt`）；
+  整卡其余位置只进页面（route `water` / `qzxy`）。实现要点：
+  - 令牌是**进程内单槽、消费即清**，不进 `SubpageRequest`——窗口链恢复
+    （`SubpageStack.pendingRestore`）重建页面时不得重触发开水，那会在用户不知情时
+    开阀计费；
+  - 自动开水的动作全在页面 VM 里（`WaterViewModel.requestAutoUnlock` /
+    `QzxyViewModel.requestAutoOpen`），VM 内有一次防重入；未登录 / 流程进行中 /
+    趣智已在用水都静默跳过。胖乖设备沿用「最近使用」口径（等 init 的设备请求回来
+    选默认台，`devicesJob` 别改成每次重发）；趣智设备沿用 `openValveFromCard`
+    （上次那台 → 唯一绑定那台 → 提示去选）；
+  - 胖乖直达**绕过双击确认设置**——那颗开关管的是页面里的大按钮，桌面胶囊是更明确
+    的主动手势（用户拍板）；
+  - 胶囊的 `clickable` 盖住整卡那层（合并卡 PowerLine 同款 PendingIntent 覆盖手法），
+    外圈 `padding` 垫出触控区，别把垫高层删掉。
+- 点击路由：`MainActivity` 的 `EXTRA_ROUTE` 开水相关共 `water` / `qzxy` /
+  `water_start` / `qzxy_start` 四个值，与付款码等同一套「先消费再启动」口径；
+  给新小组件加落点前先 grep 现有 route 常量，别撞名。
+
 ## 澎湃OS / MIUI 负一屏
 
 - 澎湃OS / MIUI 的负一屏只收录「小米小部件」（需开放平台审核），**原生小组件进不去**；

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  趣智开水小组件（DESIGN §3.6「开水两卡」，2026-09-28）：固定 2×2，余额大字（用水中时
+  切换成「用水中」大字 + 设备与时长副行）。点击分区：胶囊「去开水」→ 进趣智页并自动
+  开阀（要先在水器旁连蓝牙读设备状态，动作在页面 VM 里）；整卡其余位置 → 只进趣智页。
+  渲染零网络：余额由趣智页 / 今日页卡片刷新账户时顺手推送 + 后台 2 小时闸门兜底；
+  「用水中」是本地记账（QzxyWateringStore）的镜像，开阀 / 结算时即时推送，
+  过期（1 小时）不上桌面。
+
+  **固定尺寸**：resizeMode="none"，用户要求这张卡不给拖动（口径同 widget_water_qiekj.xml）。
+  minWidth/minHeight 是 Android 11 及以下的回退尺寸（110dp ≈ 2 格）。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:resizeMode="none"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="0"
+    android:description="@string/widget_water_qzxy_description"
+    android:previewImage="@mipmap/ic_launcher"
+    android:initialLayout="@layout/glance_default_loading_layout" />

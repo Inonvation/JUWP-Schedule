@@ -151,6 +151,9 @@ class WidgetRefreshWorker(
         // 等未接推送的取数路径）；校园卡余额只做 2 小时闸门取数。无实例 / 无凭证 /
         // 闸门未到都是廉价空跑，内部各自吞错
         LifeWidgetSync.onPeriodicTick(applicationContext)
+        // 开水两卡（DESIGN §3.6「开水两卡」，2026-09-28）：本地镜像 + 胖乖/趣智余额
+        // 2 小时闸门取数，口径同上，内部各自吞错
+        WaterWidgetSync.onPeriodicTick(applicationContext)
         return Result.success()
     }
 }

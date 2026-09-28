@@ -146,6 +146,9 @@ class SubpageActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val request = request
         SubpageStack.onWindowCreated(request)
+        // 小组件「去开水」直达令牌（WaterAutoStart）：进页前武装、本窗口首帧消费。
+        // 在 composable 外消费一次——组合重组再读会拿到恒定值，消费语义就没了
+        val autoStart = WaterAutoStart.consume(request.screen)
         enableEdgeToEdge()
         // 预测性返回（DESIGN §3.1）：34+ 由本窗口声明过渡，系统才会把手势进度交给它
         enablePredictiveBackTransitions()
@@ -157,6 +160,7 @@ class SubpageActivity : ComponentActivity() {
                     focusItemId = request.focusItemId,
                     courseName = request.courseName,
                     itemId = request.itemId,
+                    autoStart = autoStart,
                 )
             }
         }
@@ -189,18 +193,21 @@ class SubpageActivity : ComponentActivity() {
         focusItemId: String? = null,
         courseName: String? = null,
         itemId: Long = 0L,
+        /** 小组件「去开水」直达：仅 WATER / QZXY 两个页面响应，见 [WaterAutoStart]。 */
+        autoStart: Boolean = false,
     ) {
         when (screen) {
             SubpageScreen.TIMETABLE_MANAGE -> TimetableManageScreen(onBack = onBack)
             SubpageScreen.TIMETABLE_SETTINGS -> TimetableSettingsScreen(onBack = onBack)
             SubpageScreen.DATA_SETTINGS -> DataSettingsScreen(onBack = onBack)
             SubpageScreen.COURSE_TWEAK -> CourseTweakScreen(onBack = onBack)
-            SubpageScreen.WATER -> WaterScreen(onBack = onBack)
+            SubpageScreen.WATER -> WaterScreen(onBack = onBack, autoStart = autoStart)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->
                     SubpageActivity.start(this, SubpageScreen.QZXY_DEBUG, focusItemId = address)
                 },
+                autoStart = autoStart,
             )
             SubpageScreen.QZXY_DEBUG -> QzxyDebugScreen(
                 focusAddress = focusItemId,

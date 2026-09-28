@@ -11,6 +11,7 @@ import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
+import edu.jxslu.schedule.ui.widget.WaterWidgetSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -39,6 +40,10 @@ class JuwApplication : Application() {
             // （零网络），校园卡余额过 2 小时闸门后取一次。无实例 / 无凭证 / 闸门未到
             // 都是空跑，内部各自吞错，不会打断后面几步启动协程
             LifeWidgetSync.onColdStart(this@JuwApplication)
+            // 开水两卡小组件（DESIGN §3.6「开水两卡」，2026-09-28）：本地镜像 +
+            // 胖乖 / 趣智余额过 2 小时闸门各取一次。无实例 / 未登录 / 闸门未到都是
+            // 空跑，内部各自吞错，不会打断后面几步启动协程
+            WaterWidgetSync.onColdStart(this@JuwApplication)
             // 上课提醒（DESIGN §3.7）：冷启动重排下一个提醒 + 周期核对兜底。
             // 提醒关/无课时 scheduleNext 内部是撤销闹钟的空跑，很廉价。
             ClassReminder.scheduleNext(this@JuwApplication)

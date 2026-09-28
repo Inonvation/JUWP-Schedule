@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import android.content.Context
 import android.os.SystemClock
+import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.qzxy.QzxyBalance
 import edu.jxslu.schedule.data.qzxy.QzxyBill
 import edu.jxslu.schedule.data.qzxy.QzxyBluetoothScanner
@@ -28,6 +29,7 @@ import edu.jxslu.schedule.domain.QzxySign
 import edu.jxslu.schedule.domain.QzxyWatering
 import edu.jxslu.schedule.domain.QzxyWateringFormat
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.widget.WaterWidgetSync
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -259,6 +261,16 @@ class QzxyViewModel(
     private fun notice(text: String, tone: NoticeTone = NoticeTone.Info) =
         _events.trySend(QzxyEvent.Notice(text, tone))
 
+    /**
+     * 桌面趣智开水卡（DESIGN §3.6「开水两卡」）跟着本地事实走：用水状态翻转、
+     * 余额取到、登录态变化后各推一次。快照构建全程零网络（本地 store + DataStore）。
+     */
+    private fun pushWaterWidget() {
+        viewModelScope.launch {
+            runCatching { WaterWidgetSync.refreshQzxyWidget(Graph.appContext) }
+        }
+    }
+
     init {
         // 登录态以仓库的 [QzxyRepository.loggedIn] 为准：今日页卡片那份实例与页面各持
         // 一份，首启引导里登录（或页面里退出）只能从这条流得知。与胖乖开水那边同构。
@@ -307,6 +319,11 @@ class QzxyViewModel(
             // 扫描也要停：登出后回调还会继续往设备列表里塞东西，而且白占着无线电
             scanner.stopScan()
             _uiState.update { loggedOutState(it) }
+            // 桌面趣智开水卡（DESIGN §3.6「开水两卡」）跟着切回未登录形态；
+            // 登录方向的推送由 refreshAccount 成功接管，这里不重复取数
+            viewModelScope.launch {
+                runCatching { WaterWidgetSync.refreshQzxyWidget(Graph.appContext) }
+            }
         }
     }
 
@@ -343,6 +360,7 @@ class QzxyViewModel(
                     "本地提醒已清除。若设备上还有记录，点「结束用水」结算",
                 NoticeTone.Warning,
             )
+            pushWaterWidget()
             return
         }
         _uiState.update { state ->
@@ -570,6 +588,8 @@ class QzxyViewModel(
         runCatching { repo.balance() }
             .onSuccess { balance ->
                 _uiState.update { it.copy(balance = balance, balanceLoaded = true) }
+                // 桌面趣智开水卡（DESIGN §3.6「开水两卡」）：余额已经在手上，顺手推一次
+                runCatching { WaterWidgetSync.pushQzxyAccount(Graph.appContext, balance) }
             }
             .onFailure { error ->
                 _uiState.update { it.copy(balanceLoaded = true) }
@@ -950,6 +970,8 @@ class QzxyViewModel(
                         preDeductMilli = order.preDeductMoney,
                     ),
                 )
+                // 桌面趣智开水卡立刻切「用水中」（本地镜像，零网络）
+                pushWaterWidget()
                 _uiState.update { it.copy(flow = QzxyFlowState.Idle) }
                 notice(
                     "已开阀，服务端预扣 ${milliYuanText(order.preDeductMoney)}，用完点「结束用水」",
@@ -985,6 +1007,26 @@ class QzxyViewModel(
         openValve()
     }
 
+    /**
+     * 小组件「去开水」直达（DESIGN §3.6 开水两卡，2026-09-28 用户拍板）：进页即开阀。
+     *
+     * 设备口径与 [openValveFromCard] 一致（上次那台 → 唯一绑定那台 → 提示去选）。
+     * 已在用水 / 流程进行中 / 未登录都静默跳过；「在用水」直接问真相源
+     * [wateringStore]——init 的收集器还没发首帧时，界面状态可能落后于本地记账。
+     */
+    fun requestAutoOpen() {
+        if (autoOpenRequested) return
+        autoOpenRequested = true
+        viewModelScope.launch {
+            if (!_uiState.value.loggedIn) return@launch
+            if (wateringStore.watering.value != null) return@launch
+            if (_uiState.value.flow !is QzxyFlowState.Idle) return@launch
+            openValveFromCard()
+        }
+    }
+
+    private var autoOpenRequested = false
+
     /** 收起结算结果卡。 */
     fun dismissSettlement() = _uiState.update { it.copy(lastSettlement = null) }
 
@@ -1005,6 +1047,7 @@ class QzxyViewModel(
         wateringStore.clear()
         _uiState.update { it.copy(flow = QzxyFlowState.Idle, lastSettlement = null) }
         notice("已标记为结束，本地不再提示")
+        pushWaterWidget()
     }
 
     /**
@@ -1110,7 +1153,10 @@ class QzxyViewModel(
                     // 在官方 App 里结了），一并清掉——不清的话卡片会一直显示在用水，
                     // 而设备这边什么都做不了
                     val stale = _uiState.value.watering != null
-                    if (stale) wateringStore.clear()
+                    if (stale) {
+                        wateringStore.clear()
+                        pushWaterWidget()
+                    }
                     fail(
                         "设备当前空闲",
                         if (stale) {
@@ -1255,6 +1301,8 @@ class QzxyViewModel(
                 // 记账要在 clear 之前取：clear 会把 store 里的起点一并清掉
                 val startedAt = _uiState.value.watering?.startedAtMillis
                 wateringStore.clear()
+                // 桌面趣智开水卡退出「用水中」
+                pushWaterWidget()
                 _uiState.update {
                     it.copy(
                         // 记录清掉后设备回到空闲；置空强制下次开阀重读，别用旧状态

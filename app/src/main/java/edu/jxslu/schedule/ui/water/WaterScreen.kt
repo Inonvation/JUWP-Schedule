@@ -113,6 +113,8 @@ private val DATE_FORMAT = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
 @Composable
 fun WaterScreen(
     onBack: () -> Unit = {},
+    /** 小组件「去开水」直达（WaterAutoStart）：进页自动开水一次；普通入口保持 false。 */
+    autoStart: Boolean = false,
     viewModel: WaterViewModel = viewModel(
         factory = WaterViewModel.Factory(Graph.qiekj(LocalContext.current)),
     ),
@@ -130,6 +132,11 @@ fun WaterScreen(
     var confirmLogout by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // 桌面胶囊直达：首帧触发一次（VM 内有防重入，未登录 / 流程进行中会自行跳过）
+    LaunchedEffect(autoStart) {
+        if (autoStart) viewModel.requestAutoUnlock()
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->

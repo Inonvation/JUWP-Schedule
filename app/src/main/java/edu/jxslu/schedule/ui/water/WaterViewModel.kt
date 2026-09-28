@@ -10,7 +10,9 @@ import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
 import edu.jxslu.schedule.data.qiekj.UnlockException
 import edu.jxslu.schedule.domain.UnlockFlowState
+import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.widget.WaterWidgetSync
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -130,6 +132,11 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         } else {
             cancelFlowJobs()
             _uiState.update { WaterUiState() }
+            // 桌面胖乖开水卡（DESIGN §3.6「开水两卡」）跟着切回未登录形态；
+            // 登录方向的推送由 refreshBalance 成功接管，这里不重复取数
+            viewModelScope.launch {
+                runCatching { WaterWidgetSync.refreshQiekjWidget(Graph.appContext) }
+            }
         }
     }
 
@@ -256,6 +263,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
             repo.queryBalance()
         }.onSuccess { balance ->
             _uiState.update { it.copy(balance = balance, loadingBalance = false, balanceLoaded = true) }
+            // 桌面胖乖开水卡（DESIGN §3.6「开水两卡」）：余额已经在手上，顺手推一次
+            // （零额外请求；后台另有 2 小时闸门兜底）
+            runCatching { WaterWidgetSync.pushQiekjBalance(Graph.appContext, balance) }
         }.onFailure {
             _uiState.update { it.copy(loadingBalance = false, balanceLoaded = true) }
             if (it is TokenExpiredException) {
@@ -266,7 +276,10 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         }
     }
 
-    fun refreshDevices() = viewModelScope.launch {
+    /** 最近一次设备列表请求的 Job：直达开水要等它回来才知道选哪台，不补发重复请求。 */
+    private var devicesJob: Job? = null
+
+    fun refreshDevices() = (viewModelScope.launch {
         if (!_uiState.value.loggedIn) return@launch
         runCatching {
             _uiState.update { it.copy(loadingDevices = true) }
@@ -285,9 +298,34 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                 notice(it.message ?: "查询历史设备失败", NoticeTone.Error)
             }
         }
-    }
+    }).also { devicesJob = it }
 
     fun selectDevice(device: DeviceItem) = _uiState.update { it.copy(selectedDevice = device) }
+
+    /**
+     * 小组件「去开水」直达（DESIGN §3.6 开水两卡，2026-09-28 用户拍板）：进页即开水。
+     *
+     * 一次进页只触发一次；未登录 / 流程进行中静默跳过（页面自己会把状态摆出来）。
+     * 设备沿用「最近使用」口径：init 已在拉列表，等它回来选默认那台；拉完仍没有
+     * （账号下没有历史设备）就交还用户手动处理。**绕过双击确认设置**——那颗开关
+     * 管的是页面里的大按钮，桌面胶囊是更明确的主动手势。
+     */
+    fun requestAutoUnlock() {
+        if (autoUnlockRequested) return
+        autoUnlockRequested = true
+        viewModelScope.launch {
+            if (!_uiState.value.loggedIn) return@launch
+            if (_uiState.value.flow !is UnlockFlowState.Idle) return@launch
+            if (_uiState.value.selectedDevice == null) devicesJob?.join()
+            if (_uiState.value.selectedDevice == null) {
+                notice("没有可用设备，请手动选择", NoticeTone.Warning)
+                return@launch
+            }
+            unlock()
+        }
+    }
+
+    private var autoUnlockRequested = false
 
     /** 已保存的登录 token，给「复制 Token」用（另一台设备粘贴 Token 登录）；未登录返回 null。 */
     fun exportToken(): String? = repo.readToken()

@@ -63,6 +63,8 @@ import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.widget.CampusCardWidgetReceiver
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
+import edu.jxslu.schedule.ui.widget.QiekjWaterWidgetReceiver
+import edu.jxslu.schedule.ui.widget.QzxyWaterWidgetReceiver
 import edu.jxslu.schedule.ui.widget.ScheduleWidgetReceiver
 import edu.jxslu.schedule.ui.widget.WidgetDay
 import edu.jxslu.schedule.ui.widget.WidgetFocus
@@ -80,7 +82,9 @@ import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.BatteryCharging01
 import me.rerere.hugeicons.stroke.Calendar01
+import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Energy
+import me.rerere.hugeicons.stroke.GlassWater
 import me.rerere.hugeicons.stroke.Wallet03
 import java.time.LocalDate
 
@@ -89,13 +93,15 @@ import java.time.LocalDate
  *
  * 2026-09-27 **二条目改版**：可添加条目为课表（2026-09-20 单条目自适应，不变）+
  * 「校园卡 · 电费」合并卡（当天先从一条拆成三条、再合并回一条：拆开后 2 格宽的卡片
- * 只放得下一块信息，桌面看着空）。条目仍是**按内容拆**，不是按尺寸拆。页面结构：
+ * 只放得下一块信息，桌面看着空）。2026-09-28 **开水两卡**：再加胖乖开水 / 趣智开水
+ * 两条固定 2×2 卡（DESIGN §3.6「开水两卡」）。条目仍是**按内容拆**，不是按尺寸拆。页面结构：
  *
- * 1. 添加到桌面：两行添加条目，各自 `requestPinAppWidget`、各自计数徽标；
+ * 1. 添加到桌面：四行添加条目，各自 `requestPinAppWidget`、各自计数徽标；
  * 2. 课表尺寸形态：四张预览（同一份快照按四档裁剪，只作说明用）收进 2×2 网格省纵向空间；
  * 3. 校园卡（主区）：口径 / 更新时机 / 点击行为 bullets + 「在小组件中隐藏余额」开关（默认关）；
  * 4. 电费（副行）：读数口径 / 「小组件自身不联网」/ 点击行为 bullets；
- * 5. 后台及时性（可选）/ 说明：两条目共用。
+ * 5. 开水卡（胖乖 · 趣智）：口径 / 更新时机 / 胶囊直达与「点其余位置只进页面」bullets；
+ * 6. 后台及时性（可选）/ 说明：各条目共用。
  *
  * 交互规则不变（用户已拍板「自动检测 + 逐项申请」）：进页只读检测；**首次进入**自动弹
  * 一次说明弹层（含一键添加课表条目），此后不再自动弹；不主动拉任何系统框。
@@ -167,7 +173,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             SettingsSection(
                 title = "添加到桌面",
                 subtitle = if (caps.canPin) {
-                    "点「添加」后在系统确认框里一键放到桌面；两个条目各自独立添加，可以同时上桌面"
+                    "点「添加」后在系统确认框里一键放到桌面；四个条目各自独立添加，可以同时上桌面"
                 } else {
                     "当前桌面不支持应用内添加，请长按桌面空白处 → 小组件 → 水贝贝"
                 },
@@ -258,6 +264,18 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(2.dp))
             }
 
+            SettingsSection(title = "开水卡（胖乖 · 趣智）", subtitle = "固定 2×2，不可拖动；数据与点击") {
+                Spacer(Modifier.height(4.dp))
+                Bullet("胖乖卡主区是小票余额（能付水钱的那个），副行给积分；趣智卡主区是余额，" +
+                    "用水中时整卡切成「用水中」+ 设备与已用时长。")
+                Bullet("更新时机：打开开水页 / 趣智页或今日页卡片刷新后即时同步；后台约每 2 小时一次；" +
+                    "取数失败保留上次数据与更新时刻，不会清空。")
+                Bullet("趣智「用水中」是本机记账：开阀 / 结算时即时上桌面；超过 1 小时未结算视为残留，不再显示。")
+                Bullet("点「去开水」胶囊 = 进对应页面并自动开水（未登录 / 没设备时停在页面里引导，" +
+                    "趣智开阀还需要在水器旁连蓝牙）；点卡片其余位置只进页面，结算仍在页面完成。")
+                Spacer(Modifier.height(2.dp))
+            }
+
             SettingsSection(
                 title = "后台及时性（可选）",
                 subtitle = "小组件在上下课时刻自动更新；不开也能用，开启后刷新更及时",
@@ -285,7 +303,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
 
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(6.dp))
-                Bullet("两个条目各自独立添加，可以同时上桌面。")
+                Bullet("四个条目各自独立添加，可以同时上桌面。")
                 Bullet("内容与 App 内同口径：课表与「今日」页一致，余额与生活页钱包卡一致。")
                 Bullet("跟随系统深浅色；校园卡余额与电费都不在渲染路径上联网，电费只显示已取到的读数。")
                 Bullet("「还有 N 分钟」按刷新时刻计算，两次刷新之间不会跳动。")
@@ -338,6 +356,22 @@ private val entries = listOf(
         iconTint = Color(0xFF1F7A4D),
         countOf = { it.campusAdded },
     ),
+    WidgetEntry(
+        label = "水贝贝 · 胖乖开水",
+        description = "固定 2×2；小票余额大字 + 积分，点「去开水」直达开水",
+        receiver = QiekjWaterWidgetReceiver::class.java,
+        icon = HugeIcons.Droplet,
+        iconTint = Color(0xFF0F7C7C),
+        countOf = { it.qiekjAdded },
+    ),
+    WidgetEntry(
+        label = "水贝贝 · 趣智开水",
+        description = "固定 2×2；余额 / 用水中 + 设备，点「去开水」直达开阀",
+        receiver = QzxyWaterWidgetReceiver::class.java,
+        icon = HugeIcons.GlassWater,
+        iconTint = Color(0xFF2A6489),
+        countOf = { it.qzxyAdded },
+    ),
 )
 
 private fun readCaps(context: Context): WidgetCaps = WidgetCaps(
@@ -345,6 +379,8 @@ private fun readCaps(context: Context): WidgetCaps = WidgetCaps(
     batteryWhitelisted = WidgetCapabilities.isIgnoringBatteryOptimizations(context),
     scheduleAdded = WidgetCapabilities.addedCountOf(context, ScheduleWidgetReceiver::class.java),
     campusAdded = WidgetCapabilities.addedCountOf(context, CampusCardWidgetReceiver::class.java),
+    qiekjAdded = WidgetCapabilities.addedCountOf(context, QiekjWaterWidgetReceiver::class.java),
+    qzxyAdded = WidgetCapabilities.addedCountOf(context, QzxyWaterWidgetReceiver::class.java),
 )
 
 private data class WidgetCaps(
@@ -352,6 +388,8 @@ private data class WidgetCaps(
     val batteryWhitelisted: Boolean,
     val scheduleAdded: Int,
     val campusAdded: Int,
+    val qiekjAdded: Int,
+    val qzxyAdded: Int,
 )
 
 /**

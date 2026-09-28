@@ -204,6 +204,22 @@ internal const val ROUTE_POWER_BILL = "power_bill"
 /** [EXTRA_ROUTE] 的取值：校园卡小组件未开凭证 → 校园卡设置页。 */
 internal const val ROUTE_CAMPUS_CARD = "campus_card"
 
+/** [EXTRA_ROUTE] 的取值：胖乖开水小组件整卡 → 开水页（DESIGN §3.6「开水两卡」，2026-09-28）。 */
+internal const val ROUTE_WATER = "water"
+
+/** [EXTRA_ROUTE] 的取值：趣智开水小组件整卡 → 趣智校园页（同上）。 */
+internal const val ROUTE_QZXY = "qzxy"
+
+/**
+ * [EXTRA_ROUTE] 的取值：胖乖开水卡胶囊「去开水」→ 开水页并**自动开水**
+ * （2026-09-28 用户拍板：只有胶囊直达，整卡其余位置只进页面）。
+ * 与 [ROUTE_WATER] 的差别仅在武装 [WaterAutoStart] 令牌。
+ */
+internal const val ROUTE_WATER_START = "water_start"
+
+/** [EXTRA_ROUTE] 的取值：趣智开水卡胶囊「去开水」→ 趣智页并自动开阀（同上）。 */
+internal const val ROUTE_QZXY_START = "qzxy_start"
+
 /**
  * 主题在根上解析：深浅色由显示偏好里的 [ThemeMode] 决定（默认跟随系统），
  * 强制浅/深时忽略系统设置。放在 setContent 最外层，全 App（含弹层）统一生效。
@@ -515,15 +531,26 @@ internal fun JuwApp(
                 restoreState = true
             }
             pendingRoute.value = null
-        } else if (route == ROUTE_PAY_CODE || route == ROUTE_POWER_BILL || route == ROUTE_CAMPUS_CARD) {
-            // 生活小组件点击（DESIGN §3.6 二条目改版）：落点不是底栏 Tab 而是二级页
-            // （付款码 / 用电统计 / 校园卡设置）。仍走「先消费再启动」，与上面
-            // 同一套防重组回弹的口径；主界面在底下保持今日页原样
+        } else if (
+            route == ROUTE_PAY_CODE || route == ROUTE_POWER_BILL || route == ROUTE_CAMPUS_CARD ||
+            route == ROUTE_WATER || route == ROUTE_QZXY ||
+            route == ROUTE_WATER_START || route == ROUTE_QZXY_START
+        ) {
+            // 小组件点击（DESIGN §3.6 二条目改版 + 开水两卡）：落点不是底栏 Tab 而是二级页
+            // （付款码 / 用电统计 / 校园卡设置 / 开水页 / 趣智页）。仍走「先消费再启动」，
+            // 与上面同一套防重组回弹的口径；主界面在底下保持今日页原样。
+            // 「去开水」胶囊（_start）在进页前武装一次性令牌，页面首帧消费后自动开水；
+            // 整卡其余位置不带令牌，只进页面
             pendingRoute.value = null
             val screen = when (route) {
                 ROUTE_PAY_CODE -> SubpageScreen.PAY_CODE
                 ROUTE_POWER_BILL -> SubpageScreen.POWER_BILL
+                ROUTE_WATER, ROUTE_WATER_START -> SubpageScreen.WATER
+                ROUTE_QZXY, ROUTE_QZXY_START -> SubpageScreen.QZXY
                 else -> SubpageScreen.CAMPUS_CARD_SETTINGS
+            }
+            if (route == ROUTE_WATER_START || route == ROUTE_QZXY_START) {
+                WaterAutoStart.arm(screen)
             }
             openSubpage(context, SubpageRequest(screen = screen))
         }
