@@ -92,6 +92,69 @@ object PowerPayChannels {
     const val ABC_ID = "4"
 }
 
+/** 电量入账状态（`order.flag` 第 2 位，见 [PowerPayModels.entryStateFrom]）。 */
+enum class PowerEntryState {
+    /** 电量已写入电表。 */
+    ENTERED,
+
+    /** 平台判了入账失败（官方详情页同款判据）。 */
+    FAILED,
+
+    /** 还没入账——扣款可能已成功，等平台的入账任务。 */
+    PENDING,
+}
+
+/** 一次查单的结果：扣款状态与入账状态分开（2026-09-29 事故的教训，别再合并成一个数）。 */
+data class PowerOrderState(val status: Int?, val entry: PowerEntryState?)
+
+/**
+ * 电费下单（`paystep=0`）的业务表单——**字段与官方 H5 的 choose 模板逐一对齐**
+ * （`_static_js_app.js` 的 `placeOrder`，2026-09-29 逐字段核对）：
+ *
+ * ```js
+ * var t = {feeitemid:…, tranamt:…, flag:this.template, source:"app", paystep:0,
+ *          abstracts:this.chooseRowsVal};          // ← 选房描述串
+ * this.$set(t, "third_party", this.third_party);   // ← 电表分支：读表 data 原文 JSON
+ * ```
+ *
+ * 2026-09-29 入账事故：App 此前只发前五个字段。平台对 `third_party` / `abstracts`
+ * **不做任何校验**——订单照建、钱照收，但入账任务从订单里找不到电表目标，永远不执行
+ * （`order.flag` 停在 `0000000000`），三笔共 26 元卡在平台。红线：**缺读数原文就拒单，
+ * 绝不发缺字段的表单**。
+ */
+object PowerOrderForm {
+
+    /** 项目类型固定 choose（房间电费在平台就是该模板；官方页同款）。 */
+    private const val FLAG_CHOOSE = "choose"
+
+    /**
+     * 组下单表单。8 个键一个不能少；[meter.dataJson] 缺失（没有真读过电表）直接抛
+     * [IllegalStateException]—— repository 层会先给用户能看懂的 [PowerException.Protocol]，
+     * 这里是最后一道闸，防「静默发出缺字段表单」复发。
+     */
+    fun of(yuan: String, meter: PowerMeter): Map<String, String> {
+        val dataJson = meter.dataJson?.takeIf { it.isNotBlank() }
+            ?: error("没有电表读数原文（dataJson），禁止下单——third_party 缺失会让订单永不入账")
+        return linkedMapOf(
+            "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
+            "tranamt" to yuan,
+            "flag" to FLAG_CHOOSE,
+            "source" to "app",
+            "paystep" to "0",
+            "synAccessSource" to "h5",
+            "abstracts" to abstractsOf(meter.room),
+            "third_party" to dataJson,
+        )
+    }
+
+    /**
+     * 账单摘要（`abstracts`）：官方账单上「校区-…;楼栋-…;房间-…」那一行的来源，
+     * 取读数 `data` 的三个显示名拼装（与官方 `chooseRowsVal` 同格式，分隔符是 `-`/`;`）。
+     */
+    fun abstractsOf(room: PowerRoom): String =
+        "校区-${room.campus.orEmpty()};楼栋-${room.building.orEmpty()};房间-${room.room.orEmpty()}"
+}
+
 /** 一次下单的返回（`POST /blade-pay/pay` `paystep=0`）。 */
 data class PowerOrder(
     val orderId: String,
@@ -250,12 +313,40 @@ object PowerPayModels {
         )
     }.getOrNull()
 
-    /** 订单状态（`getpayinfo` 的 `order.status`；0 待支付 / 1 已完成）。 */
-    fun orderStatusFrom(raw: String): Int? = runCatching {
-        val obj = json.parseToJsonElement(raw).jsonObject
-        val order = obj["order"] as? JsonObject ?: return@runCatching null
-        (order["status"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
-    }.getOrNull()
+/**
+ * 入账状态（`getpayinfo` / `appAccountDetail` 的 `order.flag`，第 2 位字符——
+ * 与官方账单详情页同一判据：`"1"` = 入账成功、`"2"` = 入账失败、其余 = 还没入账）。
+ *
+ * **`status=1` 只代表扣款成功，不代表电量进了电表**（2026-09-29 事故：App 下单缺
+ * `third_party`，三笔「支付成功」的订单永远停在 `flag="0000000000"`）。判不出
+ * （flag 缺失 / 太短）返回 null，调用方按「不知道」处理，不推断。
+ */
+fun entryStateFrom(raw: String): PowerEntryState? = runCatching {
+    val obj = json.parseToJsonElement(raw).jsonObject
+    val order = obj["order"] as? JsonObject ?: return@runCatching null
+    val flag = (order["flag"] as? JsonPrimitive)?.contentOrNull ?: return@runCatching null
+    entryStateOf(flag)
+}.getOrNull()
+
+/** [entryStateFrom] 的纯字符串口径（单测直接钉它）。 */
+fun entryStateOf(flag: String?): PowerEntryState? {
+    val second = flag?.getOrNull(1) ?: return null
+    return when (second) {
+        '1' -> PowerEntryState.ENTERED
+        '2' -> PowerEntryState.FAILED
+        else -> PowerEntryState.PENDING
+    }
+}
+
+/** 查单一次拿全：`status`（扣款）与 `entry`（入账）是两回事，见 [entryStateFrom]。 */
+fun orderStateFrom(raw: String): PowerOrderState? = runCatching {
+    val obj = json.parseToJsonElement(raw).jsonObject
+    val order = obj["order"] as? JsonObject ?: return@runCatching null
+    PowerOrderState(
+        status = (order["status"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull(),
+        entry = entryStateOf((order["flag"] as? JsonPrimitive)?.contentOrNull),
+    )
+}.getOrNull()
 
     /**
      * 农行收银台链接（`paystep=2` + [PowerPayChannels.ABC_CODE] 的响应，2026-09-28 实测）。

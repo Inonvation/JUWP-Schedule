@@ -131,25 +131,32 @@ class PowerRepository(
     }
 
     /**
-     * 电费下单（DESIGN §4.24「电费充值」，2026-09-23 实测）。
-     * `feeitemid=181 + tranamt + paystep=0`，签名口径见 [PowerPaySign]。
-     * 返回订单号与支付有效期；渠道列表用 [channels] 单独取（`payList` 也随下单返回）。
+     * 电费下单（DESIGN §4.24「电费充值」，2026-09-23 实测；**2026-09-29 补 third_party**）。
+     *
+     * 与官方 H5 同款时序：**先真实读一次电表，再拿读数原文下单**——
+     * - `third_party` = 读数 `map.data` 整段 JSON（campusid/buildingid/roomid/sroomid 等）：
+     *   平台入账任务找电表的唯一依据。2026-09-29 事故：旧版不发它，平台照样建单收钱，
+     *   但订单永远不入账（`order.flag` 停在 `0000000000`），三笔共 26 元卡死——
+     *   平台对缺字段**不报错、不退钱、不重试**，只能人工找管理员补。
+     * - `abstracts` = 「校区-…;楼栋-…;房间-…」：官方账单的摘要行来源。
+     *
+     * 读不到电表（快照失败 / data 缺失 / 没有房间名）直接抛 [PowerException.Protocol]，
+     * 与官方页「读不到电表就不能付」同一口径——**绝不发缺字段的表单**。
+     * 表单构造的唯一口径在 [PowerOrderForm.of]（单测钉死）。
      */
     suspend fun createOrder(username: String, password: String, yuan: String): PowerOrder =
         withToken(username, password) { token ->
+            // force = true：官方页每次下单都用当次读数（third_party 的 remark 里带着
+            // 下单时刻的剩余电量），缓存/种子快照没有 dataJson，不能拿来下单
+            val fresh = snapshot(username, password, force = true, source = PowerReadingSource.RECHARGE)
+            val meter = fresh.meter
+            if (meter.dataJson.isNullOrBlank() || meter.room?.room.isNullOrBlank()) {
+                throw PowerException.Protocol("读不到电表数据，无法下单，请稍后重试")
+            }
             val raw = client.postSigned(
                 "/blade-pay/pay",
                 token,
-                PowerPaySign.signed(
-                    mapOf(
-                        "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
-                        "tranamt" to yuan,
-                        "flag" to "choose",
-                        "source" to "app",
-                        "paystep" to "0",
-                        "synAccessSource" to "h5",
-                    ),
-                ),
+                PowerPaySign.signed(PowerOrderForm.of(yuan, meter)),
             )
             expectOk(raw, "电费下单")
             PowerPayModels.orderFrom(raw.text)
@@ -295,8 +302,12 @@ class PowerRepository(
         }
     }
 
-    /** 查单（`order.status`：0 待支付 / 1 已完成）。 */
-    suspend fun orderStatus(username: String, password: String, orderId: String): Int? =
+    /**
+     * 查单（2026-09-29 起**扣款与入账分开回**）：`status` 1 = 已扣款；
+     * `entry` = 电量入账位（`order.flag` 第 2 位，`1` 成功 / `2` 失败 / 其余未入账）。
+     * `status=1` 而 `entry` 停在未入账 = 钱收了、电没进表（见 [createOrder] 的事故记录）。
+     */
+    suspend fun orderState(username: String, password: String, orderId: String): PowerOrderState? =
         withToken(username, password) { token ->
             val raw = client.get(
                 "/charge/pay/getpayinfo",
@@ -304,7 +315,7 @@ class PowerRepository(
                 mapOf("orderid" to orderId, "userAgent" to "android"),
             )
             expectOk(raw, "查电费订单")
-            PowerPayModels.orderStatusFrom(raw.text)
+            PowerPayModels.orderStateFrom(raw.text)
         }
 
     /** 读电表：`feeitemid` / `type=IEC` / `level` / 场景三键缺一不可（缺了平台只回 500 未知异常）。 */

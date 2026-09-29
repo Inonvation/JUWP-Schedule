@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -124,9 +125,11 @@ class PowerPayTest {
 
     @Test
     fun statusParsing() {
-        assertEquals(0, PowerPayModels.orderStatusFrom("""{"code":200,"order":{"status":0}}"""))
-        assertEquals(1, PowerPayModels.orderStatusFrom("""{"code":200,"order":{"status":1}}"""))
-        assertNull(PowerPayModels.orderStatusFrom("""{"code":500,"msg":"未知异常"}"""))
+        // status 的解析口径由 orderStateFrom 承接（2026-09-29 起扣款与入账一起回）
+        val state = PowerPayModels.orderStateFrom("""{"code":200,"order":{"status":0,"flag":"0000000000"}}""")!!
+        assertEquals(0, state.status)
+        assertEquals(1, PowerPayModels.orderStateFrom("""{"code":200,"order":{"status":1,"flag":"0110000000"}}""")!!.status)
+        assertNull(PowerPayModels.orderStateFrom("""{"code":500,"msg":"未知异常"}"""))
     }
 
     /**
@@ -211,5 +214,106 @@ class PowerPayTest {
         assertEquals(17, ts.length)
         assertTrue(ts.all { it.isDigit() })
         assertEquals(11, PowerPaySign.buildNonce().length)
+    }
+
+    // ------------------------------------------------------------------
+    // 下单表单（2026-09-29 入账事故后新增的钉子）
+    //
+    // 事故：App 下单只发 feeitemid/tranamt/flag/source/paystep，平台不校验
+    // third_party/abstracts 的缺失——订单照建、钱照收，但入账任务找不到电表目标，
+    // 三笔共 26 元「支付成功」却永远不入账（order.flag 停在 0000000000）。
+    // ------------------------------------------------------------------
+
+    /** 2026-09-29 官网真实订单的 third_party 原文（= getThirdData `map.data` 的 JSON）。 */
+    private val thirdPartyJson =
+        "{\"campus\":\"江西水利电力大学\",\"tsmAbstract\":\"校区#江西水利电力大学;楼栋#13B;房间#13B309\"," +
+            "\"campusid\":\"0\",\"yktmercacc\":\"1000001\",\"remark\":\"{\\\"当前剩余电量\\\":\\\"15.67\\\"}\"," +
+            "\"sroomid\":2887,\"building\":\"13B\",\"roomid\":\"14686\",\"room\":\"13B309\",\"buildingid\":\"79\"}"
+
+    /** 形状取自真实读数响应的读数（房间 13B309）。 */
+    private val orderMeter = PowerMeter(
+        room = PowerRoom(campus = "江西水利电力大学", building = "13B", room = "13B309", roomId = "14686"),
+        fields = mapOf("当前剩余电量" to "15.67"),
+        remain = 15.67,
+        remainField = "当前剩余电量",
+        fetchedAtMs = 0L,
+        dataJson = thirdPartyJson,
+    )
+
+    /** 下单表单 8 个键一个不能少：third_party 是入账目标，abstracts 是账单摘要行。 */
+    @Test
+    fun orderFormCarriesMeterTargetingAndAbstracts() {
+        val form = PowerOrderForm.of("24", orderMeter)
+        assertEquals(8, form.size)
+        assertEquals("181", form["feeitemid"])
+        assertEquals("24", form["tranamt"])
+        assertEquals("choose", form["flag"])
+        assertEquals("app", form["source"])
+        assertEquals("0", form["paystep"])
+        assertEquals("h5", form["synAccessSource"])
+        // 与官方账单摘要行同格式（分隔符 - 与 ;）
+        assertEquals("校区-江西水利电力大学;楼栋-13B;房间-13B309", form["abstracts"])
+        assertEquals(thirdPartyJson, form["third_party"])
+    }
+
+    /** 签名覆盖全部业务字段（签名漏字段 = 平台按缺参处理，就是那次事故的形态）。 */
+    @Test
+    fun signedOrderFormKeepsEveryBusinessField() {
+        val signed = PowerPaySign.signed(
+            PowerOrderForm.of("24", orderMeter),
+            timestamp = "20260929115433000",
+            nonce = "abc123xyz00",
+        )
+        for (key in listOf(
+            "feeitemid", "tranamt", "flag", "source", "paystep", "synAccessSource", "abstracts", "third_party",
+            "APP_ID", "TIMESTAMP", "NONCE", "SIGN_TYPE", "SIGN",
+        )) {
+            assertNotNull("签名表单缺 $key", signed[key])
+        }
+        assertEquals(signed["SIGN"], PowerPaySign.signOf(signed))
+    }
+
+    /** 没有真读表的 data 原文就不许组表单——宁可拒单，不发缺字段的单出去。 */
+    @Test
+    fun orderFormRefusesMissingMeterData() {
+        assertThrows(IllegalStateException::class.java) { PowerOrderForm.of("1", orderMeter.copy(dataJson = null)) }
+        assertThrows(IllegalStateException::class.java) { PowerOrderForm.of("1", orderMeter.copy(dataJson = " ")) }
+    }
+
+    /** 摘要格式对显示名缺项保持三段结构（平台照原样入账单，宁空勿改格式）。 */
+    @Test
+    fun abstractsKeepsThreePartFormatWithPartialNames() {
+        assertEquals(
+            "校区-;楼栋-13B;房间-13B309",
+            PowerOrderForm.abstractsOf(PowerRoom(campus = null, building = "13B", room = "13B309", roomId = null)),
+        )
+    }
+
+    /**
+     * 入账位 = `order.flag` 第 2 位（官方账单详情页同一判据）：
+     * `1` 入账成功 / `2` 入账失败 / 其余未入账。App 事故三笔的 flag 全是 `0000000000`。
+     */
+    @Test
+    fun entryStateReadsFlagSecondChar() {
+        // 官网已入账订单的实测 flag（2026-09-29 及历史各笔）
+        assertEquals(PowerEntryState.ENTERED, PowerPayModels.entryStateOf("0110000000"))
+        assertEquals(PowerEntryState.FAILED, PowerPayModels.entryStateOf("0210000000"))
+        assertEquals(PowerEntryState.PENDING, PowerPayModels.entryStateOf("0000000000"))
+        assertEquals(PowerEntryState.ENTERED, PowerPayModels.entryStateOf("01"))
+        // 判不出按「不知道」：调用方不推断
+        assertNull(PowerPayModels.entryStateOf(null))
+        assertNull(PowerPayModels.entryStateOf(""))
+        assertNull(PowerPayModels.entryStateOf("0"))
+    }
+
+    /** getpayinfo 的 order 对象里 status（扣款）与 flag（入账）一起解析。 */
+    @Test
+    fun orderStateFromReadsStatusAndEntry() {
+        val raw = """{"code":200,"order":{"orderid":"1790567663881293","status":1,"flag":"0000000000"}}"""
+        val state = PowerPayModels.orderStateFrom(raw)!!
+        assertEquals(1, state.status)
+        assertEquals(PowerEntryState.PENDING, state.entry)
+        assertNull(PowerPayModels.orderStateFrom("""{"code":500,"msg":"未知异常"}"""))
+        assertNull(PowerPayModels.orderStateFrom("""{"code":200}"""))
     }
 }

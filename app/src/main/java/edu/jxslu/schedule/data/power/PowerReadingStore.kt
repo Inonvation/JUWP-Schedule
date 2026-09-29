@@ -73,4 +73,7 @@ object PowerReadingSource {
 
     /** 余额提醒的每日核对。 */
     const val ALERT = "alert"
+
+    /** 电费下单前的新鲜读数（2026-09-29 加）：读数原文是下单 `third_party` 的来源。 */
+    const val RECHARGE = "recharge"
 }

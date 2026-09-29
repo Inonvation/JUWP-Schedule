@@ -72,6 +72,23 @@ class PowerModelsTest {
         assertEquals(mapOf("当前剩余电量" to "55.57"), meter.fields)
     }
 
+    /**
+     * `dataJson` 是下单 `third_party` 的唯一来源（2026-09-29 入账事故的修复点）：
+     * `map.data` 整段原样带走——键序不变、`remark` 里内嵌的 JSON 串正确转义，
+     * 平台入账任务靠它找电表。
+     */
+    @Test
+    fun meterKeepsDataJsonVerbatim() {
+        val meter = PowerModels.parseMeter(meterJson, nowMs = 1234L)
+        assertEquals(
+            "{\"campus\":\"江西水利电力大学\",\"tsmAbstract\":\"校区#江西水利电力大学;楼栋#9A;房间#9A101\"," +
+                "\"campusid\":\"0\",\"yktmercacc\":\"1000001\"," +
+                "\"remark\":\"{\\\"当前剩余电量\\\":\\\"55.57\\\"}\"," +
+                "\"sroomid\":2887,\"building\":\"9A\",\"roomid\":\"14600\",\"room\":\"9A101\",\"buildingid\":\"0\"}",
+            meter.dataJson,
+        )
+    }
+
     /** 参数不全时平台回的是 `code=500 未知异常`，不是网络错误——解析层要能区分。 */
     @Test
     fun incompleteParamsEnvelopeIsNotAMeter() {
@@ -193,6 +210,8 @@ class PowerModelsTest {
         assertEquals(0.62, snapshot.feeItem.priceYuan!!, 1e-9)
         // 单价已知：副行走折算金额，不给字段名兜底文案
         assertNull(snapshot.meter.remainField)
+        // 种子没有真读表的 data 原文——拿它下单必须被拒（third_party 缺失 = 永不入账）
+        assertNull(snapshot.meter.dataJson)
     }
 
     @Test

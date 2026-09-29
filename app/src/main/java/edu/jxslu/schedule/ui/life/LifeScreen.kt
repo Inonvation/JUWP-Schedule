@@ -59,6 +59,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.PowerBankPayActivity
 import edu.jxslu.schedule.data.ykt.rechargeTargetCard
@@ -66,6 +67,7 @@ import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.LifeFeedItem
 import edu.jxslu.schedule.domain.LifeFeedKind
 import edu.jxslu.schedule.domain.LifeFeedSections
+import edu.jxslu.schedule.domain.RechargeDisclaimer
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.campus.CampusArrivalDialog
 import edu.jxslu.schedule.ui.campus.CampusCardViewModel
@@ -80,6 +82,7 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.RechargeDisclaimerDialog
 import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.SectionHeader
@@ -95,6 +98,9 @@ import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Receipt
 import me.rerere.hugeicons.stroke.Settings01
+
+/** 充值入口的种类（免责声明放行后决定打开哪个弹层）。 */
+private enum class RechargeKind { Campus, Power }
 
 /**
  * 生活页（DESIGN 3.13）：付款码入口 / 一卡通与寝室电费 / 最近流水与账单入口。
@@ -145,6 +151,37 @@ fun LifeScreen(
     val powerRecharge by viewModel.powerRecharge.collectAsStateWithLifecycle()
     // 「去充值电子账户」联动：打开一卡通充值时预选电子账户（DESIGN 4.24）
     var campusRechargePreferElectric by rememberSaveable { mutableStateOf(false) }
+
+    // 充值免责声明（2026-09-29 用户要求）：电费与一卡通**每个充值入口**打开弹层前都要过
+    // 一道提醒，勾「一周内不再提醒」静默 7 天（窗口口径 domain/RechargeDisclaimer，
+    // 两种充值共用）。disclaimerFor 非空 = 弹窗正开着；点「继续充值」才放行进充值流程。
+    // 首次（从未确认过）弹出锁 5 秒才能关，之后立即可关——「确认过」= 继续或取消都算。
+    val displayPrefs = remember { Graph.displayPrefs(context) }
+    val disclaimerSuppressUntil by displayPrefs.rechargeDisclaimerSuppressUntil
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    val disclaimerSeenAt by displayPrefs.rechargeDisclaimerSeenAt
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    var disclaimerFor by remember { mutableStateOf<RechargeKind?>(null) }
+
+    fun reallyOpenRecharge(kind: RechargeKind) {
+        when (kind) {
+            // 打开弹层即重置流程并清一遍未支付单（平台不自动清，堆积会让新下单 500）
+            RechargeKind.Power -> {
+                viewModel.preparePowerRecharge()
+                showPowerRecharge = true
+            }
+
+            RechargeKind.Campus -> showRechargeSheet = true
+        }
+    }
+
+    fun openRecharge(kind: RechargeKind) {
+        if (RechargeDisclaimer.isSuppressed(disclaimerSuppressUntil, System.currentTimeMillis())) {
+            reallyOpenRecharge(kind)
+        } else {
+            disclaimerFor = kind
+        }
+    }
 
     // 进页刷新一次：电费读数 + 一卡通流水增量同步 + 一卡通余额（开关关时各自短路）。
     // force = false = 走缓存/闸门（DESIGN 4.24「请求节流」）：切 Tab 来回不重复打平台，
@@ -294,13 +331,11 @@ fun LifeScreen(
                     onRechargeCampus = {
                         haptics.tap()
                         campusRechargePreferElectric = false
-                        showRechargeSheet = true
+                        openRecharge(RechargeKind.Campus)
                     },
                     onRechargePower = {
                         haptics.tap()
-                        // 打开弹层即重置流程并清一遍未支付单（平台不自动清，堆积会让新下单 500）
-                        viewModel.preparePowerRecharge()
-                        showPowerRecharge = true
+                        openRecharge(RechargeKind.Power)
                     },
                     onOpenSettings = onOpenCampusSettings,
                 )
@@ -333,7 +368,7 @@ fun LifeScreen(
                 showPowerRecharge = false
                 viewModel.dismissPowerRecharge()
                 campusRechargePreferElectric = true
-                showRechargeSheet = true
+                openRecharge(RechargeKind.Campus)
             },
             onSelectChannel = { channel -> viewModel.selectPowerChannel(channel) },
             onPlaceOrder = { yuan -> viewModel.placePowerOrder(yuan) },
@@ -369,6 +404,30 @@ fun LifeScreen(
                         },
                     ) { notice -> showNotice(notice.text, notice.tone) }
                 }
+            },
+        )
+    }
+
+    // 充值免责声明弹窗：点「继续充值」落「已确认」（勾选则再落一周静默）后放行，
+    // 取消只落「已确认」不静默——下次充值还会再弹，但立即可关。
+    disclaimerFor?.let { kind ->
+        RechargeDisclaimerDialog(
+            closableAfterMs = RechargeDisclaimer.closeLockMs(disclaimerSeenAt, System.currentTimeMillis()),
+            onContinue = { suppressWeek ->
+                disclaimerFor = null
+                if (suppressWeek) {
+                    scope.launch {
+                        displayPrefs.setRechargeDisclaimerSuppressUntil(
+                            RechargeDisclaimer.suppressUntil(System.currentTimeMillis()),
+                        )
+                    }
+                }
+                scope.launch { displayPrefs.markRechargeDisclaimerSeen() }
+                reallyOpenRecharge(kind)
+            },
+            onDismiss = {
+                disclaimerFor = null
+                scope.launch { displayPrefs.markRechargeDisclaimerSeen() }
             },
         )
     }

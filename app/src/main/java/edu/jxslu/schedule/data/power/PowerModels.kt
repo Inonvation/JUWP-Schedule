@@ -69,6 +69,13 @@ data class PowerRoom(
  *
  * [fields] 是 `map.showData` 原文（中文键，如 `当前剩余电量`）：平台加字段时只多键，
  * 所以保留原文、另外单独解析出 [remain] 供展示，不把原始 map 丢掉。
+ *
+ * [dataJson] 是 `map.data` **整段原样 JSON**（含 campusid/buildingid/roomid/sroomid/
+ * tsmAbstract/下单时刻剩余电量 remark 等，键序保持平台返回的顺序）。它是 2026-09-29
+ * 入账事故的修复关键：下单（`paystep=0`）必须把它作为 `third_party` 原样发回去——
+ * 平台的入账任务只认订单里这段数据找电表；缺了订单照样支付成功，但**永远不入账**
+ * （2026-09-24/09-28 三笔 App 直充共 26 元卡死的根因）。种子快照没有它（[snapshotSeedOf]
+ * 给 null），没有它就不许下单。
  */
 data class PowerMeter(
     val room: PowerRoom,
@@ -78,6 +85,8 @@ data class PowerMeter(
     /** 认出的字段名（展示用，如「当前剩余电量」）。 */
     val remainField: String?,
     val fetchedAtMs: Long,
+    /** `map.data` 原样 JSON（下单 `third_party` 参数的唯一来源）；缺 data 时为 null。 */
+    val dataJson: String? = null,
 )
 
 /**
@@ -153,6 +162,9 @@ object PowerModels {
             ?.mapValues { (_, v) -> asString(v).orEmpty() }
             .orEmpty()
         val (remain, field) = pickRemain(fields)
+        // data 原文：显式 JSON 编码（紧凑、键序与平台一致）——JsonObject.toString() 对
+        // 字符串内的引号不保证转义，remark 里嵌着 JSON 串，不能赌它
+        val dataJson = map["data"]?.jsonObjectOrNull()?.let { json.encodeToString(JsonElement.serializer(), it) }
         return PowerMeter(
             room = PowerRoom(
                 campus = asString(data["campus"]),
@@ -164,6 +176,8 @@ object PowerModels {
             remain = remain,
             remainField = field,
             fetchedAtMs = nowMs,
+            // 下单时整段作为 third_party 发回，一个字段都不能少——见 PowerMeter.dataJson 的 KDoc
+            dataJson = dataJson,
         )
     }
 
@@ -201,6 +215,8 @@ object PowerModels {
             remain = reading.remainKwh,
             remainField = if (reading.priceYuan > 0) null else SEED_FIELD_TEXT,
             fetchedAtMs = reading.epochMs,
+            // 种子没有 third_party 原文（那是真读表才有的一段）——拿种子快照下单必须被拒绝
+            dataJson = null,
         ),
     )
 

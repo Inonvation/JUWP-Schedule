@@ -8,7 +8,9 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.YktTurnoverEntity
 import edu.jxslu.schedule.data.power.PowerException
+import edu.jxslu.schedule.data.power.PowerEntryState
 import edu.jxslu.schedule.data.power.PowerHistoryCache
+import edu.jxslu.schedule.data.power.PowerOrderState
 import edu.jxslu.schedule.data.power.PowerPayChallenge
 import edu.jxslu.schedule.data.power.PowerPayModels
 import edu.jxslu.schedule.data.power.PowerPayResult
@@ -284,15 +286,6 @@ class LifeViewModel(
         }
     }
 
-    /**
-     * 「电费充值」：把带登录态的缴费页深链交给调用方打开（一期口径：支付在网页里完成）。
-     */
-    fun openPowerPayPage(onReady: (String) -> Unit) = openPlatformPage(
-        what = "电费充值",
-        url = { user, pwd -> powerRepo.payPageUrl(user, pwd) },
-        onReady = onReady,
-    )
-
     // ------------------------------------------------------------------
     // 电费充值（DESIGN §4.24：App 内下单 + 安全键盘密码，2026-09-23 打通）
     // ------------------------------------------------------------------
@@ -317,6 +310,12 @@ class LifeViewModel(
         val cashierUrl: String? = null,
         /** 已受理之后的查单结果：1 = 平台确认已记账；0 = 查到了但仍是待支付；null = 还没查到 / 查不到。 */
         val paidStatus: Int? = null,
+        /**
+         * 电量入账状态（2026-09-29 加，与 [paidStatus] 分开）：
+         * `paidStatus=1` 只代表**扣款**成功；电量进没进电表看这一位
+         * （`order.flag` 第 2 位，[PowerEntryState]）。null = 还没查到入账位。
+         */
+        val entryStatus: PowerEntryState? = null,
         /**
          * 农行步的中性提示（灰字一行）：查单还没到账、重开链接等，都不是错误。
          *
@@ -422,6 +421,7 @@ class LifeViewModel(
                 amountYuan = yuan,
                 cashierUrl = null,
                 paidStatus = null,
+                entryStatus = null,
                 bankNote = null,
                 busy = true,
                 error = null,
@@ -520,26 +520,31 @@ class LifeViewModel(
         val session = flowSession
         if (!silent) _powerRecharge.update { it.copy(busy = true, error = null, bankNote = null) }
         viewModelScope.launch {
-            val status = powerOrderStatus(credentials.username, credentials.password, orderId)
+            val state = powerOrderState(credentials.username, credentials.password, orderId)
             if (!isCurrentSession(session)) return@launch
-            if (status == 1) {
+            if (state?.status == 1) {
                 _powerRecharge.update {
                     it.copy(
                         step = PowerRechargeUi.Step.Accepted,
                         paidStatus = 1,
+                        entryStatus = state.entry,
                         busy = false,
                         error = null,
                         bankNote = null,
                     )
                 }
                 refreshPower()
+                // 扣款成功但电量还没入账：再跟几轮查单，别把「处理中」说成最终结果
+                if (state.entry != PowerEntryState.ENTERED && state.entry != PowerEntryState.FAILED) {
+                    confirmPowerPaid(credentials.username, credentials.password, orderId, session)
+                }
             } else {
                 _powerRecharge.update {
                     it.copy(
                         busy = false,
-                        paidStatus = status,
+                        paidStatus = state?.status,
                         bankNote = when {
-                            status == 0 -> "还没查到这笔到账——银行侧回调可能有延迟，稍后再点一次检查。"
+                            state?.status == 0 -> "还没查到这笔到账——银行侧回调可能有延迟，稍后再点一次检查。"
                             else -> "暂时查不到这笔订单（网络或平台原因），稍后再试。"
                         },
                     )
@@ -608,10 +613,10 @@ class LifeViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // 网络类失败先查单：钱可能已经扣了、只是响应没回来。不查就报错，
-                // 用户以为没成功又付一次，就是重复扣款。
+            // 网络类失败先查单：钱可能已经扣了、只是响应没回来。不查就报错，
+            // 用户以为没成功又付一次，就是重复扣款。
                 val paid = e is PowerException.Network && !orderId.isNullOrBlank() &&
-                    powerOrderStatus(credentials.username, credentials.password, orderId) == 1
+                    powerOrderState(credentials.username, credentials.password, orderId)?.status == 1
                 if (paid) PowerPayResult.Accepted else PowerPayResult.Rejected(e.message ?: "支付失败")
             }
             if (!isCurrentSession(session)) return@launch
@@ -634,6 +639,7 @@ class LifeViewModel(
                                 orderId = null,
                                 challenge = null,
                                 paidStatus = null,
+                                entryStatus = null,
                                 busy = false,
                                 error = "$message（请重新下单）",
                                 rejectedCount = it.rejectedCount + 1,
@@ -650,25 +656,38 @@ class LifeViewModel(
     }
 
     /**
-     * 受理后的一次查单（不轮询）：`order.status = 1` 才是平台真把这笔记账了。
+     * 受理后的确认（**不无限轮询**，最多 [ENTRY_CONFIRM_ATTEMPTS] 次查单）：
+     * 先看 `status=1`（平台把这笔记账了 → 「已扣款」），再看入账位
+     * [PowerEntryState]——2026-09-29 事故（三笔「支付成功」的订单永远没入账）之后，
+     * **扣款与入账必须分开报告**：入账没到位就不把话说满。
      *
-     * 只把文案从「已受理」升级成「已扣款」，查不到（网络/平台改版）就保持「已受理」——
-     * 这一步是锦上添花，失败不该让用户看到任何异常。
+     * 查不到（网络/平台改版）就保持现状，不给用户任何异常——这一步是锦上添花。
      */
     private fun confirmPowerPaid(username: String, password: String, orderId: String?, session: Int) {
         if (orderId.isNullOrBlank()) return
         viewModelScope.launch {
-            delay(PAID_CONFIRM_DELAY_MS)
-            if (powerOrderStatus(username, password, orderId) == 1 && isCurrentSession(session)) {
-                _powerRecharge.update { it.copy(paidStatus = 1) }
+            for (attempt in 0 until ENTRY_CONFIRM_ATTEMPTS) {
+                delay(if (attempt == 0) PAID_CONFIRM_DELAY_MS else ENTRY_CONFIRM_DELAY_MS)
+                val state = powerOrderState(username, password, orderId) ?: return@launch
+                if (!isCurrentSession(session)) return@launch
+                if (state.status == 1) {
+                    _powerRecharge.update { it.copy(paidStatus = 1, entryStatus = state.entry) }
+                    // 入账有终态（成功/失败）就收手；还在「未入账」就再等一轮
+                    if (state.entry == PowerEntryState.ENTERED || state.entry == PowerEntryState.FAILED) {
+                        return@launch
+                    }
+                } else {
+                    // 还在待支付 / 状态查不到：不再空转，界面维持「已受理」原话
+                    return@launch
+                }
             }
         }
     }
 
-    /** 查单：`status == 1` = 平台已记账。失败按「不知道」返回 null（调用方不做任何推断）。 */
-    private suspend fun powerOrderStatus(username: String, password: String, orderId: String): Int? =
+    /** 查单（扣款 + 入账一起拿）。失败按「不知道」返回 null（调用方不做任何推断）。 */
+    private suspend fun powerOrderState(username: String, password: String, orderId: String): PowerOrderState? =
         try {
-            powerRepo.orderStatus(username, password, orderId)
+            powerRepo.orderState(username, password, orderId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -747,6 +766,12 @@ class LifeViewModel(
          * 还没落库的 `status=0`（查到 0 也不报错，只是文案停在「已受理」）。
          */
         private const val PAID_CONFIRM_DELAY_MS = 1_200L
+
+        /** 入账位的复查间隔（官方渠道实测入账是秒级，几秒内基本到位）。 */
+        private const val ENTRY_CONFIRM_DELAY_MS = 3_000L
+
+        /** 入账确认的总查单次数（含第一次）：有界，不无限轮询第三方平台。 */
+        private const val ENTRY_CONFIRM_ATTEMPTS = 3
 
         fun Factory(context: Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
