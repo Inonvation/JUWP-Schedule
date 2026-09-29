@@ -52,7 +52,7 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 | AGP | **8.7.3** |
 | Kotlin | **2.1.21**（compose / serialization 同版本；KSP `2.1.21-2.0.1`） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
-| Room DB | **v14**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑） |
+| Room DB | **v16**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`（v15 起 `fromAccount` / `accType` 记交易账户，消费流水「充值到哪」的钥匙）、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）、`ride_records`（本机骑行记录，v16，只记本机用车那条链路）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑） |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN §3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**）。**不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不存在）；不要打开传递依赖（会拉 `androidx.core` 1.17，AGP 8.7 / compileSdk 35 编不过） |
@@ -98,6 +98,34 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 
 **设备列表看不到手机时**：先确认是不是根本没连。重跑 `adb connect` 无效、排除僵尸 adb /
 小米妙享抢接口后，直接提醒用户插线或确认无线调试已开，不要在环境侧反复排查空转。
+
+**模拟器必须避开 WinNAT 保留端口段（2026-09-29 实测）**：`-port 5554/5556/5558` 全部起不来
+——现象是 qemu 活着、客户机也在渲染（日志里有 RenderThread），但 `adb devices` 里没有它，
+`bind` 直接回 `WinError 10013`。**根因是这些端口落在 Hyper-V/WinNAT 的保留段里**，
+不是"本机禁绑"（同一台机器 `5183/5960/8000` 都能绑）。起模拟器前先查：
+
+```powershell
+netsh int ipv4 show excludedportrange protocol=tcp   # 本机实测保留 5458-5557 / 5558-5657…
+```
+
+再挑一个**不在保留段**的端口（如 `-port 5183`），启动后就是 `emulator-5183`。
+本机两个 AVD：`jwptest`、`jw35`（android-35），可用的 headless 起法：
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd jw35 -no-window -no-audio `
+  -no-boot-anim -no-snapshot -gpu swiftshader_indirect -port 5183
+adb -s emulator-5183 install -r app\build\outputs\apk\debug\app-debug.apk
+adb -s emulator-5183 shell uiautomator dump /sdcard/u.xml   # 页面文字树，可逐条核对
+adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
+```
+
+**模拟器比真机好用**：`uiautomator dump` 能直接读到 Compose 的文字树、`screencap` 出真图，
+真机锁屏时这两条都拿不到（`screencap` 全黑、dump 只读到 `com.android.systemui`）。
+`input tap <x> <y>` 的坐标可从 dump 里的 `bounds` 算中心点。
+真机若锁屏，远程也做不了点验：`mDreamingLockscreen=true` + `locksettings get-disabled` 为
+`false` 时没有解锁凭据就进不去（唤醒后顶层是 MIUI `ScreenOnProximitySensorGuide`），
+`screencap` 全黑、`uiautomator dump` 只读到 `com.android.systemui`——**请用户解锁并保持亮屏**，
+那时 `uiautomator dump` 能读到本应用窗口的文字，可以逐条核对。
 
 无线调试（手机重启或 `adb usb` 后失效，IP 要现取勿记死）：
 `adb -s <serial> tcpip 5555` → `adb shell ip route` 取 IP（接口是 **wlan2**，不是 wlan0）→ `adb connect <ip>:5555`。
@@ -161,7 +189,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
                  + Textbook（§4.31：挂 courseName 带 term，教务教材确认）
-                 + EbikeQr·EbikeFreeRide·BikeNearby（§3.9：出码车号口径、免费时长、附近车辆解析）
+                 + EbikeQr·EbikeFreeRide·BikeNearby·EbikeUseMode（§3.9：出码车号口径、免费时长、
+                 附近车辆解析、使用方式=小程序/账号两档 + `EbikeCapabilities` 能力矩阵）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
                  + LifeFeed（一卡通与电费流水分段，§3.13）
  + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
@@ -181,9 +210,14 @@ data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleP
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
-data/kqcx/       快趣出行「附近车辆」接口（DESIGN §4.23；无鉴权、无凭证、只发坐标）
+data/kqcx/       快趣出行（DESIGN §4.23 / §4.32）：附近车辆接口（无鉴权、无凭证、只发坐标）
+                 + KqcxAuthClient / KqcxSessionRepository / KqxCredentialStore（账号登录与
+                 用车；token 仅内存、凭证 secure_kqcx.xml 已排除备份）
+                 + KvcxRideSession（用车编排的业务接口）+ ZoneCacheStore（图层缓存）
 data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIGN §4.24；凭证复用一卡通的
-                 学号 + 查询密码；token 仅内存、无日志拦截器）
+                 学号 + 查询密码；token 仅内存、无日志拦截器。充值两渠道：电子账户
+                 App 内 6 位密码；农行支付 = 内嵌手机版收银台 PowerBankPayActivity，
+                 取链接那一跳必须发微信 UA）
 data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
                  QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
                  QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
@@ -223,9 +257,16 @@ P6 打磨 — **进行中**。2026-09-21 起陆续落地：笔记与作业（自
 免费时长提醒、生活页（一卡通 · 寝室电费）、统一登录会话层、首启引导、学工表单、盖章成绩单导出、
 桌面小组件条目（课表 / 校园卡 · 电费合并卡，2026-09-27；胖乖开水 / 趣智开水固定 2×2，
 2026-09-28，红线见 `.agents/rules/widget.md`）。
+电费充值农行支付渠道（2026-09-28，DESIGN §4.24：内嵌农行手机版收银台「农银快e付」，
+手机号 / 短信验证码 / 支付密码只在农行页面里；取链接那一跳必须发微信 UA，否则平台回
+空的 `code=6230`、`msg` 却写「处理成功」）。
 学业完成情况与成绩自动导入（2026-09-27，DESIGN §3.17 / §4.29：首启登录成功与冷启动各抓一次，OkHttp 直取不依赖 WebView）。
 教材与导入学期选择（2026-09-28，DESIGN §4.31 / §4.4.2：导入写库成功后自动抓导入学期教材并显示在课程详情，
 一键导入确认弹窗支持切换学期自动重爬；红线见 `.agents/rules/import-jw.md`「教材」节）。
+快趣出行使用方式（2026-09-29，DESIGN §3.9 / §4.32：小程序 / 账号登录两档互斥，默认小程序；
+能力的唯一判据是 `EbikeUseMode.capabilities()` 算出的 `EbikeCapabilities`，切换在出码页的
+「使用方式」卡；**两档各有一套页面布局**——小程序方式承接旧版十一项平铺，账号方式用三段式；
+红线见 `.agents/rules/ebike.md` 首节）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版
