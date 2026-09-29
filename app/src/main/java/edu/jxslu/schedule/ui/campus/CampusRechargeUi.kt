@@ -19,8 +19,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
@@ -52,6 +55,14 @@ fun RechargeSheet(
      * （默认正式卡，DESIGN §3.10 账户口径）。
      */
     accountFen: Long? = null,
+    /**
+     * 会充到的那张正式卡的卡号（6 位）。
+     *
+     * 二次确认弹窗**加粗**展示它（2026-09-28 用户要求：充错账户是钱的事）。
+     * 选取口径由调用方用 [`edu.jxslu.schedule.data.ykt.rechargeTargetCard`] 取，
+     * 与下单链路同一份判断；取不到就不显示卡号（宁可不显示，也不显示一张可能不对的卡）。
+     */
+    cardAccount: String? = null,
     onDismiss: () -> Unit,
     /** [toElectricAccount] = true 表示充到电子账户（`yktcard` 走 accinfo type）。 */
     onLaunch: (yuan: String, toElectricAccount: Boolean) -> Unit,
@@ -167,15 +178,27 @@ fun RechargeSheet(
             onDismissRequest = { confirmStep = false },
             title = { Text("确认充值金额？") },
             text = {
+                // 目标账户**加粗**（2026-09-28 用户要求）：充错账户是钱的事，二次确认这一屏
+                // 必须让「充到哪」比「充多少」更显眼。正式卡给卡号，电子账户给账户名——
+                // 卡号取不到（余额还没回来）就不显示数字，宁缺勿错。
                 Text(
-                    if (toElectric) {
-                        "将为电子账户充值 ¥$amount。\n\n" +
-                            "电子账户用于电费等线上缴费。点击「立即支付」直接拉起微信支付，" +
-                            "在微信内确认；未支付的订单会自动失效，不会扣款。"
-                    } else {
-                        "将为校园卡账户充值 ¥$amount。\n\n" +
-                            "点击「去支付」会直接拉起微信（微信充值渠道），在微信内确认支付；" +
-                            "未支付的订单会自动失效，不会扣款。"
+                    buildAnnotatedString {
+                        append("将为")
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                            if (toElectric) {
+                                append("电子账户")
+                            } else {
+                                append("正式卡")
+                                val account = cardAccount?.takeIf { it.isNotBlank() }
+                                if (account != null) append("（卡号 $account）")
+                            }
+                        }
+                        append(" 充值 ¥$amount。\n\n")
+                        if (toElectric) {
+                            append("电子账户用于电费等线上缴费。")
+                        }
+                        append("点击「${if (toElectric) "立即支付" else "去支付"}」会直接拉起微信（微信充值渠道），")
+                        append("在微信内确认支付；未支付的订单会自动失效，不会扣款。")
                     },
                 )
             },

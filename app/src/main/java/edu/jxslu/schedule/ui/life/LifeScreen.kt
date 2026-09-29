@@ -61,6 +61,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.PowerBankPayActivity
+import edu.jxslu.schedule.data.ykt.rechargeTargetCard
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.LifeFeedItem
 import edu.jxslu.schedule.domain.LifeFeedKind
@@ -346,6 +347,9 @@ fun LifeScreen(
         RechargeSheet(
             balanceFen = balance?.cardFen,
             accountFen = balance?.accountFen,
+            // 二次确认弹窗里加粗展示的目标卡号：与下单链路同一份选取口径
+            // （`rechargeTargetCard` = 第一张非挂失卡）
+            cardAccount = balance?.cards?.rechargeTargetCard()?.account,
             initiallyElectric = campusRechargePreferElectric,
             onDismiss = {
                 showRechargeSheet = false

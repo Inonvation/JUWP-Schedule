@@ -207,7 +207,9 @@ class YktRepository(
             throw YktException.Protocol("取卡信息失败：${cardsEnv.messageOrBlank.ifBlank { cardsEnv.code.toString() }}")
         }
         val allCards = YktModels.cardsFrom(cardsEnv.data)
-        val card = allCards.firstOrNull { it.lostflag == null || it.lostflag == "0" }
+        // 选取口径与充值确认弹窗共用（`YktCard.rechargeTargetCard`）：弹窗给用户看的卡号
+        // 必须就是这里下单用的那张
+        val card = allCards.rechargeTargetCard()
             ?: throw YktException.Protocol("没有可充值的卡账户（可能已挂失或冻结）")
         val account = card.account
         // 付款前基线随下单结果一起交给上层持久化（到账判定用，见 YktRechargeStart）。

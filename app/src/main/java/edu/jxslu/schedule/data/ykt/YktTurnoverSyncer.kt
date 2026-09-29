@@ -118,6 +118,8 @@ class YktTurnoverSyncer(
                 balanceAfterFen = balanceAfterFen,
                 locationName = locationName,
                 syncedAt = now,
+                fromAccount = fromAccount,
+                accType = accType,
             )
         }
     }

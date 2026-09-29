@@ -24,7 +24,7 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         ScholarCourseEntity::class,
         TextbookEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -430,6 +430,22 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v14 → v15（2026-09-28）：消费流水补两列交易账户（卡号 + 账户类型），
+         * 让「充值充到哪个账户」能显示在账单里。
+         *
+         * 两列都可空、实体里没有 Kotlin 默认值 → 预期 schema 也没有 DEFAULT，
+         * `ADD COLUMN x TEXT` 即可（**别顺手写 NOT NULL/DEFAULT**：多写一个字就是
+         * 「迁移建的表结构与实体期望不一致 → 校验崩溃」，v7→v8 / v11→v12 的老坑）。
+         * 历史行留 NULL：展示侧「认不出就不显示」，不编一个账户出来。
+         */
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ykt_turnovers ADD COLUMN fromAccount TEXT")
+                db.execSQL("ALTER TABLE ykt_turnovers ADD COLUMN accType TEXT")
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -454,6 +470,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_11_12,
                         MIGRATION_12_13,
                         MIGRATION_13_14,
+                        MIGRATION_14_15,
                     )
                     .build()
                     .also { instance = it }

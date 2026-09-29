@@ -78,6 +78,16 @@ data class YktCard(
     val lostflag: String?,
 )
 
+/**
+ * 会用于充值的卡：**第一张非挂失卡**（`lostflag` 空或 `"0"`）。
+ *
+ * 口径单一来源：下单链路（`YktRepository.rechargeCreate`）与充值确认弹窗里的
+ * 「充值到哪个账户」都走这一个判断——两处各写一份的话，最坏是「弹窗写 A 卡、钱进 B 卡」，
+ * 而这类 bug 用户只会在事后对账时才发现。
+ */
+fun List<YktCard>.rechargeTargetCard(): YktCard? =
+    firstOrNull { it.lostflag == null || it.lostflag == "0" }
+
 /** 充值下单结果（DESIGN §4.19「充值」）。 */
 sealed interface YktRechargeOrder {
 
@@ -141,6 +151,18 @@ data class YktTurnover(
     val balanceAfterFen: Long?,
     val locationName: String?,
     val orderId: String?,
+    /**
+     * 交易账户的卡号（服务端 `fromAccount`，6 位）。
+     *
+     * 2026-09-28 实测：每条流水都带它，**充值记录里就是钱进的那张卡**——
+     * 展示口径见 [YktModels.accountLabelOf]。
+     */
+    val fromAccount: String? = null,
+    /**
+     * 交易账户类型（服务端 `accType`）：`###` = 正式卡、`000` = 电子账户
+     * （2026-09-28 实测；与电子账户钱包 id `<卡号>-000` 的后三位同源）。
+     */
+    val accType: String? = null,
 )
 
 /** 流水分页（当期查询结果）。 */
@@ -321,6 +343,8 @@ object YktModels {
                     balanceAfterFen = jsonToFen(o["cardBalance"]) ?: jsonToFen(o["ebagamt"]),
                     locationName = jsonToStr(o["locationName"]),
                     orderId = jsonToStr(o["orderId"]),
+                    fromAccount = jsonToStr(o["fromAccount"]),
+                    accType = jsonToStr(o["accType"]),
                 )
             }.orEmpty()
         return YktTurnoverPage(
@@ -328,6 +352,25 @@ object YktModels {
             total = jsonToFen(obj["total"]) ?: 0L,
             pages = jsonToFen(obj["pages"]) ?: 0L,
         )
+    }
+
+    /**
+     * 交易账户展示文案（消费流水列表行与详情共用这一份口径，2026-09-28 加）。
+     *
+     * `accType` 实测只有两个值：`###` = 正式卡、`000` = 电子账户（与电子账户钱包 id
+     * `<卡号>-000` 的后三位同源）。**认不出的值一律返回 null**：宁可不显示，也不把别的
+     * 账户类型硬说成这两个——显示错账户比不显示更糟（用户据它判断「有没有充错」）。
+     *
+     * [fromAccount]（卡号）有值时缀上：一个卡一个电子账户，卡号才是「充错卡」的判据。
+     */
+    fun accountLabelOf(accType: String?, fromAccount: String? = null): String? {
+        val kind = when (accType?.trim()) {
+            "###" -> "正式卡"
+            "000" -> "电子账户"
+            else -> return null
+        }
+        val card = fromAccount?.trim()?.takeIf { it.isNotBlank() }
+        return if (card == null) kind else "$kind $card"
     }
 
     /** `statistics/turnover/count` 的 data → 支出/收入汇总（分）。 */

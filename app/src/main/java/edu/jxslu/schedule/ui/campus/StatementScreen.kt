@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.data.local.TypeAmountRow
 import edu.jxslu.schedule.data.local.YktTurnoverEntity
+import edu.jxslu.schedule.data.ykt.YktModels
 import edu.jxslu.schedule.ui.common.AppBarChart
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
@@ -470,11 +471,19 @@ private fun TurnoverRow(record: YktTurnoverEntity, onClick: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            // 顺序 = 时刻 → 商户 → 摘要：摘要里常见「二维码=[40…]」这种超长串，
+            // 顺序 = 时刻 → 交易账户 → 商户 → 摘要：摘要里常见「二维码=[40…]」这种超长串，
             // 排在最后被省略号吃掉，前面的时刻与商户还读得到（反过来会把商户挤没）
             val time = record.jndatetimeStr.split(" ").getOrNull(1)?.take(5).orEmpty()
+            // 交易账户（正式卡 241364 / 电子账户）**只在充值行显示**（2026-09-28 用户要求
+            // 「账单要能看出充到哪」）：消费行上它基本是常量，天天躺着只会挤掉商户名。
+            val account = if (income) {
+                YktModels.accountLabelOf(record.accType, record.fromAccount)
+            } else {
+                null
+            }
             val secondary = listOfNotNull(
                 time.takeIf { it.isNotBlank() },
+                account,
                 record.locationName?.takeIf { it.isNotBlank() },
                 record.remark?.takeIf { it.isNotBlank() },
             ).joinToString(" · ")
@@ -516,6 +525,8 @@ private fun TurnoverDetail(record: YktTurnoverEntity) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
         DetailRow("交易时间", record.jndatetimeStr)
         DetailRow("金额", (if (record.income) "+" else "−") + "¥%.2f".format(record.tranamtFen / 100.0))
+        // 详情里不设「只给充值行」的限制：进来就是查这一笔的，账户信息越全越好
+        YktModels.accountLabelOf(record.accType, record.fromAccount)?.let { DetailRow("交易账户", it) }
         record.balanceAfterFen?.let { DetailRow("交易后余额", "¥%.2f".format(it / 100.0)) }
         record.locationName?.let { DetailRow("商户/终端", it) }
         record.remark?.let { DetailRow("摘要", it) }

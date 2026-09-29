@@ -70,6 +70,7 @@ import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktException
 import edu.jxslu.schedule.data.ykt.YktRechargeOrder
 import edu.jxslu.schedule.data.ykt.YktRepository
+import edu.jxslu.schedule.data.ykt.rechargeTargetCard
 import edu.jxslu.schedule.data.session.LoginState
 import edu.jxslu.schedule.data.session.LoginStateRules
 import edu.jxslu.schedule.data.session.LoginTarget
@@ -526,6 +527,8 @@ fun CampusCardSettingsScreen(
             balanceFen = balance?.totalFen,
             // 电子账户余额来自同一份 queryCard（ACCOUNT 行）；null = 不显示账户切换
             accountFen = balance?.accountFen,
+            // 二次确认弹窗里加粗展示的目标卡号：与下单链路同一份选取口径
+            cardAccount = balance?.cards?.rechargeTargetCard()?.account,
             onDismiss = { showRechargeSheet = false },
             onLaunch = { yuan, toElectric ->
                 showRechargeSheet = false

@@ -1,6 +1,8 @@
 package edu.jxslu.schedule
 
+import edu.jxslu.schedule.data.ykt.YktCard
 import edu.jxslu.schedule.data.ykt.YktModels
+import edu.jxslu.schedule.data.ykt.rechargeTargetCard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -120,5 +122,58 @@ class YktModelsTest {
         val empty = YktModels.turnoverSummaryFrom(null)
         assertEquals(0L, empty.expensesFen)
         assertEquals(0L, empty.incomeFen)
+    }
+
+    // ---- 交易账户（2026-09-28：消费流水「充到哪个账户」）----
+
+    @Test
+    fun `流水带出交易账户的卡号与类型`() {
+        val data = YktModels.json.parseToJsonElement(
+            """{"records":[{"jndatetimeStr":"2026-09-28 12:47:55","tranamt":2000,"typeFrom":"1",
+                 "turnoverType":"充值","fromAccount":"241364","accType":"###","orderId":"o1"}]}""",
+        )
+        val rec = YktModels.turnoverPageFrom(data).records.single()
+        assertEquals("241364", rec.fromAccount)
+        assertEquals("###", rec.accType)
+        assertEquals("正式卡 241364", YktModels.accountLabelOf(rec.accType, rec.fromAccount))
+    }
+
+    /**
+     * 账户文案口径（**认不出就不显示**）：`###` = 正式卡、`000` = 电子账户（实测只有这两个），
+     * 其余值（含 null）返回 null——显示错账户比不显示更糟，用户就是靠它判断有没有充错。
+     */
+    @Test
+    fun `账户文案只认实测的两个类型`() {
+        assertEquals("正式卡 241364", YktModels.accountLabelOf("###", "241364"))
+        assertEquals("电子账户 241364", YktModels.accountLabelOf("000", "241364"))
+        // 没有卡号也能给账户类型；卡号为空串当没有
+        assertEquals("正式卡", YktModels.accountLabelOf("###", null))
+        assertEquals("电子账户", YktModels.accountLabelOf("000", "  "))
+        // 未知类型 / 缺字段 → 不显示
+        assertNull(YktModels.accountLabelOf("001", "241364"))
+        assertNull(YktModels.accountLabelOf(null, "241364"))
+        assertNull(YktModels.accountLabelOf("", "241364"))
+    }
+
+    // ---- 充值目标卡（2026-09-28：确认弹窗与下单链路共用这一份判断）----
+
+    @Test
+    fun `充值目标卡取第一张非挂失卡`() {
+        fun card(account: String, lost: String? = null) = YktCard(
+            cardName = "校园卡",
+            account = account,
+            cardBalanceFen = 0L,
+            elecBalanceFen = 0L,
+            expdate = null,
+            lostflag = lost,
+        )
+        // 挂失的跳过（lostflag "1"），空值视作未挂失
+        val cards = listOf(card("111111", lost = "1"), card("222222"), card("333333", lost = "0"))
+        assertEquals("222222", cards.rechargeTargetCard()?.account)
+        // 全是挂失 → null（下单链路据此报「没有可充值的卡账户」）
+        assertNull(listOf(card("111111", lost = "1")).rechargeTargetCard())
+        assertNull(emptyList<YktCard>().rechargeTargetCard())
+        // 单张未挂失卡：确认弹窗给用户看的就是它的卡号
+        assertEquals("654321", listOf(card("654321", lost = "0")).rechargeTargetCard()?.account)
     }
 }

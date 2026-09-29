@@ -44,6 +44,15 @@ data class YktTurnoverEntity(
     val locationName: String?,
     /** 同步落库时间（epoch 毫秒）。 */
     val syncedAt: Long,
+    /**
+     * 交易账户的卡号（服务端 `fromAccount`）；旧数据为 null。
+     *
+     * 充值记录里它就是钱进的那张卡——消费流水页据此显示「正式卡 241364 / 电子账户」，
+     * 展示口径单一来源 [edu.jxslu.schedule.data.ykt.YktModels.accountLabelOf]。
+     */
+    val fromAccount: String? = null,
+    /** 交易账户类型（`###` 正式卡 / `000` 电子账户）；旧数据为 null。 */
+    val accType: String? = null,
 )
 
 @Dao
