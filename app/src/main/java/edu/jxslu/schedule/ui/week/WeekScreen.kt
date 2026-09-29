@@ -101,6 +101,7 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
 import kotlinx.coroutines.delay
@@ -270,6 +271,10 @@ fun WeekScreen(
             viewModel.consumeUndoableMessage()
         }
     }
+
+    // 教务导入成功的气泡（DESIGN §3.3）：导入窗口与这一页分属两个 Activity，结果经进程内
+    // 单例转交过来（2026-09-29 用户口径：提醒走下方那条气泡，不弹窗）
+    JwImportOutcomeEffect(snackbar)
 
     val today = LocalDate.now()
     val todayDay = today.dayOfWeek.value

@@ -36,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +61,8 @@ import edu.jxslu.schedule.JwImportActivity
 import edu.jxslu.schedule.TranscriptActivity
 import edu.jxslu.schedule.domain.ScoreCalculator
 import edu.jxslu.schedule.domain.ScoreGroups
+import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.TermSummary
@@ -94,6 +97,10 @@ fun ScoreScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scoreRepo = remember { Graph.scoreRepository(context) }
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+
+    // 成绩导入成功的气泡（DESIGN §3.3）：导入窗口 finish 后落回的是这一页
+    JwImportOutcomeEffect(snackbar)
 
     // null = Room 流首帧未到（未就绪），非 null 空列表 = 确实没有成绩。
     // 不区分的话，首帧会先渲染「还没有成绩」空态再跳真实数据（与今日页 ready
@@ -189,6 +196,7 @@ fun ScoreScreen(onBack: () -> Unit) {
                 },
             )
         },
+        snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
         when {
             // 未就绪：水滴呼吸加载态，避免「还没有成绩」空态闪现

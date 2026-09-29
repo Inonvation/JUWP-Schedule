@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -26,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,10 +59,12 @@ import edu.jxslu.schedule.data.session.WebViewCookieBridge
 import edu.jxslu.schedule.domain.AccountMask
 import edu.jxslu.schedule.ui.common.AccountCard
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
+import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import me.rerere.hugeicons.HugeIcons
@@ -89,6 +93,10 @@ fun JwAccountScreen(onBack: () -> Unit) {
     val vault = remember { Graph.credentialVault(context) }
     val prefs = remember { Graph.displayPrefs(context) }
     val cas = remember { Graph.casSession(context) }
+    val snackbar = remember { SnackbarHostState() }
+
+    // 本页有两个教务导入入口（课表 / 成绩），导入窗口 finish 后落回的就是这一页
+    JwImportOutcomeEffect(snackbar)
 
     // 登录态快照只在组合期读一次：从引导页（更新账号密码）回来时组合不重建，
     // 用「回到前台」计数当 key 重读，否则卡片会停在旧状态（2026-09-27）
@@ -126,6 +134,8 @@ fun JwAccountScreen(onBack: () -> Unit) {
                 },
             )
         },
+        // 本页 contentWindowInsets 归零，Scaffold 不替提示条让开手势条，这里自己垫
+        snackbarHost = { AppSnackbarHost(snackbar, Modifier.navigationBarsPadding()) },
     ) { padding ->
         Column(
             modifier = Modifier

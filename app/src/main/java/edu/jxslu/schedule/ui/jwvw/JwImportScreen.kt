@@ -150,8 +150,6 @@ fun JwImportScreen(
     var pageLoadGate by remember { mutableStateOf<PageLoadGate?>(null) }
     /** 考试导入的原始行 + 学期：确认弹窗选定目标课后按**目标课表**的开学日重映射（DESIGN §4.14）。 */
     var pendingExamImport by remember { mutableStateOf<Pair<List<ExamEntry>, String>?>(null) }
-    /** 导入终态反馈（门数 to 是否合并）；非 null 时弹「导入完成」，确认后返回主界面。 */
-    var importSuccess by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
     /** 成绩模式：待确认的导入（学期 → 条数），确认后按学期替换入库。 */
     var pendingScores by remember { mutableStateOf<List<Pair<String, List<edu.jxslu.schedule.domain.ScoreRecord>>>?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -1174,14 +1172,20 @@ fun JwImportScreen(
                     val imported = repo.importParsedCourses(toImport, merge, targetId, importTerm)
                     // 导入到非当前课表后切过去，返回主界面直接看到结果
                     repo.setCurrentTimetable(targetId)
-                    // 教材顺带抓（DESIGN §4.31）：挂进程级作用域，不随本页面销毁中断；
-                    // 静默失败，绝不影响导入主流程与「导入完成」弹窗
+                    // 目标课表名：返回后那条气泡要报「导到了哪张表」
+                    val targetName = repo.timetables.first()
+                        .firstOrNull { it.id == targetId }?.name.orEmpty()
+                    // 教材顺带抓（DESIGN §4.31）：挂进程级作用域，不随本页面销毁中断；静默失败
                     Graph.appScope.launch {
                         Graph.textbookSync(context).syncForTerm(importTerm)
                     }
-                    // 终态反馈后再返回（DESIGN §3.3）：此前导入成功直接 onBack，
-                    // 「到底导没导成、导了几门」全靠回主界面猜
-                    importSuccess = imported to merge
+                    // 终态反馈 = 落回课表页后下方那条气泡（DESIGN §3.3，2026-09-29 用户口径）。
+                    // 这里**不弹「导入完成」弹窗**：弹窗在本窗口里，点完就 finish，用户在自己
+                    // 那一页看不到；写成气泡后「导没导成、导了几门、导到哪张表」在落点上直接可见。
+                    JwImportResultBus.publish(
+                        scheduleOutcomeText(count = imported, merge = merge, timetableName = targetName),
+                    )
+                    onBack()
                 }
             },
             onDismiss = {
@@ -1221,32 +1225,15 @@ fun JwImportScreen(
                         pendingScores = null
                         scope.launch {
                             pending.forEach { (term, list) -> scoreRepo.replaceTerm(term, list) }
-                            // 终态反馈后再返回（DESIGN §3.3），与课表导入一致
-                            importSuccess = total to true
+                            // 终态反馈与课表导入同一口径：气泡落在返回的那一页（DESIGN §3.3）
+                            JwImportResultBus.publish("已导入 ${pending.size} 个学期共 $total 条成绩")
+                            onBack()
                         }
                     },
                 ) { Text("导入") }
             },
             dismissButton = {
                 TextButton(onClick = { pendingScores = null }) { Text("取消") }
-            },
-        )
-    }
-
-    importSuccess?.let { (count, merge) ->
-        AlertDialog(
-            onDismissRequest = onBack,
-            title = { Text(if (mode == JwImportMode.Scores) "成绩导入完成" else "导入完成") },
-            text = {
-                Text(
-                    if (mode == JwImportMode.Scores) "已导入 $count 条成绩，按学期替换存储。"
-                    else if (merge) "已合并导入 $count 门新课到目标课表（重复课程已跳过）。"
-                    // 覆盖写的是全部条数，说成"新课"会让人以为只是追加
-                    else "已覆盖写入 $count 条课次，目标课表原有课程已清空。",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = onBack) { Text("完成") }
             },
         )
     }
@@ -1364,6 +1351,22 @@ private data class ImportDraft(
     /** 理论课表页学期下拉的选项；确认弹窗的学期切换数据源（JSON/考试路径没有）。 */
     val termOptions: List<TermOption> = emptyList(),
 )
+
+/**
+ * 落回主界面后那条气泡的文案（[JwImportResultBus]，DESIGN §3.3）。
+ *
+ * 一句话说清三件事：导了几门、覆盖还是合并、导到哪张表。[timetableName] 读不到时省掉那一截
+ * （旧数据或课表刚被删）。
+ */
+private fun scheduleOutcomeText(count: Int, merge: Boolean, timetableName: String): String {
+    val target = timetableName.takeIf { it.isNotBlank() }?.let { "到「$it」" }.orEmpty()
+    return if (merge) {
+        "已合并导入 $count 门新课$target（重复课程已跳过）"
+    } else {
+        // 覆盖写的是全部条数，说成「新课」会让人以为只是追加
+        "已覆盖写入 $count 条课次$target，原有课程已清空"
+    }
+}
 
 /**
  * 一键导入的页面加载闸门：`loadUrl` 之后等目标页面加载完（或失败）。

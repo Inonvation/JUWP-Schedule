@@ -98,6 +98,7 @@ import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
+import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -240,6 +241,9 @@ fun TodayScreen(
             if (result == SnackbarResult.ActionPerformed) onOpenShortcuts(itemId)
         }
     }
+
+    // 教务导入成功的气泡（DESIGN §3.3）：今日页空态的「从教务导入」也是入口，落点就是这一页
+    JwImportOutcomeEffect(snackbar)
 
     // 「还剩 X 分钟」要跟着时间走
     LaunchedEffect(Unit) {
