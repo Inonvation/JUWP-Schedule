@@ -107,14 +107,18 @@ import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.data.session.CredentialVault
 import edu.jxslu.schedule.data.ykt.YktException
+import edu.jxslu.schedule.domain.FirstRunNotice
+import edu.jxslu.schedule.domain.FirstRunNotices
+import edu.jxslu.schedule.domain.NoticeConsent
 import edu.jxslu.schedule.domain.QzxySessionLink
-import edu.jxslu.schedule.ui.common.DisclaimerDialog
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
+import edu.jxslu.schedule.ui.common.NoticeDialog
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
@@ -197,17 +201,27 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     var yktOk by remember { mutableStateOf(false) }
     var qiekjOk by remember { mutableStateOf(false) }
     var qzxyOk by remember { mutableStateOf(false) }
-    var showDisclaimer by remember { mutableStateOf(false) }
-    // 首启自动弹的那一次要强制读完；用户自己点「查看免责声明」再开的不强制
-    var disclaimerForced by remember { mutableStateOf(false) }
+    // 首启的两份声明（DESIGN §3.16）：待弹队列 + 用户主动点「查看免责声明」的单份查看。
+    // 队列在首帧之后由落盘的同意记录算出（见下面的 LaunchedEffect）；主动查看那份不锁、
+    // 也不写同意记录（看过 ≠ 首启确认过）。
+    var noticeQueue by remember { mutableStateOf<List<FirstRunNotice>>(emptyList()) }
+    var browseNotice by remember { mutableStateOf<FirstRunNotice?>(null) }
 
-    // 首启第一步必须弹一次免责声明，且 5 秒内关不掉（DESIGN §3.16）。
+    // 首启要弹哪几份：按落盘的「已同意版本」比对（`domain/NoticeConsent.pendingNotices`），
+    // 全部同意过就是一个空队列。`first()` 会挂到 DataStore 首次发射——不能拿流的初值 0
+    // 去判，那会把"同意过"误判成"没同意过"而白弹一轮。
     // 直接进来改密码的（startAtJw）不弹：那是重复进入，不是首启。
     LaunchedEffect(Unit) {
-        if (!startAtJw && step == Step.Welcome) {
-            disclaimerForced = true
-            showDisclaimer = true
-        }
+        if (startAtJw || step != Step.Welcome) return@LaunchedEffect
+        noticeQueue = NoticeConsent.pendingNotices(
+            consents = mapOf(
+                FirstRunNotice.UserNotice to
+                    prefs.noticeConsent(FirstRunNotice.UserNotice).first().version,
+                FirstRunNotice.Disclaimer to
+                    prefs.noticeConsent(FirstRunNotice.Disclaimer).first().version,
+            ),
+            currentVersion = FirstRunNotices.VERSION,
+        )
     }
 
     /** 完成或跳过都写标记——只有「走完了」才算看过，后面不再打扰。 */
@@ -312,10 +326,7 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
             when (current) {
                 Step.Welcome -> WelcomeStep(
                     onNext = { next(Step.Jw) },
-                    onOpenDisclaimer = {
-                        disclaimerForced = false
-                        showDisclaimer = true
-                    },
+                    onOpenDisclaimer = { browseNotice = FirstRunNotice.Disclaimer },
                 )
                 Step.Jw -> JwStep(
                     cas = cas,
@@ -358,19 +369,33 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
         }
     }
 
-    // 首启第一步的免责声明（DESIGN §3.16 / §4.5）：与「我的 → 关于」共用一个弹窗，
-    // 正文只有 domain/Disclaimer.kt 一份。**不做强制勾选**——自用工具没必要拿同意书挡人，
-    // 用户想看得见、找得到就够了。
-    if (showDisclaimer) {
-        DisclaimerDialog(
-            onDismiss = { showDisclaimer = false },
-            readSeconds = if (disclaimerForced) DISCLAIMER_READ_SECONDS else 0,
+    // 首启的声明队列（DESIGN §3.16）：弹完一份出队一份，两份都确认过才回到引导本身。
+    // 文案、锁时长只有 `domain/FirstRunNotices` 一份，这里只做编排；正文取自
+    // domain（免责声明那份与 README 同源），弹窗只负责排版与倒数。
+    // 确认即落盘（版本号 + 时刻）：下次进来队列为空，不重复打扰。
+    noticeQueue.firstOrNull()?.let { notice ->
+        NoticeDialog(
+            title = FirstRunNotices.title(notice),
+            intro = FirstRunNotices.intro(notice),
+            items = FirstRunNotices.items(notice),
+            closeLockMs = FirstRunNotices.closeLockMs(notice),
+            onDismiss = {
+                noticeQueue = noticeQueue.drop(1)
+                scope.launch { prefs.markNoticeConsented(notice, FirstRunNotices.VERSION) }
+            },
+        )
+    }
+
+    // 用户自己点「查看免责声明」的那一份：随时可关
+    browseNotice?.let { notice ->
+        NoticeDialog(
+            title = FirstRunNotices.title(notice),
+            intro = FirstRunNotices.intro(notice),
+            items = FirstRunNotices.items(notice),
+            onDismiss = { browseNotice = null },
         )
     }
 }
-
-/** 首启第一步的免责声明强制阅读秒数（DESIGN §3.16）。 */
-private const val DISCLAIMER_READ_SECONDS = 5
 
 // ---------------------------------------------------------------- 顶栏
 

@@ -62,6 +62,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
+import edu.jxslu.schedule.domain.RechargeDisclaimer
 import edu.jxslu.schedule.domain.YktArrival
 import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.data.ykt.YktCard
@@ -82,6 +83,7 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.RechargeDisclaimerDialog
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
@@ -170,6 +172,16 @@ fun CampusCardSettingsScreen(
     var showRechargeSheet by remember { mutableStateOf(false) }
     var showPowerPicker by remember { mutableStateOf(false) }
     var showYktPicker by remember { mutableStateOf(false) }
+
+    // 充值免责声明（与生活页同一条口径，domain/RechargeDisclaimer）：充值入口打开
+    // 弹层前先过提醒，勾「一周内不再提醒」静默 7 天；首次（从未确认过）锁 5 秒
+    // 才能关，之后任何一次弹出立即可关。继续或取消都算「已确认」。
+    val displayPrefs = remember { Graph.displayPrefs(context) }
+    val disclaimerSuppressUntil by displayPrefs.rechargeDisclaimerSuppressUntil
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    val disclaimerSeenAt by displayPrefs.rechargeDisclaimerSeenAt
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    var showRechargeDisclaimer by remember { mutableStateOf(false) }
 
     val powerAlertEnabled by viewModel.powerAlertEnabled.collectAsStateWithLifecycle()
     val powerAlertYuan by viewModel.powerAlertYuan.collectAsStateWithLifecycle()
@@ -357,7 +369,17 @@ fun CampusCardSettingsScreen(
                                 modifier = Modifier.weight(1f),
                             ) { Text("消费流水") }
                             androidx.compose.material3.OutlinedButton(
-                                onClick = { showRechargeSheet = true },
+                                onClick = {
+                                    if (RechargeDisclaimer.isSuppressed(
+                                            disclaimerSuppressUntil,
+                                            System.currentTimeMillis(),
+                                        )
+                                    ) {
+                                        showRechargeSheet = true
+                                    } else {
+                                        showRechargeDisclaimer = true
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 enabled = watching == null,
                             ) { Text("充值") }
@@ -522,6 +544,28 @@ fun CampusCardSettingsScreen(
     }
 
     // 充值流程（DESIGN §4.19「充值」）：金额弹层 → 二次确认 → 下单 → 直拉微信 → 等待到账
+    if (showRechargeDisclaimer) {
+        RechargeDisclaimerDialog(
+            closableAfterMs = RechargeDisclaimer.closeLockMs(disclaimerSeenAt, System.currentTimeMillis()),
+            onContinue = { suppressWeek ->
+                showRechargeDisclaimer = false
+                if (suppressWeek) {
+                    scope.launch {
+                        displayPrefs.setRechargeDisclaimerSuppressUntil(
+                            RechargeDisclaimer.suppressUntil(System.currentTimeMillis()),
+                        )
+                    }
+                }
+                scope.launch { displayPrefs.markRechargeDisclaimerSeen() }
+                showRechargeSheet = true
+            },
+            onDismiss = {
+                showRechargeDisclaimer = false
+                scope.launch { displayPrefs.markRechargeDisclaimerSeen() }
+            },
+        )
+    }
+
     if (showRechargeSheet) {
         RechargeSheet(
             balanceFen = balance?.totalFen,

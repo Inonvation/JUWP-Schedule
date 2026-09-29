@@ -20,6 +20,7 @@ import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
+import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
@@ -234,6 +235,21 @@ data class PendingRecharge(
     val walletBalanceBeforeFen: Long?,
     /** 「正在确认到账」弹窗是否已提示过（每次充值只弹一次）。 */
     val confirmShown: Boolean,
+)
+
+/**
+ * 首启声明的同意记录（DESIGN §3.16）。
+ *
+ * [version] 是**用户同意过的那一版文案**，不是"是否同意过"的布尔：文案改了把
+ * `domain/FirstRunNotices.VERSION` +1，比对版本就能让用户重看新条款。
+ * [atMs] = 确认时刻（epoch 毫秒），0 = 从未确认过；它同时是"关闭锁是否生效"的判据
+ * （`domain/NoticeConsent.closeLockMs`）与「关于」页展示的凭据。
+ */
+data class NoticeConsentRecord(
+    /** 已同意的文案版本；0 = 从未确认过。 */
+    val version: Int,
+    /** 确认时刻（epoch 毫秒）；0 = 从未确认过。 */
+    val atMs: Long,
 )
 
 /**
@@ -598,7 +614,7 @@ class DisplayPrefsStore(private val context: Context) {
     }.distinctUntilChanged()
 
     /**
-     * 附近单车地图的底部面板高度（dp，DESIGN §3.9）；null = 没拖过，用默认值。
+     * 骑行页底部面板高度（dp，DESIGN §3.9）；null = 没拖过，用默认值。
      *
      * 只做范围校验，窗口缩放导致的"放不下"由渲染时再夹一道，不覆写用户拖出来的值。
      */
@@ -645,6 +661,81 @@ class DisplayPrefsStore(private val context: Context) {
     val todayDockExpanded: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_TODAY_DOCK_EXPANDED] ?: true
     }.distinctUntilChanged()
+
+    /**
+     * 充值免责声明的静默截止时刻（epoch 毫秒，DESIGN §3.13 / §4.19）。0 = 从没勾过。
+     *
+     * 勾选「一周内不再提醒」才写；不勾不写（过期值留着无害，[edu.jxslu.schedule.domain.RechargeDisclaimer.isSuppressed]
+     * 判 false 照样弹）。电费与一卡通充值共用这一个键。
+     */
+    val rechargeDisclaimerSuppressUntil: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_RECHARGE_DISCLAIMER_SUPPRESS_UNTIL] ?: 0L
+    }.distinctUntilChanged()
+
+    suspend fun setRechargeDisclaimerSuppressUntil(value: Long) {
+        context.displayDataStore.edit { it[KEY_RECHARGE_DISCLAIMER_SUPPRESS_UNTIL] = value }
+    }
+
+    /**
+     * 充值免责声明的「已确认」时刻（epoch 毫秒）。0 = 从未确认过——首次弹出要锁
+     * 5 秒才能关（`domain/RechargeDisclaimer.closeLockMs`），确认过（点「继续充值」
+     * 或「取消」都算）之后任何一次弹出都立即可关。与静默键分开：确认≠勾选静默。
+     */
+    val rechargeDisclaimerSeenAt: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_RECHARGE_DISCLAIMER_SEEN_AT] ?: 0L
+    }.distinctUntilChanged()
+
+    suspend fun markRechargeDisclaimerSeen(atMs: Long = System.currentTimeMillis()) {
+        context.displayDataStore.edit { it[KEY_RECHARGE_DISCLAIMER_SEEN_AT] = atMs }
+    }
+
+    /**
+     * 首启声明的同意记录（DESIGN §3.16）：读某一份须知的「同意过哪一版 + 什么时候」。
+     *
+     * 读路径两处：首启引导决定还要不要弹（`domain/NoticeConsent.pendingNotices`），
+     * 以及「我的 → 关于」显示"已确认/未确认"。写路径只有 [markNoticeConsented]。
+     */
+    fun noticeConsent(notice: FirstRunNotice): Flow<NoticeConsentRecord> =
+        context.displayDataStore.data.map { p ->
+            when (notice) {
+                FirstRunNotice.UserNotice -> NoticeConsentRecord(
+                    version = p[KEY_USER_NOTICE_VERSION] ?: 0,
+                    atMs = p[KEY_USER_NOTICE_SEEN_AT] ?: 0L,
+                )
+
+                FirstRunNotice.Disclaimer -> NoticeConsentRecord(
+                    version = p[KEY_DISCLAIMER_VERSION] ?: 0,
+                    atMs = p[KEY_DISCLAIMER_SEEN_AT] ?: 0L,
+                )
+            }
+        }.distinctUntilChanged()
+
+    /**
+     * 记下「已看过并确认」这一份须知。[version] 用当前的
+     * `domain/FirstRunNotices.VERSION`——落的是**用户看到的那一版**，不是写死的最新版。
+     *
+     * 版本号与时刻一次 edit 写入：只写一个的话，"同意过 v1 但不知何时"与
+     * "何时同意但不知哪版"都不足以支撑事后核对。
+     */
+    suspend fun markNoticeConsented(
+        notice: FirstRunNotice,
+        version: Int,
+        atMs: Long = System.currentTimeMillis(),
+    ) {
+        context.displayDataStore.edit { p ->
+            when (notice) {
+                FirstRunNotice.UserNotice -> {
+                    p[KEY_USER_NOTICE_VERSION] = version
+                    p[KEY_USER_NOTICE_SEEN_AT] = atMs
+                }
+
+                FirstRunNotice.Disclaimer -> {
+                    p[KEY_DISCLAIMER_VERSION] = version
+                    p[KEY_DISCLAIMER_SEEN_AT] = atMs
+                }
+            }
+        }
+    }
 
     /**
      * 未确认充值（DESIGN §4.19「充值」）：见 [PendingRecharge]。
@@ -995,7 +1086,7 @@ class DisplayPrefsStore(private val context: Context) {
         }
     }
 
-    /** 记住底部面板高度（DESIGN §3.9），见 [ebikePanelHeightDp]。 */
+    /** 记住骑行页底部面板高度（DESIGN §3.9），见 [ebikePanelHeightDp]。 */
     suspend fun setEbikePanelHeightDp(value: Float) {
         if (!value.isFinite() || value <= 0f) return
         context.displayDataStore.edit { it[KEY_EBIKE_PANEL_HEIGHT_DP] = value }
@@ -1249,7 +1340,6 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_VIEW_LNG = floatPreferencesKey("ebike_view_lng")
         val KEY_EBIKE_VIEW_ZOOM = floatPreferencesKey("ebike_view_zoom")
         val KEY_EBIKE_PANEL_HEIGHT_DP = floatPreferencesKey("ebike_panel_height_dp")
-
         /** 保存视野时的缩放范围，与瓦片源的 1~19 对齐。 */
         const val MIN_MAP_ZOOM = 1.0f
         const val MAX_MAP_ZOOM = 19.0f
@@ -1264,6 +1354,14 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_YKT_ALERT_YUAN = intPreferencesKey("ykt_alert_yuan")
         val KEY_YKT_ALERT_LAST_CHECK = stringPreferencesKey("ykt_alert_last_check")
         val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
+        val KEY_RECHARGE_DISCLAIMER_SUPPRESS_UNTIL = longPreferencesKey("recharge_disclaimer_suppress_until")
+        val KEY_RECHARGE_DISCLAIMER_SEEN_AT = longPreferencesKey("recharge_disclaimer_seen_at")
+        // 首启声明的同意记录（DESIGN §3.16）：每份须知各一对「同意过的版本 / 确认时刻」。
+        // 版本号用来判要不要重弹（文案改了 bump `FirstRunNotices.VERSION`），时刻用来展示与核对。
+        val KEY_USER_NOTICE_VERSION = intPreferencesKey("user_notice_version")
+        val KEY_USER_NOTICE_SEEN_AT = longPreferencesKey("user_notice_seen_at")
+        val KEY_DISCLAIMER_VERSION = intPreferencesKey("disclaimer_version")
+        val KEY_DISCLAIMER_SEEN_AT = longPreferencesKey("disclaimer_seen_at")
         val KEY_PENDING_RECHARGE_FEN = longPreferencesKey("pending_recharge_fen")
         val KEY_PENDING_RECHARGE_AT = longPreferencesKey("pending_recharge_at")
         val KEY_PENDING_RECHARGE_BASE_FEN = longPreferencesKey("pending_recharge_base_fen")

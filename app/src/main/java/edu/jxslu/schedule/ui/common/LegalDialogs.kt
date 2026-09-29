@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.ui.common
 
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -15,8 +16,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -24,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Disclaimer
 import edu.jxslu.schedule.domain.OpenSourceLicenses
 import kotlinx.coroutines.delay
+import kotlin.math.ceil
 
 /**
  * 长文弹窗的正文高度上限：超出后正文自己滚，确认按钮始终留在可见区。
@@ -35,33 +40,55 @@ import kotlinx.coroutines.delay
 private val LegalTextMaxHeight = 420.dp
 
 /**
- * 免责声明全文弹窗。两处使用：我的 → 关于，以及首启引导第一步（DESIGN §3.3 / §3.16）。
+ * 关闭锁的剩余毫秒（0 = 可关）。
  *
- * 正文来自 [Disclaimer]，与仓库根 README.md 的「免责声明」一节同源；
- * 不在弹窗里另抄一份，避免改一处漏一处。
+ * **用 `SystemClock.elapsedRealtime()` 而不是 `System.currentTimeMillis()`**：后者跟着
+ * 系统时间走，用户把时间往前调就能把锁瞬间走完。单调时钟不受改时间、时区与 NTP 校正影响。
  *
- * [readSeconds] 大于 0 时进入强制阅读：确认按钮在倒计时结束前不可点，点弹窗外或按返回
- * 也关不掉。首启引导第一步要的就是「看过」，那里传 5；「我的 → 关于」里是随时可关的
- * 查看，用默认的 0。
+ * 计时起点是**本组合第一次进入时**，不是宿主算锁的那一刻——弹窗还没上屏就把秒数走掉，
+ * 锁就白设了。
  */
 @Composable
-fun DisclaimerDialog(
+fun rememberCloseLock(totalMs: Long): Long {
+    var remainingMs by remember(totalMs) { mutableLongStateOf(totalMs) }
+    LaunchedEffect(totalMs) {
+        if (totalMs <= 0L) {
+            remainingMs = 0L
+            return@LaunchedEffect
+        }
+        val startAt = SystemClock.elapsedRealtime()
+        while (true) {
+            val left = totalMs - (SystemClock.elapsedRealtime() - startAt)
+            if (left <= 0L) break
+            remainingMs = left
+            delay(minOf(200L, left))
+        }
+        remainingMs = 0L
+    }
+    return remainingMs
+}
+
+/**
+ * 长文声明弹窗（免责声明 / 用户须知 / 充值风险查看共用，DESIGN §3.3 / §3.16）。
+ *
+ * [closeLockMs] 大于 0 时进入强制阅读：确认按钮在锁结束前不可点，点弹窗外或按返回也关不掉。
+ * **锁时长由宿主算好传入**（`domain/NoticeConsent.closeLockMs`）——弹窗只负责倒数与置灰，
+ * 「是否首次」「要不要弹」的判断都在宿主，别塞进弹窗里。
+ */
+@Composable
+fun NoticeDialog(
+    title: String,
+    intro: String,
+    items: List<String>,
     onDismiss: () -> Unit,
     confirmLabel: String = "我知道了",
-    readSeconds: Int = 0,
+    closeLockMs: Long = 0L,
 ) {
-    val remaining by produceState(initialValue = readSeconds, key1 = readSeconds) {
-        var left = readSeconds
-        while (left > 0) {
-            delay(1_000L)
-            left -= 1
-            value = left
-        }
-    }
-    val canDismiss = remaining <= 0
+    val remainingMs = rememberCloseLock(closeLockMs)
+    val locked = remainingMs > 0L
     AlertDialog(
-        onDismissRequest = { if (canDismiss) onDismiss() },
-        title = { Text("免责声明") },
+        onDismissRequest = { if (!locked) onDismiss() },
+        title = { Text(title) },
         text = {
             Column(
                 modifier = Modifier
@@ -69,10 +96,10 @@ fun DisclaimerDialog(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = Disclaimer.INTRO,
+                    text = intro,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Disclaimer.ITEMS.forEach { item ->
+                items.forEach { item ->
                     Text(
                         text = "· $item",
                         style = MaterialTheme.typography.bodySmall,
@@ -82,25 +109,48 @@ fun DisclaimerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss, enabled = canDismiss) {
-                if (!canDismiss) {
+            TextButton(onClick = onDismiss, enabled = !locked) {
+                if (locked) {
                     // 强制阅读的进度画在确认键上：环走完 = 可关闭，比干等一串秒数更可感
                     CountdownRing(
-                        remaining = remaining,
-                        total = readSeconds,
+                        remainingMs = remainingMs,
+                        totalMs = closeLockMs,
                         modifier = Modifier.size(17.dp),
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (canDismiss) confirmLabel else "$remaining 秒后可关闭")
+                Text(
+                    if (locked) "${ceil(remainingMs / 1000.0).toInt()} 秒后可关闭" else confirmLabel,
+                )
             }
         },
     )
 }
 
+/**
+ * 免责声明弹窗。两处使用：我的 → 关于（[readSeconds] = 0，随时可关），以及首启引导
+ * （那里由 [NoticeDialog] 直接调用，锁 5 秒）。
+ *
+ * 正文来自 [Disclaimer]，与仓库根 README.md 的「免责声明」一节同源；
+ * 不在弹窗里另抄一份，避免改一处漏一处。
+ */
+@Composable
+fun DisclaimerDialog(
+    onDismiss: () -> Unit,
+    confirmLabel: String = "我知道了",
+    readSeconds: Int = 0,
+) = NoticeDialog(
+    title = "免责声明",
+    intro = Disclaimer.INTRO,
+    items = Disclaimer.ITEMS,
+    onDismiss = onDismiss,
+    confirmLabel = confirmLabel,
+    closeLockMs = readSeconds * 1000L,
+)
+
 /** 强制阅读倒计时环：剩余比例 = 弧长，随倒计时线性耗尽。 */
 @Composable
-private fun CountdownRing(remaining: Int, total: Int, modifier: Modifier = Modifier) {
+private fun CountdownRing(remainingMs: Long, totalMs: Long, modifier: Modifier = Modifier) {
     val color = MaterialTheme.colorScheme.primary
     Canvas(modifier) {
         val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
@@ -108,7 +158,8 @@ private fun CountdownRing(remaining: Int, total: Int, modifier: Modifier = Modif
         drawArc(
             color = color,
             startAngle = -90f,
-            sweepAngle = 360f * remaining.coerceAtLeast(0).toFloat() / total.coerceAtLeast(1),
+            sweepAngle = 360f * remainingMs.coerceAtLeast(0L).toFloat() /
+                totalMs.coerceAtLeast(1L).toFloat(),
             useCenter = false,
             style = stroke,
         )
