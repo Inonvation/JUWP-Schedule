@@ -6,12 +6,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
-import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.Dispatchers
@@ -82,9 +80,6 @@ data class EbikePrefsSnapshot(
 sealed interface EbikeEvent {
     /** 一次性结果提示（保存成功/失败等）；[tone] 决定提示语气。 */
     data class Notice(val text: String, val tone: NoticeTone) : EbikeEvent
-
-    /** 开锁成功：页面补一次成功触感（等了几秒终于成了，光有 Snackbar 不够）。 */
-    data object Unlocked : EbikeEvent
 }
 
 /**
@@ -98,8 +93,6 @@ sealed interface EbikeEvent {
  */
 class EbikeViewModel(
     private val prefs: DisplayPrefsStore,
-    /** 快趣会话（DESIGN §4.32）：骑行状态查询与用车动作（开锁/锁车/还车）。 */
-    kqcx: KqcxSessionRepository? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(EbikeUiState())
@@ -107,17 +100,6 @@ class EbikeViewModel(
 
     private val _events = Channel<EbikeEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
-
-    /**
-     * 本机用车（DESIGN §4.32）：骑行状态与写动作。2026-09-28 抽成与地图页**共用**的一层
-     * （地图页也要「直接开车」+ 地图上看当前用车），安全闸只有一份，别在这里再实现一遍。
-     */
-    val kvcx: KvcxRideController = KvcxRideController(
-        session = kqcx,
-        scope = viewModelScope,
-        onNotice = { text, tone -> notice(text, tone) },
-        onUnlocked = { _events.trySend(EbikeEvent.Unlocked) },
-    )
 
     /** 一次性提示的统一出口（失败路径给 [NoticeTone.Error]/[NoticeTone.Warning]）。 */
     private fun notice(text: String, tone: NoticeTone = NoticeTone.Info) {
@@ -131,7 +113,8 @@ class EbikeViewModel(
      *
      * 阻塞读一次，与 `MeViewModel.initialPrefs` / 设置页 `runBlocking { ... .first() }`
      * 同一模式：DataStore 读过一次后常驻内存，代价是一次内存读。
-     * **它只用于首帧渲染**；行为判定（[queryKvcxRideQuietly] 等）仍读原始流，见 [accountMode]。
+     * **它只用于首帧渲染**：行为判定一律读 DataStore 原始流（`BikeMapViewModel.accountMode`
+     * 那一套），不读这个快照。
      */
     private val initialUseMode: EbikeUseMode = runBlocking {
         runCatching { prefs.ebikeUseMode.first() }.getOrDefault(EbikeUseMode.Default)
@@ -283,14 +266,6 @@ class EbikeViewModel(
         generate()
     }
 
-    /** 一键清空最近车号（DESIGN §3.9）。历史只是回填便利项，清了不弹二次确认，直接提示。 */
-    fun clearRecent() {
-        viewModelScope.launch {
-            prefs.updateEbikeRecentIds { emptyList() }
-            _events.send(EbikeEvent.Notice("已清空最近车号", NoticeTone.Info))
-        }
-    }
-
     /**
      * 生成二维码。非法车号只给行内提示，不发事件；合法则出码、
      * 视自动保存开关落相册、并写最近历史。
@@ -395,63 +370,12 @@ class EbikeViewModel(
         super.onCleared()
     }
 
-    /**
-     * 快趣侧骑行状态（DESIGN §4.32）：**进页查一次**（仅已登录），失败完全静默
-     * ——出码页的主职责是出码，这条是锦上添花（手动刷新另有出口）。实现见 [kvcx]。
-     *
-     * 只在**账号登录方式**下查（2026-09-29）：小程序方式的页面根本不展示骑行卡，
-     * 查了也没人看，还要为一次登录态查询打扰第三方接口。
-     */
-    fun queryKvcxRideQuietly() {
-        viewModelScope.launch { if (accountMode()) kvcx.query(quiet = true) }
-    }
-
-    /** 手动刷新骑行状态（骑行卡上的刷新按钮）：失败给出提示，仍不做自动轮询。 */
-    fun refreshKvcxRide() {
-        viewModelScope.launch { if (accountMode()) kvcx.query(quiet = false) }
-    }
-
-    /**
-     * 当前是否账号登录方式（App 内用车那一档）。**读 DataStore 原始流**，不读 [ebikePrefs] 快照——
-     * 快照在首次发射前是构造默认值（小程序方式），冷启动首帧会把账号方式误判成小程序方式
-     * （与 [generate] 里 autoSave 的坑同源）。读失败按「不是账号方式」处理：
-     * 宁可少发一次登录态查询，也不要拿不准就打扰第三方接口。
-     */
-    private suspend fun accountMode(): Boolean =
-        runCatching { prefs.ebikeUseMode.first().capabilities().inAppRide }.getOrDefault(false)
-
-    // ---------- 本机用车动作（DESIGN §4.32，B/C 档）：编排在 [KvcxRideController] ----------
-
-    /**
-     * 直接开锁（出码页入口）：车号先规范化，非法时只提示不动手；
-     * 其余（在案订单闸、落地确认、计时联动）全在 [KvcxRideController.unlock]。
-     */
-    fun kvcxUnlock(carNumInput: String) {
-        val carNum = EbikeQr.resolveCarNum(carNumInput)
-        if (carNum == null) {
-            notice("车号无效，无法直接开锁", NoticeTone.Warning)
-            return
-        }
-        kvcx.unlock(carNum)
-    }
-
-    /** 重试开锁（订单已在案、车锁未确认打开时；只重发开锁指令，不重建订单）。 */
-    fun kvcxRetryUnlock() = kvcx.retryUnlock()
-
-    /** 临时锁车（订单与计费继续，仅物理锁车）。 */
-    fun kvcxTempLock() = kvcx.tempLock()
-
-    /** 临时锁车后继续骑（与重试开锁同一条调用，文案不同）。 */
-    fun kvcxResumeRide() = kvcx.resumeRide()
-
-    /** 还车：静默锁 + 结束订单；成功后清计时并焚毁相册码（口径在 [KvcxRideController.returnBike]）。 */
-    fun kvcxReturn() = kvcx.returnBike()
-
     class Factory(private val prefs: DisplayPrefsStore) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            // 快趣会话按 context 现取（Graph 单例），查询失败静默——出码页的骑行条是锦上添花
-            EbikeViewModel(prefs, runCatching { Graph.kqcx(Graph.appContext) }.getOrNull()) as T
+            // 本机用车（查骑行状态 / 开锁 / 锁车 / 还车）归**地图页那一个** `KvcxRideController`
+            // （`BikeMapViewModel.kvcx`）：骑行页是它唯一的消费者，这里不再养第二个实例
+            EbikeViewModel(prefs) as T
     }
 }
 

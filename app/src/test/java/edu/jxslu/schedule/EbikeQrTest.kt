@@ -59,6 +59,42 @@ class EbikeQrTest {
         assertNull(EbikeQr.bikeUrl("一〇〇〇〇〇六六九"))
     }
 
+    // ---- parseScannedCarNum：相机扫一扫的车号识别（2026-09-29） ----
+
+    @Test
+    fun `扫描裸车号直接识别`() {
+        assertEquals("100000669", EbikeQr.parseScannedCarNum("100000669"))
+        // 尾部形态照 resolveCarNum 口径补前缀
+        assertEquals("100000669", EbikeQr.parseScannedCarNum("669"))
+        assertEquals("300000604", EbikeQr.parseScannedCarNum("300000604"))
+    }
+
+    @Test
+    fun `扫描官方车身码链接取 id 参数`() {
+        // 车身码 = 一条普通链接的二维码，与本 App 出的码同构（可带多余参数）
+        assertEquals(
+            "100000669",
+            EbikeQr.parseScannedCarNum("https://www.kvcoogo.com/ebike?id=100000669"),
+        )
+        assertEquals(
+            "100000669",
+            EbikeQr.parseScannedCarNum("https://www.kvcoogo.com/ebike?scene=1&id=100000669&from=body"),
+        )
+    }
+
+    @Test
+    fun `扫描认不出的内容返回null`() {
+        // 非车号链接、小程序码、名片码、乱码一律 null，调用方提示"未识别到有效车号"
+        assertNull(EbikeQr.parseScannedCarNum(""))
+        assertNull(EbikeQr.parseScannedCarNum("   "))
+        assertNull(EbikeQr.parseScannedCarNum("https://www.kvcoogo.com/ebike"))
+        assertNull(EbikeQr.parseScannedCarNum("https://www.kvcoogo.com/ebike?id=abc"))
+        assertNull(EbikeQr.parseScannedCarNum("https://weixin.qq.com/r/abc123"))
+        assertNull(EbikeQr.parseScannedCarNum("hello world"))
+        // id 位数不成型（4~5 位）也不放行
+        assertNull(EbikeQr.parseScannedCarNum("https://www.kvcoogo.com/ebike?id=1000"))
+    }
+
     // ---- normalizeCarInput：输入框入口口径 ----
 
     @Test

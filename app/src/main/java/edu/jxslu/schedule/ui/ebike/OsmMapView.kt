@@ -52,7 +52,7 @@ import java.io.File
  * 带注记图还能继续用，回退后不用重新下载。
  *
  * 地址是高德的非公开栅格接口：不接官方 SDK、不申请 key。属于灰色用法，页面免责声明
- * 已写明；地址失效时地图白板，底部车辆列表照常可用（降级路径见 BikeMapScreen）。
+ * 已写明；地址失效时地图白板，底部车辆列表照常可用（降级路径见 `RideScreen`）。
  */
 private val AMAP_TILE_SOURCE: OnlineTileSourceBase = object : OnlineTileSourceBase(
     "AmapRoadHD",
@@ -159,14 +159,20 @@ internal fun OsmMapView(
     userLng: Double?,
     rideLat: Double?,
     rideLng: Double?,
+    /** 识别高亮车的坐标（GCJ-02）；null = 没有要高亮的车。 */
+    highlightLat: Double? = null,
+    highlightLng: Double? = null,
+    /** 高亮标签（如「车 …669」）；null 不画标签。 */
+    highlightLabel: String? = null,
     colors: BikeMarkerColors,
     camera: CameraRequest?,
     /**
      * 地图**停手**后回调一次（中心 + 缩放）：用户拖完/滑停才通知，滑行途中一次都不发。
      *
-     * 判据在 [SettleWatcher]（事件间隔 + `scroller.isFinished`），不在调用方——View 层才知道
-     * 地图是不是还在滑。程序性移动（定位 / 回到校区 / 点分组联动）的事件被 [CameraSuppressor]
-     * 吃掉，走不到这里，那些路径各自安排查询。
+     * 判据在 [SettleWatcher]（手指松开 + 地图中心连续 120ms 没动；**不是**事件间隔，也不是
+     * `scroller.isFinished`——那两条都真机否掉过，理由写在那个类的注释里），不在调用方：
+     * View 层才知道地图是不是还在滑。程序性移动（定位 / 回到校区 / 点分组联动）的事件被
+     * [CameraSuppressor] 吃掉，走不到这里，那些路径各自安排查询。
      */
     onCenterSettled: (Double, Double, Double) -> Unit,
     zones: KvcxZones,
@@ -262,6 +268,13 @@ internal fun OsmMapView(
             } else {
                 null
             }
+            // 识别高亮（2026-09-29「车号识别联动」）：识别条定位过来的那辆车
+            overlay.highlightPoint = if (highlightLat != null && highlightLng != null) {
+                GcjPoint(highlightLat, highlightLng)
+            } else {
+                null
+            }
+            overlay.highlightLabel = highlightLabel
             overlay.zones = zones
             overlay.onClusterTap = tapCallback
             overlay.onRideTap = rideTapCallback

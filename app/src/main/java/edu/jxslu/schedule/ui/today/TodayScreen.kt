@@ -123,6 +123,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.CalendarOff
 import me.rerere.hugeicons.stroke.CheckmarkCircle02
 import me.rerere.hugeicons.stroke.ChevronDown
+import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.ChevronUp
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
@@ -164,10 +165,8 @@ fun TodayScreen(
     onOpenWater: () -> Unit = {},
     /** 趣智校园开热水页（DESIGN §4.30）：与胖乖生活并排的半行卡，独立窗口 */
     onOpenQzxy: () -> Unit = {},
-    /** 共享单车出码页（DESIGN §3.9，SubpageActivity 独立窗口） */
+    /** 快趣出行 · 骑行页（DESIGN §3.9，SubpageActivity 独立窗口；地图 + 抽屉三态） */
     onOpenEbike: () -> Unit = {},
-    /** 附近单车地图页（DESIGN §3.9）：快趣出行码卡右侧入口直达 */
-    onOpenEbikeMap: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
@@ -203,7 +202,7 @@ fun TodayScreen(
     val qzxyCardEnabled by viewModel.qzxyCardEnabled.collectAsStateWithLifecycle()
     val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
     // 免费时长计时的两个值直接读偏好仓库：`DisplayPrefs` 那层合并读模型不带它们，
-    // 而快趣卡只是展示（与 BikeMapScreen / EbikeQrScreen 读同一个单例）
+    // 而快趣卡只是展示（与 RideScreen / RideViewModel 读同一个单例）
     val context = LocalContext.current
     // 趣智登录态：卡片与开水面板都要，直接订阅仓库那条流（理由见 QzxyCard 里的注释）
     val qzxyRepo = remember(context) { Graph.qzxy(context) }
@@ -310,13 +309,12 @@ fun TodayScreen(
             onOpenShortcuts = onOpenShortcuts,
             onShortcutError = showShortcutError,
             onNotice = showNotice,
-            // 共享单车整行卡（DESIGN §3.9，2026-09-24 起，开关关 = 整卡不占位）：
-            // 点卡片其余位置进出码页，右侧「附近单车 ›」直达地图页
+            // 快趣出行 · 骑行卡（DESIGN §3.9，开关关 = 整卡不占位）：整卡点进「骑行」页。
+            // 2026-09-29 结构重构后不再有右侧「附近单车 ›」二级入口——地图就是那个页面的主体
             ebikeCard = if (ebikeCardEnabled) {
                 {
                     EbikeCard(
                         onOpen = onOpenEbike,
-                        onOpenMap = onOpenEbikeMap,
                         rideStartAt = ebikeRideStartAt,
                         freeReminderEnabled = ebikeFreeReminderEnabled,
                         useMode = ebikeUseMode,
@@ -1183,18 +1181,17 @@ private val HalfCardBalanceMaxWidth = 57.dp
 
 /**
  * 快趣出行码整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
- * 标题「快趣出行码」+ 副行，**右侧「附近单车 ›」是二级入口**
- * （[CardSideActionText]，直达附近单车地图 `EBIKE_MAP`）；点卡片其余位置进出码页。
+ * 标题「骑行」+ 副行；**整卡点进「骑行」页**（DESIGN §3.9，2026-09-29 结构重构后
+ * 不再有右侧「附近单车 ›」二级入口——地图就是那个页面的主体）。
  *
- * 副行在免费时长计时中换成倒计时（[rideSubtitle]），其余是「微信扫一扫开车」。
+ * 副行在免费时长计时中换成倒计时（[rideSubtitle]），其余随使用方式（[ebikeCardSubtitle]）。
  */
 @Composable
 private fun EbikeCard(
     onOpen: () -> Unit,
-    onOpenMap: () -> Unit,
     /** 进行中的免费时长计时起点（epoch 毫秒，0 = 无计时）。 */
     rideStartAt: Long = 0L,
-    /** 免费时长提醒开关；关着时不展示倒计时，与出码页计时条同一口径。 */
+    /** 免费时长提醒开关；关着时不展示倒计时，与骑行页计时条同一口径。 */
     freeReminderEnabled: Boolean = false,
     /** 使用方式（DESIGN §3.9 / §4.32）：只改副行常态文案——两档的开车方式不一样。 */
     useMode: EbikeUseMode = EbikeUseMode.Default,
@@ -1206,7 +1203,7 @@ private fun EbikeCard(
             .padding(horizontal = 16.dp)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
-        onClickLabel = "打开共享单车出码",
+        onClickLabel = "打开骑行页",
         contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
     ) {
         Icon(
@@ -1218,7 +1215,7 @@ private fun EbikeCard(
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = "快趣出行码",
+                text = "骑行",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -1232,28 +1229,25 @@ private fun EbikeCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(4.dp))
-        CardSideActionText(
-            text = "附近单车 ›",
-            style = MaterialTheme.typography.bodyMedium,
-            color = primary,
-            fontWeight = FontWeight.SemiBold,
-            onClickLabel = "打开附近单车地图",
-            onClick = onOpenMap,
+        Icon(
+            HugeIcons.ChevronRight,
+            contentDescription = null,
+            tint = onSurface.copy(alpha = 0.35f),
+            modifier = Modifier.size(16.dp),
         )
     }
 }
 
 /** 快趣卡副行的常态文案：两档的开车方式不同（DESIGN §3.9 / §4.32）。 */
 private fun ebikeCardSubtitle(useMode: EbikeUseMode): String = when (useMode) {
-    EbikeUseMode.MiniProgram -> "微信扫一扫开车"
+    EbikeUseMode.MiniProgram -> "微信扫一扫骑车"
     EbikeUseMode.Account -> "本机开锁用车"
 }
 
 /**
  * 快趣卡副行文案（DESIGN §3.9）：免费时长计时中显示「免费剩余 mm:ss」，其余为常态文案。
  *
- * 计时条那条口径照搬出码页（`EbikeQrScreen` 的 `timerActive`）：开关关着时只记起点、
+ * 计时条那条口径照搬骑行页（`RidePanels.kt` 里 `RideCountdown` 那块）：开关关着时只记起点、
  * 不展示倒计时，两处对同一段计时的说法保持一致。每秒刷一次，切走页面或计时结束
  * （起点被清成 0）就停；到点后落回常态文案（文案随使用方式变，见 [ebikeCardSubtitle]）。
  */

@@ -43,6 +43,16 @@ import me.rerere.hugeicons.stroke.InformationCircle
 enum class NoticeTone { Info, Success, Warning, Error }
 
 /**
+ * 提示卡离底栏（悬浮形态下是胶囊）上缘的额外间距。
+ *
+ * 普通底栏形态下 [LocalBottomBarClearance] 是 0，卡片底边正好压着底栏上沿，提示卡与
+ * 底栏的图标文字连成一片、读着像底栏多出来的一行。16dp 让它明确浮在底栏之上
+ * （2026-09-29 用户反馈「位置还是要高一点」）。悬浮形态同样叠这一份：胶囊上缘之外
+ * 也该有呼吸距离。
+ */
+private val NoticeBottomGap = 16.dp
+
+/**
  * 一句话 + 语气。给「结果要显示在某个独立窗口内部」的场景当返回值用
  * （[InlineNoticeRow] 的入参），免得调用方各自定义一对 (文案, 颜色)。
  */
@@ -80,7 +90,8 @@ class AppNoticeVisuals(
  * 位置由 Scaffold 的 `snackbarHost` 槽决定 → 贴着页面底边，不自己摆 Box 定位。
  * 底边之上还要让开多少由 [LocalBottomBarClearance] 给（见下面的实现注释）：
  * 普通底栏形态下页面底边本就在底栏上方、该值为 0；悬浮胶囊形态下页面铺到窗口底，
- * 不补这一下提示卡就落在胶囊与手势条底下。
+ * 不补这一下提示卡就落在胶囊与手势条底下。两种形态都在此之上再叠一份
+ * [NoticeBottomGap]，别让卡片贴死底栏。
  */
 @Composable
 fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
@@ -95,7 +106,7 @@ fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .padding(bottom = LocalBottomBarClearance.current),
+                .padding(bottom = LocalBottomBarClearance.current + NoticeBottomGap),
             contentAlignment = Alignment.BottomCenter,
         ) {
             AppNoticeCard(data)
@@ -126,7 +137,10 @@ private fun AppNoticeCard(data: SnackbarData) {
             .clip(shape)
             .background(scheme.surfaceContainerHigh)
             .border(1.dp, scheme.outlineVariant, shape)
-            .padding(start = 14.dp, end = if (visuals.actionLabel == null) 14.dp else 4.dp, top = 10.dp, bottom = 10.dp),
+            // 上下 14dp：正文行盒 20dp + 28dp = 卡片最小高 48dp，正好落在 M3 的触摸目标
+            // 下限上。旧值 10dp 出来的 40dp 卡片在真机上读着扁（2026-09-29 用户反馈
+            // 「气泡提醒太矮」）。带动作/关闭键时内容更高，卡片跟着长，不另设 heightIn。
+            .padding(start = 14.dp, end = if (visuals.actionLabel == null) 14.dp else 4.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(

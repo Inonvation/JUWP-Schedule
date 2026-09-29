@@ -140,6 +140,11 @@ dependencies {
     // 只用 core 的 QRCodeWriter，不引 zxing 的 Android 侧模块
     implementation("com.google.zxing:core:3.5.3")
 
+    // 相机扫一扫（2026-09-29「车号识别联动」）：扫车身二维码识别车号。
+    // journeyapps 封装了相机预览 + 连续解码 + 权限申请，自研 Camera2 方案成本不成比例；
+    // 它自带 consumer proguard 规则，且复用上面的 zxing:core（版本对齐 3.x）
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
     // 附近单车地图（DESIGN §3.9 / §4.23）：osmdroid 6.1.18 的 POM 里没有 <dependencies>，
     // 不会拉进任何传递依赖，也不影响 androidx.core 的版本边界（对比 HugeIcons 那边的教训）。
     // 瓦片源是自建的高德栅格地址（见 ui/ebike/OsmMapView.kt），不用它的在线默认源。

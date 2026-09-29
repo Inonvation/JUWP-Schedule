@@ -108,6 +108,25 @@ object EbikeQr {
     }
 
     /**
+     * 扫描内容 → 完整车号（2026-09-29「相机扫一扫」链路的纯逻辑侧）。
+     *
+     * 车身二维码 = 一条普通链接的二维码（[bikeUrl] 同构），但也宽容处理几种实际形态：
+     * - 裸车号（`100000669` / 尾部 `669`）：直接走 [resolveCarNum]；
+     * - 带 `id=` 参数的 URL（官方车身码 / 他人分享链接）：取 id 参数再过 [resolveCarNum]；
+     * - 其它内容（名片码、小程序码、别的站点链接）：null，调用方给"未识别到有效车号"提示。
+     *
+     * 纯 JVM 可测（`EbikeQrTest`），与出码口径共用 [resolveCarNum] 一处校验。
+     */
+    fun parseScannedCarNum(raw: String): String? {
+        val content = raw.trim()
+        if (content.isEmpty()) return null
+        resolveCarNum(content)?.let { return it }
+        val idParam = Regex("[?&]id=([0-9]{$CAR_NUM_MIN_LENGTH,$CAR_NUM_MAX_LENGTH})")
+            .find(content)?.groupValues?.get(1)
+        return idParam?.let(::resolveCarNum)
+    }
+
+    /**
      * 输入框原始文本 → 规整输入（只留数字，上限 [INPUT_MAX_LENGTH] 位）。
      * UI 层的唯一入口口径（DESIGN §3.9）。
      *

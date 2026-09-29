@@ -3,10 +3,8 @@ package edu.jxslu.schedule
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.AnimatedVisibility
@@ -657,18 +655,6 @@ internal fun JuwApp(
     // 未读出（首帧 null）按开处理——宁可先显示再收起，也别让底栏先少一项再补上。
     val lifeTabEnabled = displayPrefs?.lifeTabEnabled ?: true
 
-    // 今日页 → 附近单车地图（2026-09-24）：要拿「选中的车号」回传——地图选车后先收起，
-    // 这里接住车号再开出码页（车号走 SubpageRequest.focusItemId，进页即出码）。
-    // 普通 startActivity 收不到结果，必须走 launcher（openSubpageForResult 只补转场）。
-    val ebikeMapLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val carNum = result.data?.getStringExtra(SubpageActivity.EXTRA_PICKED_CAR_NUM)
-        if (!carNum.isNullOrBlank()) {
-            SubpageActivity.start(context, SubpageScreen.EBIKE, focusItemId = carNum)
-        }
-    }
-
     // 底栏四项：今日 · 课表 · 生活 · 我的（生活页在课表右侧）
     val tabs = buildList {
         add(BottomTab(Routes.TODAY, R.string.tab_today, HugeIcons.Calendar01))
@@ -798,16 +784,10 @@ internal fun JuwApp(
                             // 胖乖生活卡常显（未登录给未登录态，显示设置可关，DESIGN §3.3）；
                             // 登录态由 WaterViewModel 自带，外层不再按登录与否隐藏整卡
                             onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
-                            // 共享单车出码页（DESIGN §3.9）：今日页卡片直达，独立窗口；
-                            // 卡片右侧「附近单车 ›」进地图（带返回值：选车后开出码页自动出码）
-                            onOpenEbike = { SubpageActivity.start(context, SubpageScreen.EBIKE) },
-                            onOpenEbikeMap = {
-                                openSubpageForResult(
-                                    context,
-                                    ebikeMapLauncher::launch,
-                                    SubpageRequest(SubpageScreen.EBIKE_MAP),
-                                )
-                            },
+                            // 快趣出行（DESIGN §3.9）：今日页卡片直达「骑行」页。
+                            // 2026-09-29 结构重构后两档共用同一个页面（地图 + 抽屉三态），
+                            // 不再按使用方式路由到两个页面，也不再需要「选车回传」那条通道
+                            onOpenEbike = { SubpageActivity.start(context, SubpageScreen.RIDE) },
                             // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
                             // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
                             onOpenShortcuts = { focusItemId ->

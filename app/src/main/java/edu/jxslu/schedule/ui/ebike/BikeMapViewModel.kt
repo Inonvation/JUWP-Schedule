@@ -108,8 +108,8 @@ data class BikeMapUiState(
      * 底部车辆面板的高度（dp）。
      *
      * 放在状态里而不是页面局部 `remember`：局部状态首帧只能给默认值，等 DataStore 读回来
-     * 时面板会跳一下，转屏还会再跳一次。上下限不在这里——夹取要用**当前窗口高度**算，
-     * 那只有页面知道，所以 VM 只做「有限且为正」这一道校验。
+     * 时面板会跳一下，转屏还会再跳一次（用户明确要求过面板别跳）。上下限不在这里——
+     * 夹取要用**当前窗口高度**算，那只有页面知道，所以 VM 只做「有限且为正」这一道校验。
      */
     val panelHeightDp: Float = DEFAULT_PANEL_HEIGHT_DP,
     /**
@@ -124,12 +124,30 @@ data class BikeMapUiState(
      * 失败保留上一层：图层是装饰，空白比旧值更糟。
      */
     val zones: KvcxZones = KvcxZones.EMPTY,
+    /**
+     * 被识别条「定位」的车号（2026-09-29「车号识别联动」）：地图上画高亮圈。
+     * 存车号不存坐标——刷新换批后车可能不在了，按号在最新结果里重找，找得到才画。
+     */
+    val highlightCarNum: String? = null,
+    /** [highlightCarNum] 在当前结果里对应的车；null = 还没找到（等下一笔查询）。 */
+    val highlightedCar: NearbyBike? = null,
+    /**
+     * 列表的**距离参照点**（2026-09-30）：距离数字与排序都用它，两者必须同源——
+     * 旧版数字按「距你」算、排序却按查询中心算，拖远之后顺序就和地图对不上了。
+     *
+     * 只在**一次查询落地时**重算，拖动过程中不会翻：
+     * - 用户位置已知且查询中心离用户不超过 [USER_ANCHOR_RADIUS_METERS] → 用用户位置（标「距你」）；
+     * - 否则用查询中心（标「距中心」）——地图拖远了就按"你正在看的这一片"排，顺序才和地图对得上。
+     */
+    val anchorLat: Double? = null,
+    val anchorLng: Double? = null,
+    val anchorFromUser: Boolean = false,
 ) {
     /** 列表里的车辆总数（跨停车点，已按 [onlyOurCampus] 与 [onlyAvailable] 过滤）。 */
     val bikeCount: Int get() = clusters.sumOf { it.bikes.size }
 
-    /** 距离是否以用户位置为参照。false = 以地图中心为参照（还没定位）。 */
-    val distanceFromUser: Boolean get() = userLat != null && userLng != null
+    /** 距离是否以用户位置为参照。false = 以查询中心为参照。 */
+    val distanceFromUser: Boolean get() = anchorFromUser
 }
 
 /**
@@ -279,6 +297,9 @@ class BikeMapViewModel(
     private var lastAttemptLng: Double? = null
     private var cameraNonce = 0L
 
+    /** 导航带入、还没在查询结果里找到的待定位车号（见 [setPendingFocusCar]）。 */
+    private var pendingFocusCar: String? = null
+
     /**
      * 是否已经拿到过定位。
      *
@@ -295,8 +316,8 @@ class BikeMapViewModel(
             zoneEntries = zoneCache?.load().orEmpty()
             seedZonesFromCache()
         }
-        // 面板高度与「只看可用」先读回来：首帧就用上用户上次的值，否则进页面会先按
-        // 默认值画一帧再跳一下（用户明确说过面板不要跳，筛选同理）
+        // 面板高度与筛选先读回来：首帧就用上用户上次的值，否则进页面会先按默认值画一帧
+        // 再跳一下（用户明确说过面板不要跳）
         viewModelScope.launch {
             prefs.ebikePanelHeightDp.first()?.let(::setPanelHeight)
         }
@@ -390,12 +411,11 @@ class BikeMapViewModel(
     /**
      * 把面板高度收进 [minDp]..[maxDp]（页面在窗口尺寸变化后调用）。
      *
-     * 渲染时虽然也夹了一道，但状态本身不会跟着变，于是会出现"拖了不动"：存着 520dp 的
-     * 人转成横屏（上限只剩 280dp），面板画在 280dp，而拖动是从 520 开始算的，
-     * 手指得先走完那 240dp 才见效。让状态自己收敛就没这回事。
+     * 渲染时虽然也夹了一道，但状态本身不会跟着变，于是会出现"拖了不动"：存着 560dp 的
+     * 人转成横屏（上限只剩 280dp），面板画在 280dp，而拖动是从 560 开始算的，
+     * 手指得先走完那 280dp 才见效。让状态自己收敛就没这回事。
      *
-     * 已经在范围内时原样返回同一个实例：StateFlow 按相等去重，不会多触发一次重组，
-     * 所以调用方可以放心地把它挂在「高度或上限变了」的效果上。
+     * 已经在范围内时原样返回同一个实例：StateFlow 按相等去重，不会多触发一次重组。
      */
     fun clampPanelHeight(minDp: Float, maxDp: Float) {
         if (!minDp.isFinite() || !maxDp.isFinite() || maxDp < minDp) return
@@ -464,6 +484,48 @@ class BikeMapViewModel(
         pushCamera(lat, lng, zoom = null, animated = true)
     }
 
+    /** 找一辆车（按完整车号）并展开所在簇、把镜头移过去；找不到就提示等下一笔查询。 */
+    fun focusCar(carNum: String) {
+        if (!carNum.isNotBlank()) return
+        _uiState.update { it.copy(highlightCarNum = carNum) }
+        rebuildClusters()
+        val cluster = _uiState.value.clusters.firstOrNull { c -> c.bikes.any { it.carNum == carNum } }
+        if (cluster == null) {
+            // 当前列表里没有：可能是筛掉了、车被骑走了或还没查到这一片。
+            // 号先记着（下一笔查询找到就亮），提示给条出路而不是干等
+            _events.trySend(
+                BikeMapEvent.Notice("附近列表里暂时没有这辆车；移动地图或点刷新后再试", NoticeTone.Info),
+            )
+            return
+        }
+        _uiState.update {
+            it.copy(
+                expandedKey = cluster.key,
+                focusKey = cluster.key,
+                focusNonce = it.focusNonce + 1,
+            )
+        }
+        pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
+    }
+
+    /**
+     * 导航带入的待定位车号（出码页识别条「地图查看」经 focusItemId 传进来）：
+     * 第一笔查询结果里找到就自动定位（[focusCar]），找不到就安静等后面的查询。
+     */
+    fun setPendingFocusCar(carNum: String) {
+        pendingFocusCar = carNum
+        tryResolvePendingFocusCar()
+    }
+
+    private fun tryResolvePendingFocusCar() {
+        val num = pendingFocusCar ?: return
+        val found = _uiState.value.clusters.any { c -> c.bikes.any { it.carNum == num } }
+        if (found) {
+            pendingFocusCar = null
+            focusCar(num)
+        }
+    }
+
     /** 「回到校区」：拉回默认中心并重查。 */
     fun onResetToCampus() {
         pushCamera(
@@ -499,7 +561,10 @@ class BikeMapViewModel(
 
     /**
      * 连续定位的最新读数（坐标已是 GCJ-02，DESIGN §3.9「蓝点实时更新」）：
-     * **只挪蓝点**、按新参照点重算「距你」距离。
+     * **只挪蓝点**。
+     *
+     * **不重设列表的参照点**（2026-09-30）：蓝点每动一下就把整张列表按新位置重排，
+     * 用户站着不动也会看到顺序在变。参照点只在查询落地时定一次（见 [BikeMapUiState.anchorLat]）。
      *
      * 与 [onLocated] 的分工：镜头与重查仍归一次性定位（进页 / 点「定位」按钮）管。
      * 这里不移镜头——用户刚拖好的视野不能被走动的自己抢回去；也不重查接口——
@@ -541,8 +606,8 @@ class BikeMapViewModel(
      */
     private fun rebuildClusters() {
         val state = _uiState.value
-        val originLat = state.userLat ?: fetchedLat
-        val originLng = state.userLng ?: fetchedLng
+        val originLat = state.anchorLat ?: fetchedLat
+        val originLng = state.anchorLng ?: fetchedLng
         val anchored = if (originLat != null && originLng != null) {
             BikeNearby.reanchor(fetched, originLat, originLng)
         } else {
@@ -562,10 +627,15 @@ class BikeMapViewModel(
             .let { list -> if (state.onlyAvailable) list.filter { it.available } else list }
         val clusters = BikeNearby.cluster(shown)
         _uiState.update { current ->
+            // 高亮车按号在最新结果里重找：找得到才画（车被骑走 / 被筛掉时高亮自然消失）
+            val highlighted = current.highlightCarNum?.let { num ->
+                clusters.asSequence().flatMap { it.bikes }.firstOrNull { it.carNum == num }
+            }
             current.copy(
                 clusters = clusters,
                 // 列表换了一批，展开态只在那个停车点还在时保留
                 expandedKey = current.expandedKey?.takeIf { key -> clusters.any { it.key == key } },
+                highlightedCar = highlighted,
             )
         }
     }
@@ -610,9 +680,14 @@ class BikeMapViewModel(
 
     private suspend fun query(lat: Double, lng: Double, forceZones: Boolean) {
         _uiState.update { it.copy(loading = true, failure = null) }
+        // 图层只服务账号方式（2026-10-01）：`queryZones` 要 token，而小程序方式承诺
+        // 「只出码与计时、不打扰第三方接口」——本机若还留着可静默重登的凭证，旧写法会
+        // 在这条路上偷偷登一次快趣账号，同一个使用方式在两台手机上表现还不一样。
+        // 缓存那一层不受影响：它是本地数据（见 [fetchZones]）。
+        val inAppRide = accountMode()
         // 图层与车辆列表**并行**发（2026-09-28）：它只需要坐标与一个"哪类车"的上下文，
         // 车号用上一次那批车里的任意一辆即可——旧写法等中心结果回来才发，白多一个往返
-        fetchZones(lat, lng, forceZones)
+        fetchZones(lat, lng, forceZones, inAppRide)
 
         val centerBikes = try {
             when (val parsed = BikeNearby.parse(client.queryNearbyJson(lat, lng), lat, lng)) {
@@ -644,9 +719,9 @@ class BikeMapViewModel(
         val zoomForViewport = pendingZoom
         viewModelScope.launch { prefs.setEbikeMapViewport(lat, lng, zoomForViewport) }
         // 没有车当上下文时（本次会话第一次查询）在这里补发一次图层
-        flushPendingZone()
+        flushPendingZone(inAppRide)
         // 换校区了（比如从本校拖到隔壁师大）：图层要用这一带的车号重拉，官方同口径
-        reloadZonesForSite(lat, lng, centerBikes)
+        reloadZonesForSite(lat, lng, centerBikes, inAppRide)
 
         // 中心点没返回满，说明这一带能查到的就这么多，不用再撒点浪费请求
         if (!sampling) return
@@ -664,10 +739,14 @@ class BikeMapViewModel(
      * **立即**摆上（不等网络，"P" 与车辆列表同时出现），新鲜的话连请求都不发——图层是
      * 最不容易变的一层，而旧写法拖动一下就要等一个往返才有 "P"，正是用户报的慢。
      * 判定全在 [ZoneCache]（纯逻辑、有单测），这里只管编排。
+     *
+     * [inAppRide] = 账号登录方式。小程序方式**只吃缓存、不发请求**（见 [query] 里的说明）：
+     * 缓存是本地数据，摆旧图层比什么都不摆好；联网那条要 token，那一档不该有。
      */
-    private fun fetchZones(lat: Double, lng: Double, force: Boolean) {
+    private fun fetchZones(lat: Double, lng: Double, force: Boolean, inAppRide: Boolean) {
         val source = zoneSource ?: return
         val needFetch = applyCachedZones(lat, lng, force)
+        if (!inAppRide) return
         // 这一带有车就用这一带的车号（官方同口径）；没车就用上一次的上下文——
         // 接口只要"哪个校区"，没车不等于没还车点（见 ZoneCarContext 的注释）
         val context = zoneContextOf(fetched) ?: lastZoneCar
@@ -728,8 +807,9 @@ class BikeMapViewModel(
     }
 
     /** 中心结果落地后补发那次被挂起的图层请求（[pendingZone]）。 */
-    private fun flushPendingZone() {
+    private fun flushPendingZone(inAppRide: Boolean) {
         val source = zoneSource ?: return
+        if (!inAppRide) return
         val pending = pendingZone ?: return
         pendingZone = null
         val context = zoneContextOf(fetched) ?: lastZoneCar ?: return
@@ -745,8 +825,14 @@ class BikeMapViewModel(
      * 只在换校区时多发一次：同校区拖动时 [lastZoneCar] 的校区与它一致，直接返回。
      * 缓存命中（没联网）时也走这里——缓存条目不记校区，跨校区命中旧图层时靠这一步纠正。
      */
-    private fun reloadZonesForSite(lat: Double, lng: Double, bikes: List<NearbyBike>) {
+    private fun reloadZonesForSite(
+        lat: Double,
+        lng: Double,
+        bikes: List<NearbyBike>,
+        inAppRide: Boolean,
+    ) {
         val source = zoneSource ?: return
+        if (!inAppRide) return
         val context = zoneContextOf(bikes) ?: return
         if (context.campusName == lastZoneCar?.campusName) return
         launchZoneRequest(source, lat, lng, context)
@@ -815,15 +901,26 @@ class BikeMapViewModel(
         fetchedLng = lng
         lastAttemptLat = lat
         lastAttemptLng = lng
+        // 参照点只在**查询落地时**定一次：拖动过程中不翻，列表顺序才稳（2026-09-30 用户反馈）
+        val current = _uiState.value
+        val userLat = current.userLat
+        val userLng = current.userLng
+        val fromUser = userLat != null && userLng != null &&
+            BikeNearby.distanceMeters(userLat, userLng, lat, lng) <= USER_ANCHOR_RADIUS_METERS
         _uiState.update {
             it.copy(
                 loading = stillLoading,
                 queried = true,
                 failure = null,
                 updatedAtMillis = System.currentTimeMillis(),
+                anchorLat = if (fromUser) userLat else lat,
+                anchorLng = if (fromUser) userLng else lng,
+                anchorFromUser = fromUser,
             )
         }
         rebuildClusters()
+        // 出码页带车号跳进来的「地图查看」：结果到了就自动定位
+        tryResolvePendingFocusCar()
     }
 
     private fun failQuery(lat: Double, lng: Double, failure: BikeFailure) {
@@ -914,8 +1011,31 @@ class BikeMapViewModel(
  *
  * 存**定值**而不是屏幕比例：比例在窗口变化时会自己变，面板跟着跳，用户明确要求过别跳。
  * [PANEL_MAX_RATIO] 是第二道上限，窗口再矮也要给地图留三成，否则拖到顶只剩一条缝。
+ *
+ * **2026-10-01 起面板只装列表**：把手 + 头行 + 列表。主动作条与免责那行搬到面板**之外**
+ * （页面底部的常驻块，见 `RideScreen`）。旧版把动作条塞进这个定高面板的 footer 里，
+ * 骑行态的仪表盘一长，面板最矮时的把手 + 仪表盘 + 免责就已经超过面板高度，
+ * 底部按钮被面板的圆角裁掉——高度是定值，内容却是变量，这个组合迟早出事。
+ *
+ * 下限 240 = 把手 22 + 头行约 48 + 列表约 170。默认值从 380 收到 270：动作条搬出去之后
+ * 底部的总高度是「面板 + 常驻块」，不把默认值收回来，地图会比改动前少一块。
+ * 这只是默认值，用户拖过的档位（[panelHeightDp]）照旧保留，只受上限约束。
  */
-internal const val DEFAULT_PANEL_HEIGHT_DP = 300f
-internal const val MIN_PANEL_HEIGHT_DP = 180f
-internal const val MAX_PANEL_HEIGHT_DP = 520f
-internal const val PANEL_MAX_RATIO = 0.7f
+internal const val DEFAULT_PANEL_HEIGHT_DP = 270f
+internal const val MIN_PANEL_HEIGHT_DP = 240f
+internal const val MAX_PANEL_HEIGHT_DP = 620f
+
+/**
+ * 「面板 + 页面底部常驻块」合计占窗口高度的上限（用户可拖的那部分是面板）。
+ * 留出的三成给地图——把动作条搬到面板外之后，比例要按**整条底部**算，否则地图还是会被挤。
+ */
+internal const val PANEL_MAX_RATIO = 0.72f
+
+/**
+ * 列表用「距你」而不是「距查询中心」排的半径（米，2026-09-30）。
+ *
+ * 查询中心离用户在这个半径内 = 用户在看自己周围，距离按用户位置算（能直接决定走哪辆）；
+ * 超出 = 用户把地图拖到别处了，按查询中心算——顺序才和地图对得上，也不会因为蓝点在动
+ * 而反复重排。
+ */
+internal const val USER_ANCHOR_RADIUS_METERS = 150.0

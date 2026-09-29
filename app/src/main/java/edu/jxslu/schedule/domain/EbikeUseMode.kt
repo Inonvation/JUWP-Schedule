@@ -13,6 +13,7 @@ package edu.jxslu.schedule.domain
  * |------|---------------|-----------|
  * | 车号输入 / 生成二维码 / 保存到相册 | ✅ | ✅ |
  * | 打开微信扫一扫（顺带起免费计时） | ✅ | ❌ |
+ * | 内置相机扫一扫（扫车身码识别车号） | ❌ | ✅ |
  * | 直接开锁 / 临时锁车 / 还车 | ❌ | ✅（需登录） |
  * | 快趣账号页 / 本机骑行记录 | ❌ | ✅ |
  * | 精确倒计时（微信通知校准） | ✅ | ❌ |
@@ -73,6 +74,12 @@ data class EbikeCapabilities(
     val inAppRide: Boolean,
     /** 出码卡里的「直接开锁」：App 内用车 + 已登录 + 当前没有在案订单。 */
     val directUnlock: Boolean,
+    /**
+     * 内置相机扫一扫（2026-09-29）：直接调摄像头扫**车身二维码**识别车号，
+     * 识别后回填输入框并显示该车信息。账号方式专有——小程序方式的目标动作是
+     * 「打开微信扫一扫」（扫的是 App 出的码，不是车身码），两者扫的对象不同。
+     */
+    val cameraScan: Boolean,
 )
 
 /**
@@ -90,11 +97,13 @@ fun EbikeUseMode.capabilities(
         wechatNoticeCalibration = true,
         inAppRide = false,
         directUnlock = false,
+        cameraScan = false,
     )
     EbikeUseMode.Account -> EbikeCapabilities(
         wechatScan = false,
         wechatNoticeCalibration = false,
         inAppRide = true,
         directUnlock = loggedIn && !hasRide,
+        cameraScan = true,
     )
 }

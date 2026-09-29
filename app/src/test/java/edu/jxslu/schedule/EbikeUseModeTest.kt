@@ -72,15 +72,19 @@ class EbikeUseModeTest {
         assertTrue(caps.wechatNoticeCalibration)
         assertFalse("小程序方式没有任何 App 内用车", caps.inAppRide)
         assertFalse("小程序方式不给直接开锁", caps.directUnlock)
+        // 内置相机扫一扫是账号方式的能力（小程序方式的目标动作是打开微信扫一扫）
+        assertFalse("小程序方式不给内置相机扫一扫", caps.cameraScan)
     }
 
     @Test
     fun `账号方式去掉扫一扫与微信校准`() {
         val caps = EbikeUseMode.Account.capabilities(loggedIn = true, hasRide = false)
-        assertFalse("账号方式没有扫一扫（保留出码）", caps.wechatScan)
+        assertFalse("账号方式没有微信扫一扫（保留出码）", caps.wechatScan)
         assertFalse("账号方式的开锁时刻就是起点，无需校准", caps.wechatNoticeCalibration)
         assertTrue(caps.inAppRide)
         assertTrue(caps.directUnlock)
+        // 2026-09-29 加：内置相机扫一扫扫的是车身码，账号方式专有
+        assertTrue(caps.cameraScan)
     }
 
     @Test

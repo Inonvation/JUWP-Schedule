@@ -40,9 +40,23 @@ internal data class SubpageRequest(
     }
 
     companion object {
-        /** 枚举名 → 页面。不认识的（脏 extra / 旧版本写下的名字）返回 null。 */
-        fun screenOf(name: String?): SubpageScreen? =
-            name?.let { raw -> SubpageScreen.entries.firstOrNull { it.name == raw } }
+        /**
+         * 枚举名 → 页面。不认识的（脏 extra / 旧版本写下的名字）返回 null。
+         *
+         * [LEGACY_NAMES] 兜的是**跨版本**的那一类：闹钟 / 通知的 `PendingIntent` 里那份
+         * [Intent] 是旧版本写下的，升级后才触发。没有这层映射的话，用户点一条骑行提醒
+         * 会落到「课表管理」（[SubpageActivity] 对脏 extra 的兜底），比不跳还糟。
+         */
+        fun screenOf(name: String?): SubpageScreen? = name?.let { raw ->
+            SubpageScreen.entries.firstOrNull { it.name == raw }
+                ?: LEGACY_NAMES[raw]?.let { screenOf(it) }
+        }
+
+        /** 旧枚举名 → 现枚举名（2026-09-29 出码页与地图页合并为「骑行」）。 */
+        private val LEGACY_NAMES = mapOf(
+            "EBIKE" to "RIDE",
+            "EBIKE_MAP" to "RIDE",
+        )
 
         /**
          * 纯函数形态的解析：没有 `screen` extra、或枚举名不认识时返回 null，
@@ -211,20 +225,4 @@ internal object WaterAutoStart {
         pending = null
         hit
     }
-}
-
-/**
- * [openSubpage] 的「要拿返回值」版本：页面得用 `registerForActivityResult` 的 launcher
- * 启动（普通 `startActivity` 收不到结果），所以启动动作交给调用方，转场仍在这里补
- * ——DESIGN §3.1 要求二级页入口一律右滑推入，漏一处就是一次硬切。
- *
- * 目前只有快趣出行码页 → 附近单车地图这一条（要把选中的车号带回出码页）。
- */
-internal fun openSubpageForResult(
-    context: Context,
-    launch: (Intent) -> Unit,
-    request: SubpageRequest,
-) {
-    launch(request.applyTo(Intent(context, SubpageActivity::class.java)))
-    applySubpageOpenTransition(context)
 }

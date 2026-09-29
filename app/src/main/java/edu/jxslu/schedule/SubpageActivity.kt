@@ -24,9 +24,8 @@ import edu.jxslu.schedule.ui.me.hub.WidgetCalendarHubScreen
 import edu.jxslu.schedule.ui.campus.CampusCardSettingsScreen
 import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
-import edu.jxslu.schedule.ui.ebike.EbikeQrScreen
-import edu.jxslu.schedule.ui.ebike.BikeMapScreen
 import edu.jxslu.schedule.ui.ebike.KvcxScreen
+import edu.jxslu.schedule.ui.ebike.RideScreen
 import edu.jxslu.schedule.ui.life.PowerBillScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
@@ -76,10 +75,8 @@ enum class SubpageScreen {
     SCHOLAR,
     /** 导出成绩单 → 最近导出（DESIGN §3.14；列表即 filesDir/transcripts，最多 10 份） */
     TRANSCRIPTS,
-    /** 今日 → 共享单车出码（DESIGN §3.9；独立窗口承载二维码展示） */
-    EBIKE,
-    /** 今日 → 附近单车地图（DESIGN §3.9；从出码页进，选中的车号回填出码页） */
-    EBIKE_MAP,
+    /** 今日 → 快趣出行 · 骑行页（DESIGN §3.9；地图 + 抽屉三态，两档共用一套结构） */
+    RIDE,
     /** 我的 → 校园卡付款码设置（开关 · 凭证，DESIGN §3.10） */
     CAMPUS_CARD_SETTINGS,
     /** 我的 → 教务账户（原生信息页，DESIGN §3.3；不再一点就开导入 WebView） */
@@ -226,22 +223,9 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
             SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)
             SubpageScreen.TRANSCRIPTS -> TranscriptHistoryScreen(onBack = onBack)
-            // focusItemId 对 EBIKE 复用为「进页即出码的车号」：今日页地图选车链路
-            // 把选中车号带进出码页直接生成（2026-09-24，DESIGN §3.9）
-            SubpageScreen.EBIKE -> EbikeQrScreen(onBack = onBack, initialCarNum = focusItemId)
-            SubpageScreen.EBIKE_MAP -> BikeMapScreen(
-                onBack = onBack,
-                onPicked = { carNum ->
-                    // 选中的车号用 Activity Result 回传，**不走进程级单例**：
-                    // 单例会被任何一个还活着的出码页实例抢先消费掉（被退到后台那个也算），
-                    // 结果是用户眼前这一页空手而归（2026-09-23 实测）。
-                    setResult(
-                        RESULT_OK,
-                        Intent().putExtra(EXTRA_PICKED_CAR_NUM, carNum),
-                    )
-                    onBack()
-                },
-            )
+            // focusItemId 对 RIDE 复用为「进页即定位的车号」（2026-09-29）：识别 / 深链
+            // 带车号进来，第一笔查询找到就高亮定位（不轮询）
+            SubpageScreen.RIDE -> RideScreen(onBack = onBack, initialFocusCarNum = focusItemId)
             SubpageScreen.CAMPUS_CARD_SETTINGS -> CampusCardSettingsScreen(
                 onBack = onBack,
                 onOpenStatement = { SubpageActivity.start(this, SubpageScreen.CAMPUS_STATEMENT) },
@@ -401,14 +385,6 @@ class SubpageActivity : ComponentActivity() {
     }
 
     companion object {
-        /**
-         * 附近单车地图选中的车号，**作为 Activity Result 回传**（DESIGN §3.9）。
-         *
-         * 别改回进程级单例：那种通道会被任何一个还活着的出码页实例抢先消费掉，
-         * 用户眼前这一页反而收不到（2026-09-23 真机排查）。
-         */
-        const val EXTRA_PICKED_CAR_NUM = "picked_car_num"
-
         /**
          * [focusItemId] 只对 [SubpageScreen.SHORTCUTS] 生效：非空时设置页打开后
          * 直接展开该条目的编辑弹层（Snackbar「去设置」的就近修正闭环）。

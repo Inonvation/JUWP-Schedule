@@ -12,13 +12,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,22 +22,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -53,7 +45,6 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.domain.RideRecord
-import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -63,28 +54,26 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowLeft01
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * 快趣出行页（DESIGN §4.32，2026-09-28；2026-09-29 起只属于「账号登录」使用方式）。
+ * 快趣账号页（DESIGN §4.32；**2026-09-29 起只管账号与本机记录**）。
  *
- * 两态：
- * - 未登录：手机号 + 密码表单（UX 对齐胖乖 `WaterScreen.LoginSection`：失败保留输入、
- *   Snackbar 提示）；
- * - 已登录：账号掩码显示、骑行状态卡（进页自动查一次 + 手动刷新）、退出登录。
+ * 骑行状态并进了「骑行」页（`RideScreen`）的骑行态面板，
+ * 使用方式切换收进了「骑行设置」弹层——本页只留登录 / 账号 / 本机骑行记录，
+ * 与出码页（工作台）不再有重复区块。
  *
- * 顶部常驻「使用方式」卡（与出码页**同一份** [UseModeSection]）：两处入口都能切换，
- * 口径只有一处。切到「微信小程序」方式后本页的账号 / 骑行状态 / 本机记录整片收起
- * （那是账号方式的能力），只留一句说明与切回去的开关。
+ * 两态：未登录 = 手机号 + 密码表单（失败保留输入、Snackbar 提示）；
+ * 已登录 = 账号掩码 + 退出登录。「去骑行」进骑行页（两档共用那一个页面）。
  *
- * **免责边界**：本页只做账号与状态；开锁 / 临时锁车 / 还车在「快趣出行码」页
- * （`EbikeQrScreen`），且都经确认弹窗；支付与免押授权不做——页内常驻声明，
- * 不做成可关闭的一次性提示。
+ * **免责边界**：开锁 / 临时锁车 / 还车在工作台逐次确认后执行；支付与免押授权不做
+ * ——页尾一行常驻说明。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,13 +85,12 @@ fun KvcxScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val records by viewModel.rideRecords.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     // 使用方式（DESIGN §3.9 / §4.32）：初值阻塞读一次，页面不该先按另一档画一帧
     val ebikePrefs = remember(context) { Graph.displayPrefs(context) }
     val useMode by ebikePrefs.ebikeUseMode.collectAsStateWithLifecycle(
         initialValue = remember { runBlocking { ebikePrefs.ebikeUseMode.first() } },
     )
-    // 能力矩阵（DESIGN §3.9）：本页整片内容属于 App 内用车那一档
+    // 能力矩阵（DESIGN §3.9）：本页的账号 / 记录属于 App 内用车那一档
     val appRideEnabled = useMode.capabilities().inAppRide
 
     LaunchedEffect(Unit) {
@@ -117,10 +105,10 @@ fun KvcxScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("快趣出行") },
+                title = { Text("快趣账号") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(HugeIcons.ArrowLeft01, contentDescription = "返回")
                     }
                 },
             )
@@ -139,7 +127,6 @@ fun KvcxScreen(
         ) {
             if (appRideEnabled) {
                 if (state.loggedIn) {
-                    RideStatusSection(state, viewModel)
                     AccountSection(state, viewModel)
                 } else {
                     LoginSection(state, viewModel)
@@ -147,73 +134,22 @@ fun KvcxScreen(
                 // 本机记录与登录态无关：退出登录也照样看得到自己的骑行史
                 RideHistorySection(records = records, onClear = viewModel::clearRecords)
             } else {
-                // 小程序方式：本页的账号 / 骑行状态 / 本机记录整片收起（都是账号方式的能力）
+                // 兜底：本页入口在「小程序方式」下是隐藏的（校园服务里那一行按模式显隐），
+                // 正常进不来。真进来了也不该给一个死胡同，所以说清去哪儿切
                 InlineNoticeRow(
-                    message = "当前是「微信小程序」使用方式：本页的账号、骑行状态与本机记录都已收起，" +
-                        "开车与还车在微信小程序里完成。切到「账号登录」后本页才有登录与骑行状态。",
+                    message = "当前是「微信小程序」使用方式：本页的账号与本机记录都已收起，" +
+                        "开车与还车在微信小程序里完成。要切换使用方式，请到「骑行」页标题栏的" +
+                        "「使用方式」入口。",
                     tone = NoticeTone.Info,
                 )
             }
-            // 使用方式：与出码页共用同一份组件（含账号方式的风险提示）。
-            // 摆位与出码页一致——**任务在前、设置在后**，两页都是「用」的部分先看到
-            UseModeSection(
-                mode = useMode,
-                onSelect = { mode -> scope.launch { ebikePrefs.setEbikeUseMode(mode) } },
+            // 边界说明只留一行（此前整段免责区与出码页重复，2026-09-29 收敛）
+            Text(
+                text = "非官方账号页：开锁 / 锁车 / 还车在「快趣出行」工作台逐次确认后执行，" +
+                    "计费与善后以快趣为准；不提供支付与免押授权。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
-            DisclaimerSection()
-        }
-    }
-}
-
-// ── 已登录：骑行状态 ──
-
-@Composable
-private fun RideStatusSection(state: KvcxUiState, viewModel: KvcxViewModel) {
-    SettingsSection(
-        title = "骑行状态",
-        subtitle = "进页自动查一次；不自动轮询，需要最新状态点刷新。",
-    ) {
-        when {
-            state.querying -> Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.height(20.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("查询中…", style = MaterialTheme.typography.bodyMedium)
-            }
-            state.ride != null -> {
-                val ride = state.ride
-                val duration = KqcxAuth.formatRideDuration(ride?.totalDateSeconds)
-                SettingItem(
-                    title = buildString {
-                        append("骑行中 · ${ride?.carNum.orEmpty()}")
-                        if (duration != null) append(" · 已骑 $duration")
-                    },
-                    subtitle = buildString {
-                        val lock = ride?.locked
-                        if (lock == true) append("车辆已锁（可在「快趣出行码」页或地图页解锁继续骑 / 还车）")
-                        else append(ride?.bluetoothName?.let { "蓝牙锁：$it" } ?: "蓝牙锁名未上报")
-                        ride?.payMoneyCents?.takeIf { it > 0 }?.let {
-                            append(" · 当前费用 ¥").append(it / 100.0)
-                        }
-                    },
-                    onClick = { viewModel.refreshRide() },
-                )
-            }
-            else -> SettingItem(
-                title = "当前没有进行中的骑行",
-                subtitle = "扫码用车后这里会显示车号与蓝牙锁名",
-                onClick = { viewModel.refreshRide() },
-            )
-        }
-        OutlinedButton(
-            onClick = { viewModel.refreshRide() },
-            enabled = !state.querying && state.loggedIn,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("刷新骑行状态")
         }
     }
 }
@@ -326,12 +262,12 @@ private fun AccountSection(state: KvcxUiState, viewModel: KvcxViewModel) {
             title = state.accountMobile.ifBlank { "已登录" },
             subtitle = "快趣出行账号",
         )
-        // 用车在出码页（DESIGN §4.32）：账号与用车互相可达，入口不藏在两个深处（用户口径 2026-09-28）
+        // 用车在「骑行」页（两档共用同一个页面，2026-09-29 结构重构）
         OutlinedButton(
-            onClick = { SubpageActivity.start(context, SubpageScreen.EBIKE) },
+            onClick = { SubpageActivity.start(context, SubpageScreen.RIDE) },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("去用车（快趣出行码）")
+            Text("去骑行")
         }
         OutlinedButton(
             onClick = { viewModel.logout() },
@@ -390,23 +326,5 @@ private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
         ) {
             Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         }
-    }
-}
-
-// ── 免责声明 ──
-
-@Composable
-private fun DisclaimerSection() {
-    SettingsSection(
-        title = "边界说明",
-        subtitle = "本页为快趣出行的非官方账号与状态页（§4.32）。",
-    ) {
-        Text(
-            "开锁 / 锁车 / 还车在「快趣出行码」页逐次确认后执行，计费与善后以快趣为准；" +
-                "不提供支付与免押授权。接口口径来自快趣公开客户端，若官方调整导致失效属预期内。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            modifier = Modifier.padding(vertical = 4.dp),
-        )
     }
 }

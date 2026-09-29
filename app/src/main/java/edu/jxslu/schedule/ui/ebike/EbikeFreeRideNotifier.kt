@@ -23,8 +23,9 @@ import edu.jxslu.schedule.subpageLaunchIntent
  *   App 不需要每秒 notify 一次；
  * - [EbikeFreeRide.NotificationIds.ALERT_CHANNEL]（HIGH）：两条到点提醒，要响要弹。
  *
- * 三个通知的落点都是出码页（[SubpageScreen.EBIKE]）：提醒响的时候用户要么在微信里
- * 扫码、要么刚还完车，点通知回到「能看码、能结束计时」的那一页最直接。
+ * 三个通知的落点都是「骑行」页（[SubpageScreen.RIDE]，2026-09-29 结构重构后出码页与地图页
+ * 已合并成一个页面）：提醒响的时候用户要么在微信里扫码、要么刚还完车，点通知回到
+ * 「能看倒计时、能结束计时 / 还车」的那一页最直接。
  * 每个通知的 requestCode 各不相同（[REQUEST_LEAD] / [REQUEST_END] / [REQUEST_COUNTDOWN]）
  * ——PendingIntent 的身份是「requestCode + filterEquals」，共用 requestCode 会让落点
  * 互相改写。**requestCode 不能复用通知 id**：余额提醒（`BalanceAlertReminder`）的
@@ -51,7 +52,7 @@ internal object EbikeFreeRideNotifier {
         PendingIntent.getActivity(
             context,
             requestCode,
-            subpageLaunchIntent(context, SubpageRequest(SubpageScreen.EBIKE)),
+            subpageLaunchIntent(context, SubpageRequest(SubpageScreen.RIDE)),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 

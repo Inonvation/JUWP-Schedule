@@ -1,19 +1,11 @@
 package edu.jxslu.schedule.ui.ebike
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.kqcx.KvcxRideSession
@@ -80,7 +72,7 @@ data class KvcxRideState(
  * 信息量不够——本次骑了多久、花了多少、结清没有，一张卡说完。
  *
  * 金额与结算**以快趣为准**：我们只有进行中订单接口、没有最终账单接口，所以费用取还车前
- * 最后一次拉到的 `payMoney`，卡上注明这一点（见 [KvcxReturnDialog]）。
+ * 最后一次拉到的 `payMoney`，卡上注明这一点（结算卡见 `RidePanels.kt` 的 `RideSettledBar`）。
  */
 data class KvcxReturnSummary(
     val carNum: String?,
@@ -468,81 +460,12 @@ internal fun rememberRideElapsed(ride: KqcxAuth.Ride?, fetchedAt: Long): String?
     return rideElapsedSeconds(ride, fetchedAt, now)?.let(KqcxAuth::formatRideDuration)
 }
 
-/**
- * 还车结果卡（DESIGN §3.9，2026-09-28）：时长 / 费用 / 结算状态 + 一句"以快趣为准"。
- * 两页共用（出码页与地图页都可能还车），文案不分叉。
+/*
+ * 还车结果卡（2026-09-28 首版）在 2026-09-29 的结构重构里**从 AlertDialog 改成动作条里的
+ * 结算卡**，实现在 `RidePanels.kt` 的 `RideSettledBar`——还完车用户常常要接着骑下一辆，
+ * 弹窗会把流程打断；动作条还能顺手给「继续找车」这条出路。本文件只保留数据口径
+ * （[KvcxReturnSummary] 的字段与 [KvcxReturnSummary.settleText]），文案不在这里重复。
  */
-@Composable
-internal fun KvcxReturnDialog(
-    summary: KvcxReturnSummary,
-    onDismiss: () -> Unit,
-    /** 「去微信结清」：只在欠费时出现。微信不给第三方直达小程序待支付页，只能把用户送到微信。 */
-    onSettle: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("已还车") },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                summary.carNum?.let { car ->
-                    Text(
-                        text = "车 $car",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    summary.durationText?.let { ReturnStat(label = "本次骑行", value = it) }
-                    summary.feeText?.let { ReturnStat(label = "费用", value = it) }
-                }
-                Text(
-                    text = summary.settleText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (summary.settleWarning) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-                    },
-                )
-                Text(
-                    text = "金额与结算以快趣小程序为准。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                )
-                // 欠费才给出路：待支付页在快趣小程序里，我们只能把用户送到微信
-                if (summary.needsSettle) {
-                    OutlinedButton(
-                        onClick = onSettle,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("去微信结清")
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("知道了") }
-        },
-    )
-}
-
-@Composable
-private fun ReturnStat(label: String, value: String) {
-    Column {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-        )
-    }
-}
 
 /**
  * 起免费时长计时并把结果映射成提示文案与语气（点扫一扫 / 本机开锁成功共用）。

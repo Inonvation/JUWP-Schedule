@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 教务导入失败时探测是否经由 VPN/代理出网（学校对代理出口区别对待，见 JwVpnDetector） -->
@@ -47,6 +48,9 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- 快趣相机扫一扫（2026-09-29「车号识别联动」）：扫车身二维码识别车号。
+         运行时权限由扫码库的 CaptureActivity 自行申请，这里只声明 -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- 今日页快捷方式（DESIGN §4.16）：API 30+ 包可见性声明。
          三个 package 让预设包可见（getLaunchIntentForPackage 不再对已安装的 App
          误报「未安装」）；MAIN/LAUNCHER 让所有有桌面入口的 App 可见——既是编辑表单
@@ -87,6 +91,10 @@
         android:required="false" />
     <uses-feature
         android:name="android.hardware.location.gps"
+        android:required="false" />
+    <!-- 相机扫一扫（2026-09-29）：同样可选（平板 / 没有摄像头的设备仍可手输车号） -->
+    <uses-feature
+        android:name="android.hardware.camera"
         android:required="false" />
 
     <!-- 预测性返回（DESIGN §3.1）。targetSdk 34+ 本来就默认启用，这里显式写出来是为了
@@ -294,6 +302,14 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- 快趣相机扫一扫（2026-09-29）：覆盖库自带的 CaptureActivity——锁竖屏
+             （与其它窗口同一理由：扫码时转屏会销毁重建相机预览）；
+             tool:replace 防止与库 manifest 的 screenOrientation 声明合并冲突 -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="portrait"
+            tools:replace="android:screenOrientation" />
 
         <!-- 导出成绩单的分享/打开通道（DESIGN §4.25）：成绩单落在应用私有目录，
              系统 PDF 阅读器与分享目标靠临时授权的内容 Uri 读取，不写公共目录、不申请存储权限。

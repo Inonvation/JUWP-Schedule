@@ -13,12 +13,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -76,6 +78,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 fun ImeAwareModalBottomSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * 非 null = 内容请求「带动画地关闭」：退场动画跑完先落 [onDismiss]，再执行它。
+     *
+     * 含输入框的弹层不能自己 `sheetState.hide()`——键盘还起着时 [confirmValueChange]
+     * 会否决这次 Hidden（见文件头）。所以这条请求走同一个宿主线程，与点遮罩同一条路径。
+     * 不含输入框的弹层用 [rememberSheetDismisser]。
+     */
+    pendingDismiss: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // 键盘可见性：由弹层内容里的宿主逐帧从弹窗窗口的 IME inset 同步（M3 询问
@@ -83,6 +93,10 @@ fun ImeAwareModalBottomSheet(
     val imeVisible = remember { mutableStateOf(false) }
     // 退场序列已排队：否决 M3 这次 Hidden，交给宿主「先收键盘」
     val sequenced = remember { mutableStateOf(false) }
+    // 内容请求的「关掉再做一件事」：与点遮罩同一条退场路径，只是末尾多跑一次 after
+    LaunchedEffect(pendingDismiss) {
+        if (pendingDismiss != null) sequenced.value = true
+    }
 
     val sheetState =
         rememberModalBottomSheetState(
@@ -104,8 +118,40 @@ fun ImeAwareModalBottomSheet(
             imeVisible = imeVisible,
             sequenced = sequenced,
             onDismiss = onDismiss,
+            after = { pendingDismiss?.invoke() },
         )
         content()
+    }
+}
+
+/**
+ * 「带退场动画地关弹层」的唯一出口，给**不含输入框**的弹层用。
+ *
+ * 含输入框的弹层走 [ImeAwareModalBottomSheet] 的 `pendingDismiss`（它还要先收键盘，
+ * 不能直接 `hide()`）。两条路只在这一点上不同，其余语义一致：
+ *
+ * 1. 先在**当帧状态还在**的时候把退场动画播完（`hide()` 挂起等它跑完）；
+ * 2. 再落状态（[onDismiss]），弹层才离开组合；
+ * 3. 最后执行调用方给的动作（比如「切完使用方式再弹一句提示」）。
+ *
+ * 直接改 `showXxx = false` 会把弹层从组合里瞬间抽掉，退场根本来不及播——表现就是"啪"地消失
+ * （2026-09-30 用户在车号面板上报过的那个手感）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun rememberSheetDismisser(
+    sheetState: SheetState,
+    onDismiss: () -> Unit,
+): (after: () -> Unit) -> Unit {
+    val scope = rememberCoroutineScope()
+    return remember(sheetState, onDismiss) {
+        { after ->
+            scope.launch {
+                sheetState.hide()
+                onDismiss()
+                after()
+            }
+        }
     }
 }
 
@@ -123,6 +169,8 @@ private fun SheetDismissImeHost(
     imeVisible: MutableState<Boolean>,
     sequenced: MutableState<Boolean>,
     onDismiss: () -> Unit,
+    /** 退场动画与状态都处理完之后要跑的那件事（调用方给的，可为空实现）。 */
+    after: () -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -146,6 +194,7 @@ private fun SheetDismissImeHost(
         imeVisible.value = false
         sheetState.hide()
         onDismiss()
+        after()
     }
 
     // 兜底：其余路径直接 hide()（系统返回、下滑手势…）时，至少让键盘与退场并行，别再串成

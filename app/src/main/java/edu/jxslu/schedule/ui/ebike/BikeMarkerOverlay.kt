@@ -92,6 +92,16 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     var ridePoint: GcjPoint? = null
 
     /**
+     * 识别条「地图查看」定位过来的车（2026-09-29「车号识别联动」）：双层圈 + 车号标签。
+     * 坐标与瓦片同基准（GCJ-02），**不要再过 Gcj02 转换**；null = 没有要高亮的车。
+     * 与「当前用车」的实心标记刻意区分开——它只是"看这辆"，不是"我的车"。
+     */
+    var highlightPoint: GcjPoint? = null
+
+    /** 高亮标签文案（如「车 …669」）；null / 空白不画标签。 */
+    var highlightLabel: String? = null
+
+    /**
      * 还车点 / 禁停区图层（DESIGN §3.9，2026-09-28）；空 = 不画（未登录或还没拉到）。
      * **「P」只是信息，不接点击**（2026-09-29 用户口径）：它常常和车辆聚合圈压在一起，
      * 接点击只会挡着"点这辆车"。
@@ -227,6 +237,51 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
             val count = cluster.bikes.size.toString()
             // 基线 = 圆心下移半点字高，比直接减 descent 稳（不同字体的 descent 差得多）
             canvas.drawText(count, x, y - (label.ascent() + label.descent()) / 2f, label)
+        }
+
+        // 识别高亮：画在簇标记之上、「当前用车」与蓝点之下——它是"看这辆"的指示，
+        // 不该压过真正在骑的车。结果换批后车被骑走 / 被筛掉时，高亮自然消失
+        highlightPoint?.let { point ->
+            mapView.projection.toPixels(GeoPoint(point.lat, point.lng), out)
+            val x = out.x.toFloat()
+            val y = out.y.toFloat()
+            if (!canvas.offscreen(x, y, margin)) {
+                // 双层定位圈：外圈主色描边 + 内点带白描边，比实心标记轻
+                ring.strokeWidth = 2.5f * density
+                ring.color = colors.available
+                canvas.drawCircle(x, y, 16f * density, ring)
+                fill.color = colors.available
+                canvas.drawCircle(x, y, 5f * density, fill)
+                ring.strokeWidth = 2f * density
+                ring.color = Color.WHITE
+                canvas.drawCircle(x, y, 5f * density, ring)
+                val text = highlightLabel
+                if (!text.isNullOrBlank()) {
+                    label.color = colors.label
+                    label.textSize = 11f * density
+                    val textWidth = label.measureText(text)
+                    val chipHeight = 19f * density
+                    val chipWidth = textWidth + 14f * density
+                    val chipTop = y - 16f * density - 9f * density - chipHeight
+                    fill.color = colors.available
+                    canvas.drawRoundRect(
+                        x - chipWidth / 2, chipTop, x + chipWidth / 2, chipTop + chipHeight,
+                        9f * density, 9f * density, fill,
+                    )
+                    ring.strokeWidth = 1.5f * density
+                    ring.color = Color.WHITE
+                    canvas.drawRoundRect(
+                        x - chipWidth / 2, chipTop, x + chipWidth / 2, chipTop + chipHeight,
+                        9f * density, 9f * density, ring,
+                    )
+                    canvas.drawText(
+                        text,
+                        x,
+                        chipTop + chipHeight / 2f - (label.ascent() + label.descent()) / 2f,
+                        label,
+                    )
+                }
+            }
         }
 
         // 当前用车：画在簇标记之上、蓝点之下——"我的车"比一圈停车点重要，
