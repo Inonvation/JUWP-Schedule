@@ -65,12 +65,12 @@ import java.util.Locale
 /**
  * 快趣账号页（DESIGN §4.32；**2026-09-29 起只管账号与本机记录**）。
  *
- * 骑行状态并进了「骑行」页（`RideScreen`）的骑行态面板，
- * 使用方式切换收进了「骑行设置」弹层——本页只留登录 / 账号 / 本机骑行记录，
+ * 骑行状态并进了快趣出行页（`RideScreen`）的骑行态面板，
+ * 使用方式切换收进了「快趣出行设置」弹层——本页只留登录 / 账号 / 本机骑行记录，
  * 与出码页（工作台）不再有重复区块。
  *
  * 两态：未登录 = 手机号 + 密码表单（失败保留输入、Snackbar 提示）；
- * 已登录 = 账号掩码 + 退出登录。「去骑行」进骑行页（两档共用那一个页面）。
+ * 已登录 = 账号掩码 + 退出登录。「打开快趣出行」进快趣出行页（两档共用那一个页面）。
  *
  * **免责边界**：开锁 / 临时锁车 / 还车在工作台逐次确认后执行；支付与免押授权不做
  * ——页尾一行常驻说明。
@@ -138,7 +138,7 @@ fun KvcxScreen(
                 // 正常进不来。真进来了也不该给一个死胡同，所以说清去哪儿切
                 InlineNoticeRow(
                     message = "当前是「微信小程序」使用方式：本页的账号与本机记录都已收起，" +
-                        "开车与还车在微信小程序里完成。要切换使用方式，请到「骑行」页标题栏的" +
+                        "开车与还车在微信小程序里完成。要切换使用方式，请到快趣出行页标题栏的" +
                         "「使用方式」入口。",
                     tone = NoticeTone.Info,
                 )
@@ -262,12 +262,12 @@ private fun AccountSection(state: KvcxUiState, viewModel: KvcxViewModel) {
             title = state.accountMobile.ifBlank { "已登录" },
             subtitle = "快趣出行账号",
         )
-        // 用车在「骑行」页（两档共用同一个页面，2026-09-29 结构重构）
+        // 用车在快趣出行页（两档共用同一个页面，2026-09-29 结构重构）
         OutlinedButton(
             onClick = { SubpageActivity.start(context, SubpageScreen.RIDE) },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("去骑行")
+            Text("打开快趣出行")
         }
         OutlinedButton(
             onClick = { viewModel.logout() },

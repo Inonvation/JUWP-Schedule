@@ -279,6 +279,7 @@ class SubpageActivity : ComponentActivity() {
                 },
                 onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
                 onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
+                onOpenRide = { SubpageActivity.start(this, SubpageScreen.RIDE) },
                 onOpenKvcx = { SubpageActivity.start(this, SubpageScreen.KVCX) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },

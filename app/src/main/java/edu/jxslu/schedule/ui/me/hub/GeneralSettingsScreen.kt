@@ -237,7 +237,7 @@ fun GeneralSettingsScreen(
                 )
                 SettingSwitchRow(
                     title = "快趣出行码",
-                    subtitle = "今日页骑行二维码卡 · 非学校官方功能",
+                    subtitle = "今日页快趣出行卡（二维码 / 计时）· 非学校官方功能",
                     checked = state.displayPrefs.ebikeCardEnabled,
                     onCheckedChange = viewModel::setEbikeCardEnabled,
                     icon = HugeIcons.ScooterElectric,

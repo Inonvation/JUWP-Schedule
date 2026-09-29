@@ -79,7 +79,7 @@ import me.rerere.hugeicons.stroke.MapsLocation02
 import me.rerere.hugeicons.stroke.Settings01
 
 /**
- * 骑行页的三种状态（DESIGN §3.9）。
+ * 快趣出行页的三种状态（DESIGN §3.9）。
  *
  * 三态是**同一个页面在变形**，不是三次跳转：地图始终在上面，底部动作条换内容。
  * 状态由数据推导，不另存一份可变状态（推导见 [RideScreen] 里的 `phase`）——
@@ -91,7 +91,7 @@ import me.rerere.hugeicons.stroke.Settings01
 internal enum class RidePhase { Finding, Riding, Settled }
 
 /**
- * 快趣出行 · 骑行页（DESIGN §3.9，唯一主页）。
+ * 快趣出行页（DESIGN §3.9，唯一主页）。
  *
  * 结构（自下而上）：**页面底部常驻块**（动作区 [RideActionArea] + 免责那一行，高度由内容决定）
  * → **车辆面板** [RideBikePanel]（可拖高度、只装列表）→ 地图（吃掉剩下的空间，右上两枚浮钮）。
@@ -443,7 +443,7 @@ fun RideScreen(
         topBar = {
             TopAppBar(
                 windowInsets = pinnedStatusBars(),
-                title = { Text("骑行") },
+                title = { Text("快趣出行") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(HugeIcons.ArrowLeft01, contentDescription = "返回")
@@ -473,7 +473,7 @@ fun RideScreen(
                     }) {
                         Icon(
                             HugeIcons.Settings01,
-                            contentDescription = "骑行设置",
+                            contentDescription = "快趣出行设置",
                             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                         )
                     }

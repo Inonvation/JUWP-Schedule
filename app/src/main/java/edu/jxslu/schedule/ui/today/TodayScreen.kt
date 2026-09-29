@@ -1184,11 +1184,13 @@ private val HalfCardBalanceMaxWidth = 57.dp
 
 
 /**
- * 快趣出行码整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
- * 标题「骑行」+ 副行；**整卡点进「骑行」页**（DESIGN §3.9，2026-09-29 结构重构后
- * 不再有右侧「附近单车 ›」二级入口——地图就是那个页面的主体）。
+ * 快趣出行整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
+ * 标题「快趣出行」+ 副行；**整卡点进快趣出行页**（2026-09-29 结构重构后不再有右侧
+ * 「附近单车 ›」二级入口——地图就是那个页面的主体）。
  *
  * 副行在免费时长计时中换成倒计时（[rideSubtitle]），其余随使用方式（[ebikeCardSubtitle]）。
+ * 页面与入口卡同名（2026-10-01 用户口径「把骑行改成快趣出行」）：「骑行」这个词留给
+ * 骑行状态本身（计时中 / 已骑 / 骑行记录），页面名统一叫快趣出行。
  */
 @Composable
 private fun EbikeCard(
@@ -1207,7 +1209,7 @@ private fun EbikeCard(
             .padding(horizontal = 16.dp)
             .heightIn(min = QuickCardMinHeight),
         onClick = onOpen,
-        onClickLabel = "打开骑行页",
+        onClickLabel = "打开快趣出行",
         contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
     ) {
         Icon(
@@ -1219,7 +1221,7 @@ private fun EbikeCard(
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = "骑行",
+                text = "快趣出行",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,

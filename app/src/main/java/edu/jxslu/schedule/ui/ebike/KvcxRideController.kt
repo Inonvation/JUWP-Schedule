@@ -235,7 +235,7 @@ class KvcxRideController internal constructor(
             is UnlockOutcome.Unlocked -> {
                 // 免费计时与开锁**同步**（2026-09-28 用户口径）：本机开锁是服务端确认的骑行
                 // 开始（比"点扫一扫"这个准备动作强得多），提醒开关关着就顺手打开——
-                // 倒计时通知因此跟着开锁一起来。开关在「骑行设置」里可见、可随时关掉。
+                // 倒计时通知因此跟着开锁一起来。开关在「快趣出行设置」里可见、可随时关掉。
                 val reminderOpened = effects.ensureReminderEnabled()
                 val (timerText, timerTone) = effects.startRideTimer()
                 _state.update { it.copy(unlockPending = false, scoreAuthRequired = false) }

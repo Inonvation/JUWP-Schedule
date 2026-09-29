@@ -58,11 +58,11 @@ import me.rerere.hugeicons.stroke.Settings01
 import me.rerere.hugeicons.stroke.UserAccount
 
 /**
- * 「骑行设置」弹层（2026-09-29 界面收敛，DESIGN §3.9）：**快趣相关设置的唯一入口**。
+ * 「快趣出行设置」弹层（2026-09-29 界面收敛，DESIGN §3.9）：**快趣相关设置的唯一入口**。
  *
- * 骑行页顶栏 ⚙ 打开这一份，两档共用。2026-09-30 按主题分组：
+ * 快趣出行页顶栏 ⚙ 打开这一份，两档共用。2026-09-30 按主题分组：
  * **账号 / 出码 / 提醒 / 地图 / 其他**——低频项不再和高频开关挤在同一张卡里。
- * 使用方式不在这里：它搬到骑行页标题栏那枚常驻 chip（`RideModeChip`）。
+ * 使用方式不在这里：它搬到快趣出行页标题栏那枚常驻 chip（`RideModeChip`）。
  *
  * 弹层自带「当前配置速览」副行：使用方式 · 登录态 · 提醒开关 · 地图缓存占用，
  * 不展开就能看到现在是什么口径。
@@ -133,7 +133,7 @@ internal fun EbikeSettingsSheet(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "骑行设置",
+                    text = "快趣出行设置",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -162,7 +162,7 @@ internal fun EbikeSettingsSheet(
             )
 
             // 使用方式（DESIGN §3.9 / §4.32）**不在这里**：2026-09-29 结构重构后它搬到
-            // 骑行页标题栏那枚常驻 chip（`RideModeChip` + `RideModeSheet`）——一个决定
+            // 快趣出行页标题栏那枚常驻 chip（`RideModeChip` + `RideModeSheet`）——一个决定
             // 主动作是什么的开关，不该藏在设置里、更不该在切换后让整页变形。
 
             if (caps.inAppRide) {
@@ -470,8 +470,11 @@ private fun MapCacheCard(usage: EbikeMapCache.Usage?, onClear: () -> Unit) {
 }
 
 /**
- * 「打开快趣出行」文字入口：内置地图已经能看车在哪，官方 App 不再是必经步骤，
+ * 「打开官方快趣出行」文字入口：内置地图已经能看车在哪，官方 App 不再是必经步骤，
  * 留一个入口给习惯用它的人。低频，所以收进设置弹层。
+ *
+ * 标题带「官方」（2026-10-01）：本 App 里那个页面现在也叫快趣出行，不带限定词会出现
+ * 两行同名、一个开本页一个开别的 App。
  */
 @Composable
 private fun OpenKvcooButton(onClick: () -> Unit) {
@@ -480,8 +483,8 @@ private fun OpenKvcooButton(onClick: () -> Unit) {
         subtitle = null,
     ) {
         SettingItem(
-            title = "打开快趣出行",
-            subtitle = "已安装则直达官方 App 启动页",
+            title = "打开官方快趣出行 App",
+            subtitle = "已安装则直达官方 App 启动页（与本页不是同一个东西）",
             onClick = onClick,
         )
     }

@@ -61,7 +61,9 @@ fun ExtensionServicesHubScreen(
     onOpenWater: () -> Unit,
     /** 趣智校园开热水（DESIGN §4.30）。登录 / 余额 / 账单都在这一页。 */
     onOpenQzxy: () -> Unit,
-    /** 快趣出行（DESIGN §4.32）。登录 + 骑行状态只读查询，A 档不碰开车还车。 */
+    /** 快趣出行主页面（DESIGN §3.9）：两档共用的地图 / 生成乘车码 / 免费时长计时。 */
+    onOpenRide: () -> Unit,
+    /** 快趣账号页（DESIGN §4.32）：登录与本机骑行记录，A 档不碰开车还车。 */
     onOpenKvcx: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
@@ -143,13 +145,22 @@ fun ExtensionServicesHubScreen(
                     value = if (qzxyLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenQzxy,
                 )
-                // 快趣出行账号页：只在「账号登录」使用方式下出现（见上）。
-                // 小程序方式要改使用方式，去「快趣出行码」页的「使用方式」卡
+                // 快趣出行（2026-10-01 加入）：**主页面**，两种使用方式都该有入口——
+                // 它管的是「看车在哪、生成乘车码、免费时长计时」，与登录与否无关。
+                // 小程序方式原来在本页只能从今日页卡片进，进「我的」反而没有路。
+                SettingItem(
+                    title = "快趣出行",
+                    subtitle = "附近车辆 · 生成乘车码 · 免费时长计时",
+                    // 电单车：与今日页快趣卡同图标（DESIGN §3.9）
+                    icon = HugeIcons.ScooterElectric,
+                    onClick = onOpenRide,
+                )
+                // 快趣账号页：只在「账号登录」使用方式下出现（见上）。
+                // 小程序方式要改使用方式，去快趣出行页标题栏那枚 chip
                 if (kvcxAccountMode) {
                     SettingItem(
-                        title = "快趣出行",
-                        subtitle = "账号 · 骑行状态（开锁 / 还车在「快趣出行码」页）",
-                        // 电单车：与今日页快趣卡同图标（DESIGN §3.9）
+                        title = "快趣账号",
+                        subtitle = "登录 · 本机骑行记录（开锁 / 还车在快趣出行页）",
                         icon = HugeIcons.ScooterElectric,
                         value = if (kvcxLoggedIn) "已登录" else "点击登录",
                         onClick = onOpenKvcx,

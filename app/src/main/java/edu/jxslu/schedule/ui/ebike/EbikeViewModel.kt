@@ -374,7 +374,7 @@ class EbikeViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             // 本机用车（查骑行状态 / 开锁 / 锁车 / 还车）归**地图页那一个** `KvcxRideController`
-            // （`BikeMapViewModel.kvcx`）：骑行页是它唯一的消费者，这里不再养第二个实例
+            // （`BikeMapViewModel.kvcx`）：快趣出行页是它唯一的消费者，这里不再养第二个实例
             EbikeViewModel(prefs) as T
     }
 }
