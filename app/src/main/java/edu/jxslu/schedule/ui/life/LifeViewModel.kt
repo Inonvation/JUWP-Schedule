@@ -95,6 +95,15 @@ data class LifeUiState(
 /** 一次性事件。 */
 sealed interface LifeEvent {
     data class Notice(val text: String, val tone: NoticeTone) : LifeEvent
+
+    /**
+     * 打开农行支付收银台（DESIGN §4.24「农行支付」）：链接现取现用，交给
+     * `PowerBankPayActivity` 的**内嵌 WebView**（用户不用离开 App）。
+     *
+     * 做成一次性事件而不是状态字段：同一个链接不该因为重组、转屏被重复打开；
+     * 页面里另有「用浏览器打开」的兜底出口。
+     */
+    data class OpenBankCashier(val url: String) : LifeEvent
 }
 
 class LifeViewModel(
@@ -291,14 +300,29 @@ class LifeViewModel(
     /** 一次充值流程的状态。 */
     data class PowerRechargeUi(
         val step: Step = Step.Amount,
+        /**
+         * 支付渠道（DESIGN §4.24「渠道」，2026-09-28 加入农行）。
+         *
+         * 只在金额步能改：渠道决定「下一步」是进密码步还是跳农行收银台，下单后不许再换
+         * （换了必须重新下单，否则订单与渠道对不上）。
+         */
+        val channel: Channel = Channel.Account,
         /** 下单成功的订单。 */
         val orderId: String? = null,
         /** 密码键盘挑战（paystep=2 的 passwordMap + ccctype）。 */
         val challenge: PowerPayChallenge? = null,
         /** 本次充值金额（元，原样字符串）：密码步展示「本次充值 ¥X」用。 */
         val amountYuan: String? = null,
-        /** 已受理之后的查单结果：1 = 平台确认已记账；null = 还没查到 / 查不到。 */
+        /** 农行收银台的支付链接（[Step.BankPay] 步持有；「重新打开支付页」会重取一条新的）。 */
+        val cashierUrl: String? = null,
+        /** 已受理之后的查单结果：1 = 平台确认已记账；0 = 查到了但仍是待支付；null = 还没查到 / 查不到。 */
         val paidStatus: Int? = null,
+        /**
+         * 农行步的中性提示（灰字一行）：查单还没到账、重开链接等，都不是错误。
+         *
+         * 与 [error] 分开放：这里的话不该长成红色「出错了」的样子。
+         */
+        val bankNote: String? = null,
         /**
          * 被服务端拒绝的次数，每次拒绝自增。
          *
@@ -316,7 +340,16 @@ class LifeViewModel(
          */
         val cleanedOrders: Int = 0,
     ) {
-        enum class Step { Amount, Password, Accepted }
+        enum class Step { Amount, Password, BankPay, Accepted }
+
+        /**
+         * 支付渠道。
+         *
+         * - [Account] 电子账户：扣电子账户余额，App 内输 6 位消费密码（一期口径）；
+         * - [Bank] 农行支付：链接交给系统浏览器，卡号 + 手机短信验证码在农行页面完成
+         *   （App 不经手卡号与验证码，2026-09-28 用户拍板）。
+         */
+        enum class Channel { Account, Bank }
     }
 
     private val _powerRecharge = MutableStateFlow(PowerRechargeUi())
@@ -367,7 +400,13 @@ class LifeViewModel(
         }
     }
 
-    /** 下单（金额已由弹层校验过）。 */
+    /** 切换支付渠道（只在金额步、还没下单时有效）。 */
+    fun selectPowerChannel(channel: PowerRechargeUi.Channel) {
+        if (_powerRecharge.value.step != PowerRechargeUi.Step.Amount) return
+        _powerRecharge.update { it.copy(channel = channel, error = null, bankNote = null) }
+    }
+
+    /** 下单（金额已由弹层校验过）。渠道不同，下单之后的下一步不同。 */
     fun placePowerOrder(yuan: String) {
         val credentials = credentialStore.read() ?: run {
             _events.trySend(LifeEvent.Notice("请先在「我的 → 校园卡」开启一卡通", NoticeTone.Warning))
@@ -381,6 +420,9 @@ class LifeViewModel(
                 orderId = null,
                 challenge = null,
                 amountYuan = yuan,
+                cashierUrl = null,
+                paidStatus = null,
+                bankNote = null,
                 busy = true,
                 error = null,
             )
@@ -392,7 +434,12 @@ class LifeViewModel(
             try {
                 val order = powerRepo.createOrder(credentials.username, credentials.password, yuan)
                 if (!isCurrentSession(session)) return@launch
-                _powerRecharge.value = _powerRecharge.value.copy(orderId = order.orderId, busy = false)
+                if (_powerRecharge.value.channel == PowerRechargeUi.Channel.Bank) {
+                    // 农行：顺手把收银台链接取回来，弹层直接落「等待支付结果」步
+                    openBankCashier(credentials.username, credentials.password, order.orderId, session)
+                } else {
+                    _powerRecharge.value = _powerRecharge.value.copy(orderId = order.orderId, busy = false)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PowerException) {
@@ -404,6 +451,99 @@ class LifeViewModel(
                     busy = false,
                     error = "下单失败：${e.message ?: "未知错误"}",
                 )
+            }
+        }
+    }
+
+    /**
+     * 农行支付：取收银台链接 → 交给系统浏览器打开 → 弹层落到 [PowerRechargeUi.Step.BankPay]。
+     *
+     * 「重新打开支付页」也走这里（[reopenBankCashier]）：链接里的 TOKEN 是农行侧一次性会话，
+     * 每次现取现用，**不复用旧链接**。
+     */
+    private suspend fun openBankCashier(
+        username: String,
+        password: String,
+        orderId: String,
+        session: Int,
+    ) {
+        val url = try {
+            powerRepo.bankCashier(username, password, orderId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isCurrentSession(session)) {
+                _powerRecharge.value = _powerRecharge.value.copy(
+                    busy = false,
+                    error = "农行收银台打不开：${e.message ?: "未知错误"}",
+                )
+            }
+            return
+        }
+        if (!isCurrentSession(session)) return
+        _powerRecharge.value = _powerRecharge.value.copy(
+            step = PowerRechargeUi.Step.BankPay,
+            orderId = orderId,
+            cashierUrl = url,
+            busy = false,
+            error = null,
+            bankNote = null,
+        )
+        _events.send(LifeEvent.OpenBankCashier(url))
+    }
+
+    /** 「重新打开支付页」（农行步）：重新取一条收银台链接再交给浏览器。 */
+    fun reopenBankCashier() {
+        val credentials = credentialStore.read() ?: return
+        val state = _powerRecharge.value
+        val orderId = state.orderId ?: return
+        if (state.step != PowerRechargeUi.Step.BankPay) return
+        val session = flowSession
+        _powerRecharge.update { it.copy(busy = true, error = null, bankNote = null) }
+        viewModelScope.launch {
+            openBankCashier(credentials.username, credentials.password, orderId, session)
+        }
+    }
+
+    /**
+     * 查一次农行这笔到没到账（`order.status = 1`）。
+     *
+     * [silent] = true 是「从浏览器回到 App」的自动路径：没查到**不报错**，只留一句中性提示
+     * （银行侧回调常有几十秒延迟，刚回来就报「失败」是假警报）；手动点「检查到账」时
+     * 传 false，同样没查到也给同一句实话。
+     */
+    fun checkBankPaid(silent: Boolean = false) {
+        val credentials = credentialStore.read() ?: return
+        val state = _powerRecharge.value
+        val orderId = state.orderId ?: return
+        if (state.step != PowerRechargeUi.Step.BankPay) return
+        val session = flowSession
+        if (!silent) _powerRecharge.update { it.copy(busy = true, error = null, bankNote = null) }
+        viewModelScope.launch {
+            val status = powerOrderStatus(credentials.username, credentials.password, orderId)
+            if (!isCurrentSession(session)) return@launch
+            if (status == 1) {
+                _powerRecharge.update {
+                    it.copy(
+                        step = PowerRechargeUi.Step.Accepted,
+                        paidStatus = 1,
+                        busy = false,
+                        error = null,
+                        bankNote = null,
+                    )
+                }
+                refreshPower()
+            } else {
+                _powerRecharge.update {
+                    it.copy(
+                        busy = false,
+                        paidStatus = status,
+                        bankNote = when {
+                            status == 0 -> "还没查到这笔到账——银行侧回调可能有延迟，稍后再点一次检查。"
+                            else -> "暂时查不到这笔订单（网络或平台原因），稍后再试。"
+                        },
+                    )
+                }
             }
         }
     }

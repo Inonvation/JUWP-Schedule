@@ -129,6 +129,57 @@ class PowerPayTest {
         assertNull(PowerPayModels.orderStatusFrom("""{"code":500,"msg":"未知异常"}"""))
     }
 
+    /**
+     * 农行收银台链接（2026-09-28 实测响应的形状）。
+     *
+     * 那段 HTML 由平台原样转发，`action` 的值**首尾带空格**、表单本身没有字段
+     * （会话全在 action 的 query 里）——所以链接可以直接 GET 打开。
+     */
+    @Test
+    fun bankCashierUrlParsing() {
+        val cashierJson = """
+            {"code":200,"success":true,"data":{"paysubmit":"<form name=\"punchout_form\" method=\"post\" target=\"_parent\"  action=\" https://pay.abchina.com/EbusPerbankFront/PaymentModeNewAct?TOKEN=12345678901234567890\">\n</form>\n<script>document.forms[0].submit();</script>","qrFormUrl":"<form name=\"punchout_form\" method=\"post\" target=\"_parent\"  action=\" https://pay.abchina.com/EbusPerbankFront/PaymentModeNewAct?TOKEN=12345678901234567890\">\n</form>"},"msg":"操作成功"}
+        """.trimIndent()
+        assertEquals(
+            "https://pay.abchina.com/EbusPerbankFront/PaymentModeNewAct?TOKEN=12345678901234567890",
+            PowerPayModels.bankCashierUrlFrom(cashierJson),
+        )
+    }
+
+    /** 有的渠道走 `webUrl` 直给链接（官方前端先看它），一样要认。 */
+    @Test
+    fun bankCashierPrefersWebUrl() {
+        val raw = """{"code":200,"data":{"webUrl":"https://pay.abchina.com/EbusPerbankFront/x?TOKEN=1"}}"""
+        assertEquals("https://pay.abchina.com/EbusPerbankFront/x?TOKEN=1", PowerPayModels.bankCashierUrlFrom(raw))
+    }
+
+    /**
+     * **白名单是硬闸**：这段 HTML 来自第三方平台，除 https + `*.abchina.com` 之外一律不认
+     * ——不许把任意 URL（钓鱼站、http 降级）交给系统浏览器打开。
+     */
+    @Test
+    fun bankCashierUrlRejectsForeignHost() {
+        fun form(action: String) = """{"code":200,"data":{"paysubmit":"<form action=\"$action\"></form>"}}"""
+        assertNull(PowerPayModels.bankCashierUrlFrom(form("http://pay.abchina.com/x?TOKEN=1")))
+        assertNull(PowerPayModels.bankCashierUrlFrom(form("https://pay.abchina.com.evil.cn/x")))
+        assertNull(PowerPayModels.bankCashierUrlFrom(form("https://example.com/x?TOKEN=1")))
+        assertNull(PowerPayModels.bankCashierUrlFrom(form("javascript:alert(1)")))
+        // 平台改版 / 结构不同：认不出就是 null，调用方报「平台可能已改版」
+        assertNull(PowerPayModels.bankCashierUrlFrom("""{"code":200,"data":{"paysubmit":"<div>没有表单</div>"}}"""))
+        assertNull(PowerPayModels.bankCashierUrlFrom("""{"code":500,"msg":"未知异常，请联系管理员"}"""))
+    }
+
+    /** 渠道标识是实测值，改错 = 打到别的支付方式的接口上。 */
+    @Test
+    fun channelConstantsMatchMeasuredPayList() {
+        val channels = PowerPayModels.channelsFrom(orderJson)
+        val abc = channels.first { it.code == PowerPayChannels.ABC_CODE }
+        assertEquals(PowerPayChannels.ABC_ID, abc.payId)
+        assertEquals("农行支付", abc.name)
+        val account = channels.first { it.code == PowerPayChannels.ACCOUNT_CODE }
+        assertEquals(PowerPayChannels.ACCOUNT_ID, account.payId)
+    }
+
     @Test
     fun envelopeCodes() {
         assertEquals(500, PowerPayModels.codeOf("""{"code":500,"msg":"未知异常，请联系管理员"}"""))

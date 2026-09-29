@@ -186,6 +186,49 @@ class PowerRepository(
         }
 
     /**
+     * 农行支付第一步（DESIGN §4.24「农行支付」，2026-09-28 实测打通）：
+     * `paystep=2` + 农行渠道 → 服务端回一段自动提交的收银台表单，从中取**手机版**支付链接。
+     *
+     * 链接由 `PowerBankPayActivity` 的**内嵌 WebView** 打开（2026-09-28 用户拍板）：
+     * 页面里就是用户熟悉的那套——手机号 → 短信验证码 → 支付密码。卡号、手机号、验证码、
+     * 密码全部只进农行页面，App 不内嵌表单、不读输入、不落盘。
+     *
+     * **[PowerClient.MOBILE_CASHIER_UA] 不能改**：平台按 UA 分三支，只有微信 UA 给手机版
+     * 收银台（`mobile.abchina.com/mpaynew/mpay/index`）；桌面 UA 给 PC 版网页收银台
+     * （手机上会被裁、还提示装安全控件），手机浏览器 UA 直接回空的 `code=6230`
+     * （`msg` 却写「处理成功」）。
+     *
+     * 链接里的 TOKEN 是农行侧**一次性会话**，每次要用都重新调这个方法取新的（重开支付页
+     * 也走它，别缓存复用）。
+     */
+    suspend fun bankCashier(username: String, password: String, orderId: String): String =
+        withToken(username, password) { token ->
+            val raw = client.postSigned(
+                "/blade-pay/pay",
+                token,
+                PowerPaySign.signed(
+                    mapOf(
+                        "orderid" to orderId,
+                        "paystep" to "2",
+                        "paytype" to PowerPayChannels.ABC_CODE,
+                        "paytypeid" to PowerPayChannels.ABC_ID,
+                        "synAccessSource" to "h5",
+                    ),
+                ),
+                userAgent = PowerClient.MOBILE_CASHIER_UA,
+            )
+            // 6230 = 平台那条空分支（`msg` 却写「处理成功」）：换成人话再抛，别让用户
+            // 拿着「处理成功」的原文去猜哪里成功了（本请求已固定微信 UA，走到这里说明
+            // 平台又改了分支规则，2026-09-28 实测记录见 PowerClient.MOBILE_CASHIER_UA）。
+            if (PowerPayModels.codeOf(raw.text) == 6230) {
+                throw PowerException.Protocol("平台没返回收银台链接（code=6230），请稍后重试")
+            }
+            expectOk(raw, "取农行收银台链接")
+            PowerPayModels.bankCashierUrlFrom(raw.text)
+                ?: throw PowerException.Protocol("农行收银台链接没拿到（平台可能已改版）")
+        }
+
+    /**
      * 第一步支付：`paystep=2` + 电子账户渠道 → 服务端返回 `passwordMap`
      * （键 = uuid，值 = 乱序数字串）与 `ccctype`。UI 用它渲染密码键盘。
      */
@@ -201,8 +244,8 @@ class PowerRepository(
                 mapOf(
                     "orderid" to orderId,
                     "paystep" to "2",
-                    "paytype" to "ACCOUNT",
-                    "paytypeid" to "59",
+                    "paytype" to PowerPayChannels.ACCOUNT_CODE,
+                    "paytypeid" to PowerPayChannels.ACCOUNT_ID,
                     "synAccessSource" to "h5",
                 ),
             ),
@@ -235,8 +278,8 @@ class PowerRepository(
         val form = buildMap {
             put("orderid", targetOrderId)
             put("paystep", "2")
-            put("paytype", "ACCOUNT")
-            put("paytypeid", "59")
+            put("paytype", PowerPayChannels.ACCOUNT_CODE)
+            put("paytypeid", PowerPayChannels.ACCOUNT_ID)
             put("password", cipher)
             put("uuid", uuid)
             challenge.accountType?.let { put("ccctype", it) }

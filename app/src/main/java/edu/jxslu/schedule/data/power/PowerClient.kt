@@ -25,12 +25,37 @@ class PowerClient private constructor(private val http: OkHttpClient) {
         /** 前端 bundle 里的 OAuth2 客户端凭据（所有人可见，非机密）。 */
         private const val BASIC = "Basic Y2hhcmdlOmNoYXJnZV9zZWNyZXQ="
 
-        /** 该学校的登录方式（`GET /charge/logintype` 取值）：学号 + 查询密码。 */
+        /**
+         * 该学校的登录方式（`GET /charge/logintype` 取值）：学号 + 查询密码。
+         */
         private const val LOGIN_TYPE = "student-sno-queryPassword"
 
         private const val UA =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/120.0.0.0 Mobile Safari/537.36"
+
+        /**
+         * 微信 UA：**只有取农行收银台链接那一条请求用它**（2026-09-28 实测）。
+         *
+         * 平台按请求 UA 把 `paystep=2 + 农行渠道` 分成三支，只有这一支给**手机版**收银台：
+         *
+         * | 请求 UA | 响应 |
+         * |---------|------|
+         * | 微信（含 `MicroMessenger`） | `200` + `paysubmit`＝`https://mobile.abchina.com/mpaynew/mpay/index?TOKEN=…`（**手机版收银台**：手机号 → 短信验证码 → 支付密码） |
+         * | 桌面 / 其它非手机 UA | `200` + `paysubmit`＝`https://pay.abchina.com/EbusPerbankFront/PaymentModeNewAct?TOKEN=…`（网页版收银台：PC 布局、K 宝/安全控件提示、手机上会被裁） |
+         * | 手机浏览器（含 `Mobile Safari` 且无 `MicroMessenger`） | `{"code":6230,"success":false,"data":null,"msg":"处理成功"}`——**空响应**，文案还骗人 |
+         *
+         * 用户历史上一直是在**微信里**付这笔电费（学校入口在微信里），拿到的就是手机版
+         * 收银台；所以这里固定发微信 UA，让平台给同一条链接，再由 App 内嵌页打开。
+         * 手机版页面**不依赖微信 JSAPI**（实测 `WeixinJSBridge`/`jweixin` 0 处），
+         * 普通手机浏览器 UA 也能正常渲染（手机号 + 验证码表单齐全）。
+         *
+         * `body` 里的 `userAgent` / `isWX` 字段都不影响分支（三个字段各测一遍，差别只在
+         * 请求头 UA）。
+         */
+        const val MOBILE_CASHIER_UA =
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Version/4.0 Chrome/107.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.49.2600"
 
         /** 移动服务平台（ydfwpt）打开本平台的口径：token 走 URL，收银台回跳走 paymentUrl。 */
         private const val APPSOURSE = "ydfwpt"
@@ -136,13 +161,21 @@ class PowerClient private constructor(private val http: OkHttpClient) {
     /**
      * POST 签名表单（`/blade-pay/pay` 下单与支付）。鉴权走 **header**
      * （2026-09-23 实测：表单字段形式报「未知异常」），与 [login] 的 Basic 头不同。
+     *
+     * [userAgent] 默认移动端 UA；**取农行收银台链接那一跳必须传
+     * [MOBILE_CASHIER_UA]**（分支表见该常量的注释，不传会拿到空的 `code=6230`）。
      */
-    suspend fun postSigned(path: String, token: String, fields: Map<String, String>): Raw =
+    suspend fun postSigned(
+        path: String,
+        token: String,
+        fields: Map<String, String>,
+        userAgent: String = UA,
+    ): Raw =
         withContext(Dispatchers.IO) {
             execute(
                 Request.Builder()
                     .url(BASE + path)
-                    .header("User-Agent", UA)
+                    .header("User-Agent", userAgent)
                     .header("Authorization", BASIC)
                     .header("synjones-auth", "bearer $token")
                     .header("synAccessSource", "h5")

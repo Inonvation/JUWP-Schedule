@@ -33,6 +33,8 @@ class PowerHistoryCache(context: Context) {
         val amountFen: Long,
         val room: String?,
         val refund: Boolean,
+        /** 旧缓存文件里没有这一列：给默认值，读旧数据不炸（种子只用于首屏展示）。 */
+        val payId: Int? = null,
     )
 
     fun load(): List<PowerTurnover> = runCatching {
@@ -45,6 +47,7 @@ class PowerHistoryCache(context: Context) {
                 amountFen = row.amountFen,
                 room = row.room,
                 refund = row.refund,
+                payId = row.payId,
             )
         }
     }.getOrDefault(emptyList())
@@ -68,6 +71,7 @@ class PowerHistoryCache(context: Context) {
         amountFen = it.amountFen,
         room = it.room,
         refund = it.refund,
+        payId = it.payId,
     )
 
     private companion object {

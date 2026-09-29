@@ -319,8 +319,23 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
    累计缴费、饼图数据都不是用电量，`appAccountDetail` 直接 500），只有「当前剩余电量」。
    要用电量得自己按时间记读数再差分：App 侧落在 `power_readings` 表（DESIGN §3.13「用电统计」）。
 
+7. **农行支付那条 `paystep=2` 按请求 UA 分三支**（2026-09-28 实测，探针在
+   `_archive/_probe_power_abc*.py`）：同一单、同一 token，只有请求头 UA 不同——
+   微信 UA（含 `MicroMessenger`）→ `200` + `paysubmit`＝**手机版收银台**
+   `mobile.abchina.com/mpaynew/mpay/index?TOKEN=…`（农银快e付：手机号 + 验证码 + 支付密码）；
+   桌面 / 非手机 UA → `200` + 网页版 `pay.abchina.com/EbusPerbankFront/PaymentModeNewAct?TOKEN=…`；
+   **手机浏览器 UA（含 `Mobile Safari` 且无 `MicroMessenger`）→ `{"code":6230,"success":false,"data":null,"msg":"处理成功"}`**
+   （空响应，`msg` 却是「处理成功」，别当成解析错误）。`body` 里的 `userAgent` / `isWX` 不影响分支。
+   另外：**手机版链接不能拿网页版那条的 TOKEN 自己拼**——直接 GET 回
+   `{"respCode":"90015","respMsg":"无可用的支付方式，请下载安装我行掌上银行客户端进行支付。"}`。
+   收银台 URL 只在那段 `paysubmit` HTML 的 `action` 里（值首尾带空格，要 trim；表单本身没有字段）。
+8. **网页版收银台页有个会误导的 K 宝弹框**：手机浏览器打开 `pay.abchina.com/…` 时页面弹
+   「K宝驱动没有正确安装…请使用IE浏览器」，点掉即可；真正的支付表单在其下方（K码支付：
+   卡号 + 图形验证码 → 手机号后四位 + 短信验证码 + 支付密码）。
+
 App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blade-pay` 下单 + 电子账户
-密码支付，DESIGN §4.24），脚本只产出 `scripts/out/power.json` 供本机查看。
+密码支付 + 农行支付内嵌手机版收银台，DESIGN §4.24）。**脚本不做充值**：支付链路留在
+App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看。
 
 ### 5.6 教务处盖章成绩单（签章管理系统，2026-09-24 实测）
 

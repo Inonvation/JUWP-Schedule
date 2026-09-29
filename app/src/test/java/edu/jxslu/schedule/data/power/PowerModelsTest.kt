@@ -39,7 +39,9 @@ class PowerModelsTest {
            "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
           {"turnoverid":3955332,"feeitemid":181,"payid":4,"feerange":"202507","tranamt":-10,
            "createdate":"2025-07-04 09:00:00","refund_flag":1,
-           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"}]}
+           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
+          {"turnoverid":5091738,"feeitemid":181,"payid":59,"feerange":"202609","tranamt":24,
+           "createdate":"2026-09-28 11:54:33","refund_flag":1,"abstracts":null}]}
     """.trimIndent()
 
     @Test
@@ -82,7 +84,7 @@ class PowerModelsTest {
     @Test
     fun turnoverParsesAmountsAndRoomLabel() {
         val rows = PowerModels.parseTurnovers(turnoverJson)
-        assertEquals(3, rows.size)
+        assertEquals(4, rows.size)
         // 升序：早的在前
         assertEquals("2025-07-03 13:08:57", rows[0].dateText)
         assertEquals(5000L, rows[0].amountFen)
@@ -90,6 +92,24 @@ class PowerModelsTest {
         assertEquals(2000L, rows[2].amountFen)
         assertEquals("202608", rows[2].month)
         assertTrue("充值时间应能解析成 epoch 毫秒", rows[2].epochMs > 0L)
+        // 最新一条（电子账户）：平台没填 abstracts（2026-09-28 实测确有其事），
+        // 房间为 null，但 payid 还在——账单行据此显示「支付方式」补位
+        // （fixture 那条是 payid=59「电子账户」，不是 4「农行支付」）
+        assertEquals(59, rows[3].payId)
+        assertEquals(null, PowerModels.roomLabelOf(rows[3].room))
+        assertEquals("电子账户 24.00", "电子账户 %.2f".format(rows[3].amountFen / 100.0))
+    }
+
+    /**
+     * 支付渠道文案口径（`payid`）：只有实测过的 `4`/`59` 给文案，其余一律 null
+     * ——账单里显示错渠道和显示错房间一样糟（用户拿它核对「这笔记在哪」）。
+     */
+    @Test
+    fun payChannelLabelOnlyForMeasuredIds() {
+        assertEquals("农行支付", PowerModels.payChannelLabelOf(4))
+        assertEquals("电子账户", PowerModels.payChannelLabelOf(59))
+        assertEquals(null, PowerModels.payChannelLabelOf(6))
+        assertEquals(null, PowerModels.payChannelLabelOf(null))
     }
 
     /**
@@ -100,8 +120,8 @@ class PowerModelsTest {
     @Test
     fun turnoverDirectionComesFromAmountSignNotRefundFlag() {
         val rows = PowerModels.parseTurnovers(turnoverJson)
-        // 三条都是 refund_flag=1，但只有 tranamt 为负的那条是退款
-        assertEquals(listOf(false, true, false), rows.map { it.refund })
+        // 四条都是 refund_flag=1，但只有 tranamt 为负的那条是退款
+        assertEquals(listOf(false, true, false, false), rows.map { it.refund })
         assertEquals("2025-07-04 09:00:00", rows[1].dateText)
         // 金额统一取绝对值（退款也不例外）
         assertTrue(rows.all { it.amountFen >= 0 })

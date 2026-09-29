@@ -96,6 +96,11 @@ data class PowerTurnover(
     val room: String?,
     /** true = 退款（`tranamt` 为负）；false = 充值。 */
     val refund: Boolean,
+    /**
+     * 支付渠道 id（`payid`）：`4` = 农行支付、`59` = 电子账户（与下单用的
+     * `PowerPayChannels` 同源，2026-09-28 实测）。展示文案见 [PowerModels.payChannelLabelOf]。
+     */
+    val payId: Int? = null,
 )
 
 /** 一次取数的完整结果（项目配置 + 读数）。 */
@@ -227,6 +232,7 @@ object PowerModels {
                 amountFen = fen(abs(amountYuan)),
                 room = asString(obj["abstracts"]),
                 refund = amountYuan < 0,
+                payId = obj["payid"]?.let { asInt(it) },
             )
         }.sortedBy { it.epochMs }
     }
@@ -302,6 +308,18 @@ object PowerModels {
             ?.substringAfter('-')
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * 支付渠道展示文案（`payid`）：`4` = 农行支付、`59` = 电子账户。
+     *
+     * **认不出的值返回 null**（宁可不显示，也不把别的渠道说成这两个——用户拿它核对
+     * 「这笔是怎么付的」）。渠道 id 与下单侧 `PowerPayChannels` 是同一套实测值。
+     */
+    fun payChannelLabelOf(payId: Int?): String? = when (payId) {
+        PowerPayChannels.ABC_ID.toInt() -> "农行支付"
+        PowerPayChannels.ACCOUNT_ID.toInt() -> "电子账户"
+        else -> null
     }
 
     /** 元 → 分。 */

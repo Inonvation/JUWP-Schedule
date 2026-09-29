@@ -147,9 +147,17 @@
             android:windowSoftInputMode="adjustResize" />
         <!-- 学工表单独立窗口（DESIGN §3.15）：宿舍报修、请假等共用这一个（表单标识走
              extra）。第三个「因为窗口里有统一认证表单而锁竖屏」的窗口，理由与上面两个
-             相同。App 里锁方向的只有这三个。 -->
+             相同。 -->
         <activity
             android:name=".XgFormActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- 农行支付收银台独立窗口（DESIGN §4.24「农行支付」）：窗口里是农行的支付页面
+             （卡号 / 手机号 / 短信验证码 / 支付密码都在那边输入），同样锁竖屏 + adjustResize，
+             理由与上面几个含网页表单的窗口相同。 -->
+        <activity
+            android:name=".PowerBankPayActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />

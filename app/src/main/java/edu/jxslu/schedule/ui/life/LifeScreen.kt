@@ -60,6 +60,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.R
+import edu.jxslu.schedule.PowerBankPayActivity
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.LifeFeedItem
 import edu.jxslu.schedule.domain.LifeFeedKind
@@ -78,6 +79,7 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.SkeletonBox
@@ -163,12 +165,24 @@ fun LifeScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 电费充值进入密码步骤：下单成功即取键盘挑战（passwordMap）
-    LaunchedEffect(powerRecharge.orderId, powerRecharge.step) {
-        if (powerRecharge.step == LifeViewModel.PowerRechargeUi.Step.Amount &&
+    // 电费充值进入密码步骤：下单成功即取键盘挑战（passwordMap）。
+    // **电子账户渠道专属**（2026-09-28）：农行渠道下单后走 BankPay 步，不该在这里
+    // 多打一条 ACCOUNT 的 paystep=2。
+    LaunchedEffect(powerRecharge.orderId, powerRecharge.step, powerRecharge.channel) {
+        if (powerRecharge.channel == LifeViewModel.PowerRechargeUi.Channel.Account &&
+            powerRecharge.step == LifeViewModel.PowerRechargeUi.Step.Amount &&
             powerRecharge.orderId != null
         ) {
             viewModel.loadPayChallenge()
+        }
+    }
+
+    // 农行支付：从浏览器切回本页时自动查一次到账（静默——银行侧回调常有几十秒延迟，
+    // 没查到只留一句中性提示，不弹错误）。口径同「我的 → 校园卡」的 onHostResume。
+    val resumeTick = rememberResumeTick()
+    LaunchedEffect(resumeTick) {
+        if (resumeTick > 0 && powerRecharge.step == LifeViewModel.PowerRechargeUi.Step.BankPay) {
+            viewModel.checkBankPaid(silent = true)
         }
     }
 
@@ -176,6 +190,17 @@ fun LifeScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is LifeEvent.Notice -> snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+
+                // 农行收银台：**App 内嵌页**打开（2026-09-28 用户拍板，不再甩给浏览器）。
+                // 卡号 / 手机号 / 短信验证码 / 支付密码只在农行页面里输入，本 App 不读不存。
+                is LifeEvent.OpenBankCashier -> {
+                    runCatching { PowerBankPayActivity.start(context, event.url) }
+                        .onFailure {
+                            snackbar.showSnackbar(
+                                AppNoticeVisuals("农行支付页打不开，请重试", tone = NoticeTone.Error),
+                            )
+                        }
+                }
             }
         }
     }
@@ -309,9 +334,12 @@ fun LifeScreen(
                 campusRechargePreferElectric = true
                 showRechargeSheet = true
             },
+            onSelectChannel = { channel -> viewModel.selectPowerChannel(channel) },
             onPlaceOrder = { yuan -> viewModel.placePowerOrder(yuan) },
             onLoadChallenge = { viewModel.loadPayChallenge() },
             onSubmitPassword = { cipher -> viewModel.submitPowerPassword(cipher) },
+            onReopenCashier = { viewModel.reopenBankCashier() },
+            onCheckPaid = { viewModel.checkBankPaid() },
         )
     }
     if (showRechargeSheet) {

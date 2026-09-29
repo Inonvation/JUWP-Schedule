@@ -73,6 +73,25 @@ object PowerPaySign {
             .joinToString("") { "%02x".format(it) }
 }
 
+/**
+ * 支付渠道标识（下单响应 `payList` 里的 `pay_type_code` + `id`，2026-09-23 / 2026-09-28 实测）。
+ *
+ * 平台照渠道表发 id，两份都要带上（`paystep=2` 同时收 `paytype` 与 `paytypeid`）。
+ */
+object PowerPayChannels {
+
+    /** 电子账户（扣电子账户余额，App 内 6 位消费密码）。`payList` 名称「电子账户」。 */
+    const val ACCOUNT_CODE = "ACCOUNT"
+    const val ACCOUNT_ID = "59"
+
+    /**
+     * 农行支付（K 码支付：卡号 + 手机短信验证码在**农行页面**完成）。
+     * `payList` 里 `id=4`、`pay_type_name=农行支付`、`icon=ABCpay`、`nopassword=0`。
+     */
+    const val ABC_CODE = "NEWPAYMENTPLATFORM"
+    const val ABC_ID = "4"
+}
+
 /** 一次下单的返回（`POST /blade-pay/pay` `paystep=0`）。 */
 data class PowerOrder(
     val orderId: String,
@@ -237,6 +256,49 @@ object PowerPayModels {
         val order = obj["order"] as? JsonObject ?: return@runCatching null
         (order["status"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
     }.getOrNull()
+
+    /**
+     * 农行收银台链接（`paystep=2` + [PowerPayChannels.ABC_CODE] 的响应，2026-09-28 实测）。
+     *
+     * 实测响应（`paysubmit` 与 `qrFormUrl` 是同一段 HTML）：
+     * ```
+     * {"code":200,"success":true,"data":{
+     *   "paysubmit":"<form name=\"punchout_form\" method=\"post\" target=\"_parent\"
+     *      action=\" https://pay.abchina.com/EbusPerbankFront/PaymentModeNewAct?TOKEN=…\">\n</form>
+     *      <script>document.forms[0].submit();</script>"}}
+     * ```
+     * 那段表单**没有任何字段**（会话全在 action 的 query 里），所以链接直接 GET 就能打开——
+     * 2026-09-28 真机浏览器实测页面正常渲染（金额 / 商户 / 订单号齐全），K 码支付入口也在。
+     *
+     * **只认 https + `*.abchina.com`**：这段 HTML 由第三方平台转发，不许把任意 URL
+     * 交给系统浏览器打开（平台改版或被篡改时的最后一道闸）。
+     */
+    fun bankCashierUrlFrom(raw: String): String? = runCatching {
+        val data = dataOf(raw) ?: return@runCatching null
+        val candidates = buildList {
+            (data["webUrl"] as? JsonPrimitive)?.contentOrNull?.let { add(it) }
+            for (key in listOf("paysubmit", "qrFormUrl", "paymentcashierStr")) {
+                (data[key] as? JsonPrimitive)?.contentOrNull?.let { html ->
+                    formActionOf(html)?.let { add(it) }
+                }
+            }
+        }
+        candidates.firstOrNull { isAbcCashierUrl(it) }
+    }.getOrNull()
+
+    /** 从收银台 HTML 里取 `<form action="…">`；实测值首尾带空格，必须 trim。 */
+    private fun formActionOf(html: String): String? =
+        FORM_ACTION.find(html)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** 收银台链接白名单：https + `abchina.com` 域（含子域）。 */
+    private fun isAbcCashierUrl(url: String): Boolean = runCatching {
+        val uri = java.net.URI(url)
+        val host = uri.host.orEmpty().lowercase()
+        uri.scheme.equals("https", ignoreCase = true) &&
+            (host == "abchina.com" || host.endsWith(".abchina.com"))
+    }.getOrDefault(false)
+
+    private val FORM_ACTION = Regex("""action\s*=\s*"([^"]+)"""", RegexOption.IGNORE_CASE)
 
     private fun dataOf(raw: String): JsonObject? = runCatching {
         (json.parseToJsonElement(raw).jsonObject["data"] as? JsonObject)

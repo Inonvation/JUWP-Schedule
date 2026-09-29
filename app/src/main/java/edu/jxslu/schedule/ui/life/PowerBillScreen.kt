@@ -418,10 +418,14 @@ private fun BillRow(row: PowerTurnover, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
+            // 顺序 = 时刻 → 房间 → 支付方式：房间是「充到哪」的主信息，支付方式补位——
+            // 平台偶尔不填 `abstracts`（2026-09-28 实测 13 条里 2 条为空，都是电子账户那条
+            // 路径），那几行至少还能看出「这笔是怎么付的」，不至于整行没有目标信息。
             val secondary = listOfNotNull(
                 // 「2026-08-25 12:20:23」→「08-25 12:20」：月份已在页头，不重复
                 row.dateText.take(16).substringAfter('-', "").takeIf { it.isNotBlank() },
                 PowerModels.roomLabelOf(row.room),
+                PowerModels.payChannelLabelOf(row.payId),
             ).joinToString(" · ")
             if (secondary.isNotEmpty()) {
                 Text(
@@ -466,6 +470,7 @@ private fun TurnoverDetail(row: PowerTurnover) {
         DetailRow("交易时间", row.dateText)
         DetailRow("金额", (if (row.refund) "−" else "+") + PowerBill.amountText(row.amountFen))
         PowerModels.roomLabelOf(row.room)?.let { DetailRow("房间", it) }
+        PowerModels.payChannelLabelOf(row.payId)?.let { DetailRow("支付方式", it) }
         feeRangeLabel(row.month)?.let { DetailRow("费用所属月", it) }
         row.turnoverId?.let { DetailRow("订单号", it.toString()) }
     }
