@@ -21,6 +21,22 @@
   理论课表」不能换成「URL 含 `xskb`」（实验页 URL 也含它，会变成自动死循环），一次性标记
   `autoImportTried` 同步置位、并在 `runOneClickImport` 入口消费（手动点按钮也算用掉）。
 
+## 导入结果落回主界面（2026-09-29）
+
+- 导入窗口与主界面是两个 Activity，反馈不能停在窗口里：**写库成功即 `finish()`，结果交给
+  主界面下方那条气泡**（用户口径：「导入成功提醒是软件内下方那个一行的气泡提醒，不是弹窗
+  提醒」）。通道是 `ui/jwvw/JwImportResultBus`，**不再有「导入完成」弹窗**——留着它，用户
+  点完「完成」就 finish，反馈停在他看不见的那个窗口里。
+- **五个落点**各调一次 `JwImportOutcomeEffect(snackbar)`：课表页 / 今日页 / 成绩页 /
+  学校统一认证页 / 课表中心页（后两个是本页的「导入课表」「导入成绩」入口，导入窗口 finish
+  后落回的就是它们）。新增落点页面时别忘了同时补 `AppSnackbarHost`；`JwAccountScreen` 的
+  Scaffold 把 `contentWindowInsets` 归零了，提示条要自己 `navigationBarsPadding()`。
+- 四条别改坏：① 课表/考试与成绩两条路径都发，文案各自拼（成绩不报课表名）；
+  ② 发布放在**写库之后、`onBack()` 之前**，顺序反了就是「窗口关了、消息还没发」；
+  ③ 消费方**先 `consume()` 再判 `isFresh()`**，过期就丢——从二级页进的用户要等切 Tab 才
+  组合主界面那两页，没有闸门会凭空冒出一条旧提示；④ 别把落点改回「只在课表页消费」。
+- 新鲜期常数在 `JwImportOutcome.FRESH_WINDOW_MS`，边界由 `JwImportResultBusTest` 钉住。
+
 ## 确认弹窗支持切换学期（2026-09-28）
 
 - 弹窗的「数据学期」行在**一键导入路径**下是可点下拉（`ImportTargetDialogHost` 新参

@@ -36,7 +36,7 @@
 
 约束：release 包名 `edu.jxslu.schedule`，debug 加 `.debug` 后缀，两者签名不同。
 理由：同包名会互相覆盖安装，数据全丢。
-启动 debug 包必须写全限定名，`adb` 命令见 `AGENTS.md`「装真机」。
+启动 debug 包必须写全限定名，`adb` 命令与「装到哪台设备、谁来点验」的判据见 `AGENTS.md`「装机与验证路径」。
 
 ## 提交与推送
 

@@ -36,7 +36,7 @@
 3. 历史实现记录在 `docs/devlog.md`（仅本地），只在排查「当初为什么这么改」时才翻
 4. 只读参考：`F:\light-life-v3.0`（胖乖）、`scripts/README.md`（爬虫脚本）
 
-**改完的收尾顺序**：写代码 → 编译 + 单测 → 有设备就装真机 → 最后同步文档。
+**改完的收尾顺序**：写代码 → 编译 + 单测 → 按「装机与验证路径」决定装在哪台设备、谁来点验 → 最后同步文档。
 `DESIGN.md` 对应章节（不是 devlog）放在最后一步，用户可以先在真机上并行点验。
 同步时顺手 grep 旧说法，确认没有残留，同一口径只留一份：
 
@@ -79,11 +79,29 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 - 用例数从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总（Gradle 成功时不打印用例数），读 XML 用 `-Encoding UTF8`。
 - 改过混淆规则要装 release 包冒烟，理由与已踩的坑见 `.agents/rules/build-release.md`。
 
-## 装真机
+## 装机与验证路径
+
+**先 `adb devices`，再决定谁来点验**（2026-09-29 起）。默认把点验交给用户，AI 自己测只走下面那个窄口子。
+「手机在线」的判据：设备列表里出现非 `emulator-` 前缀的 serial。
+
+| 情况 | 做法 |
+|------|------|
+| 手机在线 | `adb install -r` 装 debug 包 → 告诉用户已装好、装的是哪个包、建议点验的 2–3 处 → 停下等反馈。不要自己接着在设备上反复点 |
+| 手机不在线，且改动够小 | 自己起模拟器自测（起法见下），结论落成一句话 |
+| 手机不在线，改动不够小 | 说明缺哪台设备、需要用户点验什么。不要为了「测过」而扩大模拟器范围 |
+
+「够小」= 下面三条**同时**满足，缺一条就交给用户：
+
+1. 不碰网络请求路径（Retrofit/OkHttp、WebView 注入、教务/胖乖/一卡通/电费/快趣/农行收银台）
+2. 不碰凭证、签名、`proguard-rules.pro`、Room 迁移、`AndroidManifest` 权限
+3. 验证点只在 UI 层，且 `uiautomator dump` 或 `screencap` 能给出结论
+
+模拟器上的结果只算冒烟，不算真机验证；沾到账号、网络、系统权限的功能一律等用户点验。
 
 ```powershell
 & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r app\build\outputs\apk\debug\app-debug.apk
-# MIUI 可能弹「USB 安装」需在手机上允许
+# MIUI 可能弹「USB 安装」需在手机上允许；首次常被 INSTALL_FAILED_USER_RESTRICTED 拦，重试一次通常就过
+# 多台设备在线时加 -s <serial>，用 adb devices -l 分辨真机与模拟器
 ```
 
 debug 与 release 是两个独立应用（桌面名「水贝贝 Debug」/「水贝贝」），可同时安装、数据各一份。改动冲突时改 `app/src/debug/res/values/strings.xml`（仅覆盖 `app_name`）；包名与签名口径见 `.agents/rules/build-release.md`。
@@ -244,8 +262,8 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
 ## 沟通与 DoD
 
 - 与用户中文交流；少形容词，多可验证结论
-- 完成定义：功能可演示（真机/模拟器或写明阻塞）；能跑则跑 `assembleDebug` + `testDebugUnitTest`；
-  有设备则 `adb install -r` 装 debug 包；未越权改无关模块
+- 完成定义：功能可演示。能跑则跑 `assembleDebug` + `testDebugUnitTest`；装机与点验按「装机与验证路径」
+  走，手机在线就装给用户点验，不在线且改动够小才自测，其余写明阻塞；未越权改无关模块
 - 文档同步是收尾动作，排在编译/装机之后。删功能时把引用它的文档、注释、测试一并清掉
 
 ## 阶段状态（见 DESIGN.md §6 里程碑）
