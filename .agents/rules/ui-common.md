@@ -33,6 +33,21 @@
   键盘（第一版实测无效）。校园卡充值、电费充值、快捷方式表单三个弹层已接；新弹层照抄
   `ImeAwareModalBottomSheet`。
 
+## 关弹层一律"先播退场动画、再落状态"
+
+- **任何"关弹层 / 关掉再做一件事"的路径都要走退场动画**：直接改 `showXxx = false` 会把弹层
+  从组合里瞬间抽掉，表现是"啪"地消失（2026-09-30 用户报过两次：车号面板的出场，以及
+  "只有出码面板有动画、其余弹层没有"）。两个出口，按弹层里有没有输入框选：
+  - **含输入框**：`ImeAwareModalBottomSheet(onDismiss = …, pendingDismiss = 关掉之后要跑的动作)`；
+    内容里把 `待执行动作` 写进 `pendingDismiss` 即可（同一路径也管"先关面板、再拉起微信"
+    这类动作）。**别自己调 `sheetState.hide()`**——键盘还起着时 `confirmValueChange` 会否决它。
+  - **不含输入框**：`rememberSheetDismisser(sheetState, onDismiss)`，拿到 `dismiss(after)`。
+- **把手用 M3 默认那根**（`ModalBottomSheet` 不传 `dragHandle`）：全项目一致就好。
+  嫌那点高度也别改成 `dragHandle = null` + 自己垫顶距——同一页里有的有把手、有的没有，
+  比那条空白显眼。真要改就整项目一起改，改前先在真机上对一遍手感。
+- **Snackbar 会压住贴底的主操作**：页面底部若有常驻动作条（如骑行页），把它实测的高度垫进
+  `AppSnackbarHost` 的 `Modifier.padding(bottom = …)`，否则提示一来就看不见主按钮。
+
 ## 卡片观感只有一处定义
 
 - 卡片观感**只有一处定义**：`ui/common/AppCard.kt` 的 `AppCard` / `AppCardRow`
@@ -66,6 +81,30 @@
 - 一次性消息**只有一条通道**：页面 Scaffold 的 `snackbarHost = { AppSnackbarHost(snackbar) }`
   （`ui/common/AppNotice.kt`）。语气用 `NoticeTone` 四档，视觉规格见 DESIGN §3.2；
   **禁止**新增 `android.widget.Toast`（系统黑框，与 App 其余浮层两套观感）。
+
+## 确认型弹窗的既有规格
+
+- 纯确认/声明类弹窗（无输入）用 M3 `AlertDialog`，不走 `ImeAwareModalBottomSheet`（那是
+  含输入框弹层的专属口径）。正文长时给 `heightIn(max=…)` + `verticalScroll` 防小屏裁切。
+- **长文声明弹窗只有 `ui/common/LegalDialogs.kt` 的 `NoticeDialog` 一个实现**
+  （标题 / 开场句 / 逐条正文都由调用方从 `domain/` 取，弹窗只排版）。`DisclaimerDialog`
+  是它的免责声明薄封装；加新的声明类弹窗就再包一层，**不要另写一个 AlertDialog**。
+- **关闭锁一律走 `rememberCloseLock(totalMs)`**（同文件）：锁住期间确认键置灰、返回与
+  点遮罩无效。两个硬性口径：
+  1. **用 `SystemClock.elapsedRealtime()`，不要用 `System.currentTimeMillis()`** ——
+     后者跟着系统时间走，用户把时间往前调就能把锁瞬间走完；
+  2. 计时起点是**组合第一次进入时**，不是宿主算锁的那一刻 —— 弹窗还没上屏就把秒数走掉，
+     锁就白设了。
+- **锁时长由宿主算好传入，弹窗不做「是否首次」的判断**：
+  - 首启的两份声明（用户须知 / 免责声明）：队列只装「没同意过」的那几份
+    （`domain/NoticeConsent.pendingNotices`），所以进队列的必然锁满，锁时长直接取
+    `domain/FirstRunNotices.closeLockMs`；
+  - **充值免责声明**（`ui/common/RechargeDisclaimerDialog`）：每个充值入口开弹层前都过它，
+    首次弹出锁 5 秒（宿主按 `domain/RechargeDisclaimer.closeLockMs` 算），
+    「已确认」落库在宿主侧（`DisplayPrefsStore.markRechargeDisclaimerSeen`）。
+- **同意/已读要落盘**（`DisplayPrefsStore.markNoticeConsented` / `markRechargeDisclaimerSeen`）：
+  落的是**版本号 + 时刻**。只锁秒数不留记录，事后什么都核不出来；版本号则是「改了文案
+  要让用户重看」的唯一判据（改文案必须 bump `FirstRunNotices.VERSION`）。
 
 ## 弹层是比页面高一层的独立窗口
 

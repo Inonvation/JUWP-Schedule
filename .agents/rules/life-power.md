@@ -93,8 +93,18 @@
 - **读表参数缺一不可**：`feeitemid=181` / `type=IEC` / `level=3` / campus+building+room；
   少一个平台只回 `code=500「未知异常」`（HTTP 200），**业务码 401 也藏在 HTTP 200 里**，
   必须读 body 的 `code` 才能触发重登。
-- **电费充值已 App 内完成**（2026-09-24 实测收口）：下单 = `POST /blade-pay/pay`
-  `paystep=0`（`feeitemid=181 + tranamt + flag=choose`，签名 `PowerPaySign`）；
+- **电费充值已 App 内完成**（2026-09-24 实测收口；**2026-09-29 下单表单 8 字段**）：
+  下单 = `POST /blade-pay/pay` `paystep=0`（`feeitemid=181 + tranamt + flag=choose +
+  synAccessSource=h5 + abstracts + third_party`，签名 `PowerPaySign`，表单唯一口径
+  `PowerOrderForm.of`）。**`third_party` 是命根子**（2026-09-29 事故）：= 读表响应
+  `map.data` 原文 JSON（`PowerMeter.dataJson`），平台入账任务只认它找电表——缺了订单照样
+  建、钱照样收、支付照样「成功」（`status=1`），但**永远不入账**（`order.flag` 第 2 位停在
+  0；`1`=入账成功/`2`=失败，`PowerEntryState`），不报错不退钱，只能人工找管理员。三笔
+  26 元就是这么卡死的。红线：下单前**强制新鲜读表**（缓存/种子快照没有 dataJson，
+  `PowerReadingSource.RECHARGE`），读不到 dataJson 或房号**直接拒单**，绝不发缺字段表单。
+  扣款与入账分开报告：`orderState`/`PowerOrderState`（status + entry 两字段），Accepted
+  步区分「已入账 / 入账处理中 / 入账失败」，别再拿 `status=1` 当「到账」说满话；
+  协议级验证脚本 `_archive/_probe_power_order_fix.py`（下单→验落库→删单）可随时重跑；
   支付 = `paystep=2 + paytype=ACCOUNT + paytypeid=59` 拿 `passwordMap` 乱序表，
   `PowerPayChallenge.cipherOf` 是密文换算唯一口径（用户数字 d → **d 在乱序表里的
   下标**；官方键盘第 i 个键显示 `table[i]` 但提交 `String(i)`，2026-09-24 读前端
@@ -134,12 +144,21 @@
   `YktModels.accountLabelOf`（认不出的类型返回 null——显示错账户比不显示更糟）；
   消费行不显示（一张卡一个值，只会挤掉商户名）。
   ② 电费缴费账单：详情有「支付方式」（`payid`：4 农行 / 59 电子账户），行副标题在房间
-  缺位时由它顶位。**房间缺失不许推定**：平台 `abstracts` 偶尔不填（2026-09-28 实测 13 条
-  里 2 条为空），而平台 H5 的 `/sceneBind/add` 允许改绑房间——拿当前绑定房间去套历史记录
-  会张冠李戴，宁缺勿错。
+  缺位时由它顶位。**房间缺失不许推定**：平台 H5 的 `/sceneBind/add` 允许改绑房间——
+  拿当前绑定房间去套历史记录会张冠李戴，宁缺勿错。空 `abstracts` 的旧归因（「平台偶尔
+  不填、电子账户路径」）**是误诊**：2026-09-29 定位真相 = App 旧版下单缺
+  `third_party`/`abstracts`，谁下的单谁空（App 单全空、官方单全有），修复见下节「下单」；
+  历史那几笔补不了（平台落库，事后改不了）。
 - **电费充值的密码步没有输入框**（2026-09-24 用户拍板）：6 格点阵就是输入位，键盘仍是
   系统的（透明 `BasicTextField` 垫在点阵下面，点阵不拦触摸）。进步自动聚焦、失败自动清空、
   受理后自动收键盘。别把 `OutlinedTextField` 加回来——用户明确否掉了那个矩形框。
+- **充值免责声明先过一道**（2026-09-29 用户要求，DESIGN §4.24）：**每个充值入口**（生活页
+  钱包卡两格、电费弹层「去充值电子账户 ›」、我的 → 校园卡页「充值」）打开弹层前都过
+  `ui/common/RechargeDisclaimerDialog`，五条声明 + 「一周内不再提醒」。**首次（从未确认过）
+  锁 5 秒**（按钮置灰、返回/遮罩无效、确认键倒数），确认（继续或取消）落
+  `recharge_disclaimer_seen_at` 后任何一次弹出立即可关；勾选静默 7 天
+  （`domain/RechargeDisclaimer` = 窗口与锁时长唯一口径，`RechargeDisclaimerTest` 钉住），
+  电费与一卡通**共用同一份**。新加充值入口时必须过这道闸——别绕开。
 - **充值的二次确认弹窗要加粗「充到哪」**（2026-09-28 用户要求：充错账户是钱的事）：
   电费弹层加粗**房间号**（一个房间一个电表，充错就是别人的；农行支付那条的等待步金额行
   也带房间号）；一卡通弹层加粗**目标账户**——正式卡给 6 位卡号、电子账户给账户名。
