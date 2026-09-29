@@ -19,6 +19,7 @@ import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
+import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
@@ -160,6 +161,12 @@ data class DisplayPrefs(
     val qzxyCardEnabled: Boolean = true,
     /** 今日页共享单车卡显示开关（DESIGN §3.9）。默认开（用户要求入口常驻）。 */
     val ebikeCardEnabled: Boolean = true,
+    /**
+     * 快趣出行的使用方式（DESIGN §3.9 / §4.32）。**默认微信小程序方式**：
+     * 账号登录方式要凭证、有计费后果与支付分授权门槛，只能由用户显式选择；
+     * 小程序方式不需要任何凭证。能力判据的唯一来源见 [EbikeUseMode]。
+     */
+    val ebikeUseMode: EbikeUseMode = EbikeUseMode.Default,
     /**
      * 共享单车二维码生成后自动存相册（DESIGN §3.9）。**默认关**（用户拍板）——
      * 相册里只留用户真的要的码，开了才会每次生成即落盘。
@@ -539,6 +546,15 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_EBIKE_CARD_ENABLED] ?: true
     }.distinctUntilChanged()
 
+    /**
+     * 快趣出行的使用方式（DESIGN §3.9 / §4.32）。**默认 [EbikeUseMode.MiniProgram]**：
+     * 账号登录方式要凭证、有计费后果，只能由用户显式选择。
+     * 认不出的存储值一律退回默认档（口径在 [EbikeUseMode.fromId]）。
+     */
+    val ebikeUseMode: Flow<EbikeUseMode> = context.displayDataStore.data.map { p ->
+        EbikeUseMode.fromId(p[KEY_EBIKE_USE_MODE])
+    }.distinctUntilChanged()
+
     /** 共享单车出码后自动存相册（DESIGN §3.9）。全局项，默认关（用户拍板）。 */
     val ebikeAutoSave: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_AUTO_SAVE] ?: false
@@ -875,6 +891,14 @@ class DisplayPrefsStore(private val context: Context) {
     /** 今日页共享单车卡开关（DESIGN §3.9）。 */
     suspend fun setEbikeCardEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_CARD_ENABLED] = value }
+    }
+
+    /**
+     * 快趣出行的使用方式（DESIGN §3.9 / §4.32）。写的是枚举的存储 id，
+     * 读路径用 [EbikeUseMode.fromId] 还原（认不出一律回默认档）。
+     */
+    suspend fun setEbikeUseMode(value: EbikeUseMode) {
+        context.displayDataStore.edit { it[KEY_EBIKE_USE_MODE] = value.id }
     }
 
     /** 今日页校园卡付款码卡开关（DESIGN §3.10）。 */
@@ -1215,6 +1239,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_WATER_CARD_ENABLED = booleanPreferencesKey("water_card_enabled")
         val KEY_QZXY_CARD_ENABLED = booleanPreferencesKey("qzxy_card_enabled")
         val KEY_EBIKE_CARD_ENABLED = booleanPreferencesKey("ebike_card_enabled")
+        val KEY_EBIKE_USE_MODE = stringPreferencesKey("ebike_use_mode")
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
         val KEY_EBIKE_LOCATION_ASKED = booleanPreferencesKey("ebike_location_asked")

@@ -23,8 +23,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         ScholarGroupEntity::class,
         ScholarCourseEntity::class,
         TextbookEntity::class,
+        RideRecordEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -40,6 +41,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun powerReadingDao(): PowerReadingDao
     abstract fun scholarProgressDao(): ScholarProgressDao
     abstract fun textbookDao(): TextbookDao
+    abstract fun rideRecordDao(): RideRecordDao
 
     companion object {
 
@@ -446,6 +448,33 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v15 → v16（2026-09-28）：新表 `ride_records`（本机骑行记录，DESIGN §3.9）。
+         *
+         * CREATE TABLE / CREATE INDEX 非 destructive；实体里没有 Kotlin 默认值的列
+         * （`feeCents` 与 `settled` 都是**构造参数**，实体没写 `= null` / `= false`），
+         * 所以建表语句里**不要**自作主张加 NOT NULL/DEFAULT——
+         * 多写一个字就是「迁移建的表结构与实体期望不一致 → 校验崩溃」（v7→v8 的老坑）。
+         * 索引与实体的 `@Index(value = ["endAt"])` 一一对应，漏一条同样校验崩溃。
+         */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS ride_records (" +
+                        "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, " +
+                        "carNum TEXT NOT NULL, " +
+                        "startAt INTEGER NOT NULL, " +
+                        "endAt INTEGER NOT NULL, " +
+                        "durationSeconds INTEGER NOT NULL, " +
+                        "feeCents INTEGER, " +
+                        "settled INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_ride_records_endAt ON ride_records (endAt)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -471,6 +500,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_12_13,
                         MIGRATION_13_14,
                         MIGRATION_14_15,
+                        MIGRATION_15_16,
                     )
                     .build()
                     .also { instance = it }

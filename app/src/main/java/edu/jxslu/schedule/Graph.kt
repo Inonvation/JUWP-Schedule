@@ -2,7 +2,11 @@ package edu.jxslu.schedule
 
 import android.content.Context
 import edu.jxslu.schedule.data.local.JuwDatabase
+import edu.jxslu.schedule.data.kqcx.KqcxAuthClient
+import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
+import edu.jxslu.schedule.data.kqcx.KqxCredentialStore
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
+import edu.jxslu.schedule.data.kqcx.ZoneCacheStore
 import edu.jxslu.schedule.data.power.PowerClient
 import edu.jxslu.schedule.data.power.PowerHistoryCache
 import edu.jxslu.schedule.data.power.PowerReadingStore
@@ -22,6 +26,7 @@ import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
+import edu.jxslu.schedule.data.repo.RideRecordStore
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import kotlinx.coroutines.sync.Mutex
@@ -62,6 +67,12 @@ object Graph {
     @Volatile
 private var qiekjRepository: QiekjRepository? = null
 private var qzxyRepository: QzxyRepository? = null
+
+    @Volatile
+    private var kqcxSession: KqcxSessionRepository? = null
+
+    @Volatile
+    private var zoneCacheStore: ZoneCacheStore? = null
     private var qzxyDeviceStore: QzxyDeviceStore? = null
     private var qzxyDebugStore: QzxyDebugStore? = null
     private var qzxyClearStore: QzxyClearStore? = null
@@ -100,6 +111,7 @@ private var qzxyRepository: QzxyRepository? = null
     private var noteRepository: NoteRepository? = null
 
     @Volatile
+    private var rideRecordStore: RideRecordStore? = null
     private var homeworkRepository: HomeworkRepository? = null
 
     @Volatile
@@ -215,6 +227,13 @@ private var qzxyRepository: QzxyRepository? = null
             noteRepository ?: NoteRepository(JuwDatabase.get(context)).also { noteRepository = it }
         }
 
+    /** 本机骑行记录单例（DESIGN §3.9「最近骑行」）：只有本机还车成功会写。 */
+    fun rideRecordStore(context: Context): RideRecordStore =
+        rideRecordStore ?: synchronized(this) {
+            rideRecordStore ?: RideRecordStore(JuwDatabase.get(context).rideRecordDao())
+                .also { rideRecordStore = it }
+        }
+
     /** 作业仓库单例（DESIGN §4.20）：与笔记共用一套附件与渲染口径。 */
     fun homeworkRepository(context: Context): HomeworkRepository =
         homeworkRepository ?: synchronized(this) {
@@ -244,6 +263,18 @@ private var qzxyRepository: QzxyRepository? = null
                 QiekjTokenStore(context.applicationContext),
                 QiekjOrderHistoryStore(context.applicationContext),
             ).also { qiekjRepository = it }
+        }
+
+    /**
+     * 快趣出行会话单例（DESIGN §4.32）。与胖乖/趣智同为第三方的独立会话：
+     * token 仅内存、凭证落加密 prefs（secure_kqcx.xml，已排除备份）。
+     */
+    fun kqcx(context: Context): KqcxSessionRepository =
+        kqcxSession ?: synchronized(this) {
+            kqcxSession ?: KqcxSessionRepository(
+                KqcxAuthClient.create(),
+                KqxCredentialStore(context.applicationContext),
+            ).also { kqcxSession = it }
         }
 
     /**
@@ -362,6 +393,15 @@ private var qzxyRepository: QzxyRepository? = null
     fun kqcxBikeClient(context: Context): KqcxBikeClient =
         kqcxBikeClient ?: synchronized(this) {
             kqcxBikeClient ?: KqcxBikeClient.create().also { kqcxBikeClient = it }
+        }
+
+    /**
+     * 还车点 / 禁停区图层的落盘缓存单例（DESIGN §3.9，2026-09-28）：地图页读写、
+     * 「地图缓存」卡统计与清除（`EbikeMapCache`）共用一份，避免两份实例各写各的。
+     */
+    fun zoneCacheStore(context: Context): ZoneCacheStore =
+        zoneCacheStore ?: synchronized(this) {
+            zoneCacheStore ?: ZoneCacheStore(context.applicationContext).also { zoneCacheStore = it }
         }
 
     /**

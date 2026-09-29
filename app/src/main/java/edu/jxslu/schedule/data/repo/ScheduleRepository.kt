@@ -22,6 +22,7 @@ import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
+import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.ScheduleBackground
@@ -399,6 +400,8 @@ class ScheduleRepository(
         val cardEnabled: Boolean,
         val autoSave: Boolean,
         val recentIds: List<String>,
+        /** 使用方式（§3.9 / §4.32）：小程序方式 / 账号登录，能力的唯一判据。 */
+        val useMode: EbikeUseMode,
     )
 
     /** 页面外壳类偏好的收拢切片：底栏形态（§4.22）、今日页抽屉（§3.3）、生活页与启动页（§3.13/§3.3）。 */
@@ -469,6 +472,7 @@ class ScheduleRepository(
             prefs.ebikeCardEnabled,
             prefs.ebikeAutoSave,
             prefs.ebikeRecentIds,
+            prefs.ebikeUseMode,
             ::EbikePrefs,
         ),
         prefs.campusCardEnabled,
@@ -495,6 +499,7 @@ class ScheduleRepository(
             ebikeCardEnabled = ebike.cardEnabled,
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
+            ebikeUseMode = ebike.useMode,
             campusCardEnabled = campusCard,
             floatingNavBar = shell.floatingNavBar,
             todayDockExpanded = shell.todayDockExpanded,

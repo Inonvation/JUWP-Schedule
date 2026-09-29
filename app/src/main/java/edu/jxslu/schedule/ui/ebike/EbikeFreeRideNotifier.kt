@@ -80,7 +80,9 @@ internal object EbikeFreeRideNotifier {
                         EbikeFreeRide.NotificationIds.COUNTDOWN_CHANNEL,
                         "免费时长倒计时",
                         NotificationManager.IMPORTANCE_LOW,
-                    ).apply { description = "扫码开车后在通知栏常驻显示免费剩余时间" },
+                    // 文案与使用方式无关：小程序方式是点「打开微信扫一扫」起计时，
+                    // 账号方式是开锁成功起计时（DESIGN §3.9 / §4.32）
+                    ).apply { description = "骑行开始后在通知栏常驻显示免费剩余时间" },
                 )
             }
             if (manager.getNotificationChannel(EbikeFreeRide.NotificationIds.ALERT_CHANNEL) == null) {

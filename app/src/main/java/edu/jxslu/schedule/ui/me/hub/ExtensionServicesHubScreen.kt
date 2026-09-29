@@ -25,14 +25,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.xg.XgForm
 import edu.jxslu.schedule.data.xg.XgUrls
+import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.ClipboardList
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Repair
+import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
 
 /**
@@ -57,6 +61,8 @@ fun ExtensionServicesHubScreen(
     onOpenWater: () -> Unit,
     /** 趣智校园开热水（DESIGN §4.30）。登录 / 余额 / 账单都在这一页。 */
     onOpenQzxy: () -> Unit,
+    /** 快趣出行（DESIGN §4.32）。登录 + 骑行状态只读查询，A 档不碰开车还车。 */
+    onOpenKvcx: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
     val context = LocalContext.current
@@ -65,6 +71,17 @@ fun ExtensionServicesHubScreen(
         .collectAsStateWithLifecycle()
     val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
         .collectAsStateWithLifecycle()
+    val kvcxLoggedIn by remember { Graph.kqcx(context).loggedIn }
+        .collectAsStateWithLifecycle()
+    // 使用方式（DESIGN §3.9 / §4.32）：**快趣出行账号入口只属于账号登录方式**——
+    // 小程序方式不碰快趣账号，入口留着就是它用不到的功能（切回去入口自然回来）。
+    // 初值阻塞读一次（同 MeViewModel.initialPrefs 模式）：入口行不该先冒出来再消失
+    val ebikePrefs = remember(context) { Graph.displayPrefs(context) }
+    val ebikeUseMode by ebikePrefs.ebikeUseMode.collectAsStateWithLifecycle(
+        initialValue = remember { runBlocking { ebikePrefs.ebikeUseMode.first() } },
+    )
+    // 能力矩阵（DESIGN §3.9）：账号入口只属于 App 内用车那一档
+    val kvcxAccountMode = ebikeUseMode.capabilities().inAppRide
 
     Scaffold(
         topBar = {
@@ -126,6 +143,18 @@ fun ExtensionServicesHubScreen(
                     value = if (qzxyLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenQzxy,
                 )
+                // 快趣出行账号页：只在「账号登录」使用方式下出现（见上）。
+                // 小程序方式要改使用方式，去「快趣出行码」页的「使用方式」卡
+                if (kvcxAccountMode) {
+                    SettingItem(
+                        title = "快趣出行",
+                        subtitle = "账号 · 骑行状态（开锁 / 还车在「快趣出行码」页）",
+                        // 电单车：与今日页快趣卡同图标（DESIGN §3.9）
+                        icon = HugeIcons.ScooterElectric,
+                        value = if (kvcxLoggedIn) "已登录" else "点击登录",
+                        onClick = onOpenKvcx,
+                    )
+                }
             }
         }
     }

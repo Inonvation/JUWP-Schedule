@@ -3,12 +3,16 @@ package edu.jxslu.schedule.ui.ebike
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -33,9 +37,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,8 +54,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,15 +83,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.BikeCluster
 import edu.jxslu.schedule.domain.BikeNearby
+import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.NearbyBike
+import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
@@ -103,6 +116,7 @@ import me.rerere.hugeicons.stroke.ChevronDown
 import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.Crosshair
 import me.rerere.hugeicons.stroke.MapsLocation02
+import me.rerere.hugeicons.stroke.Navigation01
 import me.rerere.hugeicons.stroke.Refresh
 import me.rerere.hugeicons.stroke.ScooterElectric
 import java.time.Instant
@@ -147,12 +161,75 @@ fun BikeMapScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 本机用车（DESIGN §4.32）：与出码页共用 KvcxRideController——地图上能直接开锁、
+    // 锁车、还车，也把「当前用车」画在地图上（官方小程序同款能力）。
+    // **只在账号登录方式下露出**（2026-09-29）：小程序方式的地图只查车与图层，
+    // 车行不出现「开锁」、地图上没有「当前用车」卡与标记，见 [EbikeUseMode]
+    val kvcx by viewModel.kvcx.state.collectAsStateWithLifecycle()
+    val kvcxLoggedIn by viewModel.kvcx.loggedIn.collectAsStateWithLifecycle()
+    val useMode by viewModel.useMode.collectAsStateWithLifecycle()
+    // 能力矩阵（DESIGN §3.9，唯一判据见 EbikeCapabilities）：地图上的用车入口只在
+    // App 内用车那一档出现
+    val caps = useMode.capabilities(loggedIn = kvcxLoggedIn, hasRide = kvcx.ride != null)
+    // 一处收口：小程序方式下不认内存里残留的快趣订单，下面所有用车 UI 只看这个 ride
+    val ride = if (caps.inAppRide) kvcx.ride else null
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     val semantic = MaterialTheme.semanticColors
     val haptics = rememberAppHaptics()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+
+    // 用车动作的结果提示（开锁成功/失败、还车结算等）走页面 Snackbar
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is BikeMapEvent.Notice -> snackbar.showSnackbar(
+                    AppNoticeVisuals(event.text, tone = event.tone),
+                )
+                // 开锁成功：补一次成功触感（与出码页同口径）
+                BikeMapEvent.Unlocked -> haptics.success()
+            }
+        }
+    }
+
+    // 进页查一次骑行状态（仅账号登录方式、失败静默）：地图上要能看见「当前用车」。
+    // **不轮询**——后续只由手动刷新与动作完成驱动。
+    LaunchedEffect(Unit) { viewModel.queryRideQuietly() }
+
+    // 本机用车确认弹窗（动作 + 车号）：写操作一律二次确认，文案与出码页共用一份
+    var kvcxPending by remember { mutableStateOf<Pair<KvcxAction, String>?>(null) }
+    // 写操作要定位（快趣按位置校验）：未授权先申请，授权后用户再点一次（与出码页同口径）
+    val kvcxPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ ->
+        if (!BikeLocator.hasPermission(context)) {
+            scope.launch {
+                snackbar.showSnackbar(
+                    AppNoticeVisuals("没有定位权限，快趣无法校验位置", tone = NoticeTone.Warning),
+                )
+            }
+        }
+    }
+    val requestKvcxAction: (KvcxAction, String) -> Unit = { action, carNum ->
+        haptics.tap()
+        if (!BikeLocator.hasPermission(context)) {
+            kvcxPermissionLauncher.launch(AppPermissions.location.toTypedArray())
+            scope.launch {
+                snackbar.showSnackbar(
+                    AppNoticeVisuals("本机用车需要定位权限（快趣按位置校验）", tone = NoticeTone.Warning),
+                )
+            }
+        } else if (action == KvcxAction.LOCK) {
+            // 临时锁车免二次确认（与出码页同口径，2026-09-28 用户拍板）
+            viewModel.kvcx.tempLock()
+        } else if (action == KvcxAction.RESUME) {
+            // 解锁继续骑同理免确认（本来就在计费中）
+            viewModel.kvcx.resumeRide()
+        } else {
+            kvcxPending = action to carNum
+        }
+    }
 
     /**
      * 一条带「去设置」动作的警告提示。
@@ -194,8 +271,26 @@ fun BikeMapScreen(
             // 直接用浅蓝（材质蓝 300）配更深一档的蓝描边；品牌深青不往地图上套。
             fenceStroke = Color(0xFF3D8BEF).copy(alpha = 0.85f).toArgb(),
             fenceFill = Color(0xFF64B5F6).copy(alpha = 0.30f).toArgb(),
+            rideMarker = scheme.primary.toArgb(),
+            rideHalo = scheme.primary.copy(alpha = 0.22f).toArgb(),
+            rideGlyph = scheme.onPrimary.toArgb(),
+            // 还车点 / 禁停区图层：色相逐字对齐官方小程序（#333333 / #D7535D），
+            // 只有透明度压淡了一档——官方那个 67% 填充会把底图与车标一起吃掉
+            nogoStroke = Color(0xFF333333).copy(alpha = 0.45f).toArgb(),
+            nogoFill = Color(0xFF333333).copy(alpha = 0.22f).toArgb(),
+            spotStroke = Color(0xFFD7535D).copy(alpha = 0.9f).toArgb(),
+            spotFill = Color(0xFFD7535D).copy(alpha = 0.26f).toArgb(),
+            spotBadge = Color(0xFFD7535D).toArgb(),
+            spotGlyph = Color(0xFFFFFFFF).toArgb(),
         )
     }
+
+    // 「我的车」标记的坐标口径（2026-09-28）：**未锁 = 正在骑**，车就在你身边——服务端
+    // 坐标是拉取那一刻的快照，骑出去几百米后标记还杵在原地，看着像"我的车丢了"；
+    // 已锁（或锁状态未知）= 车停在某处，用车位坐标。没有自己的定位时一律退回车位坐标。
+    val rideFollowsUser = ride?.locked == false && state.userLat != null && state.userLng != null
+    val rideMarkerLat = if (rideFollowsUser) state.userLat else ride?.lat
+    val rideMarkerLng = if (rideFollowsUser) state.userLng else ride?.lng
 
     val prefs = remember { Graph.displayPrefs(context) }
 
@@ -263,11 +358,22 @@ fun BikeMapScreen(
         }
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // 回到页面时补查一次骑行状态：在别处（出码页 / 微信）开的车或还的车，回来时地图上的
+    // 「当前用车」不能还是旧值。一次性查询，不是轮询；小程序方式下 VM 会直接跳过
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.queryRideQuietly()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // 蓝点实时更新（DESIGN §3.9）：页面可见期间挂平台定位流，只挪蓝点与「距你」距离，
     // 不移镜头也不重查接口（那是「定位」按钮那次一次性定位与用户动作的职责）。
     // 失败静默：看得见的失败提示都长在一次性定位那条路上。
     // 退到后台 repeatOnLifecycle 会取消收集、注销系统定位监听，不在后台耗电。
-    val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, locationGranted) {
         if (!locationGranted) return@LaunchedEffect
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -327,16 +433,72 @@ fun BikeMapScreen(
                         selectedKey = state.expandedKey,
                         userLat = state.userLat,
                         userLng = state.userLng,
+                        rideLat = rideMarkerLat,
+                        rideLng = rideMarkerLng,
+                        zones = state.zones,
                         colors = markerColors,
                         camera = state.camera,
-                        onCenterChanged = viewModel::onCenterChanged,
+                        onCenterSettled = viewModel::onMapSettled,
                         onClusterTap = { key ->
                             haptics.tap()
                             viewModel.onClusterTap(key)
                         },
+                        onRideTap = {
+                            haptics.tap()
+                            rideMarkerLat?.let { lat ->
+                                rideMarkerLng?.let { lng -> viewModel.onFocusPoint(lat, lng) }
+                            }
+                        },
                         onCameraApplied = viewModel::onCameraApplied,
                         modifier = Modifier.fillMaxSize(),
                     )
+
+                    // 当前用车卡：浮在地图下沿（面板之上），出现/消失走「上滑 + 淡入」。
+                    // 用 AnimatedContent（普通函数）而不是 AnimatedVisibility：这里同时具备
+                    // BoxScope 与 ColumnScope，两个作用域版本的 AnimatedVisibility 会撞解析
+                    AnimatedContent(
+                        targetState = ride,
+                        transitionSpec = {
+                            (fadeIn() + slideInVertically { it / 2 }) togetherWith
+                                (fadeOut() + slideOutVertically { it / 2 })
+                        },
+                        contentAlignment = Alignment.BottomCenter,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        label = "rideCard",
+                    ) { current -> current?.let {
+                            MapRideCard(
+                                ride = current,
+                                fetchedAt = kvcx.fetchedAt,
+                                busy = kvcx.busy,
+                                unlockPending = kvcx.unlockPending,
+                                followsUser = rideFollowsUser,
+                                onFocus = {
+                                    haptics.tap()
+                                    rideMarkerLat?.let { lat ->
+                                        rideMarkerLng?.let { lng -> viewModel.onFocusPoint(lat, lng) }
+                                    }
+                                },
+                                onRefresh = {
+                                    haptics.tap()
+                                    viewModel.refreshRide()
+                                },
+                                onTempLock = {
+                                    requestKvcxAction(KvcxAction.LOCK, current.carNum)
+                                },
+                                onResume = {
+                                    requestKvcxAction(KvcxAction.RESUME, current.carNum)
+                                },
+                                onReturn = {
+                                    requestKvcxAction(KvcxAction.RETURN, current.carNum)
+                                },
+                                onRetryUnlock = {
+                                    requestKvcxAction(KvcxAction.RETRY_UNLOCK, current.carNum)
+                                },
+                            )
+                        }
+                    }
 
                     Column(
                         modifier = Modifier
@@ -410,7 +572,218 @@ fun BikeMapScreen(
                         // 同上：BikeRow 是 AppCardRow，触感由卡片内部给
                         onPicked(carNum)
                     },
+                    // 账号登录方式且已登录才给「开锁」；已有进行中订单时禁用
+                    // （仓库层还有在案订单闸兜底）。小程序方式的车行只有「出码」
+                    canUnlock = caps.directUnlock,
+                    unlockEnabled = ride == null && kvcx.busy == null,
+                    onUnlock = { carNum -> requestKvcxAction(KvcxAction.UNLOCK, carNum) },
                 )
+            }
+        }
+    }
+
+    // 还车结果卡（与出码页同一张，共用 KvcxReturnDialog）；欠费时给「去微信结清」出路。
+    // 只在账号方式下出现（小程序方式没有本机还车这个动作）
+    if (caps.inAppRide) {
+        kvcx.returnSummary?.let { summary ->
+            KvcxReturnDialog(
+                summary = summary,
+                onDismiss = { viewModel.kvcx.dismissReturnSummary() },
+                onSettle = {
+                    haptics.tap()
+                    openWechatForSettle(context) { message ->
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                AppNoticeVisuals(message, tone = NoticeTone.Info),
+                            )
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    // 本机用车确认（DESIGN §4.32）：与出码页**同一套文案与四道闸**（kvcxConfirmDialog）。
+    // 地图上开车/还车只是入口不同，责任边界一模一样
+    kvcxPending?.let { (action, carNum) ->
+        val dialog = kvcxConfirmDialog(action, "车 $carNum") ?: return@let
+        AlertDialog(
+            onDismissRequest = { kvcxPending = null },
+            title = { Text(dialog.first) },
+            text = { Text(dialog.second) },
+            confirmButton = {
+                TextButton(onClick = {
+                    kvcxPending = null
+                    haptics.tap()
+                    when (action) {
+                        KvcxAction.UNLOCK -> viewModel.kvcx.unlock(carNum)
+                        KvcxAction.RETRY_UNLOCK -> viewModel.kvcx.retryUnlock()
+                        KvcxAction.RESUME -> viewModel.kvcx.resumeRide()
+                        KvcxAction.LOCK -> viewModel.kvcx.tempLock()
+                        KvcxAction.RETURN -> viewModel.kvcx.returnBike()
+                    }
+                }) {
+                    Text(
+                        text = dialog.third,
+                        color = if (action == KvcxAction.RETURN) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { kvcxPending = null }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+}
+
+/**
+ * 地图上的「当前用车」卡（DESIGN §3.9 / §4.32，2026-09-28）：开着车也能在地图上直接
+ * 锁车 / 还车——官方小程序同款能力，旧版这张卡只能回出码页才有。
+ *
+ * 位置与出码页的骑行卡同源（[KvcxRideController]）；这里换成浮动在地图下沿的紧凑形态：
+ * 车号 + 锁状态 + 已骑（本地走时）+ 费用 + 位置更新时间 + 两个动作。
+ */
+@Composable
+private fun MapRideCard(
+    ride: KqcxAuth.Ride,
+    fetchedAt: Long,
+    busy: KvcxAction?,
+    unlockPending: Boolean,
+    /** 标记是否并到了用户位置（未锁 = 正在骑）：说明文案跟着换。 */
+    followsUser: Boolean,
+    onFocus: () -> Unit,
+    onRefresh: () -> Unit,
+    onTempLock: () -> Unit,
+    onResume: () -> Unit,
+    onReturn: () -> Unit,
+    onRetryUnlock: () -> Unit,
+) {
+    val elapsed = rememberRideElapsed(ride, fetchedAt)
+    AppCard(
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Icon(
+                HugeIcons.ScooterElectric,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                text = "车 ${ride.carNum}",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            ride.locked?.let { locked ->
+                Text(
+                    text = if (locked) "已锁" else "未锁",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(
+                onClick = onFocus,
+                enabled = busy == null,
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    HugeIcons.Navigation01,
+                    contentDescription = "在地图上定位到车",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            IconButton(
+                onClick = onRefresh,
+                enabled = busy == null,
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    HugeIcons.Refresh,
+                    contentDescription = "刷新骑行状态",
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "已骑 ${elapsed ?: "--"}",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = "tnum",
+                ),
+            )
+            ride.payMoneyCents?.takeIf { it > 0 }?.let { cents ->
+                Text(
+                    text = "¥%.2f".format(cents / 100.0),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            // 电量（0~100 才显示，与出码页骑行卡同口径）
+            ride.batteryPercent?.takeIf { it in 1..100 }?.let { percent ->
+                Text(
+                    text = "电量 $percent%",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            // 位置是**拉取那一刻**的快照（不轮询）：写出来它有多新，别让用户以为车就在这；
+            // 未锁时标记并到蓝点，说明也随之换成"随你"（不是车位坐标）
+            Text(
+                text = if (followsUser) "未锁 · 标记随你" else "位置 ${clockText(fetchedAt)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            when {
+                unlockPending -> OutlinedButton(
+                    onClick = onRetryUnlock,
+                    enabled = busy == null,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (busy == KvcxAction.RETRY_UNLOCK) "重试中…" else "重试开锁")
+                }
+                // 本机锁的车要能在本机解锁（与出码页同口径）
+                ride.locked == true -> OutlinedButton(
+                    onClick = onResume,
+                    enabled = busy == null,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (busy == KvcxAction.RESUME) "解锁中…" else "解锁继续骑")
+                }
+                else -> OutlinedButton(
+                    onClick = onTempLock,
+                    enabled = busy == null,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (busy == KvcxAction.LOCK) "锁车中…" else "临时锁车")
+                }
+            }
+            Button(
+                onClick = onReturn,
+                enabled = busy == null,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (busy == KvcxAction.RETURN) "还车中…" else "还车")
             }
         }
     }
@@ -485,6 +858,9 @@ private fun BikePanel(
     onResetToCampus: () -> Unit,
     onClusterTap: (String) -> Unit,
     onPick: (String) -> Unit,
+    canUnlock: Boolean,
+    unlockEnabled: Boolean,
+    onUnlock: (String) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     // 每 15 秒重算一次"现在"，用来把更新时间从新鲜翻成可能过期
@@ -624,14 +1000,19 @@ private fun BikePanel(
                         distanceFromUser = state.distanceFromUser,
                         onClick = { onClusterTap(cluster.key) },
                         onPick = onPick,
+                        canUnlock = canUnlock,
+                        unlockEnabled = unlockEnabled,
+                        onUnlock = onUnlock,
+                        // 刷新后新数据进来时卡片平滑落位，而不是整列跳一下
+                        modifier = Modifier.animateItem(),
                     )
                 }
             }
         }
 
         Text(
-            text = "地图车辆数据来自共享电单车运营方接口，可能延迟或不准，" +
-                "实际可用情况以小程序为准。",
+            text = "地图车辆数据来自共享电单车运营方接口，可能延迟或不准，实际可用情况以小程序为准。" +
+                "红色「P」与红框是还车点、灰块是禁停区（同样来自运营方接口，会滞后）。",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurface.copy(alpha = 0.45f),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
@@ -652,9 +1033,13 @@ private fun ClusterCard(
     distanceFromUser: Boolean,
     onClick: () -> Unit,
     onPick: (String) -> Unit,
+    canUnlock: Boolean,
+    unlockEnabled: Boolean,
+    onUnlock: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         AppCard(
@@ -712,7 +1097,13 @@ private fun ClusterCard(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 cluster.bikes.forEach { bike ->
-                    BikeRow(bike = bike, onClick = { onPick(bike.carNum) })
+                    BikeRow(
+                        bike = bike,
+                        canUnlock = canUnlock,
+                        unlockEnabled = unlockEnabled,
+                        onClick = { onPick(bike.carNum) },
+                        onUnlock = { onUnlock(bike.carNum) },
+                    )
                 }
             }
         }
@@ -721,7 +1112,13 @@ private fun ClusterCard(
 
 
 @Composable
-private fun BikeRow(bike: NearbyBike, onClick: () -> Unit) {
+private fun BikeRow(
+    bike: NearbyBike,
+    canUnlock: Boolean,
+    unlockEnabled: Boolean,
+    onClick: () -> Unit,
+    onUnlock: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     val lowBadge = bike.batteryLowBadge
     AppCardRow(
@@ -765,12 +1162,20 @@ private fun BikeRow(bike: NearbyBike, onClick: () -> Unit) {
             style = MaterialTheme.typography.labelSmall,
             color = scheme.onSurface.copy(alpha = 0.6f),
         )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = "出码",
-            style = MaterialTheme.typography.labelLarge,
-            color = scheme.primary,
-        )
+        // 两个动作都是显式按钮：整行点击仍然 = 出码（老习惯不变），
+        // 「开锁」只在登录快趣后出现——它是写操作，有计费后果
+        TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 12.dp)) {
+            Text("出码")
+        }
+        if (canUnlock) {
+            FilledTonalButton(
+                onClick = onUnlock,
+                enabled = unlockEnabled,
+                contentPadding = PaddingValues(horizontal = 12.dp),
+            ) {
+                Text("开锁")
+            }
+        }
     }
 }
 
@@ -871,9 +1276,16 @@ private fun PanelDragHandle(onResize: (Float) -> Unit, onResizeFinished: () -> U
     }
 }
 
-/** 摘要行下方那句状态：刷新中 / 更新于几点 / 还没拿到数据。 */
+/**
+ * 摘要行下方那句状态：刷新中 / 更新于几点（补全中） / 还没拿到数据。
+ *
+ * 2026-09-28 拆分：**中心结果落地就不再是"刷新中"**（拖动换地方时等待感主要来自那个圈），
+ * 周围的撒点还在飞时只挂一句「正在补全周围…」——它只影响列表的完整度，不影响已看到的车。
+ */
 private fun subtitleText(state: BikeMapUiState): String = when {
     state.loading && state.queried -> "刷新中…"
+    state.completing && state.updatedAtMillis > 0 ->
+        "更新于 ${clockText(state.updatedAtMillis)} · 正在补全周围…"
     state.updatedAtMillis > 0 -> "更新于 ${clockText(state.updatedAtMillis)}"
     state.queried -> "尚未获取到数据"
     else -> "正在获取…"
@@ -889,5 +1301,3 @@ private fun clusterStatusText(cluster: BikeCluster): String {
     }
 }
 
-private fun clockText(millis: Long): String =
-    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalTime().format(CLOCK_FORMAT)

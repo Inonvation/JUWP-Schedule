@@ -1,13 +1,17 @@
 package edu.jxslu.schedule.ui.ebike
 
 import android.content.Context
+import android.graphics.Canvas
 import android.os.SystemClock
+import android.view.MotionEvent
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.layout.onSizeChanged
@@ -15,9 +19,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.domain.BikeCluster
 import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.GcjPoint
+import edu.jxslu.schedule.domain.KvcxZones
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapListener
 import org.osmdroid.events.ScrollEvent
@@ -27,6 +37,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Overlay
 import java.io.File
 
 /**
@@ -84,8 +95,11 @@ private var osmdroidConfigured = false
  *    600 MiB、回收目标 500 MiB（拆包确认，见 [TILE_CACHE_MAX_BYTES]），校园尺度
  *    用不到这么多，手机存储却被一直占着。缓存目录在 `cacheDir`，系统清理时机
  *    不可控，自己压到几十兆更实在。
+ *
+ * `internal` 而不是 private：`EbikeMapCache`（「地图缓存」卡的统计与清除）要在
+ * 不打开地图的情况下也拿到同一份缓存目录，**别在别处另抄一份路径**。
  */
-private fun ensureOsmdroidConfiguration(context: Context) {
+internal fun ensureOsmdroidConfiguration(context: Context) {
     if (osmdroidConfigured) return
     osmdroidConfigured = true
     val config = Configuration.getInstance()
@@ -99,7 +113,11 @@ private fun ensureOsmdroidConfiguration(context: Context) {
     config.osmdroidBasePath = base
     config.osmdroidTileCache = tiles
     config.userAgentValue = context.packageName
-    config.setTileDownloadThreads(4.toShort())
+    // 瓦片下载线程：osmdroid 默认 2（`DefaultConfigurationProvider` 构造里 `bipush 2`，拆包确认），
+    // 2026-09-27 抬到 4，2026-09-28 再抬到 8——把视图拖到没缓存过的地方时，一屏十几块瓦片
+    // 是"地图看起来半天不出来"的主要来源（实测单块 ~0.15s，并行发一批就下完）；
+    // 8 与 osmdroid 自己的文件系统线程默认值同档，对 CDN 也算客气。
+    config.setTileDownloadThreads(8.toShort())
     config.expirationOverrideDuration = TILE_EXPIRATION_MS
     config.tileFileSystemCacheMaxBytes = TILE_CACHE_MAX_BYTES
     config.tileFileSystemCacheTrimBytes = TILE_CACHE_TRIM_BYTES
@@ -129,6 +147,9 @@ private const val TILE_CACHE_TRIM_BYTES = 50L * 1024 * 1024
  * @param camera 待执行的镜头移动（定位 / 回到校区）；按 `nonce` 触发，连点同一个坐标也生效。
  * @param onCameraApplied 镜头移动执行完的回调；调用方据此把请求清掉，别让它被重放。
  * @param userLat / userLng 已取到的用户位置（GCJ-02），画成蓝点；null 不画。
+ * @param rideLat / rideLng 当前用车的车位置（GCJ-02，与瓦片同基准），画成「我的车」标记；null 不画。
+ * @param onRideTap 点中「我的车」标记（把镜头移过去）。
+ * @param zones 还车点 / 禁停区图层（只读；空 = 不画）。「P」**不接点击**（只作信息展示）。
  */
 @Composable
 internal fun OsmMapView(
@@ -136,22 +157,39 @@ internal fun OsmMapView(
     selectedKey: String?,
     userLat: Double?,
     userLng: Double?,
+    rideLat: Double?,
+    rideLng: Double?,
     colors: BikeMarkerColors,
     camera: CameraRequest?,
-    onCenterChanged: (Double, Double, Double) -> Unit,
+    /**
+     * 地图**停手**后回调一次（中心 + 缩放）：用户拖完/滑停才通知，滑行途中一次都不发。
+     *
+     * 判据在 [SettleWatcher]（事件间隔 + `scroller.isFinished`），不在调用方——View 层才知道
+     * 地图是不是还在滑。程序性移动（定位 / 回到校区 / 点分组联动）的事件被 [CameraSuppressor]
+     * 吃掉，走不到这里，那些路径各自安排查询。
+     */
+    onCenterSettled: (Double, Double, Double) -> Unit,
+    zones: KvcxZones,
     onClusterTap: (String) -> Unit,
+    onRideTap: () -> Unit,
     onCameraApplied: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     // 回调每次重组刷新：地图监听器只建一次，闭包捕获旧 lambda 会读到过期状态
-    val centerCallback by rememberUpdatedState(onCenterChanged)
+    val settleCallback by rememberUpdatedState(onCenterSettled)
     val tapCallback by rememberUpdatedState(onClusterTap)
+    val rideTapCallback by rememberUpdatedState(onRideTap)
     val appliedCallback by rememberUpdatedState(onCameraApplied)
 
     // 程序性移动期间吃掉地图中心回调，见 CameraSuppressor。监听器只建一次，
     // 所以要用一个可变持有者，不能靠重组时新建的闭包
     val suppressor = remember { CameraSuppressor() }
+
+    // 「停手」判定（见 SettleWatcher 的注释）：手指状态 + 轮询地图中心，滑行途中不发查询
+    val touchTracker = remember { TouchTracker() }
+    val settleScope = rememberCoroutineScope()
+    val settleWatcher = remember { SettleWatcher(settleScope) { touchTracker.down } }
 
     // 地图视图的实际尺寸。osmdroid 的 setCenter/animateTo 按当前尺寸算滚动量，
     // 尺寸还是 0 的时候算出来的落点是错的——入口那次定位正好撞上这个窗口
@@ -182,8 +220,10 @@ internal fun OsmMapView(
                         if (suppressor.shouldSwallow(center.latitude, center.longitude)) {
                             return false
                         }
-                        // 缩放也会触发 onScroll；位移判断统一交给 ViewModel 的 30 米阈值
-                        centerCallback(center.latitude, center.longitude, zoomLevelDouble)
+                        // 每次事件只喂给停手判定；查询由它确认"真的停了"之后再发
+                        settleWatcher.onEvent(this@apply) { lat, lng, zoom ->
+                            settleCallback(lat, lng, zoom)
+                        }
                         return false
                     }
 
@@ -192,12 +232,16 @@ internal fun OsmMapView(
                         if (suppressor.shouldSwallow(center.latitude, center.longitude)) {
                             return false
                         }
-                        centerCallback(center.latitude, center.longitude, zoomLevelDouble)
+                        settleWatcher.onEvent(this@apply) { lat, lng, zoom ->
+                            settleCallback(lat, lng, zoom)
+                        }
                         return false
                     }
                 },
             )
             overlays.add(overlay)
+            // 只读的手指状态跟踪（不吃事件）：SettleWatcher 靠它区分「手指还按着」与「松手了」
+            overlays.add(touchTracker)
         }
     }
 
@@ -213,7 +257,14 @@ internal fun OsmMapView(
             } else {
                 null
             }
+            overlay.ridePoint = if (rideLat != null && rideLng != null) {
+                GcjPoint(rideLat, rideLng)
+            } else {
+                null
+            }
+            overlay.zones = zones
             overlay.onClusterTap = tapCallback
+            overlay.onRideTap = rideTapCallback
             view.invalidate()
         },
     )
@@ -309,4 +360,90 @@ private class CameraSuppressor {
     private companion object {
         const val SUPPRESS_RADIUS_METERS = BikeNearby.MIN_REQUERY_SHIFT_METERS
     }
+}
+
+/**
+ * 「地图停手」判定（2026-09-29）：**手指松开了** + **地图中心连续 [SETTLE_QUIET_MS] 没动**。
+ *
+ * 两条判据都不是随手挑的，各自补掉一个真机踩到的坑：
+ * 1. **只看事件间隔不行**：惯性滑动（fling）期间地图渲染很重（瓦片 + 几十个标记），帧率可能
+ *    低到 5~10fps，事件间隔超过防抖阈值，于是滑行途中被误判成「停手」——实测一次 swipe
+ *    连发 7 次查询（每次 1 中心 + 8 撒点 + 1 图层），既费流量、又让列表在地图还在滑的时候
+ *    反复重排（观感就是「卡」）。所以这里**直接轮询 `mapView.mapCenter`**：滑行时中心一直在变，
+ *    与事件流密不密无关。
+ * 2. **`scroller.isFinished` 不能用**（同日实测）：拖完之后它**一直是 false**（日志里 44 轮
+ *    都没变过），拿它当硬闸门会永远等下去——一个查询都发不出去。
+ * 3. **手指还按着不算停手**：慢拖时中心可能连着几百毫秒只挪几米，只看「没动」会在拖的过程中
+ *    反复发查询；[TouchTracker] 给出「手指在不在屏幕上」，按住期间一律等。
+ *
+ * 用法：每次未被 [CameraSuppressor] 吃掉的滚动/缩放事件调一次 [onEvent]（它会取消上一次等待）。
+ */
+private class SettleWatcher(
+    private val scope: CoroutineScope,
+    /** 手指是否还按在地图上（[TouchTracker]）。 */
+    private val fingerDown: () -> Boolean,
+) {
+
+    private var job: Job? = null
+
+    fun onEvent(mapView: MapView, onSettled: (Double, Double, Double) -> Unit) {
+        job?.cancel()
+        job = scope.launch {
+            var last = mapView.mapCenter ?: return@launch
+            var rounds = 0
+            while (true) {
+                delay(SETTLE_QUIET_MS)
+                rounds += 1
+                val now = mapView.mapCenter ?: return@launch
+                val moved = BikeNearby.distanceMeters(
+                    last.latitude,
+                    last.longitude,
+                    now.latitude,
+                    now.longitude,
+                )
+                if (fingerDown() || moved >= SETTLE_MOVE_METERS) {
+                    // 还按着 / 还在动（惯性滑动也算）：把基准挪到当前位置，再等一轮
+                    last = now
+                    continue
+                }
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "fire rounds=$rounds center=${now.latitude},${now.longitude}")
+                }
+                onSettled(now.latitude, now.longitude, mapView.zoomLevelDouble)
+                return@launch
+            }
+        }
+    }
+
+    private companion object {
+        /** 轮询间隔，也是「停住」的判定窗口。 */
+        const val SETTLE_QUIET_MS = 120L
+
+        /** 一个轮询周期内中心挪动超过这个距离就算「还在动」（米）。 */
+        const val SETTLE_MOVE_METERS = 5.0
+
+        const val TAG = "BikeMapSettle"
+    }
+}
+
+/**
+ * 手指状态跟踪：`ACTION_DOWN` 到 `ACTION_UP`/`CANCEL` 之间算「按着」。
+ *
+ * 只读不拦（[onTouchEvent] 返回 false），地图照常处理手势；存在的唯一理由是
+ * [SettleWatcher] 需要知道「用户是不是还在拖」，而 osmdroid 的滚动事件给不出这个信息。
+ */
+private class TouchTracker : Overlay() {
+
+    var down = false
+        private set
+
+    override fun onTouchEvent(event: MotionEvent, mapView: MapView): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> down = true
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> down = false
+        }
+        return false
+    }
+
+    override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) = Unit
 }

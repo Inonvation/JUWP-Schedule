@@ -5,11 +5,15 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import edu.jxslu.schedule.BuildConfig
+import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.WechatRentNotice
+import edu.jxslu.schedule.domain.capabilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -27,8 +31,9 @@ import kotlinx.coroutines.launch
  * 真机抓取真实文案把匹配规则钉死（release 一行都不打，支付通知属于用户隐私）。
  *
  * 这个服务由系统在**用户授予「通知使用权」之后**绑定，未授权时根本收不到回调，
- * 所以这里不检查授权状态；开关（`ebikePreciseCountdownEnabled`）与各道闸
- * 都在 [EbikeFreeRideReminder] 的两个入口里。
+ * 所以这里不检查授权状态；开关（`ebikePreciseCountdownEnabled`）、使用方式
+ * （必须是小程序方式，见 [EbikeUseMode]）与各道闸都在这里 / [EbikeFreeRideReminder]
+ * 的入口里。
  */
 class WechatRentListener : NotificationListenerService() {
 
@@ -62,6 +67,11 @@ class WechatRentListener : NotificationListenerService() {
         // onNotificationPosted 在主线程回调，读 DataStore / 起服务都不能在这里做
         scope.launch {
             runCatching {
+                // 使用方式闸（2026-09-29）：这条链路只服务「点打开微信扫一扫」那条路
+                // （校准起点 / 收到完成通知就收计时）。账号登录方式的起点是服务端确认的
+                // 开锁时刻、也不走微信扫一扫，整条链路在那一档没有任何作用——此时
+                // **不读、不处理**用户通知（隐私上也是最稳的一档）。读失败同样按不处理。
+                if (!miniProgramMode()) return@launch
                 if (isCompletion) {
                     EbikeFreeRideReminder.endRideFromNotice(
                         applicationContext,
@@ -76,6 +86,13 @@ class WechatRentListener : NotificationListenerService() {
             }
         }
     }
+
+    /** 当前是否启用微信通知校准（见 [EbikeUseMode] 的能力矩阵）。读不到偏好时不处理：宁漏判不误判。 */
+    private suspend fun miniProgramMode(): Boolean =
+        runCatching {
+            Graph.displayPrefs(applicationContext).ebikeUseMode.first().capabilities()
+                .wechatNoticeCalibration
+        }.getOrDefault(false)
 
     override fun onDestroy() {
         scope.cancel()

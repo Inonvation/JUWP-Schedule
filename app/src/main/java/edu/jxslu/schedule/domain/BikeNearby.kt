@@ -150,14 +150,24 @@ object BikeNearby {
      */
     const val LOW_BATTERY_BADGE_PERCENT = 20.0
 
-    /** 采样环半径（米），见 [samplePoints]。 */
-    const val SAMPLE_RADIUS_METERS = 700.0
+    /**
+     * 采样环半径（米），见 [samplePoints]。
+     *
+     * 2026-09-29 从 700 收到 **450**（用户口径：「稍微减小视图刷新的范围，现在太多了有点卡」）：
+     * 环半径决定"一次刷新能捞回多大一片车"，700 米那圈把 1.4 公里外的车也捞进列表与地图，
+     * 聚合圈多、每帧要画的标记就多（拖动时掉帧），列表也长。
+     * 450 米（配 [MAX_NEARBY_DISTANCE_METERS] 1.2 公里）刚好覆盖校园尺度。
+     */
+    const val SAMPLE_RADIUS_METERS = 450.0
 
     /**
-     * 展示距离上限（米）。多点采样会把两公里外的车也捞回来，
-     * 那些不算"附近"，不进列表。
+     * 展示距离上限（米）。多点采样会把更远的车也捞回来，那些不算"附近"，不进列表。
+     *
+     * 2026-09-29 从 2000 收到 **1200**（与 [SAMPLE_RADIUS_METERS] 一起收，理由同上）：
+     * 校园对角线约 1.4 公里，站在校园中心 1.2 公里内已覆盖全校；再远的车既走不到、
+     * 又白占列表与地图标记。
      */
-    const val MAX_NEARBY_DISTANCE_METERS = 2000
+    const val MAX_NEARBY_DISTANCE_METERS = 1200
 
     /**
      * 运营方停车点名里的错别字 → 校内实际楼名。

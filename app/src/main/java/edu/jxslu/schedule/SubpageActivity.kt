@@ -26,6 +26,7 @@ import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
 import edu.jxslu.schedule.ui.ebike.EbikeQrScreen
 import edu.jxslu.schedule.ui.ebike.BikeMapScreen
+import edu.jxslu.schedule.ui.ebike.KvcxScreen
 import edu.jxslu.schedule.ui.life.PowerBillScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
@@ -115,6 +116,8 @@ enum class SubpageScreen {
     HOMEWORK_DETAIL,
     /** 今日页作业卡/截止提醒 → 作业中心（未完成汇总，DESIGN §3.11） */
     HOMEWORK_TODO,
+    /** 我的 → 校园服务 → 快趣出行（登录 · 骑行状态只读查询，DESIGN §4.32） */
+    KVCX,
 }
 
 /**
@@ -202,6 +205,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.DATA_SETTINGS -> DataSettingsScreen(onBack = onBack)
             SubpageScreen.COURSE_TWEAK -> CourseTweakScreen(onBack = onBack)
             SubpageScreen.WATER -> WaterScreen(onBack = onBack, autoStart = autoStart)
+            SubpageScreen.KVCX -> KvcxScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->
@@ -291,6 +295,7 @@ class SubpageActivity : ComponentActivity() {
                 },
                 onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
                 onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
+                onOpenKvcx = { SubpageActivity.start(this, SubpageScreen.KVCX) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

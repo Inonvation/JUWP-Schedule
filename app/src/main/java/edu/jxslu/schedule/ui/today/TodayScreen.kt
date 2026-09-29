@@ -78,6 +78,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.EbikeFreeRide
+import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
@@ -212,6 +213,10 @@ fun TodayScreen(
         .collectAsStateWithLifecycle(initialValue = 0L)
     val ebikeFreeReminderEnabled by ebikePrefs.ebikeFreeReminderEnabled
         .collectAsStateWithLifecycle(initialValue = false)
+    // 使用方式（DESIGN §3.9 / §4.32）：只影响快趣卡副行的常态文案（两档的开车方式不同），
+    // 卡本身与入口不变
+    val ebikeUseMode by ebikePrefs.ebikeUseMode
+        .collectAsStateWithLifecycle(initialValue = EbikeUseMode.Default)
     val dockExpanded by viewModel.todayDockExpanded.collectAsStateWithLifecycle()
     var showWaterEntrySheet by remember { mutableStateOf(false) }
     // 趣智校园的余额面板（DESIGN §3.18）：与开水面板同形态，入口也是卡片右侧的余额
@@ -314,6 +319,7 @@ fun TodayScreen(
                         onOpenMap = onOpenEbikeMap,
                         rideStartAt = ebikeRideStartAt,
                         freeReminderEnabled = ebikeFreeReminderEnabled,
+                        useMode = ebikeUseMode,
                     )
                 }
             } else {
@@ -1190,6 +1196,8 @@ private fun EbikeCard(
     rideStartAt: Long = 0L,
     /** 免费时长提醒开关；关着时不展示倒计时，与出码页计时条同一口径。 */
     freeReminderEnabled: Boolean = false,
+    /** 使用方式（DESIGN §3.9 / §4.32）：只改副行常态文案——两档的开车方式不一样。 */
+    useMode: EbikeUseMode = EbikeUseMode.Default,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -1217,7 +1225,7 @@ private fun EbikeCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = rideSubtitle(rideStartAt, freeReminderEnabled),
+                text = rideSubtitle(rideStartAt, freeReminderEnabled, useMode),
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
@@ -1236,37 +1244,52 @@ private fun EbikeCard(
     }
 }
 
-/** 快趣卡副行的常态文案。 */
-private const val EBIKE_CARD_SUBTITLE = "微信扫一扫开车"
+/** 快趣卡副行的常态文案：两档的开车方式不同（DESIGN §3.9 / §4.32）。 */
+private fun ebikeCardSubtitle(useMode: EbikeUseMode): String = when (useMode) {
+    EbikeUseMode.MiniProgram -> "微信扫一扫开车"
+    EbikeUseMode.Account -> "本机开锁用车"
+}
 
 /**
  * 快趣卡副行文案（DESIGN §3.9）：免费时长计时中显示「免费剩余 mm:ss」，其余为常态文案。
  *
  * 计时条那条口径照搬出码页（`EbikeQrScreen` 的 `timerActive`）：开关关着时只记起点、
  * 不展示倒计时，两处对同一段计时的说法保持一致。每秒刷一次，切走页面或计时结束
- * （起点被清成 0）就停；到点后落回常态文案。
+ * （起点被清成 0）就停；到点后落回常态文案（文案随使用方式变，见 [ebikeCardSubtitle]）。
  */
 @Composable
-private fun rideSubtitle(rideStartAt: Long, freeReminderEnabled: Boolean): String {
+private fun rideSubtitle(
+    rideStartAt: Long,
+    freeReminderEnabled: Boolean,
+    useMode: EbikeUseMode,
+): String {
+    val idle = ebikeCardSubtitle(useMode)
     val counting = freeReminderEnabled &&
         EbikeFreeRide.isActive(rideStartAt, System.currentTimeMillis())
     val text by produceState(
         initialValue = if (counting) {
             EbikeFreeRide.countdownText(rideStartAt, System.currentTimeMillis())
         } else {
-            EBIKE_CARD_SUBTITLE
+            idle
         },
         key1 = rideStartAt,
         key2 = counting,
+        key3 = idle,
     ) {
-        if (!counting) return@produceState
+        // **key 变化会让 producer 重启，但 `initialValue` 只在首次组合时用一次**：
+        // 不在这里把 value 写成 idle，重启后直接 return 会让 State 一直停在首帧那个字符串
+        // （2026-09-29 真机点验抓到：切换使用方式后副行仍显示「微信扫一扫开车」）。
+        if (!counting) {
+            value = idle
+            return@produceState
+        }
         while (true) {
             val now = System.currentTimeMillis()
             if (!EbikeFreeRide.isActive(rideStartAt, now)) break
             value = EbikeFreeRide.countdownText(rideStartAt, now)
             delay(1_000L)
         }
-        value = EBIKE_CARD_SUBTITLE
+        value = idle
     }
     return text
 }

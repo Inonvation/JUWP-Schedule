@@ -3,25 +3,40 @@ package edu.jxslu.schedule.ui.ebike
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
+import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
+import edu.jxslu.schedule.data.kqcx.KvcxZoneSource
+import edu.jxslu.schedule.data.kqcx.ZoneCacheStore
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.BikeCluster
 import edu.jxslu.schedule.domain.BikeFailure
 import edu.jxslu.schedule.domain.BikeNearby
+import edu.jxslu.schedule.domain.EbikeUseMode
+import edu.jxslu.schedule.domain.KvcxZones
 import edu.jxslu.schedule.domain.NearbyBike
 import edu.jxslu.schedule.domain.NearbyParseResult
+import edu.jxslu.schedule.domain.ZoneCache
+import edu.jxslu.schedule.domain.ZoneCacheEntry
+import edu.jxslu.schedule.domain.capabilities
+import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * 一次「把镜头移过去」的请求。
@@ -37,6 +52,14 @@ data class CameraRequest(
     val nonce: Long,
     val animated: Boolean = true,
 )
+
+/** 地图页的一次性提示（用车动作结果等）；[tone] 决定提示语气。 */
+sealed interface BikeMapEvent {
+    data class Notice(val text: String, val tone: NoticeTone) : BikeMapEvent
+
+    /** 开锁成功：页面补一次成功触感（与出码页同口径）。 */
+    data object Unlocked : BikeMapEvent
+}
 
 /**
  * 附近单车地图页状态（DESIGN §3.9）。
@@ -89,6 +112,18 @@ data class BikeMapUiState(
      * 那只有页面知道，所以 VM 只做「有限且为正」这一道校验。
      */
     val panelHeightDp: Float = DEFAULT_PANEL_HEIGHT_DP,
+    /**
+     * 中心结果已落地、周围的撒点还在飞（2026-09-28 拆分）：**不再算"刷新中"**——
+     * 头部进度圈在中心结果回来时就该收（拖动换地方时等待感主要来自它），
+     * 撒点补全只在副标题挂一句「正在补全周围…」。
+     */
+    val completing: Boolean = false,
+    /**
+     * 还车点 / 禁停区图层（DESIGN §3.9，2026-09-28）：与车辆列表同一次用户动作驱动
+     * （进页 / 拖动停稳 / 刷新 / 定位成功后各拉一次），**不额外轮询**。
+     * 失败保留上一层：图层是装饰，空白比旧值更糟。
+     */
+    val zones: KvcxZones = KvcxZones.EMPTY,
 ) {
     /** 列表里的车辆总数（跨停车点，已按 [onlyOurCampus] 与 [onlyAvailable] 过滤）。 */
     val bikeCount: Int get() = clusters.sumOf { it.bikes.size }
@@ -101,7 +136,12 @@ data class BikeMapUiState(
  * 附近单车地图页（DESIGN §3.9 / §4.23）。
  *
  * 刷新由用户动作驱动，**不做后台轮询**：进页一次、拖动停稳一次、点刷新一次、
- * 定位成功后一次。拖动有 500ms 防抖，且与上次实际请求过的中心点距离不足 30 米就跳过。
+ * 定位成功后一次。拖动由 View 层判定"停手"（`SettleWatcher`：事件安静 + `scroller.isFinished`）
+ * 后回调 [onMapSettled]，再经 [QUERY_CONFIRM_MS] 的合并窗口发出——滑行途中一次都不发；
+ * 与上次实际请求过的中心点距离不足 30 米同样跳过。
+ *
+ * 还车点 / 禁停区图层在用户动作基础上多一层**落盘缓存**（2026-09-28，[ZoneCacheStore]）：
+ * 命中就先摆上、新鲜就不联网，只有「刷新」按钮强制重拉——缓存省的是重复往返，不是替代接口。
  *
  * 一次刷新可能发多个请求（见 [query] / [mergeSamples]）：接口只给"离查询点最近的 20 辆"，
  * 单点查不全。稀疏区域只发 1 个，车多的区域才会加撒一圈采样点。中心点那批先落列表，
@@ -110,10 +150,74 @@ data class BikeMapUiState(
 class BikeMapViewModel(
     private val client: KqcxBikeClient,
     private val prefs: DisplayPrefsStore,
+    /** 快趣会话（DESIGN §4.32）：本机开锁 / 锁车 / 还车与「当前用车」标记都靠它。 */
+    kqcx: KqcxSessionRepository? = null,
+    /** 还车点 / 禁停区图层的数据源（只读；未登录时为 null）。 */
+    private val zoneSource: KvcxZoneSource? = null,
+    /**
+     * 图层的落盘缓存（DESIGN §3.9「停车点缓存」）：命中就先摆上、新鲜就不联网；
+     * 每次成功拉取写回。null = 不缓存（只影响图层，车辆列表照旧）。
+     */
+    private val zoneCache: ZoneCacheStore? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BikeMapUiState())
     val uiState: StateFlow<BikeMapUiState> = _uiState.asStateFlow()
+
+    private val _events = Channel<BikeMapEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+    /**
+     * 本机用车（DESIGN §4.32，与出码页共用同一份编排）：骑行状态与写动作。
+     * 地图页在本页就能开锁、锁车、还车——官方小程序也是在地图上直接操作当前用车。
+     * **只在账号登录方式下使用**，见 [useMode] / [queryRideQuietly]。
+     */
+    val kvcx: KvcxRideController = KvcxRideController(
+        session = kqcx,
+        scope = viewModelScope,
+        onNotice = { text, tone -> _events.trySend(BikeMapEvent.Notice(text, tone)) },
+        onUnlocked = { _events.trySend(BikeMapEvent.Unlocked) },
+    )
+
+    /**
+     * 使用方式（DESIGN §3.9 / §4.32，2026-09-29）：地图上的「开锁」按钮与「当前用车」卡
+     * 只属于账号登录方式，小程序方式只保留查车与图层。
+     *
+     * 初值阻塞读一次（同 `MeViewModel.initialPrefs` 模式）：模式决定首帧露不露出用车入口，
+     * 初值给错会先按另一档画一帧再翻过来——那是看得见的闪。DataStore 读过一次后常驻内存。
+     */
+    val useMode: StateFlow<EbikeUseMode> = prefs.ebikeUseMode.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        runBlocking {
+            runCatching { prefs.ebikeUseMode.first() }.getOrDefault(EbikeUseMode.Default)
+        },
+    )
+
+    /**
+     * 查一次骑行状态（仅账号登录方式）。小程序方式直接不查：地图上根本没有用车入口，
+     * 查了没人看，还要为一次登录态查询打扰第三方接口。
+     *
+     * 读原始流判定（不读 [useMode] 的 StateFlow）——行为判定按仓库既有口径走真值，
+     * 读失败按「不是账号方式」处理（宁可不查，也不拿不准就打扰接口）。
+     */
+    fun queryRideQuietly() {
+        viewModelScope.launch {
+            if (!accountMode()) return@launch
+            kvcx.query(quiet = true)
+        }
+    }
+
+    /** 手动刷新骑行状态（「当前用车」卡上的刷新按钮）：失败给出提示，仍不做自动轮询。 */
+    fun refreshRide() {
+        viewModelScope.launch {
+            if (!accountMode()) return@launch
+            kvcx.query(quiet = false)
+        }
+    }
+
+    private suspend fun accountMode(): Boolean =
+        runCatching { prefs.ebikeUseMode.first().capabilities().inAppRide }.getOrDefault(false)
 
     /** 防抖与查询**必须分两个 Job**，见 [startQuery] 的注释。 */
     private var debounceJob: Job? = null
@@ -126,6 +230,45 @@ class BikeMapViewModel(
      * 都不用重新请求接口。
      */
     private var fetched: List<NearbyBike> = emptyList()
+
+    /**
+     * 最近一次拉到的原始图层（未过滤）：「只看本校」开关变化时从这里重算，
+     * 与车辆列表同一套口径——开关不重新请求接口。
+     */
+    private var fetchedZones: KvcxZones = KvcxZones.EMPTY
+
+    /** 落盘缓存的当前内容（进页读一次；之后每次成功拉取追加，判定见 [ZoneCache]）。 */
+    private var zoneEntries: List<ZoneCacheEntry> = emptyList()
+
+    /** 本次会话是否已经拿到过网络图层：拿到之后缓存只用于"换片区的即时展示"，不再补种。 */
+    private var zonesFromNetwork = false
+
+    /**
+     * 上一次图层请求用的车号上下文（车号 + 它所属校区）。
+     *
+     * `queryZoneList` 的还车点 / 禁停区是**按车号所属校区**出的（2026-09-28 实测：拿本校
+     * 车号、查询点放到 6 公里外，回来的仍是本校那批还车点；换一辆师大车号问同一个点，
+     * 回的是师大校区的点）。所以换校区要换车号重拉——官方就是拿查询点附近那辆车的车号
+     * 当上下文（`loadNearbyElements` 里 `carNum: list[0].name`）。
+     *
+     * 2026-09-29 追加：**这一带没车时继续拿上一次的上下文**，而不是不发请求。接口只需要
+     * "哪个校区"，不需要车真的在旁边；旧规则（没车就不拉）会让"视图落在没车的角落、
+     * 但看得到还车点"的情况下一个「P」都没有（用户报「移到有停车区的地方却刷不出来」）。
+     */
+    private data class ZoneCarContext(val carNum: String, val campusName: String)
+
+    private var lastZoneCar: ZoneCarContext? = null
+
+    /** 图层请求序号：旧响应回来时若已有更新的请求发出，直接作废（别盖掉新区域的图层）。 */
+    private var zoneNonce = 0L
+
+    /** 在飞的图层请求：新的一发就把旧的取消（图层只跟最新中心点）。 */
+    private var zoneJob: Job? = null
+
+    /** 还没有车当上下文时的待发图层请求（只有本次会话第一次会用到）。 */
+    private data class ZonePending(val lat: Double, val lng: Double, val force: Boolean)
+
+    private var pendingZone: ZonePending? = null
     private var fetchedLat: Double? = null
     private var fetchedLng: Double? = null
 
@@ -146,6 +289,12 @@ class BikeMapViewModel(
     private var locatedOnce = false
 
     init {
+        // 图层缓存先读回来（几十 KB 的文件，毫秒级）：进页那一刻就把上次那片还车点摆上，
+        // 命中的话连请求都不发（判定在 domain/ZoneCache）。与下面几条并行，互不依赖
+        viewModelScope.launch {
+            zoneEntries = zoneCache?.load().orEmpty()
+            seedZonesFromCache()
+        }
         // 面板高度与「只看可用」先读回来：首帧就用上用户上次的值，否则进页面会先按
         // 默认值画一帧再跳一下（用户明确说过面板不要跳，筛选同理）
         viewModelScope.launch {
@@ -174,12 +323,15 @@ class BikeMapViewModel(
     }
 
     /**
-     * 地图中心或缩放变了。防抖后视位移决定要不要真的发请求。
+     * 地图**停手**了（View 层判定：事件安静 + `scroller.isFinished`，见 `SettleWatcher`）。
      *
-     * 程序性移动（定位、回到校区、点分组联动）期间地图侧会把回调吃掉，走不到这里，
-     * 所以这里收到的都是用户自己拖出来的。
+     * 拖动 / 惯性滑动期间不会走到这里，所以不需要在这里再等一个防抖窗口；[QUERY_CONFIRM_MS]
+     * 只用来合并"停手信号 + 紧随其后的一两个收尾事件"。
+     *
+     * 程序性移动（定位、回到校区、点分组联动）的事件被镜头静默区吃掉，走不到这里，
+     * 那些路径各自安排查询（[onLocated] / [onResetToCampus] / [onClusterTap]）。
      */
-    fun onCenterChanged(lat: Double, lng: Double, zoom: Double) {
+    fun onMapSettled(lat: Double, lng: Double, zoom: Double) {
         if (!lat.isFinite() || !lng.isFinite()) return
         if (zoom.isFinite() && zoom > 0) pendingZoom = zoom
         pendingLat = lat
@@ -187,9 +339,12 @@ class BikeMapViewModel(
         scheduleQuery(immediate = false)
     }
 
-    /** 刷新按钮：跳过位移判断，问就是重查。 */
+    /**
+     * 刷新按钮：跳过位移判断，问就是重查。**图层也强制重拉**（缓存只替用户动作省请求，
+     * 「刷新」就是用户要看最新的意思）。
+     */
     fun refresh() {
-        scheduleQuery(immediate = true)
+        scheduleQuery(immediate = true, forceZones = true)
     }
 
     /** 取定位期间置位，让按钮有个"在做事"的样子。 */
@@ -271,6 +426,8 @@ class BikeMapViewModel(
         if (_uiState.value.onlyOurCampus == value) return
         _uiState.update { it.copy(onlyOurCampus = value) }
         rebuildClusters()
+        // 图层同吃这一份筛选（还车点按围栏过滤，见 KvcxZones.campusOnly）
+        applyZones()
         viewModelScope.launch { prefs.setEbikeMapOnlyOurCampus(value) }
     }
 
@@ -295,6 +452,16 @@ class BikeMapViewModel(
         if (expanding && cluster != null) {
             pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
         }
+    }
+
+    /**
+     * 把镜头移到某个点（点「当前用车」标记 / 卡片上的「定位到车」）。
+     * 程序性移动，静默窗口会吃掉随之而来的滚动回调，因此**不触发重查**——
+     * 那批车已经取回来了，重查只会让列表当场换一批内容。
+     */
+    fun onFocusPoint(lat: Double, lng: Double) {
+        if (!lat.isFinite() || !lng.isFinite()) return
+        pushCamera(lat, lng, zoom = null, animated = true)
     }
 
     /** 「回到校区」：拉回默认中心并重查。 */
@@ -382,7 +549,7 @@ class BikeMapViewModel(
             fetched
         }
         val shown = anchored
-            // 撒点采样会把两公里外的车也捞回来，那些不算"附近"
+            // 撒点采样会把上限外的车也捞回来，那些不算"附近"
             .filter { it.distanceMeters <= BikeNearby.MAX_NEARBY_DISTANCE_METERS }
             // 只看本校：车队归属 + 围栏双条件（师大校园的车在这里被挡掉）
             .let { list ->
@@ -403,14 +570,21 @@ class BikeMapViewModel(
         }
     }
 
-    private fun scheduleQuery(immediate: Boolean) {
+    /**
+     * [forceZones] = 图层不吃新鲜缓存（只有「刷新」按钮用；「回到校区」是换视野，不是要最新）。
+     *
+     * [immediate] = 跳过等待与 30 米位移闸门（进页 / 定位成功 / 回到校区 / 刷新按钮）。
+     * 拖动走的那条（[onMapSettled]）已经由 View 层确认"地图停了"，这里只留
+     * [QUERY_CONFIRM_MS] 合并收尾事件，再按 30 米闸门判断要不要真发。
+     */
+    private fun scheduleQuery(immediate: Boolean, forceZones: Boolean = false) {
         debounceJob?.cancel()
         debounceJob = viewModelScope.launch {
-            if (!immediate) delay(QUERY_DEBOUNCE_MS)
+            if (!immediate) delay(QUERY_CONFIRM_MS)
             val lat = pendingLat
             val lng = pendingLng
             if (!immediate && !movedEnough(lat, lng)) return@launch
-            startQuery(lat, lng)
+            startQuery(lat, lng, forceZones)
         }
     }
 
@@ -418,12 +592,12 @@ class BikeMapViewModel(
      * 起一次查询。
      *
      * 只取消上一次**查询**，不碰防抖 Job：镜头移动期间地图每一帧都会走
-     * `onCenterChanged`，两者共用一个 Job 的话，刚发出去的请求会被下一帧掐掉，
+     * `onMapSettled`，两者共用一个 Job 的话，刚发出去的请求会被下一帧掐掉，
      * 页面就一直转圈。
      */
-    private fun startQuery(lat: Double, lng: Double) {
+    private fun startQuery(lat: Double, lng: Double, forceZones: Boolean) {
         queryJob?.cancel()
-        queryJob = viewModelScope.launch { query(lat, lng) }
+        queryJob = viewModelScope.launch { query(lat, lng, forceZones) }
     }
 
     /** 与上次**尝试过**的中心点比，位移是否够大。从没查过一律算够。 */
@@ -434,8 +608,11 @@ class BikeMapViewModel(
             BikeNearby.MIN_REQUERY_SHIFT_METERS
     }
 
-    private suspend fun query(lat: Double, lng: Double) {
+    private suspend fun query(lat: Double, lng: Double, forceZones: Boolean) {
         _uiState.update { it.copy(loading = true, failure = null) }
+        // 图层与车辆列表**并行**发（2026-09-28）：它只需要坐标与一个"哪类车"的上下文，
+        // 车号用上一次那批车里的任意一辆即可——旧写法等中心结果回来才发，白多一个往返
+        fetchZones(lat, lng, forceZones)
 
         val centerBikes = try {
             when (val parsed = BikeNearby.parse(client.queryNearbyJson(lat, lng), lat, lng)) {
@@ -460,14 +637,166 @@ class BikeMapViewModel(
         // 中心点先落列表，别等撒点跑完：九次请求里最慢的那个不该压在用户眼前。
         // 撒点还在飞时不摘 loading——头部那枚进度圈就是「还在补全周围」的提示
         val sampling = centerBikes.size >= SAMPLE_PAGE_SIZE
-        applyResult(lat, lng, centerBikes, stillLoading = sampling)
-        // 记视野。写完这一次就够了，不需要在退出时再写一遍
-        prefs.setEbikeMapViewport(lat, lng, pendingZoom)
+        // 中心结果落地即结束"刷新中"：拖动换地方时，用户等的就是这一批（撒点只是补全）
+        applyResult(lat, lng, centerBikes, stillLoading = false)
+        // 记视野。写完这一次就够了，不需要在退出时再写一遍。
+        // 不占关键路径：DataStore 写入是磁盘事务，压在两批请求之间只是白等它
+        val zoomForViewport = pendingZoom
+        viewModelScope.launch { prefs.setEbikeMapViewport(lat, lng, zoomForViewport) }
+        // 没有车当上下文时（本次会话第一次查询）在这里补发一次图层
+        flushPendingZone()
+        // 换校区了（比如从本校拖到隔壁师大）：图层要用这一带的车号重拉，官方同口径
+        reloadZonesForSite(lat, lng, centerBikes)
 
         // 中心点没返回满，说明这一带能查到的就这么多，不用再撒点浪费请求
         if (!sampling) return
+        _uiState.update { it.copy(completing = true) }
         // 采样结果合并后再刷一遍：多出来的远车按距离插进列表，簇与展开态照旧重算
         applyResult(lat, lng, mergeSamples(lat, lng, centerBikes), stillLoading = false)
+        _uiState.update { it.copy(completing = false) }
+    }
+
+    /**
+     * 拉还车点 / 禁停区图层。[fetched] 里挑第一辆车当 `carNum` 上下文——没有车就不发请求
+     * （接口要车号，编一个出来没有意义）。失败静默、保留上一层。
+     *
+     * 2026-09-28 起**先吃落盘缓存**（用户口径：停车点缓存）：命中覆盖当前中心的缓存就
+     * **立即**摆上（不等网络，"P" 与车辆列表同时出现），新鲜的话连请求都不发——图层是
+     * 最不容易变的一层，而旧写法拖动一下就要等一个往返才有 "P"，正是用户报的慢。
+     * 判定全在 [ZoneCache]（纯逻辑、有单测），这里只管编排。
+     */
+    private fun fetchZones(lat: Double, lng: Double, force: Boolean) {
+        val source = zoneSource ?: return
+        val needFetch = applyCachedZones(lat, lng, force)
+        // 这一带有车就用这一带的车号（官方同口径）；没车就用上一次的上下文——
+        // 接口只要"哪个校区"，没车不等于没还车点（见 ZoneCarContext 的注释）
+        val context = zoneContextOf(fetched) ?: lastZoneCar
+        if (context == null) {
+            // 本次会话还没拿到过任何车：先记下这次的中心，等中心结果回来再发
+            if (needFetch) pendingZone = ZonePending(lat, lng, force)
+            return
+        }
+        if (needFetch) launchZoneRequest(source, lat, lng, context)
+    }
+
+    /**
+     * 这一带的图层上下文该用哪辆车。
+     *
+     * **「只看本校」开着时优先本校车**（2026-09-29）：图层是按车号所属校区出的，若这一带
+     * 最近的是隔壁师大（或别的校区）的车，拿它当上下文就会把图层换成那个校区的还车点——
+     * 再经「只看本校」的围栏过滤，本片的「P」会**整片消失**（用户 2026-09-29 报的
+     * 「加载出来又突然消失」就是这个）。开着只看本校时固定用本校车，图层就始终是本校校区的，
+     * 围栏只削掉边缘那一两个点，不会整片空掉。
+     *
+     * 关着时用这一带最近的那辆（官方口径：`carNum: list[0].name`），图层跟着所看区域走。
+     */
+    private fun zoneContextOf(bikes: List<NearbyBike>): ZoneCarContext? {
+        val car = if (_uiState.value.onlyOurCampus) {
+            bikes.firstOrNull { BikeNearby.isOurCampus(it.campusName) }
+        } else {
+            bikes.firstOrNull()
+        }
+        return car?.let { ZoneCarContext(it.carNum, it.campusName) }
+    }
+
+    /**
+     * 缓存命中就立刻把图层摆进状态；返回 true = 还要联网。
+     *
+     * 缓存里有覆盖当前中心的条目、但已过期时不返回 true 也不行——过期就该刷新，
+     * 只是刷新期间用户看的是旧图层而不是空白（[fetchZones] 调用点不阻塞它）。
+     * [force]（用户点了「刷新」）直接要求联网。
+     */
+    private fun applyCachedZones(lat: Double, lng: Double, force: Boolean): Boolean {
+        val cached = ZoneCache.bestCovering(zoneEntries, lat, lng) ?: return true
+        // 在飞的旧请求（更早的中心）回来时不该盖掉刚摆上的缓存：序号往前推一格让它作废，
+        // 顺手取消——那发的数据已经用不上了，别白占一次往返
+        zoneNonce += 1
+        zoneJob?.cancel()
+        fetchedZones = cached.zones
+        applyZones()
+        if (force) return true
+        return !ZoneCache.isFresh(cached, System.currentTimeMillis())
+    }
+
+    /** 缓存读回来 / 补发之前，把覆盖当前中心的图层先摆上（网上还没结果时才摆）。 */
+    private fun seedZonesFromCache() {
+        // 网络结果（哪怕是空图层）已经是"当前的说法"，别拿旧缓存把它盖回去
+        if (zonesFromNetwork || fetchedZones != KvcxZones.EMPTY) return
+        val best = ZoneCache.bestCovering(zoneEntries, pendingLat, pendingLng) ?: return
+        fetchedZones = best.zones
+        applyZones()
+    }
+
+    /** 中心结果落地后补发那次被挂起的图层请求（[pendingZone]）。 */
+    private fun flushPendingZone() {
+        val source = zoneSource ?: return
+        val pending = pendingZone ?: return
+        pendingZone = null
+        val context = zoneContextOf(fetched) ?: lastZoneCar ?: return
+        // 补发前再吃一次缓存：等中心结果这段时间里，缓存可能刚读回来（进页那次）
+        if (applyCachedZones(pending.lat, pending.lng, pending.force)) {
+            launchZoneRequest(source, pending.lat, pending.lng, context)
+        }
+    }
+
+    /**
+     * 新一带的图层上下文与当前那层**不同校区**时，用它重拉一遍（官方同口径）。
+     *
+     * 只在换校区时多发一次：同校区拖动时 [lastZoneCar] 的校区与它一致，直接返回。
+     * 缓存命中（没联网）时也走这里——缓存条目不记校区，跨校区命中旧图层时靠这一步纠正。
+     */
+    private fun reloadZonesForSite(lat: Double, lng: Double, bikes: List<NearbyBike>) {
+        val source = zoneSource ?: return
+        val context = zoneContextOf(bikes) ?: return
+        if (context.campusName == lastZoneCar?.campusName) return
+        launchZoneRequest(source, lat, lng, context)
+    }
+
+    private fun launchZoneRequest(
+        source: KvcxZoneSource,
+        lat: Double,
+        lng: Double,
+        context: ZoneCarContext,
+    ) {
+        val nonce = ++zoneNonce
+        lastZoneCar = context
+        zoneJob?.cancel()
+        zoneJob = viewModelScope.launch {
+            // 取消要原样抛出去（与 `sampleAt` 同一口径）：吞掉它会让取消变成一次"图层失败"
+            val zones = try {
+                source.queryZones(lat, lng, context.carNum)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                null
+            } ?: return@launch
+            // 旧响应作废：拖动期间可能有更新的请求已经发出（各自并发，回来的顺序不保证）
+            if (nonce != zoneNonce) return@launch
+            // **空图层不覆盖上一层**（2026-09-29 用户报「加载出来又突然消失」）：解析失败
+            // （非 JSON / 结构不符）与业务错误码都会回空，拿它盖掉整片「P」是最糟的表现
+            // ——「失败静默保留上一层」的同一口径。真的没有还车点的校区也走这条：旧图层画在
+            // 它自己的坐标上，视野移过去自然看不见，不比整片空白差
+            if (zones.isEmpty) return@launch
+            zonesFromNetwork = true
+            fetchedZones = zones
+            applyZones()
+            // 成功结果写回缓存（只存非空，上面已挡掉空表）
+            zoneEntries = ZoneCache.put(
+                zoneEntries,
+                ZoneCacheEntry(lat, lng, System.currentTimeMillis(), zones),
+            )
+            zoneCache?.save(zoneEntries)
+        }
+    }
+
+    /** 按当前筛选口径把 [fetchedZones] 落进状态（开关变化 / 新数据到达时都走这里）。 */
+    private fun applyZones() {
+        val zones = if (_uiState.value.onlyOurCampus) {
+            fetchedZones.campusOnly(BikeNearby::inCampusFence)
+        } else {
+            fetchedZones
+        }
+        _uiState.update { it.copy(zones = zones) }
     }
 
     /**
@@ -500,7 +829,8 @@ class BikeMapViewModel(
     private fun failQuery(lat: Double, lng: Double, failure: BikeFailure) {
         lastAttemptLat = lat
         lastAttemptLng = lng
-        _uiState.update { it.copy(loading = false, queried = true, failure = failure) }
+        // 中心结果都没拿到：撒点也不会发，把"补全中"一并收掉（否则副标题会挂着）
+        _uiState.update { it.copy(loading = false, queried = true, failure = failure, completing = false) }
     }
 
     /**
@@ -538,8 +868,15 @@ class BikeMapViewModel(
     }
 
     companion object {
-        /** 拖动停稳后才发请求（毫秒）。地图滑动事件很密，不防抖会连发十几次。 */
-        private const val QUERY_DEBOUNCE_MS = 500L
+        /**
+         * 拖动停手后到发请求之间的一小段合并窗口（毫秒）。
+         *
+         * View 层（`SettleWatcher`）已经确认"地图停了"才调 [onMapSettled]，所以这里**不再做
+         * 停手判定**，只用来合并"停手信号 + 紧随其后的收尾事件"：osmdroid 在滑动结束前后会补
+         * 一两个滚动回调，没有这个窗口就会多发一次请求。官方小程序在 drag-end 上是零延迟发，
+         * 我们这 80ms 就是那点差距。
+         */
+        private const val QUERY_CONFIRM_MS = 80L
 
         /** 接口一次返回的封顶条数（2026-09-23 实测）。返回满这个数就认为还有更远的没给。 */
         private const val SAMPLE_PAGE_SIZE = 20
@@ -559,7 +896,16 @@ class BikeMapViewModel(
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            BikeMapViewModel(client, prefs) as T
+            // 快趣会话按 context 现取（Graph 单例）；不可用时用户只是看不到本机用车入口。
+            // 图层缓存同样包在 runCatching 里：它只是"省一个往返"的优化，取不到就不缓存，
+            // 不该把 VM 的创建整个拖崩（旁边那条 kqcx 也是这个口径）
+            BikeMapViewModel(
+                client,
+                prefs,
+                runCatching { Graph.kqcx(Graph.appContext) }.getOrNull(),
+                runCatching { Graph.kqcx(Graph.appContext) }.getOrNull(),
+                runCatching { Graph.zoneCacheStore(Graph.appContext) }.getOrNull(),
+            ) as T
     }
 }
 

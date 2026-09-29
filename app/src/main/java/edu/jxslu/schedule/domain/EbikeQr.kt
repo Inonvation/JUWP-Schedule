@@ -159,6 +159,20 @@ object EbikeQr {
         if (carNum.startsWith(TEMPLATE)) "…" + tailOf(carNum) else carNum
 
     /**
+     * 「生成二维码」按钮的主次（2026-09-28）：**输入与已出码车号不一致、或还没出过码**
+     * → 需要一次生成动作，按钮走主色（filled）；一致 → 只是备着再点一次，走描边。
+     *
+     * 旧版按钮恒为主色，"改了车号但码还是旧的那张"没有任何提示——用户可能拿着旧码去扫。
+     * 顺带把这一隐性状态显性化，不新增任何控件。
+     */
+    fun needsRegenerate(input: String, generatedBikeId: String?): Boolean =
+        generatedBikeId == null || generatedBikeId != resolveCarNum(input)
+
+    /** 最近车号 chip 是否对应当前输入（选中态高亮；空输入返回 false）。 */
+    fun isCurrentInput(input: String, carNum: String): Boolean =
+        input.isNotEmpty() && resolveCarNum(input) == carNum
+
+    /**
      * 生成 QR 位阵。容错取 M（15%，打印/屏幕亮度损失下仍有余量）；
      * 白边 1 模块（zxing 约定：margin 是模块数不是像素，1 已满足扫码器的静区要求，
      * UI 展示时再由外层容器给视觉留白）。

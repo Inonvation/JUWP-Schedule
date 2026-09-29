@@ -122,6 +122,44 @@ class EbikeQrTest {
         assertEquals("300000669", EbikeQr.chipLabel("300000669"))
     }
 
+    // ---- needsRegenerate：生成按钮的主次（2026-09-28） ----
+
+    @Test
+    fun `没出过码时要生成`() {
+        assertTrue(EbikeQr.needsRegenerate("", null))
+        assertTrue(EbikeQr.needsRegenerate("669", null))
+    }
+
+    @Test
+    fun `输入与已出码车号一致时不需要再生成`() {
+        // 尾部输入与完整车号是同一辆车（669 → 100000669）
+        assertFalse(EbikeQr.needsRegenerate("669", "100000669"))
+        assertFalse(EbikeQr.needsRegenerate("100000669", "100000669"))
+    }
+
+    @Test
+    fun `改了车号或码与输入不符都要重新生成`() {
+        assertTrue(EbikeQr.needsRegenerate("512", "100000669"))
+        assertTrue(EbikeQr.needsRegenerate("300000604", "100000669"))
+        // 输入被清空：码还在屏上，但已经不是"当前输入"的码了
+        assertTrue(EbikeQr.needsRegenerate("", "100000669"))
+        // 输入还构不成车号（4 位）：同样算需要重新生成
+        assertTrue(EbikeQr.needsRegenerate("1000", "100000669"))
+    }
+
+    // ---- isCurrentInput：最近 chip 的选中态 ----
+
+    @Test
+    fun `chip 选中态认同一辆车`() {
+        assertTrue(EbikeQr.isCurrentInput("669", "100000669"))
+        assertTrue(EbikeQr.isCurrentInput("100000669", "100000669"))
+        assertFalse(EbikeQr.isCurrentInput("512", "100000669"))
+        // 别的车队尾部相同也不算同一辆
+        assertFalse(EbikeQr.isCurrentInput("100000669", "300000669"))
+        // 空输入没有选中项
+        assertFalse(EbikeQr.isCurrentInput("", "100000669"))
+    }
+
     // ---- qrMatrix：参数与内容 ----
 
     @Test

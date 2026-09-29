@@ -12,6 +12,8 @@ import android.view.MotionEvent
 import edu.jxslu.schedule.domain.BikeCluster
 import edu.jxslu.schedule.domain.BikeStatus
 import edu.jxslu.schedule.domain.GcjPoint
+import edu.jxslu.schedule.domain.KvcxParkSpot
+import edu.jxslu.schedule.domain.KvcxZones
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
@@ -41,6 +43,21 @@ internal data class BikeMarkerColors(
     val fenceStroke: Int,
     /** 校区围栏填充色（更淡的主色）。 */
     val fenceFill: Int,
+    /** 当前用车标记的实心色（主色）。 */
+    val rideMarker: Int,
+    /** 当前用车标记的外晕（半透明主色）。 */
+    val rideHalo: Int,
+    /** 当前用车标记里那辆小车的颜色。 */
+    val rideGlyph: Int,
+    /** 禁停区描边 / 填充（深灰，官方口径 `#333333`，透明度压淡一档）。 */
+    val nogoStroke: Int,
+    val nogoFill: Int,
+    /** 还车点范围描边 / 填充（官方口径 `#D7535D`）。 */
+    val spotStroke: Int,
+    val spotFill: Int,
+    /** 还车点图标：圆角方块底色 + 里面的「P」。 */
+    val spotBadge: Int,
+    val spotGlyph: Int,
 )
 
 /**
@@ -68,6 +85,19 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     /** 已取到的用户位置（GCJ-02）；null = 还没定位过。 */
     var userPoint: GcjPoint? = null
 
+    /**
+     * 当前用车的车位置（GCJ-02，来自 `queryUnderwayOrder`；快趣坐标与地图瓦片同基准，
+     * **不要再过 Gcj02 转换**）；null = 没有进行中的订单。
+     */
+    var ridePoint: GcjPoint? = null
+
+    /**
+     * 还车点 / 禁停区图层（DESIGN §3.9，2026-09-28）；空 = 不画（未登录或还没拉到）。
+     * **「P」只是信息，不接点击**（2026-09-29 用户口径）：它常常和车辆聚合圈压在一起，
+     * 接点击只会挡着"点这辆车"。
+     */
+    var zones: KvcxZones = KvcxZones.EMPTY
+
     /** 配色随主题走。 */
     var colors: BikeMarkerColors = BikeMarkerColors(
         available = Color.DKGRAY,
@@ -81,13 +111,33 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         centerHalo = Color.WHITE,
         fenceStroke = Color.GRAY,
         fenceFill = Color.LTGRAY,
+        rideMarker = Color.DKGRAY,
+        rideHalo = Color.LTGRAY,
+        rideGlyph = Color.WHITE,
+        nogoStroke = Color.DKGRAY,
+        nogoFill = Color.LTGRAY,
+        spotStroke = Color.RED,
+        spotFill = Color.LTGRAY,
+        spotBadge = Color.RED,
+        spotGlyph = Color.WHITE,
     )
 
     /** 点中标记的回调；Compose 侧每次重组刷新，避免闭包捕获旧状态。 */
     var onClusterTap: (String) -> Unit = {}
 
+    /** 点中「当前用车」标记的回调（把镜头移过去）；Compose 侧同样逐次刷新。 */
+    var onRideTap: () -> Unit = {}
+
     /** 命中半径：拇指点得中，又不至于把相邻停车点全吞掉（DESIGN §4.23 定为 24dp）。 */
     private val hitRadiusPx = 24f * density
+
+    /**
+     * 屏幕外剔除的余量（dp）：投影点离画布边比这个还远就不画。
+     *
+     * 48dp 足够盖住标记半径（簇最大 15dp + 描边）与还车点多边形（几十米，z17 下约几十像素），
+     * 又能在拖动时把绝大多数离屏标记挡在绘制之前——地图每帧重画全部标记是「有点卡」的来源之一。
+     */
+    private val cullMarginPx = 48f * density
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
@@ -109,6 +159,14 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
     private val pinFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
+    /** 当前用车标记里的小车 glyph：两轮实心 + 踏板/立管描边。 */
+    private val glyphFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    private val glyphStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
     private val pinPath = Path()
 
     /** 围栏描边：虚线更有「边界」的感觉，实线像在画一块行政区。dash/空 7/4dp，偏密（2026-09-27 真机反馈调密）。 */
@@ -121,14 +179,39 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     /** 围栏路径，每帧按投影重算（缩放时屏幕坐标全变）。 */
     private val fencePath = Path()
 
+    /** 还车点 / 禁停区多边形共用的一条路径（逐个画完就 reset，不跨帧保留）。 */
+    private val zonePath = Path()
+
+    /** 图层描边（实线；围栏那条是虚线，分开两把刷子）。 */
+    private val zoneStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    /** 还车点图标的底色圆角方块。 */
+    private val badgeFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    /** 图标里的「P」：白字 + 一层暗影，压在任何底色上都读得出来。 */
+    private val badgeGlyph = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+        setShadowLayer(1.5f * density, 0f, 0f, 0x99000000.toInt())
+    }
+
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow) return
         val out = Point()
+        val margin = cullMarginPx
         drawFence(canvas, mapView, out)
-        clusters.forEach { cluster ->
+        // 图层压在围栏之上、车辆标记之下（与官方 zIndex：服务区 3 < 禁停 4 < 还车点 5 < 车 6 同序）
+        drawZones(canvas, mapView, out, margin)
+        for (cluster in clusters) {
             mapView.projection.toPixels(GeoPoint(cluster.lat, cluster.lng), out)
             val x = out.x.toFloat()
             val y = out.y.toFloat()
+            // 屏幕外不画（2026-09-29）：拖动时每帧都要重画所有标记，几十个离屏的
+            // drawCircle + drawText 纯属白干，正是「有点卡」的一部分
+            if (canvas.offscreen(x, y, margin)) continue
             val selected = cluster.key == selectedKey
             val radius = (if (selected) 15f else 12f) * density
 
@@ -144,6 +227,22 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
             val count = cluster.bikes.size.toString()
             // 基线 = 圆心下移半点字高，比直接减 descent 稳（不同字体的 descent 差得多）
             canvas.drawText(count, x, y - (label.ascent() + label.descent()) / 2f, label)
+        }
+
+        // 当前用车：画在簇标记之上、蓝点之下——"我的车"比一圈停车点重要，
+        // 但"我在哪"仍要在最上层。样式与簇区分开：更大、主色实心 + 白描边 + 白色小车
+        ridePoint?.let { point ->
+            mapView.projection.toPixels(GeoPoint(point.lat, point.lng), out)
+            val x = out.x.toFloat()
+            val y = out.y.toFloat()
+            fill.color = colors.rideHalo
+            canvas.drawCircle(x, y, 21f * density, fill)
+            fill.color = colors.rideMarker
+            canvas.drawCircle(x, y, 14f * density, fill)
+            ring.strokeWidth = 3f * density
+            ring.color = Color.WHITE
+            canvas.drawCircle(x, y, 14f * density, ring)
+            drawScooterGlyph(canvas, x, y)
         }
 
         // 用户位置最后画，压在所有标记之上。
@@ -167,8 +266,19 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
-        if (clusters.isEmpty()) return false
         val out = Point()
+        // 顺序 = 绘制顺序的倒序：当前用车 > 停车点聚合。
+        // 排前面的是压在别人上面的那层，否则被盖住的元素会先把点击接走。
+        // **还车点「P」不参与命中**（2026-09-29 用户口径）：它常和聚合圈压在一起，
+        // 接点击只会挡着选车（用户报「想点车却点到停车区弹说明」）。
+        ridePoint?.let { point ->
+            mapView.projection.toPixels(GeoPoint(point.lat, point.lng), out)
+            if (hypot(out.x - e.x, out.y - e.y) <= hitRadiusPx) {
+                onRideTap()
+                return true
+            }
+        }
+        if (clusters.isEmpty()) return false
         var hit: String? = null
         var best = Float.MAX_VALUE
         clusters.forEach { cluster ->
@@ -192,6 +302,91 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         cluster.bikes.any { it.available } -> colors.available
         cluster.bikes.any { it.status == BikeStatus.LowBattery } -> colors.lowBattery
         else -> colors.unavailable
+    }
+
+    /** 当前用车标记里的小车（两轮 + 踏板 + 立管 + 把手），比写字省地方也跨语言。 */
+    private fun drawScooterGlyph(canvas: Canvas, x: Float, y: Float) {
+        val d = density
+        glyphFill.color = colors.rideGlyph
+        glyphStroke.color = colors.rideGlyph
+        glyphStroke.strokeWidth = 1.9f * d
+        val wheelY = y + 3.8f * d
+        canvas.drawCircle(x - 5.4f * d, wheelY, 2.2f * d, glyphFill)
+        canvas.drawCircle(x + 5.4f * d, wheelY, 2.2f * d, glyphFill)
+        canvas.drawLine(x - 5.4f * d, wheelY, x + 3.4f * d, wheelY, glyphStroke)
+        canvas.drawLine(x + 3.4f * d, wheelY, x + 5.9f * d, y - 3.6f * d, glyphStroke)
+        canvas.drawLine(x + 4.2f * d, y - 3.6f * d, x + 7.2f * d, y - 3.6f * d, glyphStroke)
+    }
+
+    /**
+     * 还车点 / 禁停区图层（DESIGN §3.9）：先禁停区（深灰，底）再还车点（红框 + P 图标）。
+     * 色相逐字对齐官方小程序的 polygon 口径（`#333333` / `#D7535D`），透明度压淡一档
+     * ——官方那个 67% 的填充会把底图与车辆标记一起压得看不清。
+     */
+    private fun drawZones(canvas: Canvas, mapView: MapView, out: Point, margin: Float) {
+        if (zones.isEmpty) return
+        zones.nogoZones.forEach { outline ->
+            buildPath(mapView, outline, out)
+            fill.color = colors.nogoFill
+            canvas.drawPath(zonePath, fill)
+            zoneStroke.color = colors.nogoStroke
+            zoneStroke.strokeWidth = 1f * density
+            canvas.drawPath(zonePath, zoneStroke)
+        }
+        for (spot in zones.parkSpots) {
+            mapView.projection.toPixels(GeoPoint(spot.lat, spot.lng), out)
+            // 屏幕外连多边形一起跳过：还车点范围只有几十米，余量足够盖住
+            if (canvas.offscreen(out.x.toFloat(), out.y.toFloat(), margin)) continue
+            if (spot.outline.size >= 3) {
+                buildPath(mapView, spot.outline, out)
+                fill.color = colors.spotFill
+                canvas.drawPath(zonePath, fill)
+                zoneStroke.color = colors.spotStroke
+                zoneStroke.strokeWidth = 1.5f * density
+                canvas.drawPath(zonePath, zoneStroke)
+            }
+            drawSpotBadge(canvas, mapView, spot, out)
+        }
+    }
+
+    /** 投影点是否落在画布外（留 [margin] 余量，标记半径与边缘弹跳都算进去）。 */
+    private fun Canvas.offscreen(x: Float, y: Float, margin: Float): Boolean =
+        x < -margin || y < -margin || x > width + margin || y > height + margin
+
+    /** 顶点列表 → 闭合路径（屏幕坐标逐帧重算，缩放时不会飘）。 */
+    private fun buildPath(mapView: MapView, outline: List<GcjPoint>, out: Point) {
+        zonePath.reset()
+        outline.forEachIndexed { index, point ->
+            mapView.projection.toPixels(GeoPoint(point.lat, point.lng), out)
+            if (index == 0) {
+                zonePath.moveTo(out.x.toFloat(), out.y.toFloat())
+            } else {
+                zonePath.lineTo(out.x.toFloat(), out.y.toFloat())
+            }
+        }
+        zonePath.close()
+    }
+
+    /**
+     * 还车点图标：一枚圆角方块 + 白「P」（停车符号，跨语言都认）。
+     * 官方那枚是位图资源（24×16），这里自绘省一套图；白描边保证压在红框与底图上都看得见。
+     */
+    private fun drawSpotBadge(canvas: Canvas, mapView: MapView, spot: KvcxParkSpot, out: Point) {
+        mapView.projection.toPixels(GeoPoint(spot.lat, spot.lng), out)
+        val x = out.x.toFloat()
+        val y = out.y.toFloat()
+        // 尺寸压到 15dp（原来 20dp 显得比车标还抢眼）；命中半径仍是 24dp，点得中
+        val half = 7.5f * density
+        val rect = RectF(x - half, y - half, x + half, y + half)
+        val corner = 3f * density
+        badgeFill.color = colors.spotBadge
+        canvas.drawRoundRect(rect, corner, corner, badgeFill)
+        ring.strokeWidth = 1.5f * density
+        ring.color = Color.WHITE
+        canvas.drawRoundRect(rect, corner, corner, ring)
+        badgeGlyph.color = colors.spotGlyph
+        badgeGlyph.textSize = 10f * density
+        canvas.drawText("P", x, y - (badgeGlyph.ascent() + badgeGlyph.descent()) / 2f, badgeGlyph)
     }
 
     /**
