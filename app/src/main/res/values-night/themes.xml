@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  深色系统下的窗口主题。只管 Compose 首帧之前的窗口底色：Android 12+ 的启动
+  SplashScreen 取的也是它，不设的话冷启动会先白屏一下，深色模式里格外刺眼。
+  Compose 侧的深浅色由 JuwTheme 按用户偏好解析，与本文件无关——本文件跟的是
+  **系统**夜间模式，应用内强制「浅色 / 深色」不改变它（那是窗口级的事，
+  需要 setTheme 才能做，暂不处理）。
+-->
+<resources>
+    <style name="Theme.JuwSchedule" parent="android:Theme.Material.NoActionBar" />
+</resources>

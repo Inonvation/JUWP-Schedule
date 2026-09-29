@@ -62,6 +62,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -289,82 +290,91 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .imePadding(),
+    // 根节点必须是 `Surface`，不能只拿 `Modifier.background` 画个底色：`Surface` 会往下
+    // 提供 `LocalContentColor`（这里是 `onBackground`），而 `Modifier.background` 不会。
+    // 缺了这层，本屏所有没写 `color` 的 `Text` / `Icon` 会落回 `LocalContentColor` 的默认值
+    // 纯黑——浅色主题下与近黑正文几乎没差别所以看不出来，深色主题下标题直接糊进背景
+    // （2026-09-29 模拟器复现：「欢迎使用水贝贝」几乎不可见）。
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
     ) {
-        OnboardingTopBar(
-            showBack = !startAtJw && step != Step.Welcome,
-            onBack = { back() },
-            showSegments = !startAtJw,
-            filledSegments = step.index,
-            showSkip = step != Step.Done,
-            onSkipAll = { finish() },
-        )
-        AnimatedContent(
-            targetState = step,
+        Column(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            transitionSpec = {
-                val forward = targetState.ordinal >= initialState.ordinal
-                (
-                    slideInHorizontally(
-                        animationSpec = tween(320, easing = EmphasizedEasing),
-                    ) { full -> if (forward) full / 3 else -full / 3 } + fadeIn(tween(320))
-                    ) togetherWith (
-                    slideOutHorizontally(
-                        animationSpec = tween(320, easing = EmphasizedEasing),
-                    ) { full -> if (forward) -full / 3 else full / 3 } + fadeOut(tween(200))
+                .fillMaxSize()
+                .statusBarsPadding()
+                .imePadding(),
+        ) {
+            OnboardingTopBar(
+                showBack = !startAtJw && step != Step.Welcome,
+                onBack = { back() },
+                showSegments = !startAtJw,
+                filledSegments = step.index,
+                showSkip = step != Step.Done,
+                onSkipAll = { finish() },
+            )
+            AnimatedContent(
+                targetState = step,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                transitionSpec = {
+                    val forward = targetState.ordinal >= initialState.ordinal
+                    (
+                        slideInHorizontally(
+                            animationSpec = tween(320, easing = EmphasizedEasing),
+                        ) { full -> if (forward) full / 3 else -full / 3 } + fadeIn(tween(320))
+                        ) togetherWith (
+                        slideOutHorizontally(
+                            animationSpec = tween(320, easing = EmphasizedEasing),
+                        ) { full -> if (forward) -full / 3 else full / 3 } + fadeOut(tween(200))
+                        )
+                },
+                label = "onboardingStep",
+            ) { current ->
+                when (current) {
+                    Step.Welcome -> WelcomeStep(
+                        onNext = { next(Step.Jw) },
+                        onOpenDisclaimer = { browseNotice = FirstRunNotice.Disclaimer },
                     )
-            },
-            label = "onboardingStep",
-        ) { current ->
-            when (current) {
-                Step.Welcome -> WelcomeStep(
-                    onNext = { next(Step.Jw) },
-                    onOpenDisclaimer = { browseNotice = FirstRunNotice.Disclaimer },
-                )
-                Step.Jw -> JwStep(
-                    cas = cas,
-                    vault = vault,
-                    scope = scope,
-                    onLaunchBgSync = { startBgSync() },
-                    // 重复进入（只改密码）时这一步做完就收窗，不再拖着用户走后面几屏
-                    onDone = { jwOk = true; if (startAtJw) finish() else next(Step.Ykt) },
-                    onSkip = { if (startAtJw) finish() else next(Step.Ykt) },
-                )
-                Step.Ykt -> YktStep(
-                    vault = vault,
-                    scope = scope,
-                    onDone = { yktOk = true; next(Step.Qiekj) },
-                    onSkip = { next(Step.Qiekj) },
-                )
-                Step.Qiekj -> QiekjStep(
-                    scope = scope,
-                    codeSentAt = qiekjCodeSentAt,
-                    onCodeSent = { qiekjCodeSentAt = it },
-                    onDone = { qiekjOk = true; next(Step.Qzxy) },
-                    onSkip = { next(Step.Qzxy) },
-                )
-                Step.Qzxy -> QzxyStep(
-                    scope = scope,
-                    codeSentAt = qzxyCodeSentAt,
-                    onCodeSent = { qzxyCodeSentAt = it },
-                    onDone = { qzxyOk = true; next(Step.Done) },
-                    onSkip = { next(Step.Done) },
-                )
-                Step.Done -> DoneStep(
-                    jwOk = jwOk,
-                    yktOk = yktOk,
-                    qiekjOk = qiekjOk,
-                    qzxyOk = qzxyOk,
-                    bgSyncPhase = bgSyncPhase,
-                    onFinish = { finish() },
-                )
+                    Step.Jw -> JwStep(
+                        cas = cas,
+                        vault = vault,
+                        scope = scope,
+                        onLaunchBgSync = { startBgSync() },
+                        // 重复进入（只改密码）时这一步做完就收窗，不再拖着用户走后面几屏
+                        onDone = { jwOk = true; if (startAtJw) finish() else next(Step.Ykt) },
+                        onSkip = { if (startAtJw) finish() else next(Step.Ykt) },
+                    )
+                    Step.Ykt -> YktStep(
+                        vault = vault,
+                        scope = scope,
+                        onDone = { yktOk = true; next(Step.Qiekj) },
+                        onSkip = { next(Step.Qiekj) },
+                    )
+                    Step.Qiekj -> QiekjStep(
+                        scope = scope,
+                        codeSentAt = qiekjCodeSentAt,
+                        onCodeSent = { qiekjCodeSentAt = it },
+                        onDone = { qiekjOk = true; next(Step.Qzxy) },
+                        onSkip = { next(Step.Qzxy) },
+                    )
+                    Step.Qzxy -> QzxyStep(
+                        scope = scope,
+                        codeSentAt = qzxyCodeSentAt,
+                        onCodeSent = { qzxyCodeSentAt = it },
+                        onDone = { qzxyOk = true; next(Step.Done) },
+                        onSkip = { next(Step.Done) },
+                    )
+                    Step.Done -> DoneStep(
+                        jwOk = jwOk,
+                        yktOk = yktOk,
+                        qiekjOk = qiekjOk,
+                        qzxyOk = qzxyOk,
+                        bgSyncPhase = bgSyncPhase,
+                        onFinish = { finish() },
+                    )
+                }
             }
         }
     }
