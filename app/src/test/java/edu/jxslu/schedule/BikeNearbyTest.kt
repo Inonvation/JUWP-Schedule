@@ -6,6 +6,7 @@ import edu.jxslu.schedule.domain.NearbyBike
 import edu.jxslu.schedule.domain.NearbyParseResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -306,6 +307,29 @@ class BikeNearbyTest {
             points[1].lat, points[1].lng, points[5].lat, points[5].lng,
         )
         assertEquals(BikeNearby.SAMPLE_RADIUS_METERS * 2, opposite, 3.0)
+    }
+
+    @Test
+    fun `采样点可以只要四个对角点`() {
+        val points = BikeNearby.samplePoints(28.688320, 116.028466, ringCount = 4)
+        assertEquals(5, points.size)
+        assertEquals(28.688320, points.first().lat, 1e-9)
+        // 四个对角点：每个都同时偏离中心的纬度与经度（正东西南北那四个会有一个不变）
+        points.drop(1).forEach { point ->
+            assertNotEquals(28.688320, point.lat, 1e-6)
+            assertNotEquals(116.028466, point.lng, 1e-6)
+            val distance = BikeNearby.distanceMeters(28.688320, 116.028466, point.lat, point.lng)
+            assertEquals(BikeNearby.SAMPLE_RADIUS_METERS, distance, 2.0)
+        }
+        assertEquals(4, points.drop(1).distinct().size)
+    }
+
+    @Test
+    fun `采样点数被夹在四到八之间`() {
+        // 0 会退化成"只查中心"（z17 的视野比采样环还大，覆盖会明显掉），所以夹到 4
+        assertEquals(5, BikeNearby.samplePoints(28.688320, 116.028466, ringCount = 0).size)
+        assertEquals(5, BikeNearby.samplePoints(28.688320, 116.028466, ringCount = 3).size)
+        assertEquals(9, BikeNearby.samplePoints(28.688320, 116.028466, ringCount = 16).size)
     }
 
     @Test

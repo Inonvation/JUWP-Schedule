@@ -57,6 +57,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -123,7 +124,7 @@ import me.rerere.hugeicons.stroke.UserAccount
 import kotlin.math.roundToInt
 
 /**
- * 骑行页的**底部动作区**与各面板（DESIGN §3.9；2026-09-30 结构重构，2026-10-01 收口）。
+ * 快趣出行页的**底部动作区**与各面板（DESIGN §3.9；2026-09-30 结构重构，2026-10-01 收口）。
  *
  * 全页只有两块可动的：
  *
@@ -182,7 +183,6 @@ internal fun RideActionArea(
     timerActive: Boolean,
     timerStartAt: Long,
     timerCanEnd: Boolean,
-    spotsHint: String?,
     summary: KvcxReturnSummary?,
     /** 小程序方式下"码已经生成好了"：只有这时才给「打开微信扫一扫」。 */
     hasCode: Boolean,
@@ -193,6 +193,8 @@ internal fun RideActionArea(
     onLogin: () -> Unit,
     onUnlock: (String) -> Unit,
     onGenerateForCar: (String) -> Unit,
+    /** 把镜头移到指定车号（车辆卡头行那枚定位）。 */
+    onFocusCar: (String) -> Unit,
     onFocusRide: () -> Unit,
     onTempLock: () -> Unit,
     onResume: () -> Unit,
@@ -281,10 +283,10 @@ internal fun RideActionArea(
                 // 计时中用实时值（骑行中途换车会换起点）；退场那一份用快照把倒计时留住
                 timerActive = timerActive || held.timerActive,
                 timerStartAt = if (timerActive) timerStartAt else held.timerStartAt,
-                spotsHint = spotsHint,
                 summary = summary ?: held.summary,
                 onDismissPicked = onDismissPicked,
                 onGenerateForCar = onGenerateForCar,
+                onFocusCar = onFocusCar,
                 onRefreshRide = onRefreshRide,
                 onFocusRide = onFocusRide,
                 onTimerExpired = onTimerExpired,
@@ -387,10 +389,10 @@ private fun RideActionUpper(
     busy: KvcxAction?,
     timerActive: Boolean,
     timerStartAt: Long,
-    spotsHint: String?,
     summary: KvcxReturnSummary?,
     onDismissPicked: () -> Unit,
     onGenerateForCar: (String) -> Unit,
+    onFocusCar: (String) -> Unit,
     onRefreshRide: () -> Unit,
     onFocusRide: () -> Unit,
     onTimerExpired: () -> Unit,
@@ -402,7 +404,6 @@ private fun RideActionUpper(
             busy = busy,
             timerActive = timerActive,
             timerStartAt = timerStartAt,
-            spotsHint = spotsHint,
             onRefresh = onRefreshRide,
             onLocateCar = onFocusRide,
             onTimerExpired = onTimerExpired,
@@ -417,6 +418,7 @@ private fun RideActionUpper(
                     .firstOrNull { it.carNum == car },
                 caps = caps,
                 distanceFromUser = state.distanceFromUser,
+                onFocus = onFocusCar,
                 onDismiss = onDismissPicked,
                 onGenerate = onGenerateForCar,
             )
@@ -546,10 +548,12 @@ private fun RideActionButtons(
 }
 
 /**
- * 车辆卡的**上区**：车号 + 详情 +（账号方式）出码的次级入口。
+ * 车辆卡的**上区**：车号 + 详情 +（账号方式）生成乘车码的次级入口。
  *
- * 次级入口是**右对齐的一枚小文字按钮**，摆在主动作上方（2026-09-30 用户口径「整宽描边
- * 按钮太占高度」）；别把它做成与主动作同宽，也别挪到主动作下方（那会把主动作顶上去）。
+ * 版式（2026-10-01 打磨）：头行「车号 + 定位 + 收起」→ 站点与状态一行 → **居中**的次级入口。
+ * 用户口径「生成乘车码按钮居中」：它原来右对齐、紧贴主动作那条边，看着像主动作的附属；
+ * 居中之后它是一枚独立动作，主次关系反而更清楚。**别做成与主动作同宽**（2026-09-30 口径
+ * 「整宽描边按钮太占高度」），也别挪到主动作下方（那会把主动作顶上去）。
  *
  * 详情那行与车辆行共用 [bikeInfoText]：同一辆车在列表和卡片里说法不同（尤其距离参照点）
  * 比少一行字更让人犯迷糊。
@@ -561,6 +565,8 @@ private fun RideCarUpper(
     caps: EbikeCapabilities,
     /** 距离的参照点是用户位置（true）还是地图中心（false），与列表同一口径。 */
     distanceFromUser: Boolean,
+    /** 把镜头移到这辆车（卡片自己的定位动作；原来只有车号面板里那一枚）。 */
+    onFocus: (String) -> Unit,
     onDismiss: () -> Unit,
     onGenerate: (String) -> Unit,
 ) {
@@ -571,7 +577,8 @@ private fun RideCarUpper(
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
             .padding(top = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        // 头行 / 详情 / 次级入口三段，10dp 与骑行仪表盘同一个呼吸（8dp 三段挤在一起）
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -587,6 +594,14 @@ private fun RideCarUpper(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
+            if (bike != null) {
+                IconButtonSmall(
+                    icon = HugeIcons.MapsLocation02,
+                    label = "在地图上定位这辆车",
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = { onFocus(carNum) },
+                )
+            }
             IconButtonSmall(HugeIcons.Cancel01, "收起车辆卡", onClick = onDismiss)
         }
         Text(
@@ -597,20 +612,19 @@ private fun RideCarUpper(
                     append(bikeInfo)
                 }
             } else {
-                AnnotatedString("这辆车不在附近这批结果里；用「按车号」输入后点定位图标可以在图上找它")
+                AnnotatedString("这辆车不在附近这批结果里；用「按车号」输入车号后可以在地图上找它")
             },
             style = MaterialTheme.typography.bodySmall,
             color = detailColor,
         )
         // 账号方式：支付分免押的账号开不了锁，只能出码去微信扫，所以这一枚要留着。
-        // **做小**（2026-09-30 用户口径）：整宽描边按钮太占高度，改成右对齐的一枚小按钮，
-        // 轻到不抢主动作的位置。
+        // **做小 + 居中**：整宽描边按钮太占高度，一枚居中的小文字按钮就够了。
         if (caps.inAppRide) {
             RideTextAction(
                 icon = HugeIcons.QrCode01,
                 text = "生成乘车码",
                 onClick = { onGenerate(carNum) },
-                modifier = Modifier.align(Alignment.End),
+                modifier = Modifier.align(Alignment.CenterHorizontally),
             )
         }
     }
@@ -624,7 +638,6 @@ private fun RideRidingUpper(
     busy: KvcxAction?,
     timerActive: Boolean,
     timerStartAt: Long,
-    spotsHint: String?,
     onRefresh: () -> Unit,
     onLocateCar: () -> Unit,
     onTimerExpired: () -> Unit,
@@ -707,14 +720,8 @@ private fun RideRidingUpper(
                 LabeledValue(label = "免费时长", value = "15 分钟")
             }
         }
-        // 还车点列表就在下面那块面板里，这里只在小程序方式没有图层可看时补一句说明
-        if (spotsHint != null) {
-            Text(
-                text = spotsHint,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            )
-        }
+        // 还车点列表在下面那块面板里，动作区不再补说明：两档现在都能拉图层
+        // （2026-10-01 撤掉"小程序方式不拉"那道闸），空列表的说明在面板自己的空态里
     }
 }
 
@@ -913,8 +920,9 @@ internal fun RideBikePanel(
                     )
                 }
             }
-            // 失败提示留在列表上方：它要一直看得见，不被列表滚走
-            state.failure?.let { failure ->
+            // 失败提示留在列表上方：它要一直看得见，不被列表滚走。
+            // 列表为空时不再重复一遍——下面那版空态已经把"这次没查到"说清楚了
+            state.failure?.takeIf { state.clusters.isNotEmpty() }?.let { failure ->
                 InlineNoticeRow(
                     message = BikeMapViewModel.failureText(failure),
                     tone = NoticeTone.Warning,
@@ -936,34 +944,60 @@ internal fun RideBikePanel(
                             .padding(vertical = 24.dp),
                     )
 
-                    // 空态走公共的 EmptyHint：标题 + 正文 + 一个出口，与其它页的空态同一套观感
+                    // 空态走公共的 EmptyHint：标题 + 正文 + 一个出口，与其它页的空态同一套观感。
+                    // 「查失败」与「这一带真没车」分开说：失败时上面已经挂着一条网络提示，
+                    // 底下再写一句「附近没有车」等于把"查询没成"说成"这里没车"（2026-10-01）
                     state.clusters.isEmpty() -> EmptyHint(
-                        title = "附近没有车",
-                        body = when {
-                            state.onlyOurCampus && state.onlyAvailable ->
-                                "这一带没有可用的本校车，可关掉「只看本校」或「只看可用」看看全部"
-                            state.onlyOurCampus -> "这一带没有本校的车，关掉「只看本校」看看全部"
-                            state.onlyAvailable -> "这一带没有可用的车，关掉「只看可用」看看全部"
-                            else -> "这一带暂时没有车，把地图拖到别处再看看"
+                        title = if (state.failure != null) "这次没查到" else "附近没有车",
+                        body = if (state.failure != null) {
+                            // 走到这个分支说明列表本身就是空的（上一次的结果若还在，
+                            // `failQuery` 不会清它，上面那条提示行会挂着）——别写「里是上一次的结果」
+                            "查询没成功；点右上角刷新重试，或把地图拖到别处看看。"
+                        } else {
+                            when {
+                                state.onlyOurCampus && state.onlyAvailable ->
+                                    "这一带没有可用的本校车，可关掉「只看本校」或「只看可用」看看全部"
+                                state.onlyOurCampus -> "这一带没有本校的车，关掉「只看本校」看看全部"
+                                state.onlyAvailable -> "这一带没有可用的车，关掉「只看可用」看看全部"
+                                else -> "这一带暂时没有车，把地图拖到别处再看看"
+                            }
                         },
                         actionLabel = "回到校区",
                         onAction = onResetToCampus,
                     )
 
-                    else -> state.clusters.forEach { cluster ->
-                        RideClusterCard(
-                            cluster = cluster,
-                            expanded = cluster.key == state.expandedKey,
-                            distanceFromUser = state.distanceFromUser,
-                            caps = caps,
-                            onClick = { onClusterTap(cluster.key) },
-                            onPick = onPick,
-                            onUnlock = onUnlock,
-                            onGenerateForCar = onGenerateForCar,
-                            modifier = Modifier.onGloballyPositioned { coords ->
-                                clusterOffsets[cluster.key] = coords.positionInParent().y.roundToInt()
-                            },
-                        )
+                    else -> {
+                        state.clusters.forEach { cluster ->
+                            // key 走簇键（2026-10-01）：撒点合并落地时列表会换一批，
+                            // 有 key 才能移动节点，没 key 就整列按位置重组一遍
+                            key(cluster.key) {
+                                RideClusterCard(
+                                    cluster = cluster,
+                                    expanded = cluster.key == state.expandedKey,
+                                    distanceFromUser = state.distanceFromUser,
+                                    caps = caps,
+                                    onClick = { onClusterTap(cluster.key) },
+                                    onPick = onPick,
+                                    onUnlock = onUnlock,
+                                    onGenerateForCar = onGenerateForCar,
+                                    modifier = Modifier.onGloballyPositioned { coords ->
+                                        clusterOffsets[cluster.key] =
+                                            coords.positionInParent().y.roundToInt()
+                                    },
+                                )
+                            }
+                        }
+                        // 封顶之外还有更远的停车点：说清一句，别让用户以为这一带就这么多
+                        if (state.clusterOverflow > 0) {
+                            Text(
+                                text = "还有 ${state.clusterOverflow} 处更远，把地图拖过去看",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1132,19 +1166,34 @@ private fun RideClusterCard(
                         .graphicsLayer { rotationZ = rotation },
                 )
             }
-            if (expanded) {
-                cluster.bikes.forEach { bike ->
-                    // 卡内分隔线的规格在 AppCardDivider 里（0.6 透明度），别在这写死一份
-                    AppCardDivider(modifier = Modifier.padding(start = 14.dp))
-                    RideBikeRow(
-                        bike = bike,
-                        distanceFromUser = distanceFromUser,
-                        // 账号方式已登录才给「开锁」：那是写操作，有计费后果；其余给「生成乘车码」
-                        canUnlock = caps.directUnlock,
-                        onClick = { onPick(bike.carNum) },
-                        onUnlock = { onUnlock(bike.carNum) },
-                        onGenerate = { onGenerateForCar(bike.carNum) },
-                    )
+            // 展开 / 收起走高度 + 淡入淡出（2026-10-01 用户口径「点击地点卡片展开收起时要有动画」）：
+            // 旧版是 `if (expanded)` 直接增删，一屏里内容瞬移；展开用 [BAR_RISE_MS]、
+            // 收起用 [BAR_FALL_MS]，与动作区那套窗口升降同一个手感
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(
+                    animationSpec = tween(BAR_RISE_MS, easing = FastOutSlowInEasing),
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(animationSpec = tween(BAR_FADE_IN_MS)),
+                exit = shrinkVertically(
+                    animationSpec = tween(BAR_FALL_MS, easing = FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(animationSpec = tween(BAR_FADE_OUT_MS)),
+            ) {
+                Column {
+                    cluster.bikes.forEach { bike ->
+                        // 卡内分隔线的规格在 AppCardDivider 里（0.6 透明度），别在这写死一份
+                        AppCardDivider(modifier = Modifier.padding(start = 14.dp))
+                        RideBikeRow(
+                            bike = bike,
+                            distanceFromUser = distanceFromUser,
+                            // 账号方式已登录才给「开锁」：那是写操作，有计费后果；其余给「生成乘车码」
+                            canUnlock = caps.directUnlock,
+                            onClick = { onPick(bike.carNum) },
+                            onUnlock = { onUnlock(bike.carNum) },
+                            onGenerate = { onGenerateForCar(bike.carNum) },
+                        )
+                    }
                 }
             }
         }
@@ -1631,7 +1680,8 @@ private fun RideSpotsContent(
             .padding(horizontal = 16.dp)
             // 导航栏那份内边距归页面底部的常驻块，这里再垫一份就是双倍留白
             .padding(bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        // 与车辆列表同一套行距（10dp）：两块内容在同一面板里换，节奏不该跟着换
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
             text = "附近还车点",
@@ -1658,7 +1708,6 @@ private fun RideSpotsContent(
                 AppCardRow(
                     onClick = { onSpotTap(spot) },
                     onClickLabel = "把镜头对准这个还车点",
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 ) {
                     Icon(
                         HugeIcons.MapPin,
@@ -1725,7 +1774,7 @@ internal fun PanelDragHandle(onResize: (Float) -> Unit, onResizeFinished: () -> 
 }
 
 /**
- * 骑行页的**动作按钮（唯一规格）**：整行、46dp 高、胶囊形，主次只差实心与描边。
+ * 快趣出行页的**动作按钮（唯一规格）**：整行、46dp 高、胶囊形，主次只差实心与描边。
  *
  * 旧版是三套并存：找车态用自定义的 46dp 胶囊、骑行与结算用 M3 默认的 40dp、码面板里
  * 那两个用码按钮写死 48dp。同一屏里主动作换个状态就换高度、换字号，看着像没做完。

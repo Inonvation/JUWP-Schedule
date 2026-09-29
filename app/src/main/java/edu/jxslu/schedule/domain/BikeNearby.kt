@@ -353,7 +353,7 @@ object BikeNearby {
         )
 
     /**
-     * 采样点：中心加一圈八个方位（正北起，每 45 度一个）。
+     * 采样点：中心加一圈方位点（默认 8 个，正北起每 45 度一个；[ringCount] = 4 时取四个对角）。
      *
      * 为什么需要撒点：服务端一次只返回**离查询点最近的 20 辆**。校园里一个车桩就停十几辆，
      * 于是以地图中心查一次，返回的全是那一个桩，别处的车根本不会出现（2026-09-23 用户实测：
@@ -361,11 +361,24 @@ object BikeNearby {
      *
      * 半径取 [SAMPLE_RADIUS_METERS]：比校区尺度略小，相邻采样点的"最近 20"有重叠，
      * 中间不至于漏出空档。
+     *
+     * [ringCount] 由调用方按缩放给（2026-10-01，见 `BikeMapViewModel.ringSampleCount`）：
+     * 默认校区尺度只撒 4 个对角点（请求数 9 → 5），缩得更小才用 8 个。
+     * **别传 0**：z17 在纬度 28.7° 下的视野约 1.1×1.7 公里，比采样环还大，只查中心
+     * 会让地图上只剩中心一小片有车。
      */
-    fun samplePoints(lat: Double, lng: Double): List<GcjPoint> {
+    fun samplePoints(
+        lat: Double,
+        lng: Double,
+        ringCount: Int = RING_SAMPLE_COUNT,
+    ): List<GcjPoint> {
+        val count = ringCount.coerceIn(RING_MIN_SAMPLE_COUNT, RING_SAMPLE_COUNT)
         val points = mutableListOf(GcjPoint(lat, lng))
-        repeat(RING_SAMPLE_COUNT) { index ->
-            points += offsetBy(lat, lng, SAMPLE_RADIUS_METERS, index * (360.0 / RING_SAMPLE_COUNT))
+        repeat(count) { index ->
+            // 4 点时从 45° 起（四个对角）：正东西南北那四个方向的车会全落在轴线上，
+            // 对角围出来的覆盖更均匀
+            val bearing = index * (360.0 / count) + if (count == RING_MIN_SAMPLE_COUNT) 45.0 else 0.0
+            points += offsetBy(lat, lng, SAMPLE_RADIUS_METERS, bearing)
         }
         return points
     }
@@ -390,6 +403,9 @@ object BikeNearby {
 
     /** 采样环上的点位数（8 个方位）。 */
     private const val RING_SAMPLE_COUNT = 8
+
+    /** 采样环最少撒几个（4 个对角点）：再少就退化成"只查中心"，覆盖会明显掉。 */
+    private const val RING_MIN_SAMPLE_COUNT = 4
 
     /** 一个纬度约合多少米。 */
     private const val METERS_PER_DEGREE_LAT = 111_320.0

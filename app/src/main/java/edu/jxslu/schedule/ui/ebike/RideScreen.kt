@@ -190,13 +190,16 @@ fun RideScreen(
         else -> RidePhase.Finding
     }
     /**
-     * 列表要不要换成还车点：只有账号方式的骑行态。
+     * 列表与地图要不要换成还车点（2026-10-01 第二次修订）。
      *
-     * 小程序方式没有还车点图层（拉那一层要快趣账号的 token，见 `BikeMapViewModel.query`
-     * 里的能力闸），换成还车点只会得到一屏"没有数据"，地图上的车还被清空——用户只是点了
-     * 「打开微信扫一扫」，回来却像走错了页。那一档保留车辆列表，还车点的事写在动作区。
+     * 骑行态优先给还车点：那一刻用户要找的是"停哪儿"。**两档都适用**——图层接口不需要
+     * 凭证（见 `KvcxSessionRepository.queryZones`），小程序方式也拉得到，不再按使用方式分。
+     *
+     * 判据里带 `parkSpots` 非空：这一带没有还车点数据、或图层还没回来时，地图与列表
+     * **一起**留在车上（两者共用这一个布尔量），不至于出现"空地图 + 一屏没有数据"
+     * ——用户点完「打开微信扫一扫」回来那样就像走错了页。
      */
-    val showSpots = phase == RidePhase.Riding && caps.inAppRide
+    val showSpots = phase == RidePhase.Riding && state.zones.parkSpots.isNotEmpty()
 
     // 骑行中禁切模式，切完也不该留着上一档的临时状态（选中车 / 打开的出码面板）
     LaunchedEffect(useMode) {
@@ -650,7 +653,6 @@ fun RideScreen(
                         timerActive = timerActive,
                         timerStartAt = prefs.rideStartAt,
                         timerCanEnd = ride == null,
-                        spotsHint = if (caps.wechatScan) MINI_SPOTS_HINT else null,
                         summary = summary,
                         hasCode = hasCode,
                         onDismissPicked = { pickedCar = null },
@@ -660,6 +662,8 @@ fun RideScreen(
                         onLogin = openAccount,
                         onUnlock = { carNum -> requestKvcxAction(KvcxAction.UNLOCK, carNum) },
                         onGenerateForCar = generateForCar,
+                        // 车辆卡头行那枚定位：把镜头移到这辆车（车号面板里那枚的卡片版）
+                        onFocusCar = { carNum -> viewModel.focusCar(carNum) },
                         onFocusRide = {
                             rideMarkerLat?.let { lat ->
                                 rideMarkerLng?.let { lng -> viewModel.onFocusPoint(lat, lng) }
@@ -858,15 +862,6 @@ fun RideScreen(
         }
     }
 }
-
-/**
- * 小程序方式骑行态的说明（还车点图层要快趣账号的 token，见 `BikeMapViewModel.query`）。
- *
- * 这一档的列表与地图都留在"附近的车"上，还车点的事只能让用户去微信里看，
- * 所以这里要说清"看不到"是设计如此，而不是这一带没有。
- */
-private const val MINI_SPOTS_HINT =
-    "小程序方式不显示还车点图层（那一层要快趣账号）；还车点可以在微信小程序里看。"
 
 private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里允许位置信息，或手动拖动地图找车"
 

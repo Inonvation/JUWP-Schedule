@@ -205,13 +205,19 @@ class KqcxSessionRepository(
      */
     /**
      * 还车点 / 禁停区图层（DESIGN §3.9）：只读、失败静默（图层是装饰，调用方保留上一层）。
-     * 没登录 / 没有可当上下文的车号时直接回 null，不发请求。
+     * 没有可当上下文的车号时直接回 null，不发请求。
+     *
+     * **不碰账号**（2026-10-01）：这个接口不需要 token（实测不带 `token` 头也回
+     * `resultCode=1`，见 [KqcxAuthClient.zonesJson]），所以不再 `ensureSession()`。
+     * 旧写法在本机留着凭证时会**隐式重登一次**：小程序方式（对外承诺"不碰账号、
+     * 不打扰第三方接口"）因此也拿到了图层，两台手机表现还不一样；而没有凭证的手机
+     * 该图层永远不出现（用户 2026-10-01 报的「停车点没了」就是这个）。
+     * 现在有会话就带上 token、没有就空着发，两种使用方式都能看还车点。
      */
     override suspend fun queryZones(lat: Double, lng: Double, carNum: String?): KvcxZones? {
         if (carNum.isNullOrBlank()) return null
         return try {
-            ensureSession()
-            KvcxZones.parse(client.zonesJson(requireToken(), lat, lng, carNum))
+            KvcxZones.parse(client.zonesJson(token.orEmpty(), lat, lng, carNum))
         } catch (_: Throwable) {
             null
         }

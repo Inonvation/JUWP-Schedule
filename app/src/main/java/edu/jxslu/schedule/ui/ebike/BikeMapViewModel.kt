@@ -1,9 +1,12 @@
 package edu.jxslu.schedule.ui.ebike
 
+import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
 import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
 import edu.jxslu.schedule.data.kqcx.KvcxZoneSource
@@ -21,6 +24,7 @@ import edu.jxslu.schedule.domain.ZoneCacheEntry
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -37,6 +41,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * 一次「把镜头移过去」的请求。
@@ -75,6 +80,16 @@ data class BikeMapUiState(
     /** 至少完成过一次请求（含失败）；false = 刚进页面，还没结果。 */
     val queried: Boolean = false,
     val clusters: List<BikeCluster> = emptyList(),
+    /**
+     * 过滤后（**未封顶**）的车总数：头部「本校可用 N 辆」的口径。
+     *
+     * 与 [clusters] 的长度**分开**（2026-10-01）：列表与地图只画最近的
+     * [MAX_CLUSTER_COUNT] 处（每帧成本与列表长度都跟簇数走），但"这一带有多少辆能骑"
+     * 这个数字不该跟着被裁掉。多出来的簇数见 [clusterOverflow]。
+     */
+    val bikeCount: Int = 0,
+    /** 因封顶没画出来的簇数；> 0 时列表尾部给一行「还有 N 处更远」。 */
+    val clusterOverflow: Int = 0,
     val failure: BikeFailure? = null,
     /** 最近一次成功刷新的时刻（epoch 毫秒）；0 = 还没成功过。 */
     val updatedAtMillis: Long = 0L,
@@ -143,9 +158,6 @@ data class BikeMapUiState(
     val anchorLng: Double? = null,
     val anchorFromUser: Boolean = false,
 ) {
-    /** 列表里的车辆总数（跨停车点，已按 [onlyOurCampus] 与 [onlyAvailable] 过滤）。 */
-    val bikeCount: Int get() = clusters.sumOf { it.bikes.size }
-
     /** 距离是否以用户位置为参照。false = 以查询中心为参照。 */
     val distanceFromUser: Boolean get() = anchorFromUser
 }
@@ -625,7 +637,26 @@ class BikeMapViewModel(
                 }
             }
             .let { list -> if (state.onlyAvailable) list.filter { it.available } else list }
-        val clusters = BikeNearby.cluster(shown)
+        val allClusters = BikeNearby.cluster(shown)
+        // 卡片与标记封顶（2026-10-01）：列表布局与地图每帧的成本都跟簇数成正比，密度高的
+        // 校区能摞到几十处；只画最近的一批，多出来的在列表尾部给一行「还有 N 处更远」。
+        // 头部的车辆总数走 bikeCount（未封顶），所以那个数字不会被裁小
+        //
+        // **要聚焦的那辆车必须进榜**：识别条「地图查看」与高亮是"找这辆"的动作，
+        // 它落在第 25 个簇里时不能因为封顶而找不着——把它的簇换掉榜尾那一个。
+        val priority = _uiState.value.highlightCarNum ?: pendingFocusCar
+        val clusters = run {
+            val ranked = if (priority == null) {
+                -1
+            } else {
+                allClusters.indexOfFirst { cluster -> cluster.bikes.any { it.carNum == priority } }
+            }
+            when {
+                allClusters.size <= MAX_CLUSTER_COUNT -> allClusters
+                ranked < 0 || ranked < MAX_CLUSTER_COUNT -> allClusters.take(MAX_CLUSTER_COUNT)
+                else -> allClusters.take(MAX_CLUSTER_COUNT - 1) + allClusters[ranked]
+            }
+        }
         _uiState.update { current ->
             // 高亮车按号在最新结果里重找：找得到才画（车被骑走 / 被筛掉时高亮自然消失）
             val highlighted = current.highlightCarNum?.let { num ->
@@ -633,6 +664,8 @@ class BikeMapViewModel(
             }
             current.copy(
                 clusters = clusters,
+                bikeCount = shown.size,
+                clusterOverflow = allClusters.size - clusters.size,
                 // 列表换了一批，展开态只在那个停车点还在时保留
                 expandedKey = current.expandedKey?.takeIf { key -> clusters.any { it.key == key } },
                 highlightedCar = highlighted,
@@ -679,18 +712,20 @@ class BikeMapViewModel(
     }
 
     private suspend fun query(lat: Double, lng: Double, forceZones: Boolean) {
+        // 两段耗时只在 debug 打：量「松手 → 首屏落地」与「→ 撒点合并落地」，用法见 rules/ebike.md
+        val startedAt = SystemClock.elapsedRealtime()
         _uiState.update { it.copy(loading = true, failure = null) }
-        // 图层只服务账号方式（2026-10-01）：`queryZones` 要 token，而小程序方式承诺
-        // 「只出码与计时、不打扰第三方接口」——本机若还留着可静默重登的凭证，旧写法会
-        // 在这条路上偷偷登一次快趣账号，同一个使用方式在两台手机上表现还不一样。
-        // 缓存那一层不受影响：它是本地数据（见 [fetchZones]）。
-        val inAppRide = accountMode()
         // 图层与车辆列表**并行**发（2026-09-28）：它只需要坐标与一个"哪类车"的上下文，
         // 车号用上一次那批车里的任意一辆即可——旧写法等中心结果回来才发，白多一个往返
-        fetchZones(lat, lng, forceZones, inAppRide)
+        fetchZones(lat, lng, forceZones)
 
         val centerBikes = try {
-            when (val parsed = BikeNearby.parse(client.queryNearbyJson(lat, lng), lat, lng)) {
+            // 解析挪到 Default（2026-10-01）：响应回来后的 JSON 解析跑在主线程，
+            // 一次刷新最多 5 份 × 20 个对象，那几毫秒正好压在拖动停手那一帧上
+            val parsed = withContext(Dispatchers.Default) {
+                BikeNearby.parse(client.queryNearbyJson(lat, lng), lat, lng)
+            }
+            when (parsed) {
                 is NearbyParseResult.Ok -> parsed.bikes
                 NearbyParseResult.ServiceError -> {
                     failQuery(lat, lng, BikeFailure.Service)
@@ -714,22 +749,45 @@ class BikeMapViewModel(
         val sampling = centerBikes.size >= SAMPLE_PAGE_SIZE
         // 中心结果落地即结束"刷新中"：拖动换地方时，用户等的就是这一批（撒点只是补全）
         applyResult(lat, lng, centerBikes, stillLoading = false)
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "首屏落地 +${SystemClock.elapsedRealtime() - startedAt}ms（${centerBikes.size} 条）")
+        }
         // 记视野。写完这一次就够了，不需要在退出时再写一遍。
         // 不占关键路径：DataStore 写入是磁盘事务，压在两批请求之间只是白等它
         val zoomForViewport = pendingZoom
         viewModelScope.launch { prefs.setEbikeMapViewport(lat, lng, zoomForViewport) }
         // 没有车当上下文时（本次会话第一次查询）在这里补发一次图层
-        flushPendingZone(inAppRide)
+        flushPendingZone()
         // 换校区了（比如从本校拖到隔壁师大）：图层要用这一带的车号重拉，官方同口径
-        reloadZonesForSite(lat, lng, centerBikes, inAppRide)
+        reloadZonesForSite(lat, lng, centerBikes)
 
         // 中心点没返回满，说明这一带能查到的就这么多，不用再撒点浪费请求
         if (!sampling) return
         _uiState.update { it.copy(completing = true) }
         // 采样结果合并后再刷一遍：多出来的远车按距离插进列表，簇与展开态照旧重算
-        applyResult(lat, lng, mergeSamples(lat, lng, centerBikes), stillLoading = false)
+        val ring = ringSampleCount(pendingZoom)
+        val merged = mergeSamples(lat, lng, centerBikes, ring)
+        applyResult(lat, lng, merged, stillLoading = false)
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                TAG,
+                "合并落地 +${SystemClock.elapsedRealtime() - startedAt}ms" +
+                    "（${merged.size} 条 · 环 $ring 点 · z${"%.1f".format(pendingZoom)}）",
+            )
+        }
         _uiState.update { it.copy(completing = false) }
     }
+
+    /**
+     * 采样环上的点数按缩放给（2026-10-01）。
+     *
+     * 默认的校区尺度（z ≥ [RING_SAMPLE_ZOOM]）撒 **4** 个对角点，请求数从 9 砍到 5；
+     * 缩得更小、一屏看得更远时才用 8 个方位。
+     *
+     * **别改成 0**：z17 在纬度 28.7° 下的视野约 1.1×1.7 公里，比 450 米的采样环还大，
+     * 只查中心会让地图上只剩中心一小片有车。
+     */
+    private fun ringSampleCount(zoom: Double): Int = if (zoom >= RING_SAMPLE_ZOOM) 4 else 8
 
     /**
      * 拉还车点 / 禁停区图层。[fetched] 里挑第一辆车当 `carNum` 上下文——没有车就不发请求
@@ -740,13 +798,13 @@ class BikeMapViewModel(
      * 最不容易变的一层，而旧写法拖动一下就要等一个往返才有 "P"，正是用户报的慢。
      * 判定全在 [ZoneCache]（纯逻辑、有单测），这里只管编排。
      *
-     * [inAppRide] = 账号登录方式。小程序方式**只吃缓存、不发请求**（见 [query] 里的说明）：
-     * 缓存是本地数据，摆旧图层比什么都不摆好；联网那条要 token，那一档不该有。
+     * **两种使用方式都拉**（2026-10-01 改）：图层接口不需要凭证（见
+     * `KvcxSessionRepository.queryZones`），小程序方式也能看还车点；缓存那一层照旧
+     * 先吃（本地数据，摆上比空白好），新鲜就不联网。
      */
-    private fun fetchZones(lat: Double, lng: Double, force: Boolean, inAppRide: Boolean) {
+    private fun fetchZones(lat: Double, lng: Double, force: Boolean) {
         val source = zoneSource ?: return
         val needFetch = applyCachedZones(lat, lng, force)
-        if (!inAppRide) return
         // 这一带有车就用这一带的车号（官方同口径）；没车就用上一次的上下文——
         // 接口只要"哪个校区"，没车不等于没还车点（见 ZoneCarContext 的注释）
         val context = zoneContextOf(fetched) ?: lastZoneCar
@@ -807,9 +865,8 @@ class BikeMapViewModel(
     }
 
     /** 中心结果落地后补发那次被挂起的图层请求（[pendingZone]）。 */
-    private fun flushPendingZone(inAppRide: Boolean) {
+    private fun flushPendingZone() {
         val source = zoneSource ?: return
-        if (!inAppRide) return
         val pending = pendingZone ?: return
         pendingZone = null
         val context = zoneContextOf(fetched) ?: lastZoneCar ?: return
@@ -829,10 +886,8 @@ class BikeMapViewModel(
         lat: Double,
         lng: Double,
         bikes: List<NearbyBike>,
-        inAppRide: Boolean,
     ) {
         val source = zoneSource ?: return
-        if (!inAppRide) return
         val context = zoneContextOf(bikes) ?: return
         if (context.campusName == lastZoneCar?.campusName) return
         launchZoneRequest(source, lat, lng, context)
@@ -889,38 +944,41 @@ class BikeMapViewModel(
      * 把一批车落成当前结果：状态、聚类、锚点记账都走这一条路。
      *
      * [stillLoading] = true 用于撒点在飞的中间态：列表已经可用，头部留着进度圈。
+     * 聚簇与排序（最多一百多辆车）放 Default：它跟解析一样压在同一帧上。
      */
-    private fun applyResult(
+    private suspend fun applyResult(
         lat: Double,
         lng: Double,
         bikes: List<NearbyBike>,
         stillLoading: Boolean,
     ) {
-        fetched = bikes
-        fetchedLat = lat
-        fetchedLng = lng
-        lastAttemptLat = lat
-        lastAttemptLng = lng
-        // 参照点只在**查询落地时**定一次：拖动过程中不翻，列表顺序才稳（2026-09-30 用户反馈）
-        val current = _uiState.value
-        val userLat = current.userLat
-        val userLng = current.userLng
-        val fromUser = userLat != null && userLng != null &&
-            BikeNearby.distanceMeters(userLat, userLng, lat, lng) <= USER_ANCHOR_RADIUS_METERS
-        _uiState.update {
-            it.copy(
-                loading = stillLoading,
-                queried = true,
-                failure = null,
-                updatedAtMillis = System.currentTimeMillis(),
-                anchorLat = if (fromUser) userLat else lat,
-                anchorLng = if (fromUser) userLng else lng,
-                anchorFromUser = fromUser,
-            )
+        withContext(Dispatchers.Default) {
+            fetched = bikes
+            fetchedLat = lat
+            fetchedLng = lng
+            lastAttemptLat = lat
+            lastAttemptLng = lng
+            // 参照点只在**查询落地时**定一次：拖动过程中不翻，列表顺序才稳（2026-09-30 用户反馈）
+            val current = _uiState.value
+            val userLat = current.userLat
+            val userLng = current.userLng
+            val fromUser = userLat != null && userLng != null &&
+                BikeNearby.distanceMeters(userLat, userLng, lat, lng) <= USER_ANCHOR_RADIUS_METERS
+            _uiState.update {
+                it.copy(
+                    loading = stillLoading,
+                    queried = true,
+                    failure = null,
+                    updatedAtMillis = System.currentTimeMillis(),
+                    anchorLat = if (fromUser) userLat else lat,
+                    anchorLng = if (fromUser) userLng else lng,
+                    anchorFromUser = fromUser,
+                )
+            }
+            rebuildClusters()
+            // 出码页带车号跳进来的「地图查看」：结果到了就自动定位
+            tryResolvePendingFocusCar()
         }
-        rebuildClusters()
-        // 出码页带车号跳进来的「地图查看」：结果到了就自动定位
-        tryResolvePendingFocusCar()
     }
 
     private fun failQuery(lat: Double, lng: Double, failure: BikeFailure) {
@@ -932,7 +990,7 @@ class BikeMapViewModel(
 
     /**
      * 撒点补齐：中心的结果不够（返回满 20 辆，说明还有更远的没给），
-     * 就在周围八个方位各查一次，按车号合并。
+     * 就在周围各查一次，按车号合并。[ringCount] 由 [ringSampleCount] 按缩放给（4 或 8）。
      *
      * 采样请求并行发，单个点失败只丢这个点——少看到一辆车，总比整页报错强。
      */
@@ -940,10 +998,11 @@ class BikeMapViewModel(
         lat: Double,
         lng: Double,
         center: List<NearbyBike>,
+        ringCount: Int,
     ): List<NearbyBike> {
         val merged = LinkedHashMap<String, NearbyBike>()
         center.forEach { bike -> merged[bike.carNum] = bike }
-        val rings = BikeNearby.samplePoints(lat, lng).drop(1)
+        val rings = BikeNearby.samplePoints(lat, lng, ringCount).drop(1)
         val extra = coroutineScope {
             rings.map { point -> async { sampleAt(point.lat, point.lng) } }.awaitAll()
         }
@@ -951,9 +1010,15 @@ class BikeMapViewModel(
         return merged.values.toList()
     }
 
-    /** 单个采样点。服务端报错、结构不符、网络异常一律算空——采样点失败不该拖垮整页。 */
+    /**
+     * 单个采样点。服务端报错、结构不符、网络异常一律算空——采样点失败不该拖垮整页。
+     * 解析同样走 Default：并行回来的几份 payload 一起在主线程解，正好顶在停手那一帧上。
+     */
     private suspend fun sampleAt(lat: Double, lng: Double): List<NearbyBike> = try {
-        when (val parsed = BikeNearby.parse(client.queryNearbyJson(lat, lng), lat, lng)) {
+        val parsed = withContext(Dispatchers.Default) {
+            BikeNearby.parse(client.queryNearbyJson(lat, lng), lat, lng)
+        }
+        when (parsed) {
             is NearbyParseResult.Ok -> parsed.bikes
             NearbyParseResult.ServiceError -> emptyList()
             NearbyParseResult.Malformed -> emptyList()
@@ -977,6 +1042,21 @@ class BikeMapViewModel(
 
         /** 接口一次返回的封顶条数（2026-09-23 实测）。返回满这个数就认为还有更远的没给。 */
         private const val SAMPLE_PAGE_SIZE = 20
+
+        /**
+         * 列表与地图最多画多少处停车点（2026-10-01）。
+         *
+         * 列表每项都是一张 `AppCard`，地图每帧给每簇画圆 + 数字，成本都跟簇数成正比；
+         * 校园里密度高的时段能到几十处。取 24（约 4 屏）之外的多半没人看，尾部给一行
+         * 「还有 N 处更远」。**车辆总数不受它影响**（`bikeCount` 走未封顶的那份）。
+         */
+        private const val MAX_CLUSTER_COUNT = 24
+
+        /** 低于这个缩放才撒 8 个方位点；否则 4 个（见 [ringSampleCount]）。 */
+        private const val RING_SAMPLE_ZOOM = 16.5
+
+        /** 查询耗时日志的 tag（只在 debug 打）。 */
+        private const val TAG = "BikeMapQuery"
 
         /** 失败类别的用户文案（UI 层唯一出处）。 */
         fun failureText(failure: BikeFailure): String = when (failure) {
