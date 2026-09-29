@@ -4,7 +4,7 @@
 「从教务系统拿到课表/考试/成绩」完整数据链路的实现细节，以及换校适配的动手步骤。
 应用功能与界面规格见 [DESIGN.md](DESIGN.md)，爬虫脚本速查见 [scripts/README.md](scripts/README.md)。
 
-> 快照：v1.2.0（2026-09-24，Room v11）。工程实况（依赖版本、数据库版本）以
+> 快照：v2.0.0（2026-09-29，Room v16）。工程实况（依赖版本、数据库版本）以
 > [AGENTS.md](AGENTS.md) 为准，领域口径清单按主题拆在 [`.agents/rules/`](.agents/rules/)，
 > 本文只讲「为什么这么设计、换校要动哪里」。
 
@@ -41,6 +41,8 @@
   scripts/fetch_lab_courses.py 实验课表 HTML → lab_courses.json（含周次聚合）
   scripts/fetch_exams.py       考试 JSON 接口 → exams.json
   scripts/fetch_scores.py      成绩 JSON 接口 → scores.json
+  scripts/fetch_textbooks.py   教材确认 JSON 接口 → textbooks.json
+  scripts/fetch_transcript.py  盖章成绩单 PDF（金格签章系统，非强智教务）
 
 链路 B（App 端 WebView 注入导入 —— 生产路径，用户数据不出本机）
   JwImportActivity → WebView 里用户自己登录教务
@@ -66,11 +68,12 @@
 （DESIGN §4.17，默认关闭；凭证 EncryptedSharedPreferences 加密存储、排除云备份）。
 同一套页面规则自此有 Python 与 Kotlin 两份独立实现，**换校时两边要同步改**（见 §5.6）。
 
-除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、一卡通付款码与账单、寝室电费、
-快趣出行码与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、`data/ykt/`、
-`data/power/`、`data/kqcx/`、`domain/EbikeQr.kt`），与课表核心零耦合——换校适配时整块
+除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、趣智校园开热水、一卡通付款码与账单、
+寝室电费、快趣出行出码与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、
+`data/qzxy/`、`data/ykt/`、`data/power/`、`data/kqcx/`），与课表核心零耦合——换校适配时整块
 删掉不影响课表功能（入口在 `ui/` 对应包、今日页底部固定区与底栏「生活」）。
-各自的实现细节见 DESIGN §3.9 / §3.10 / §3.13 / §4.5 / §4.10 / §4.18 / §4.19 / §4.23 / §4.24。
+各自的实现细节见 DESIGN §3.9 / §3.10 / §3.13 / §3.18 / §4.5 / §4.10 / §4.18 / §4.19 /
+§4.23 / §4.24 / §4.30 / §4.32。
 
 ---
 
@@ -80,10 +83,10 @@
 |----|-----|
 | 模块 | 单模块 `:app` |
 | 语言/UI | Kotlin 2.1.21 + Jetpack Compose + Material3 |
-| 持久化 | Room 2.7.1（v8：课表/成绩/笔记/作业/检测/一卡通流水）+ DataStore（显示偏好与开关） |
-| 网络 | App 端 WebView + Retrofit（胖乖）+ OkHttp（教务检测、一卡通）；课表数据零自建后端 |
+| 持久化 | Room 2.7.1（v16：课表/成绩/学业/一卡通流水/笔记/作业/电费读数/教材/骑行记录）+ DataStore（显示偏好与开关） |
+| 网络 | App 端 WebView + OkHttp（教务、一卡通、电费、快趣、趣智）+ Retrofit（胖乖）；课表数据零自建后端 |
 | SDK | minSdk 26 / compileSdk 35 |
-| 测试 | 纯 JVM 单测 57 个类（domain 层可全量测，见 §9） |
+| 测试 | 纯 JVM 单测 114 个类 / 1111 个用例（domain 层可全量测，见 §9） |
 
 分层与依赖方向（`app/src/main/java/edu/jxslu/schedule/`）：
 
@@ -91,22 +94,32 @@
 MainActivity.kt        底栏四 Tab：今日 / 课表 / 生活（可关，§3.13）/ 我的
 SubpageActivity.kt     二级页容器（成绩查询、笔记/作业 7 个二级页、各类设置）
 JwImportActivity.kt    教务导入独立窗口（独立 Activity，见 §5）
+OnboardingActivity.kt  首启引导（登录教务 / 各第三方账号 / 跳过）
+XgFormActivity.kt      学工表单 WebView（宿舍报修等，走统一认证）
+TranscriptActivity.kt  盖章成绩单导出（金格签章系统）
+PowerBankPayActivity.kt 农行手机版收银台（电费充值内嵌，§4.24）
 Graph.kt               手写单例装配：Repository / 数据库 / 偏好
 domain/                纯 Kotlin：Course、ScheduleCalculator、ExamMapper、ScheduleExporter、
                        CourseTweak、ReminderPlanner、Markdown/MathTex、
+                       EbikeUseMode（快趣能力矩阵）、QzxyWaterFlow（用水状态机）、
                        Shortcuts …… 不依赖 Android，可 JVM 测
-data/local/            Room v11：Entities / Daos / JuwDatabase（含 v1→v11 逐级迁移）
+data/local/            Room v16：Entities / Daos / JuwDatabase（含 v1→v16 逐级迁移）
 data/repo/             ScheduleRepository（课表读写 + 导入校验）、ScoreRepository、
-                       NoteRepository / HomeworkRepository、AttachmentStore（笔记图片）
+                       NoteRepository / HomeworkRepository、AttachmentStore（笔记图片）、
+                       ScoreSync / ScholarProgressSync / TextbookSync（登录后自动导入）
 data/prefs/            DataStore 显示偏好与全局开关（含 slotSchemaVersion）
-data/jw/               教务：JwUrls、两个课表解析器、考试/成绩解析器、JwHttpSession（检测）
+data/session/          统一登录会话层（CAS 自动填表、Cookie 桥接、登录闸门）
+data/jw/               教务：JwUrls、课表/考试/成绩/学业/教材解析器、JwHttpSession（检测）
 data/qiekj/            胖乖生活 API（登录/开水/余额/订单）
+data/qzxy/             趣智校园开热水（协议状态机、蓝牙水控、用水记账）
 data/ykt/              一卡通（新中新慧新e校）登录、付款码与流水同步
-data/power/            寝室电费（新开普缴费平台）：登录、读表、电费流水与缴费页深链（§4.24）
+data/power/            寝室电费（新开普缴费平台）：登录、读表、流水与充值（§4.24）
+data/kqcx/             快趣出行：附近车辆、还车点图层、账号登录与本机用车
+data/xg/               学工表单（统一认证免登）
 data/calendar/         系统日历同步（CalendarSyncer）
-ui/                    Compose Screen + ViewModel（today/week/life/me/water/campus/score/
-                       notes/homework/timetable/detect/reminder/ebike/...）
-ui/widget/             Glance 桌面小组件
+ui/                    Compose Screen + ViewModel（today/week/life/me/water/qzxy/campus/score/
+                       notes/homework/timetable/ebike/jwvw/onboarding/theme/common/...）
+ui/widget/             Glance 桌面小组件（课表 / 校园卡·电费 / 胖乖开水 / 趣智开水）
 ```
 
 原则：
@@ -167,22 +180,27 @@ data class SemesterConfig(
 
 | 表 | 主键 | 说明 |
 |----|------|------|
-| `timetables` | `id` | 课表身份；`slotsCustomized` 标记用户改过作息 |
+| `timetables` | `id` | 课表身份；`slotsCustomized` 标记用户改过作息；`term`（v14）记这张表的数据学期，是课程详情查教材的钥匙 |
 | `courses` | `id`（+ `timetableId` 索引） | 课程行：`timetableId` 归属；`weeksCsv` 逗号分隔周次；`kind` 课型；`remark` 备注 |
 | `time_slots` | `(timetableId, number)` | 每张课表一份作息表（小节号 1–11） |
 | `semester_config` | `timetableId` | 每张课表一份开学日/总周数 |
 | `scores` | `id`（+ `term` 索引） | 成绩全局归属学生、不挂课表；按学期整体替换 |
-| `ykt_turnovers` | `orderId`（+ `jndatetime` 索引） | 一卡通流水；按服务端订单号去重 |
+| `scholar_groups` / `scholar_courses` | `id` | 学业完成情况（v13）：四个维度的达成度 + 课程明细，全局归属学生 |
+| `ykt_turnovers` | `orderId`（+ `jndatetime` 索引） | 一卡通流水；按服务端订单号去重；v15 起 `fromAccount` / `accType` 记充值到账的账户 |
 | `notes` | `id`（+ `courseName` / `updatedAt` 索引） | 笔记·课件，按课程名归属（§3.1 决策 3） |
 | `homework` | `id`（+ `courseName` / `done` / `dueDate` 索引） | 作业，按课程名归属；`dueDate` 存 `yyyy-MM-dd` 文本（字典序即时间序） |
 | `power_readings` | `(epochMs, roomId)` 唯一 | 电表读数本机记录，用电量差分靠它（DESIGN §4.24）；`roomId` 是平台数字 id，v12 起另存 `roomName`（房号显示名，只给界面） |
+| `textbooks` | `id`（+ `courseName` 索引） | 教材（v14）：挂课程名 + 学期，导入课表后自动抓一次 |
+| `ride_records` | `id` | 本机骑行记录（v16），只记本机用车那条链路，不拉服务端历史 |
 
-版本史（v1→v12 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
+版本史（v1→v16 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
 （`timetables` + `courses.timetableId`）→ v4 成绩表 → v5 调课检测两表 →
 v6 一卡通流水 → v7 笔记/作业 → v8 `courses.remark` → v9 `homework` 去 `title` →
-v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings` → v12 `power_readings.roomName`。
+v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings` → v12 `power_readings.roomName` →
+v13 学业两表 → v14 `timetables.term` + `textbooks` → v15 `ykt_turnovers.fromAccount/accType` →
+v16 `ride_records`。
 
-迁移纪律两条：
+迁移纪律三条：
 
 1. **逐级 `ALTER TABLE` / `CREATE TABLE`，禁用 destructive migration**。
    用户设备上是真实课表，重建表式的迁移等于删库。主键变更（v2→v3 把作息表从全局单份
@@ -191,6 +209,9 @@ v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings` → v12
    `index_<表>_<列>`），漏一个就迁移校验崩溃。2026-09-20 实测：`ykt_turnovers.jndatetime`
    漏声明，**只影响从 v5 升级的设备，全新安装不崩**——这类缺陷只在特定升级路径上暴露，
    改 schema 后必须逐级真机验证（旧版升上来 + 全新安装各一次）。
+3. **实体里带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 的 `courses.remark`、
+   v11→v12 的 `power_readings.roomName`、v13→v14 的教材展示列都是同一个坑）：
+   Room 生成的建表语句带 `DEFAULT`，迁移里少写一次，升级设备的表结构就与实体对不上。
 
 ### 3.3 JSON 导入导出（与拾光课程表互通）
 
@@ -419,9 +440,15 @@ suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
 - 一键导入多传一个 `breakdown`，逐项列出「理论课表 29 条 / 实验课表 12 条」——
   只写「共 N 条」时，0 条的来源是隐形的；
 - 弹窗展示解析出的条数与页面学期（`term`）；
+- 弹窗里的「数据学期」在**一键导入**路径下可点开下拉，换一个学期就重新爬一次（DESIGN §4.4.2）；
+  带 `--term` 的脚本会校验「请求学期 = 教务返回学期」，对不上直接报错而不是静默爬错学期；
 - 考试导入在确认时用**目标课表**的开学日重新映射周次（预览口径 ≠ 落库口径）；
 - 入库走 `ScheduleRepository.importParsedCourses`：合并按 mergeKey 去重，
-  覆盖整体替换；整批颜色按课程名排序名次分配（§6.4）。
+  覆盖整体替换；整批颜色按课程名排序名次分配（§6.4）；
+- **写库成功即 `finish()` 回主界面**，结果不在导入窗口里展示（用户点完「完成」就关窗，
+  反馈会停在他看不见的那个窗口里）：导了几门、覆盖还是合并、导到哪张表经
+  `ui/jwvw/JwImportResultBus` 交给落点页面下方那条提示条，见 §6 第 8 条；教材抓取
+  （`TextbookSync`）挂进程级作用域异步进行，失败静默，不影响导入主流程。
 
 ### 5.5 失败呈现与自愈
 
@@ -489,6 +516,12 @@ suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
    （`ui/common/AppNotice.kt`），语气四档 `NoticeTone`；不要新引入 `android.widget.Toast`。
    `ModalBottomSheet` / `AlertDialog` 是更高一层的独立窗口，Snackbar 会被它盖住——
    弹层内的提示用 `InlineNoticeRow`（或先关弹层再提示）。
+8. **跨窗口的一次性结果走进程内单例 + 新鲜期**：导入窗口与主界面是两个 Activity，没有共同的
+   CompositionLocal，结果只能经单例转交（`ui/jwvw/JwImportResultBus` +
+   `JwImportOutcomeEffect`）。消费方**先 `consume()` 再判 `isFresh()`**——顺序反了，
+   过期的那条会一直留在通道里，下一次组合又读到、又判过期，白跑一轮；没有新鲜期这道闸，
+   十分钟前的结果会在用户随手切回课表页时冒出来。同形态的还有一卡通付款码结果
+   （`ui/campus/PayCodeResultBus`）。
 
 ---
 
@@ -543,8 +576,10 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 解析器契约保持不变：注入 JS 返回 `{ok, items, term}`，Kotlin 侧把每条数据转成
 `Course`。下游（确认弹窗、入库、网格渲染）完全不用动。
 
-**不做校园生活模块**（胖乖/一卡通/快趣）时：删掉 `data/qiekj/`、`data/ykt/` 与
-`ui/water|campus|ebike/`、今日页底部固定区的对应入口即可，课表链路零牵动；
+**不做校园生活模块**（胖乖 / 趣智 / 一卡通 / 电费 / 快趣）时：删掉 `data/qiekj/`、
+`data/qzxy/`、`data/ykt/`、`data/power/`、`data/kqcx/` 与
+`ui/water|qzxy|campus|life|ebike/`、今日页底部固定区与底栏「生活」的对应入口即可，
+课表链路零牵动；
 若要改 Room 实体，务必遵守 §3.2 的迁移两条纪律。
 
 ### 第 4 步：换品牌信息与包名
@@ -570,7 +605,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
 ```
 
-覆盖面（57 个测试类，`app/src/test/`）：
+覆盖面（114 个测试类 / 1111 个用例，`app/src/test/`）：
 
 - **解析与数据链路**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
   `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 样例）、
@@ -587,18 +622,32 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 - **笔记·作业**：`NoteExcerptTest`、`MarkdownParserTest` / `MarkdownEditTest`（自研子集
   与编辑器补全全分支）、`MathTexTest`、`HomeworkCenterTest` / `HomeworkReminderTest`、
   `CourseRemarkTest`（备注搬运：mergeKey 匹配 / kid 区分 / 不覆盖新行）；
+- **学业、教材与导入通道**：`ScholarProgressParserTest` / `ScholarProgressRulesTest`
+  （学业达成情况：表头名映射 / 四维度聚合）、`TextbookParserTest`（教材 JSON 的学期校验）、
+  `OneClickImportTest`（一键导入的判型与一次性标记）、`JwImportResultBusTest`
+  （结果通道的新鲜期边界）、`AutoSyncRulesTest` / `ProfileSyncRulesTest`（自动导入闸门）、
+  `LoginGateRulesTest` / `NoticeConsentTest`（自动续登闸门与首启两份声明的同意判定）；
 - **校园生活**：`QiekjSignTest` / `QiekjModelsTest`、`YktKeyboardTest` / `YktModelsTest` /
-  `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest`、`EbikeQrTest` /
-  `EbikeFreeRideTest`、`BikeNearbyTest`（附近车辆响应容错 / 停车点聚簇 / 距离与状态推导）、
-  `KqcxBikeClientTest`（失败分类：超时不能吃成网络不可达）、
+  `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest` / `YktArrivalTest` /
+  `YktPayWatchTest` / `YktSyncGateTest`、`EbikeQrTest` / `EbikeFreeRideTest` /
+  `EbikeUseModeTest`（两档能力矩阵）、`BikeNearbyTest`（附近车辆响应容错 / 停车点聚簇 /
+  距离与状态推导 / 采样点数夹取）、`KqcxBikeClientTest`（失败分类：超时不能吃成网络不可达） /
+  `KqcxAuthTest` / `KvcxZonesTest` / `ZoneCacheTest` / `ZoneCacheStoreTest` / `RideRecordTest`、
+  `QzxyWaterFlowTest`（用水状态机全分支）/ `QzxyWateringTest` / `QzxyProtocolTest` /
+  `QzxySessionLinkTest` / `QzxyPhoneMaskTest` / `QzxyCredentialTest` / `QzxyFrameTest` /
+  `QzxyClDataTest` / `QzxyRechargeTest` / `QzxySignTest`、
   `Gcj02Test`（WGS84 → GCJ-02：境外不偏移 / 境内偏移量级 / 邻近两点相对距离不变）、
   `PowerModelsTest`（电费响应解析：项目 / 读数 / 流水 + 500 与 401 外壳 + 剩余电量键回退）、
+  `PowerPayTest` / `PowerBillTest` / `PowerUsageTest`（下单字段完整性、账单与用电差分）、
+  `RechargeDisclaimerTest`（充值免责声明的静默期与首次锁定）、
   `LifeFeedTest`（一卡通与电费流水分段：按来源分组 / 段内倒序 / 限量按段算 / 同刻稳定 /
   解析失败沉底 / 只有一段有内容不算空态）、
   `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
   `PowerClientUrlTest`（缴费页 / 账单页深链形态与 feeitemid 钉子）；
-- **UI 边界**：`WidgetModelTest`（小组件分档/行数/明日接棒）、`ParseWeeksInputTest`、
-  `CompactPositionTest`、`PanelSnapTest`、`GridFontScaleTest`。
+- **UI 边界与外观**：`WidgetModelTest` / `LifeWidgetModelsTest` / `WaterWidgetModelsTest`
+  （小组件分档 / 行数 / 明日接棒）、`ThemePaletteTest` / `PaletteContractTest`
+  （六套配色与全角色落值）、`ParseWeeksInputTest`、`CompactPositionTest`、`PanelSnapTest`、
+  `GridFontScaleTest`。
 
 结论从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总
 （Gradle 成功时不打印用例数；读 XML 记得 `-Encoding UTF8`）。
@@ -614,12 +663,13 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 | Room | **2.7.1**——2.6 配 Kotlin 2.1 会 KSP `unexpected jvm signature V` |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（JitPack，**必须 `isTransitive = false`**，否则拉 androidx.core 1.17 编不过）；查名用 `.agents/skills/find-hugeicons/SKILL.md` 的本地 JAR 方法 |
 | Glance | 1.2.0（传递抬 compose runtime 到 1.7.8，`androidx.core` 保持 1.15.0） |
+| osmdroid | `org.osmdroid:osmdroid-android:6.1.18`（Maven Central，POM 里没有 `<dependencies>`，不拉传递依赖）；**加依赖后第一次构建要联网 resolve 一次**，之后 `--offline` 照常 |
 | debug/release | 两个 applicationId（`.debug` 后缀），可共存；启动 debug 包必须写全限定 Activity 名（`am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity`） |
 | WebView | MIUI 白屏 → 软件渲染兜底；教务页无 viewport meta → `useWideViewPort` 方案 |
 | 离线构建 | 依赖齐备后加 `--offline` 秒级完成：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline` |
 | 系统权限 | 2026-09-23 起**不需要任何 adb 授权**：快趣出行的「助手通道」（`WRITE_SECURE_SETTINGS` + 改写 `Settings.Secure.assistant`）已随内置单车地图上线而删除，只剩桌面启动意图。详见 DESIGN §3.9 |
-| 运行时权限 | 只有「附近单车地图 → 定位到我的位置」会在**点击那一刻**申请定位权限（精确/粗略任一即可），进页不弹框；不给也能用——地图默认落在校区中心，拖动照常查车。见 DESIGN §4.23 |
-| release 体积 | 自 2026-09-21 开 R8 + 资源压缩：17.9MB → 3.6MB（见 §10.1） |
+| 运行时权限 | 只有快趣出行页的「定位到我的位置」会在**点击那一刻**申请定位权限（精确/粗略任一即可），进页不弹框；不给也能用——地图默认落在校区中心，拖动照常查车。见 DESIGN §4.23 |
+| release 体积 | 自 2026-09-21 开 R8 + 资源压缩：17.9MB → 4.6MB（2.0.0 实测，见 §10.1） |
 
 ### 10.1 R8（release 自 2026-09-21 开启）
 
@@ -651,6 +701,8 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 - 校园卡凭证单独加密存储（`ykt_credentials.xml`，同样排除备份）；付款码等同现金——
   不进日志、不进剪贴板/相册，token 只存内存；验证码类响应（8002/8003）**绝不重试**，
   开启类交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）；
+- 快趣账号凭证单独加密存储（`secure_kqcx.xml`，排除备份），token 只存内存；电费平台复用
+  一卡通的学号 + 查询密码，没有第二份密码落盘（教务密码实测登不进电费平台）；
 - 模拟登录/抓取以「正常客户端」为限：不刷积分、不绕过付费、不伪造官方身份、
   不对教务接口做高频请求；
 - 对外发布你的改编版时，同样写明非官方声明，使用风险自负。
