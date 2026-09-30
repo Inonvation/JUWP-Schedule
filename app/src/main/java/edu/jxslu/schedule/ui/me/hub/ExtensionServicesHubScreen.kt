@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Calendar01
+import me.rerere.hugeicons.stroke.Calendar03
 import me.rerere.hugeicons.stroke.ClipboardList
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Droplet
@@ -65,6 +66,8 @@ fun ExtensionServicesHubScreen(
     onOpenRide: () -> Unit,
     /** 快趣账号页（DESIGN §4.32）：登录与本机骑行记录，A 档不碰开车还车。 */
     onOpenKvcx: () -> Unit,
+    /** 校历（DESIGN §4.34）：免登录，图来自仓库镜像 + 内置兜底。 */
+    onOpenCampusCalendar: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
     val context = LocalContext.current
@@ -118,6 +121,15 @@ fun ExtensionServicesHubScreen(
                         onClick = { onOpenXgForm(form) },
                     )
                 }
+                // 校历（DESIGN §4.34）：本节唯一的**免登录**条目——放在学校系统组而不是
+                // 另开一节，是因为它是学校发布物、数据源头在学校，只是获取方式不走统一
+                // 认证（镜像图）。节标题的「要登录」口径在此放宽，其余条目不受影响
+                SettingItem(
+                    title = "校历",
+                    subtitle = "学年校历大图 · 每学年自动更新（无需登录）",
+                    icon = HugeIcons.Calendar03,
+                    onClick = onOpenCampusCalendar,
+                )
             }
 
             SettingsSection(

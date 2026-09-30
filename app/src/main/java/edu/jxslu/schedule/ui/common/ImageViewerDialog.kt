@@ -31,10 +31,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.graphics.BitmapFactory
+import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.R
 import edu.jxslu.schedule.ui.week.loadScheduleBackground
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.ui.graphics.asImageBitmap
 
 /**
- * 图片所在的存储位置。两处的目录与解码口径不同，看图时要指明是从哪来的。
+ * 图片所在的存储位置。各处的目录与解码口径不同，看图时要指明是从哪来的。
  */
 enum class ImageSource {
     /** 笔记·课件与作业的附件（DESIGN §4.20），目录 `notes_img/`。 */
@@ -42,6 +48,9 @@ enum class ImageSource {
 
     /** 课表页背景图（DESIGN §4.21），目录 `schedule_bg/`。 */
     ScheduleBackground,
+
+    /** 校历镜像图（DESIGN §4.34），目录 `campus_calendar/`；图缺失时 UI 兜内置资源图。 */
+    CampusCalendar,
 }
 
 /**
@@ -64,6 +73,14 @@ fun ImageViewerDialog(
             // 背景图铺满整屏，看大图给足分辨率；`cache = false` 不改动渲染用的单槽缓存
             ImageSource.ScheduleBackground ->
                 loadScheduleBackground(context, fileName, targetLongSidePx = 1920, cache = false)
+            // 校历（DESIGN §4.34）：镜像图没下载到（内置兜底状态）时回退打包资源图——
+            // 校历页点图放大永远可用，不能因为「还没联网刷下来」就点了没反应
+            ImageSource.CampusCalendar -> withContext(Dispatchers.IO) {
+                val file = Graph.campusCalendar(context).fileFor(fileName)
+                val bitmap = file?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                    ?: BitmapFactory.decodeResource(context.resources, R.drawable.ic_campus_calendar)
+                bitmap?.asImageBitmap()
+            }
         }
     }
     var scale by remember { mutableStateOf(1f) }

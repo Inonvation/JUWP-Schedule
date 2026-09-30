@@ -95,6 +95,12 @@ class JuwApplication : Application() {
                 runCatching { Graph.scholarProgressSync(this@JuwApplication).sync() }
             }
         }
+        // 校历镜像（DESIGN §4.34）：冷启动静默刷一次，7 天闸门在 store 内部——
+        // 未到期是零网络空跑；学年没变不重复下载图；失败静默（内置兜底图顶上）。
+        // 与教务自动导入互不相干，独立一条不进 CAS 会话那组
+        appScope.launch {
+            runCatching { Graph.campusCalendar(this@JuwApplication).refresh() }
+        }
         // 登录失效提醒（DESIGN §3.16 / §4.27）：只在「转停用」那一刻发一条。
         // 会话过期但凭证有效时不打扰用户——那时会自动续登，发通知只会制造噪音。
         LoginStateNotifier.observe(this, appScope)

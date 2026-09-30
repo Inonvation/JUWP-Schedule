@@ -21,6 +21,7 @@ import edu.jxslu.schedule.ui.me.hub.GeneralSettingsScreen
 import edu.jxslu.schedule.ui.me.hub.LearningHubScreen
 import edu.jxslu.schedule.ui.me.hub.TimetableHubScreen
 import edu.jxslu.schedule.ui.me.hub.WidgetCalendarHubScreen
+import edu.jxslu.schedule.ui.campus.CampusCalendarScreen
 import edu.jxslu.schedule.ui.campus.CampusCardSettingsScreen
 import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
@@ -118,6 +119,8 @@ enum class SubpageScreen {
     HOMEWORK_TODO,
     /** 我的 → 校园服务 → 快趣出行（登录 · 骑行状态只读查询，DESIGN §4.32） */
     KVCX,
+    /** 我的 → 校园服务 → 校历（仓库镜像 + 内置兜底，DESIGN §4.34） */
+    CAMPUS_CALENDAR,
 }
 
 /**
@@ -206,6 +209,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.COURSE_TWEAK -> CourseTweakScreen(onBack = onBack)
             SubpageScreen.WATER -> WaterScreen(onBack = onBack, autoStart = autoStart)
             SubpageScreen.KVCX -> KvcxScreen(onBack = onBack)
+            SubpageScreen.CAMPUS_CALENDAR -> CampusCalendarScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->
@@ -285,6 +289,9 @@ class SubpageActivity : ComponentActivity() {
                 onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
                 onOpenRide = { SubpageActivity.start(this, SubpageScreen.RIDE) },
                 onOpenKvcx = { SubpageActivity.start(this, SubpageScreen.KVCX) },
+                onOpenCampusCalendar = {
+                    SubpageActivity.start(this, SubpageScreen.CAMPUS_CALENDAR)
+                },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

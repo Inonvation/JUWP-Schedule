@@ -23,6 +23,7 @@ import edu.jxslu.schedule.data.qzxy.QzxyWateringStore
 import edu.jxslu.schedule.data.qzxy.QzxyGattLink
 import edu.jxslu.schedule.data.qzxy.QzxySessionStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
+import edu.jxslu.schedule.data.repo.CampusCalendarStore
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
 import edu.jxslu.schedule.data.repo.ExamSync
 import edu.jxslu.schedule.data.repo.HomeworkRepository
@@ -124,6 +125,9 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var scheduleBackgroundStore: ScheduleBackgroundStore? = null
+
+    @Volatile
+    private var campusCalendarStore: CampusCalendarStore? = null
 
     @Volatile
     private var yktCredentialStore: YktCredentialStore? = null
@@ -269,6 +273,16 @@ private var qzxyRepository: QzxyRepository? = null
         scheduleBackgroundStore ?: synchronized(this) {
             scheduleBackgroundStore ?: ScheduleBackgroundStore(context.applicationContext)
                 .also { scheduleBackgroundStore = it }
+        }
+
+    /**
+     * 校历镜像缓存单例（DESIGN §4.34）：冷启动静默刷新与校历页共用一份。
+     * 无凭证（镜像在公开仓库），OkHttp client 在 store 内部只建一次。
+     */
+    fun campusCalendar(context: Context): CampusCalendarStore =
+        campusCalendarStore ?: synchronized(this) {
+            campusCalendarStore ?: CampusCalendarStore(context.applicationContext)
+                .also { campusCalendarStore = it }
         }
 
     /** 胖乖仓库单例（DESIGN §4.10）：Retrofit client 只建一次，token 存加密 prefs。 */
