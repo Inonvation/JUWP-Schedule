@@ -110,6 +110,9 @@ enum class JwImportMode {
 fun JwImportScreen(
     onBack: () -> Unit,
     mode: JwImportMode = JwImportMode.Schedule,
+    // 课表模式下开在考试安排查询页（DESIGN §4.33）。只改「登录后的自动落页」，
+    // 不动抽取/写库任何一环；成绩模式忽略它。
+    startAtExam: Boolean = false,
 ) {
     val context = LocalContext.current
     val repo = remember { Graph.repository(context) }
@@ -150,6 +153,13 @@ fun JwImportScreen(
     var pageLoadGate by remember { mutableStateOf<PageLoadGate?>(null) }
     /** 考试导入的原始行 + 学期：确认弹窗选定目标课后按**目标课表**的开学日重映射（DESIGN §4.14）。 */
     var pendingExamImport by remember { mutableStateOf<Pair<List<ExamEntry>, String>?>(null) }
+    /**
+     * 「教务这一学期没有考试安排」的弹窗入参（学期号）。
+     *
+     * 一键式口径（2026-09-30 用户要求，与导入课表同构）：落到考试安排查询页就自动抓，
+     * 抓不到安排**也要给一个明确的终态**——只留状态条会被当成「什么都没发生」。
+     */
+    var emptyExamTerm by remember { mutableStateOf<String?>(null) }
     /** 成绩模式：待确认的导入（学期 → 条数），确认后按学期替换入库。 */
     var pendingScores by remember { mutableStateOf<List<Pair<String, List<edu.jxslu.schedule.domain.ScoreRecord>>>?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -488,7 +498,7 @@ fun JwImportScreen(
             val mapping = ExamMapper.toExamCourses(rows, slots, semester, term)
             if (rows.isEmpty()) {
                 statusNote = "$term 暂无考试安排（教务通常考前数周才录入）"
-                snackbar.showSnackbar(statusNote)
+                emptyExamTerm = term
                 return
             }
             if (mapping.courses.isEmpty()) {
@@ -528,6 +538,23 @@ fun JwImportScreen(
         } finally {
             busy = false
         }
+    }
+
+    /**
+     * 考试安排的一键式入口（2026-09-30，用户口径：跟导入课表一样）。
+     *
+     * 落到考试安排查询页就自动跑一次 [runExamImport]：有安排 → 识别结果确认弹窗，
+     * 没安排 → 「暂时没有考试安排」弹窗，两条都是明确的终态。共用理论课表那条的
+     * `autoImportTried`（同一窗口一次导一轮），`busy` 挡住导入期间的重复触发。
+     *
+     * 定义在 [runExamImport] **之后**：Kotlin 局部函数不能前向引用（同
+     * `autoImportOnScoreReady` 的理由）。
+     */
+    fun autoImportOnExamReady(page: JwSchedulePage) {
+        if (autoImportTried || busy) return
+        if (mode != JwImportMode.Schedule || page != JwSchedulePage.Exam) return
+        autoImportTried = true
+        scope.launch { runExamImport(webView) }
     }
 
     /** 成绩导入（DESIGN §4.15）：全部学期分页 fetch → 按学期分组 → 确认后逐学期替换入库。 */
@@ -792,19 +819,35 @@ fun JwImportScreen(
                                             // 会让成绩导入每次都落到课表页、再手动点一次入口
                                             val autoNavTarget = when (mode) {
                                                 JwImportMode.Scores -> JwUrls.SCORE_FRM
-                                                JwImportMode.Schedule -> JwUrls.SCHEDULE_LIST
+                                                JwImportMode.Schedule -> if (startAtExam) {
+                                                    // 从考试页进来的窗口（DESIGN §4.33）：落理论课表页会
+                                                    // 触发 autoImportOnTheoryReady，一键导入理论+实验跑起来，
+                                                    // 跟入口写的「导入考试安排」不是一回事
+                                                    JwUrls.EXAM_QUERY
+                                                } else {
+                                                    JwUrls.SCHEDULE_LIST
+                                                }
                                             }
                                             statusNote = when {
                                                 "eapp2.juwp.edu.cn" in u ->
                                                     "请使用学校统一身份认证登录"
                                                 "xsMainV" in u ->
-                                                    if (mode == JwImportMode.Scores) {
-                                                        "已登录教务主页，正在打开成绩查询页…"
-                                                    } else {
-                                                        "已登录教务主页，正在打开学期理论课表…"
+                                                    when {
+                                                        mode == JwImportMode.Scores ->
+                                                            "已登录教务主页，正在打开成绩查询页…"
+                                                        startAtExam ->
+                                                            "已登录教务主页，正在打开考试安排查询…"
+                                                        else ->
+                                                            "已登录教务主页，正在打开学期理论课表…"
                                                     }
                                                 page == JwSchedulePage.Exam ->
-                                                    "考试安排查询已打开。点下方「导入考试安排」。"
+                                                    // 首次落页由 autoImportOnExamReady 自动跑，
+                                                    // 跑过之后再回来就只剩手动入口
+                                                    if (autoImportTried) {
+                                                        "考试安排查询已打开。点下方「导入考试安排」可重新导入。"
+                                                    } else {
+                                                        "考试安排查询已打开，正在自动导入…"
+                                                    }
                                                 page == JwSchedulePage.Lab ->
                                                     "实验课表已打开。"
                                                 page == JwSchedulePage.Theory ->
@@ -840,6 +883,9 @@ fun JwImportScreen(
                                                 // 理论课表就绪 → 自动跑一次一键导入（DESIGN §4.4.2），
                                                 // 用户不必再点「一键导入课表」
                                                 autoImportOnTheoryReady(page)
+                                                // 考试安排查询页就绪 → 自动跑一次考试导入
+                                                //（2026-09-30 用户口径：考试也做成一键式）
+                                                autoImportOnExamReady(page)
                                                 return@checkSessionLost
                                             }
                                             // 成绩查询页不是课表页（pageKind = None），单独一条：
@@ -1191,6 +1237,25 @@ fun JwImportScreen(
             onDismiss = {
                 importDraft = null
                 pendingExamImport = null
+            },
+        )
+    }
+
+    // 「这一学期教务还没排考」的终态弹窗（2026-09-30）：一键式的另一条出口。
+    // 考试由教务考前数周才录入，平时 count=0 是**正常空态不是错误**，所以文案只陈述
+    // 事实 + 给出下次再来的路，不用 warning/error 语气。
+    emptyExamTerm?.let { term ->
+        AlertDialog(
+            onDismissRequest = { emptyExamTerm = null },
+            title = { Text("暂时没有考试安排") },
+            text = {
+                Text(
+                    "$term 教务还没有录入考试安排。教务通常考前数周才排考，" +
+                        "过段时间再来查一次即可。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { emptyExamTerm = null }) { Text("知道了") }
             },
         )
     }

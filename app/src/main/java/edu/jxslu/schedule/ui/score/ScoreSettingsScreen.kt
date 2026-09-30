@@ -58,7 +58,8 @@ import kotlinx.coroutines.launch
  * 成绩页顶栏收一个齿轮入口进来；数据操作（导入 / 清空学期）仍留在成绩页——它们是
  * 页内动作不是设置。
  *
- * 考试变动提醒**不在这里**：考试跟着课表走（入口在 我的 → 课表，2026-09-30 挪入），
+ * 考试变动提醒**不在这里**：2026-09-30 起在独立考试页（`ui/exam/ExamScreen.kt`，
+ * `SubpageScreen.EXAMS`，入口「我的 → 学习 → 成绩与考试 → 考试安排」），
  * 两个提醒共用检查间隔 [ScoreAlertDefaults]（同一份 DataStore 值，这里改了那边也变）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -201,8 +202,11 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
     }
 }
 
-/** 通知权限申请：API 33+ 且未授予才弹（模式同 CampusCardSettingsScreen）。 */
-private fun maybeRequestNotifPermission(
+/**
+ * 通知权限申请：API 33+ 且未授予才弹（模式同 CampusCardSettingsScreen）。
+ * internal 自 2026-09-30：考试页的开提醒也要同一份口径，别再复制一处。
+ */
+internal fun maybeRequestNotifPermission(
     context: android.content.Context,
     launcher: ActivityResultLauncher<String>,
 ) {

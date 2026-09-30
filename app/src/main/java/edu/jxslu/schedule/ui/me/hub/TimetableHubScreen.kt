@@ -40,24 +40,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
-import edu.jxslu.schedule.ui.common.WheelValueDialog
-import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.content.ContextCompat
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
-import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsTag
 import edu.jxslu.schedule.ui.me.MeViewModel
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
@@ -77,6 +62,9 @@ import me.rerere.hugeicons.stroke.Import
  *
  * 上课提醒 2026-09-28 迁往「提醒与桌面」hub（与小组件、日历同属
  * 「课表数据送到哪里」）。成绩查询 2026-09-24 挪进学习页。
+ *
+ * 考试 2026-09-30 从「使用」区的内联开关收成入口行（`ExamAlertRows` 删除），同日傍晚
+ * 连入口一起挪去「我的 → 学习」（用户口径：考试跟成绩一起看），本页不再有考试相关行。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,7 +131,6 @@ fun TimetableHubScreen(
                     icon = HugeIcons.CalendarSync,
                     onClick = onOpenCourseTweak,
                 )
-                ExamAlertRows()
             }
 
             SettingsSection(title = "数据") {
@@ -245,105 +232,5 @@ private fun TimetableHero(state: edu.jxslu.schedule.ui.me.MeUiState, onOpenJwImp
                 )
             }
         }
-    }
-}
-
-/**
- * 考试变动提醒（DESIGN §4.33，2026-09-30 挪入课表 hub）：考试跟着课表走，
- * 开关与自动检查间隔就放在「使用」区里，不再单独开页。检测到教务发布新考试
- * 或时间/考场调整时发通知，点通知进教务导入页确认后才会写进课表。
- *
- * 自动检查间隔与「成绩变动提醒」共用一份 DataStore 值（[ScoreAlertDefaults]）——
- * 两条提醒链共用同一个周期任务（`ScoreAlertReminder`），间隔本来就是全局的。
- */
-@Composable
-private fun ExamAlertRows() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val prefs = remember { Graph.displayPrefs(context) }
-    val enabled by prefs.examAlertEnabled.collectAsState(initial = false)
-    val intervalHours by prefs.alertIntervalHours.collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
-    var intervalPickerOpen by remember { mutableStateOf(false) }
-
-    val notifPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (!granted) {
-            scope.launch {
-                android.widget.Toast.makeText(
-                    context,
-                    "未授予通知权限，提醒不会显示；可在系统设置里重新开启",
-                    android.widget.Toast.LENGTH_LONG,
-                ).show()
-            }
-        }
-    }
-
-    SettingSwitchRow(
-        title = "考试变动提醒",
-        subtitle = "教务发布新考试或时间/考场调整时通知；点通知进教务导入页确认后才会写进课表",
-        checked = enabled,
-        onCheckedChange = { want ->
-            scope.launch { prefs.setExamAlertEnabled(want) }
-            if (want) {
-                if (Build.VERSION.SDK_INT >= 33 &&
-                    ContextCompat.checkSelfPermission(
-                        context, Manifest.permission.POST_NOTIFICATIONS,
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-                scope.launch { ScoreAlertReminder.onSettingsChanged(context) }
-            }
-        },
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled) { intervalPickerOpen = true }
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                "自动检查间隔",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                },
-            )
-            Text(
-                "与「成绩设置」里的出分提醒共用",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            )
-        }
-        Text(
-            ScoreAlertDefaults.intervalLabel(intervalHours),
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (enabled) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            },
-        )
-    }
-
-    if (intervalPickerOpen) {
-        WheelValueDialog(
-            title = "自动检查间隔",
-            values = ScoreAlertDefaults.INTERVAL_CHOICES.map { ScoreAlertDefaults.intervalLabel(it) },
-            initialIndex = ScoreAlertDefaults.intervalChoiceIndex(intervalHours),
-            onConfirm = { index ->
-                intervalPickerOpen = false
-                scope.launch {
-                    prefs.setAlertIntervalHours(ScoreAlertDefaults.INTERVAL_CHOICES[index])
-                    ScoreAlertReminder.onSettingsChanged(context)
-                }
-            },
-            onDismiss = { intervalPickerOpen = false },
-        )
     }
 }

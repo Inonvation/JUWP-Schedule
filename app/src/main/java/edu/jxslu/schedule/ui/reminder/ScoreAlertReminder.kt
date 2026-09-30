@@ -44,8 +44,10 @@ import kotlinx.coroutines.flow.first
  *    切换时 `ExamSync` 返回空变更，这里只按变更列表发，天然满足。
  * 2. **没变更就不发**：检查成功但成绩/考试没动静是常态，静默；有变更也各发一条
  *    （成绩一条、考试一条），同一次检查内不合并——两者的点击落点不同。
- * 3. **考试只提醒不写库**：点通知落教务导入页（`JwImportActivity`，Schedule 模式），
- *    用户确认后才写课表。考试进课表只有手动导入一条路（DESIGN §4.33 红线）。
+ * 3. **考试只提醒不写库**：点通知落**考试页**（`SubpageScreen.EXAMS`，2026-09-30 由
+ *    教务导入页改过来）——详情、提醒开关、导入入口在同一页，看完再决定导不导入；
+ *    写库仍要用户在导入页点「导入考试安排」并过确认弹窗，考试进课表只有手动一条路
+ *    （DESIGN §4.33 红线）。
  *
  * **工作名与 Worker 类名一经发布不要改**：`KEEP` 策略下老任务按类名实例化，
  * 改名会让已排的周期任务实例化失败且不会重排，兜底永久消失（同 `BalanceAlertCheckWorker`）。
@@ -218,7 +220,7 @@ object ScoreAlertReminder {
         }.onFailure { Log.w(TAG, "notify scores failed", it) }
     }
 
-    /** 考试通知：正文列「新增/调整：课程 日期 时刻 地点」。点击落教务导入页。 */
+    /** 考试通知：正文列「新增/调整：课程 日期 时刻 地点」。点击落考试页。 */
     private fun postExams(
         context: Context,
         changes: List<ExamChangeDetector.Change>,
@@ -250,7 +252,7 @@ object ScoreAlertReminder {
                 PendingIntent.getActivity(
                     context,
                     EXAM_REQUEST_CODE,
-                    Intent(context, edu.jxslu.schedule.JwImportActivity::class.java)
+                    subpageLaunchIntent(context, SubpageRequest(SubpageScreen.EXAMS))
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),

@@ -27,13 +27,16 @@ import edu.jxslu.schedule.domain.ScholarProgressRules
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ClipboardPen
 import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Task01
 import me.rerere.hugeicons.stroke.Target01
 
-/** 我的 → 学习（DESIGN §3.11 / §4.15）：笔记·课件、作业与成绩查询，副标题实时计数。
- * 成绩查询 2026-09-24 自课表汇总挪入（用户要求：成绩属学习内容，不该藏在课表配置流里）。 */
+/** 我的 → 学习（DESIGN §3.11 / §4.15）：笔记·课件、作业、成绩与考试，副标题实时计数。
+ * 成绩查询 2026-09-24 自课表汇总挪入（用户要求：成绩属学习内容，不该藏在课表配置流里）。
+ * 考试 2026-09-30 同理由课表 hub 挪入——考试安排与成绩同属「教务给的学习数据」，
+ * 入口放在成绩旁边比放在课表配置流里更符合找它的路径。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LearningHubScreen(
@@ -42,6 +45,7 @@ fun LearningHubScreen(
     onOpenHomework: () -> Unit,
     onOpenScores: () -> Unit,
     onOpenScholar: () -> Unit,
+    onOpenExam: () -> Unit,
 ) {
     val context = LocalContext.current
     val noteGroups by remember { Graph.noteRepository(context) }.observeGroups()
@@ -106,12 +110,18 @@ fun LearningHubScreen(
                 )
             }
 
-            SettingsSection(title = "成绩") {
+            SettingsSection(title = "成绩与考试") {
                 SettingItem(
                     title = "成绩查询",
                     subtitle = "按学期 · 学年汇总 · 从教务导入",
                     icon = HugeIcons.GraduationScroll,
                     onClick = onOpenScores,
+                )
+                SettingItem(
+                    title = "考试安排",
+                    subtitle = "发布与时间考场变动提醒 · 从教务更新",
+                    icon = HugeIcons.ClipboardPen,
+                    onClick = onOpenExam,
                 )
                 SettingItem(
                     title = "学业完成情况",

@@ -27,6 +27,7 @@ import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
 import edu.jxslu.schedule.ui.ebike.KvcxScreen
 import edu.jxslu.schedule.ui.ebike.RideScreen
+import edu.jxslu.schedule.ui.exam.ExamScreen
 import edu.jxslu.schedule.ui.life.PowerBillScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
@@ -75,6 +76,8 @@ enum class SubpageScreen {
     SCORES,
     /** 成绩查询 → 成绩设置（分组 · 排序 · 统计口径 · 成绩变动提醒，DESIGN §4.33） */
     SCORE_SETTINGS,
+    /** 我的 → 学习 → 考试安排（考试列表 · 考试变动提醒，DESIGN §4.33） */
+    EXAMS,
     /** 我的 → 学习 → 学业完成情况（培养方案达成度，DESIGN §3.17 / §4.29） */
     SCHOLAR,
     /** 导出成绩单 → 最近导出（DESIGN §3.14；列表即 filesDir/transcripts，最多 10 份） */
@@ -229,6 +232,7 @@ class SubpageActivity : ComponentActivity() {
                 ShortcutSettingsScreen(onBack = onBack, focusItemId = focusItemId)
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
             SubpageScreen.SCORE_SETTINGS -> ScoreSettingsScreen(onBack = onBack)
+            SubpageScreen.EXAMS -> ExamScreen(onBack = onBack)
             SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)
             SubpageScreen.TRANSCRIPTS -> TranscriptHistoryScreen(onBack = onBack)
             // focusItemId 对 RIDE 复用为「进页即定位的车号」（2026-09-29）：识别 / 深链
@@ -246,6 +250,7 @@ class SubpageActivity : ComponentActivity() {
                 onOpenHomework = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
                 onOpenScores = { SubpageActivity.start(this, SubpageScreen.SCORES) },
                 onOpenScholar = { SubpageActivity.start(this, SubpageScreen.SCHOLAR) },
+                onOpenExam = { SubpageActivity.start(this, SubpageScreen.EXAMS) },
             )
             SubpageScreen.TIMETABLE_HUB -> TimetableHubScreen(
                 onBack = onBack,

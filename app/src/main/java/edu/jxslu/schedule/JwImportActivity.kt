@@ -18,6 +18,8 @@ import edu.jxslu.schedule.ui.jwvw.JwImportScreen
  * 返回后课表自动刷新。Cookie 在 CookieManager 全局生效，登录会话不受影响。
  *
  * [EXTRA_MODE] 决定导入对象：课表（默认）或成绩（DESIGN §4.15）。
+ * [EXTRA_START_EXAM] 只对课表模式有意义：**开在考试安排查询页**而不是理论课表页
+ * （DESIGN §4.33 考试页的导入入口、考试变动通知的确认口）。
  *
  * 动画与 [SubpageActivity] 同款：打开 = 新窗口从右缘推入覆盖主窗口（slide_in_right），
  * 关闭 = 向右滑出（slide_out_right），主窗口全程原地不动。此前该窗口没配转场，
@@ -32,9 +34,10 @@ class JwImportActivity : ComponentActivity() {
         val mode = intent.getStringExtra(EXTRA_MODE)
             ?.let { name -> JwImportMode.entries.firstOrNull { it.name == name } }
             ?: JwImportMode.Schedule
+        val startAtExam = intent.getBooleanExtra(EXTRA_START_EXAM, false)
         setContent {
             JuwRoot {
-                JwImportScreen(onBack = { finish() }, mode = mode)
+                JwImportScreen(onBack = { finish() }, mode = mode, startAtExam = startAtExam)
             }
         }
     }
@@ -46,10 +49,20 @@ class JwImportActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_MODE = "mode"
+        private const val EXTRA_START_EXAM = "start_exam"
 
-        fun start(context: Context, mode: JwImportMode = JwImportMode.Schedule) {
+        /**
+         * [startAtExam] = true：登录后直接落到 `xsksap_query`（考试安排查询页），
+         * 一键导入不会顺带跑起来——从考试页进来的人要的是「导入考试安排」。
+         */
+        fun start(
+            context: Context,
+            mode: JwImportMode = JwImportMode.Schedule,
+            startAtExam: Boolean = false,
+        ) {
             val intent = Intent(context, JwImportActivity::class.java)
                 .putExtra(EXTRA_MODE, mode.name)
+                .putExtra(EXTRA_START_EXAM, startAtExam)
             context.startActivity(intent)
             applySubpageOpenTransition(context)
         }

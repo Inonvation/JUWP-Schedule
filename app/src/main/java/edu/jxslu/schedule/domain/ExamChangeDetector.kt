@@ -22,12 +22,12 @@ object ExamChangeDetector {
     )
 
     fun detect(old: List<ExamEntry>, new: List<ExamEntry>): List<Change> {
-        val oldByKey = old.associateBy { it.key }
+        val oldByKey = old.associateBy(::keyOf)
         val changes = mutableListOf<Change>()
         for (entry in new) {
             // 日期解析失败的行没法跟旧数据对账（键会漂移成「每次都是新的」），跳过
             if (entry.date.isBlank()) continue
-            val before = oldByKey[entry.key]
+            val before = oldByKey[keyOf(entry)]
             val change = when {
                 before == null -> Change(Kind.NEW, entry)
                 before.isSameSlot(entry) -> null
@@ -46,6 +46,10 @@ object ExamChangeDetector {
             campus == other.campus &&
             seatNo == other.seatNo
 
-    private val ExamEntry.key: String
-        get() = courseNo.ifBlank { name } + "|" + date
+    /**
+     * 身份键 = 课程号（空则课程名）+ 日期。公开自 2026-09-30：考试页把「本次更新探测到的
+     * 新增/调整」标到列表卡上，用的必须是检测器这一份键，两份各写一个迟早会漂。
+     */
+    fun keyOf(entry: ExamEntry): String =
+        entry.courseNo.ifBlank { entry.name } + "|" + entry.date
 }
