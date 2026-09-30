@@ -37,6 +37,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.prefs.NoticeConsentRecord
 import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.FirstRunNotices
+import edu.jxslu.schedule.domain.NoticeConsent
 import edu.jxslu.schedule.domain.RechargeDisclaimer
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -83,9 +84,13 @@ fun AboutScreen(
     val prefs = remember { Graph.displayPrefs(context) }
     // 「用户须知」条目上的确认状态：同意过哪一版 + 何时确认（记录见 DisplayPrefsStore）。
     // 这是落盘同意记录的读路径——记录不展示给用户看就只是死数据。
+    // 判定走 `domain/NoticeConsent.isConsented`（版本比对）：文案 bump 版本后这里会
+    // 自动退回「未确认」，等用户看完新版再确认。
     val userNoticeConsent by remember {
         prefs.noticeConsent(FirstRunNotice.UserNotice)
     }.collectAsStateWithLifecycle(initialValue = NoticeConsentRecord(version = 0, atMs = 0L))
+    val userNoticeConfirmed =
+        NoticeConsent.isConsented(userNoticeConsent.version, FirstRunNotices.VERSION)
     var showDisclaimer by remember { mutableStateOf(false) }
     var showUserNotice by remember { mutableStateOf(false) }
     var showRechargeNotice by remember { mutableStateOf(false) }
@@ -130,7 +135,7 @@ fun AboutScreen(
                     title = "用户须知",
                     subtitle = "非官方 · 数据只存本机 · 第三方接口可能随时失效",
                     icon = HugeIcons.Megaphone01,
-                    value = if (userNoticeConsent.version > 0) "已确认" else "未确认",
+                    value = if (userNoticeConfirmed) "已确认" else "未确认",
                     onClick = { showUserNotice = true },
                 )
                 SettingItem(
@@ -172,12 +177,21 @@ fun AboutScreen(
     if (showDisclaimer) {
         DisclaimerDialog(onDismiss = { showDisclaimer = false })
     }
+    // 用户须知：从关于页打开并关掉（确认键 / 返回 / 点遮罩都算）= 确认当前版本。
+    // 这是老安装唯一的确认口——同意记录的写点原本只有首启引导的声明队列，而队列
+    // 只在引导里弹；引导键已写过的老安装永远不会再见到队列，状态就永远停在
+    // 「未确认」（2026-09-30 用户报）。这里补上后，主动看完全文并关掉即完成确认。
     if (showUserNotice) {
         NoticeDialog(
             title = FirstRunNotices.title(FirstRunNotice.UserNotice),
             intro = FirstRunNotices.intro(FirstRunNotice.UserNotice),
             items = FirstRunNotices.items(FirstRunNotice.UserNotice),
-            onDismiss = { showUserNotice = false },
+            onDismiss = {
+                showUserNotice = false
+                scope.launch {
+                    prefs.markNoticeConsented(FirstRunNotice.UserNotice, FirstRunNotices.VERSION)
+                }
+            },
         )
     }
     // 充值风险：正文与每个充值入口弹的那份同源（domain/RechargeDisclaimer.ITEMS），

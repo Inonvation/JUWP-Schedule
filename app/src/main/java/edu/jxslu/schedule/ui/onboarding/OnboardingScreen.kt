@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.ui.onboarding
 
+import android.app.Activity
 import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
@@ -383,6 +384,9 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     // 文案、锁时长只有 `domain/FirstRunNotices` 一份，这里只做编排；正文取自
     // domain（免责声明那份与 README 同源），弹窗只负责排版与倒数。
     // 确认即落盘（版本号 + 时刻）：下次进来队列为空，不重复打扰。
+    // 「不同意并退出」（2026-09-30 用户要求）：不写同意记录、不写 onboarding_seen，
+    // 整个应用关掉——下次启动引导与声明都会再来，进主界面的唯一路径是同意。
+    val activity = context as? Activity
     noticeQueue.firstOrNull()?.let { notice ->
         NoticeDialog(
             title = FirstRunNotices.title(notice),
@@ -393,6 +397,8 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                 noticeQueue = noticeQueue.drop(1)
                 scope.launch { prefs.markNoticeConsented(notice, FirstRunNotices.VERSION) }
             },
+            declineLabel = "不同意并退出",
+            onDecline = { activity?.finishAffinity() },
         )
     }
 

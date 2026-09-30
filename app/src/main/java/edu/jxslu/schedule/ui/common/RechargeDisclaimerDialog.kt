@@ -30,14 +30,17 @@ import kotlin.math.ceil
  * 充值免责声明（2026-09-29 用户要求，DESIGN §3.13 / §4.19）。
  *
  * **电费与一卡通的每个充值入口**在打开充值弹层前都要过这一道（入口清单见
- * `LifeScreen` / `CampusCardSettingsScreen` 的接线）：点「继续充值」才放行，
- * 取消 = 不进充值流程。勾选「一周内不再提醒」后静默 7 天
+ * `LifeScreen` / `CampusCardSettingsScreen` 的接线）：点「继续充值」才放行；
+ * 「不同意并取消支付」= 明示不接受协议，本次充值就地作罢、绝不进充值流程
+ * （2026-09-30 用户要求：不同意就取消支付）。勾选「一周内不再提醒」后静默 7 天
  * （窗口口径单一来源 `domain/RechargeDisclaimer`，两种充值共用一份）。
  *
  * **首次弹出锁 5 秒**：宿主按 `domain/RechargeDisclaimer.closeLockMs` 算好
  * [closableAfterMs] 传进来，锁住期间两枚按钮置灰、返回/点遮罩无效，确认键上
  * 倒数秒数；确认过之后的弹出 [closableAfterMs] = 0，立即可关。倒计时本身走
- * [rememberCloseLock]（单调时钟，改系统时间绕不过去）。
+ * [rememberCloseLock]（单调时钟，改系统时间绕不过去）。取消键与继续键同样落
+ * 「已确认」时刻（宿主侧 `markRechargeDisclaimerSeen`）——那是"看过"不是"同意"，
+ * 不同意过的用户下次充值还会再弹，只是不再锁 5 秒。
  *
  * AlertDialog（无输入框，不走 ImeAwareModalBottomSheet——那是含输入框弹层的专属口径）；
  * 正文长，给 `verticalScroll` 防小屏裁切。文案在 `domain/RechargeDisclaimer.ITEMS`
@@ -96,7 +99,7 @@ fun RechargeDisclaimerDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !locked) { Text("取消") }
+            TextButton(onClick = onDismiss, enabled = !locked) { Text("不同意并取消支付") }
         },
     )
 }

@@ -74,6 +74,10 @@ fun rememberCloseLock(totalMs: Long): Long {
  * [closeLockMs] 大于 0 时进入强制阅读：确认按钮在锁结束前不可点，点弹窗外或按返回也关不掉。
  * **锁时长由宿主算好传入**（`domain/NoticeConsent.closeLockMs`）——弹窗只负责倒数与置灰，
  * 「是否首次」「要不要弹」的判断都在宿主，别塞进弹窗里。
+ *
+ * [declineLabel] / [onDecline] 给"不接受协议"的明示出口（首启队列 = 不同意并退出应用，
+ * 2026-09-30 用户要求）：给出就渲染第二枚按钮，锁住期间同样置灰——强制阅读期间
+ * 连"拒绝"都必须等读完。不给就是纯声明查看（关于页 / 主动浏览），只保留确认键。
  */
 @Composable
 fun NoticeDialog(
@@ -83,6 +87,8 @@ fun NoticeDialog(
     onDismiss: () -> Unit,
     confirmLabel: String = "我知道了",
     closeLockMs: Long = 0L,
+    declineLabel: String? = null,
+    onDecline: (() -> Unit)? = null,
 ) {
     val remainingMs = rememberCloseLock(closeLockMs)
     val locked = remainingMs > 0L
@@ -123,6 +129,13 @@ fun NoticeDialog(
                     if (locked) "${ceil(remainingMs / 1000.0).toInt()} 秒后可关闭" else confirmLabel,
                 )
             }
+        },
+        dismissButton = if (declineLabel != null && onDecline != null) {
+            {
+                TextButton(onClick = onDecline, enabled = !locked) { Text(declineLabel) }
+            }
+        } else {
+            null
         },
     )
 }
