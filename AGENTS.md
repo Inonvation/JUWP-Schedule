@@ -239,7 +239,7 @@ data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIG
 data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
                  QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
                  QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|scholar|timetable|common|theme|widget|ebike|notes|homework
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -299,6 +299,29 @@ P6 打磨 — **进行中**。2026-09-21 起陆续落地：笔记与作业（自
 发现链路绑微信 token，改为**公开仓库镜像** `docs-public/calendar/`（图 + index.json），
 App 冷启动 7 天闸门静默刷 + 页内手动刷新，内置兜底图永不空屏，点图全屏手势缩放；
 **每年更新 = 存新图 + 改 index.json 两个值**，用户端免发版自动换）。
+快趣出行三处调整（2026-09-30，DESIGN §3.9 / §4.32）：① 未登录的登录表单写清「忘记密码」
+的出路（小程序登录页「忘记密码」重设 / 登录后「设置 → 修改密码」，密码保存在本机加密存储）；
+② 骑行态的还车点列表改用运营方点位名当标题（`givecarList[].name`，缺名才回落「还车点」），
+这个字段一并进缓存文件；③ 免费时长提醒补 `VIBRATE` 权限 + 提醒时直接震动（此前通知渠道配了
+震动但 manifest 缺权限，系统静默丢弃——用户报的「通知了但没震动」根因），设置弹层「提醒」区
+新增「通知与悬浮」入口；**横幅（heads-up）弹不弹由系统 / ROM 决定，App 强制不了**。
+真机点验待用户执行。
+开锁 / 还车确认弹窗打磨（2026-10-01，DESIGN §3.9 / §4.32）：正文改成编号要点（长文可滚，
+小屏与大字体档位下按钮不被挤出去）；**开锁弹窗新增「以后开锁不再确认」勾选**，落
+`ebike_unlock_confirm`，出口在快趣出行设置新增的「开锁与还车」区（可随时恢复）；
+**只有开锁能免确认**——还车涉及结算与调度费、重试开锁是异常路径，都保留每次确认，
+定位前置照旧排在直发分支前面。真机点验待用户执行。
+地图重绘与弹窗重组（2026-10-01，DESIGN §3.9「刷新成本第二刀」/ §4.32）：用户报「点确认开锁后
+卡一下」，查出两条——① `AndroidView` 的 update 每轮重组都跑、收尾无条件 `invalidate()`，
+于是页面上任何与地图无关的状态变化都整幅重画地图，现在改为**先比对 `MapOverlayInputs`、
+画的东西没变就不重绘**；② 用车确认弹窗的状态读取收进 `KvcxConfirmHost`，开关弹窗不再重组整页。
+真机点验待用户执行（重点：拖动/刷新后车标与还车点照常出现、点车辆行高亮正常）。
+开锁后掉帧的根因与修复（2026-10-01 第二轮，DESIGN §3.9）：用户报「关掉二次弹窗后，开锁就掉帧、
+然后骑行面板弹出来」——那 240ms 是动作区 `AnimatedContent` 的高度动画，地图跟着实测高度走，
+**每帧 resize 一次 → osmdroid 每帧整幅重绘**。现在地图的让位高度在换形态期间**冻结**
+（`mapReserveDp` + `DpHolder` 只记账不写状态），动画结束才一次性落位；页面结构改成
+`Box { 地图; 贴底的 Column（面板 + 常驻块，叠在图上）}`，形态 key 由 `rideBarKey()` 唯一算出
+（`RideBarKeyTest` 3 例钉住）。真机点验待用户执行（重点：开锁后是否还掉帧、面板升起是否照旧）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

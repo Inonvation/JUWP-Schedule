@@ -216,6 +216,26 @@
 - 每帧那边的两条：图层先过**经纬度包围盒**（`ZONE_CULL_PADDING_DEG`）再建路径
   （接口固定回 15 个还车点，视野里通常只有三五个）；投影复用同一个 `tmpGeo`，
   不要回到"每簇每帧 new 一个 GeoPoint"。
+- **叠加层只在输入真变了才重画**（2026-10-01 用户报「点确认开锁后卡」时定位到这条）：
+  `AndroidView` 的 `update` 块**每次外层重组都会跑**（update 的 lambda 每轮新实例，
+  跳不过去），历史上它收尾无条件 `view.invalidate()` —— 于是页面上任何与地图无关的状态变化
+  （开确认弹窗、按钮 busy、Snackbar、偏好变化）都会整幅重画地图，正好撞在写操作那两帧上。
+  现在 update 里先比对 `MapOverlayInputs`（colors / clusters / selectedKey / 三个点 /
+  highlightLabel / zones，全是数据类，比较是值比较），**相等就跳过赋值与 invalidate**；
+  回调（`onClusterTap` / `onRideTap`）不进比对，每轮照写——它们是闭包，换了不需要重画。
+  **别退回无条件 invalidate**；加新的绘制输入时记得一并进 `MapOverlayInputs`，
+  漏进去就是"数据变了画面不动"的静默 bug。记账用的 `DrawnOverlayInputs` 是普通持有者，
+  **别换成 `mutableStateOf`**（update 跑在 apply 阶段，写状态会再触发一轮重组）。
+- **地图的让位高度在底部块换形态时冻结**（2026-10-01 同一条报障的另一半，`RideScreen`）：
+  动作区 `barKey` 一变，`AnimatedContent` 的 `SizeTransform` 走 240ms 高度动画；页面若让地图
+  跟着实测高度走，这 240ms 里**每帧 resize 一次地图**（osmdroid 每帧整幅重绘 + 每帧写状态
+  重组整页）。现在：`mapReserveDp` 是**冻结值**，动画期间不动（地图被升起来的底部块盖住），
+  动画结束取最终实测高度一次性落位——被切掉的那一截正好在块后面，看不见。
+  三个配套件别拆：① 页面结构是 `Box { 地图（按 panelHeight + mapReserveDp 让位）;
+  贴底的 Column（面板 + 常驻块，叠在地图之上）}`——不是 `Column` 里排，否则冻结会撑破容器；
+  ② `barKey` 由 `rideBarKey()` 唯一算出（页面与动作区共用），页面靠它触发冻结；
+  ③ 布局回调（`onGloballyPositioned`）在动画期间**只记账不写状态**（`DpHolder`），
+  不然每帧一次状态写就把省下来的又花回去。
 - 量法：debug 下 `BikeMapQuery` 打两行（首屏落地 / 合并落地，含条数与环点数）；
   `adb shell dumpsys gfxinfo <包名> framestats` 看拖动时段的掉帧。
   **展示上限 1200 米这次没收**：采样环只有 450 米，捞回来的车最远六百多米，
@@ -280,6 +300,36 @@
   那条路（别的车队前缀是 `300000…`，靠尾部三位拼不出正确链接），
   **不要再按 `EbikeQr.TEMPLATE + 尾部` 拼 URL**。
 
+## 内置相机扫一扫（2026-09-30 换自有取景窗口）
+
+- 扫车身码的窗口从库自带的 `CaptureActivity` 换成自己的 **`EbikeScanActivity`**
+  （`ui/ebike/EbikeScanActivity.kt`）：库窗口只有取景框 + 一行提示，没有开关手电筒、
+  也没有「从相册选图」的入口，而这两件正是暗光 / 码已在相册里时的唯一出路。
+  **相机那一套没重写**——预览仍是库的 `DecoratedBarcodeView`，开关机 / 权限 / 取景框 /
+  解码节流仍归 `CaptureManager`，只换界面（Compose）。入口只在账号方式
+  （`caps.cameraScan`，只此一处），调用点是 `RideScreen.scanBodyCode` 里的
+  `ScanOptions.setCaptureActivity(...)`——**别把这行删了**，删了就退回库窗口。
+- **结果与库窗口逐字段同形**（`CaptureManager.resultIntent` + `ScanContract` 不改）。
+  相册那条路解出的车号**先在窗口里过一遍 `EbikeQr.parseScannedCarNum`**：从相册挑到
+  无关截图是常态，那种情况留在取景页给一句「换一张试试」，别踢回骑行页报「未识别到
+  有效车号」——那等于把用户刚打开的面板关掉。
+- **回页面的判定分三档**（`RideScreen.scanLauncher`，2026-09-30）：`result.contents`
+  **为空 = 取消**（取景页没扫到就被关掉，`ScanContract` 把 `RESULT_CANCELED` 映射成空
+  结果）→ **不提示**；非空但 `parseScannedCarNum` 为 null（名片码 / 小程序码 / 别的链接）
+  → 才报「未识别到有效车号」；其余照旧回填车号 + 车辆卡。**别把前两档并回一个
+  `carNum == null`**——那正是「每次取消都挨一句报错」的来路（2026-09-30 修）。
+  相机权限被拒 / 相机起不来这两条路走库自己的对话框，回来同样是空结果。
+- **手电筒状态只有库一处**（`TorchListener` 回调 → `torchOn` 这枚 state，界面只读）：
+  `setTorchOn/Off` 是同步回调，**别在页面里另存一份开关值**——去相册再回来时
+  `CameraPreview` 会按自己记住的状态重新点亮补光灯，两处各记一份迟早对不上。
+  设备没有补光灯（`FEATURE_CAMERA_FLASH`）时不摆这枚按钮。
+- **相册解码先降采样**（`readSampledBitmap`：`inJustDecodeBounds` 探针 → `inSampleSize`
+  取到长边 ≤ 2000 的最小 2 的幂）：12MP 照片整解是 48MB 的 int 数组，而二维码只要模块
+  够清楚。解码的**纯逻辑在 `EbikeQr.decodeFromPixels`**（ARGB 像素 + 尺寸），Bitmap 那层
+  留在 UI——所以 `EbikeQrTest` 能直接喂 `qrMatrix` 渲染出的像素做 round-trip。
+  返回结果里的 `SourceData` 是 1×1 占位（`resultIntent` 只读 `Result` 的文本 / 格式 /
+  字节），别把它当成"像素要回传"。
+
 ## 扫完即焚（2026-09-27 改口径）
 
 - **出码页两个开关的「行为判定」读原始流，不读页面快照**（2026-09-27 修「开了自动保存
@@ -325,6 +375,17 @@
   `ebike_free_ride`**——已存在 channel 的 importance 与震动都改不动，且「删掉重建」也无效
   （delete 是异步的，紧接着 create 会被当成更新，实测震动没生效），只能换 id；
   通知 id 1000/1005/1006，与上课（1001/1004）、作业（1002/1003）错开。
+- **震动要 `VIBRATE` 权限，横幅弹不弹不由我们定**（2026-09-30 用户报「通知了但只在通知栏
+  看到，不弹出也没震动」）：manifest 此前一直**没声明 `VIBRATE`**——Android 8 起渠道上的
+  `vibrationPattern` 靠它才生效，缺了系统静默丢弃，所以 `enableVibration(true)` 配了也白配
+  （这是那一轮的真根因，已补）。另外 `EbikeFreeRideNotifier.vibrateAlert` 在两条提醒里
+  各发一次**直接震动**（`VibrationEffect`；API 31+ 走 `VibratorManager.defaultVibrator`，
+  更低走 `Vibrator`）：渠道震动归系统通知设置管，用户把那条渠道的「震动」关掉后它就不震，
+  直接震动不看那个开关。**横幅（heads-up）只能尽力**：App 侧只有「HIGH 渠道 + 不静音」
+  这一条路，应用被后台限制、通知设置里「悬浮通知 / 横幅」被关，都会让提醒只落在通知栏
+  ——所以设置弹层「提醒」区常驻一条「通知与悬浮」（`AppPermissions.jumpNotificationSettings`，
+  跳应用通知设置页、失败兜底应用详情页），**别删**：那是用户唯一能改的地方。
+  **常驻倒计时那条保持 LOW 无震动**——它每秒重发一次，做成横幅等于每秒弹一次。
   迟到窗口（用户拍板）：提前量那条只要免费时段没结束就补发，结束那条结束后
   5 分钟内仍发（`EbikeFreeRide.END_WINDOW_MS`）；去重键带计时起点，落
   `ebike_free_notified_keys`。`EbikeFreeRideCheckWorker` 的类名也别改
@@ -365,8 +426,15 @@
 ## 快趣出行登录与用车（DESIGN §4.32，2026-09-28；A 只读 + B/C 用车）
 
 - 逆向产物（`docs/kvcoo-miniprogram-analysis.md`，仅本地）确认快趣后端无签名、token 唯一凭证。
-  登录 = `userLoginByPassword {mobile, password: MD5(密码)}`（标准小写 hex，复用
-  `QzxyCredential.md5Hex`）。
+ 登录 = `userLoginByPassword {mobile, password: MD5(密码)}`（标准小写 hex，复用
+ `QzxyCredential.md5Hex`）。
+- **未登录的登录表单要写清「忘记密码去哪儿改」**（2026-09-30 用户要求，`KvcxScreen.LoginSection`
+  登录按钮下方常驻一句）：改密码只能在快趣小程序里做，App 不存找回流程也没有客服通道。
+  两个落点从解包产物核对过——小程序**登录页的「忘记密码」**（`pages/login/forget`：
+  手机号 + 短信验证码 → `resetPassword`）、**登录后「设置 → 修改密码」**
+  （`pages/setting/modifypassword`：只填新密码 → `updatePassword`）。同一句里写明密码
+  （连同手机号）保存在本机加密存储（`KqxCredentialStore`，为的是 token 失效后静默重登），
+  别让人以为「App 不用密码」。
 - **字段解析一律宽容取值**（`KqcxAuth` 里 `text/long/double/int/bool` 五个私有扩展）：
   快趣后端字段类型不稳定（数值给字符串或带小数点的 number、布尔给 0/1），严格 DTO 会在真机
   直接抛「骑行订单字段解析失败」（2026-09-28 用户真机报过）——**别退回 `@Serializable` 硬解**，
@@ -400,6 +468,19 @@
      订单内、没有新增的计费后果，误触代价低于多一次确认的打扰；「计费继续」由 `tempLock`
      成功后的提示文案交代）。弹窗文案与「哪些动作要弹」都只在这个函数里，两页共用，
      别在页面里另写一份（`KvcxRideControllerTest` 里那几条断言钉着这件事）。
+     - **正文是编号要点**（`KvcxConfirm.points`，2026-10-01）：三件事（计费 / 核对车号 /
+       支付分出路）各一条，别糊回一整段；长文配 `heightIn(max = 400.dp)` + `verticalScroll`
+       （`ui-common.md` 对确认型弹窗的硬要求，小屏与大字体档位下按钮不能被挤出去）。
+     - **只有开锁能免确认**（`allowSkip`）：勾选「以后开锁不再确认」落 `ebike_unlock_confirm`，
+       出口在快趣出行设置 → 开锁与还车（`RideConfirmSettingsSection`）。**四道闸里只放开这一道**
+       ——它是"用户对自己账号"的授权；还车涉及结算与调度费、重试开锁是异常路径，都保留每次
+       确认（弹窗那行常显说明就是写给用户看的，别顺手把还车也做成可关）。
+      关掉后 `RideScreen.requestKvcxAction` 走直发分支，**定位前置仍在它前面**（那一道不可关）；
+      页面判定读的是 `EbikePrefsSnapshot.unlockConfirm`，它滞后时只会多弹一次确认，偏保守。
+       **勾选不记忆**：每次打开弹窗都从没勾开始（勾选是这一次的明确决定）。
+     - **弹窗的状态读取收在 `KvcxConfirmHost` 里**（2026-10-01）：`pendingAction` 用裸 state
+       对象传递、在宿主组件里才 `by` 读——读在 `RideScreen` 函数体里的话，开关弹窗会重组整页，
+       连带地图走一遍 `AndroidView` update。**别再把它改回页面函数体里的 `by` 读**。
   4. **调度费/出围栏不代确认**——`dispatchMoney>0`、50011 一律抛错降级官方渠道，
      **别**改成发 `dispatchFlag:1` 替用户接受费用。
   5. **支付/免押授权不做**（微信内流程）：`needPay` 只提示 + `confirmUnpaidSettled` 短轮询
@@ -484,6 +565,13 @@
     `BikeNearby.inCampusFence` 判坐标；**禁停区不筛**（安全提示，藏掉更糟）。开关变化走
     `applyZones()` 重算，**不重新请求**（与车辆列表同一口径）；原始图层存在 `fetchedZones`。
   - 「P」图标 15dp（20dp 时比车标还抢眼，用户反馈缩小）；命中半径仍是 24dp，别跟着缩。
+  - **还车点要带点位名**（2026-09-30 用户口径「一个个还车点能不能换成具体地点」）：
+    `givecarList[]` 顶层有 `name`（实测「教学北大楼左侧」「北大楼」「土建楼」），解析进
+    `KvcxParkSpot.name`，展示一律走 `displayName`（空名回落「还车点」，**页面里别再写一遍
+    `ifBlank`**）。骑行态的列表（`RideSpotsContent`）用它当标题、距离挪到副行；「P」标记
+    不标名字（15 个点同时标名会盖住底图）。这个字段也进了缓存文件（`ZoneCacheStore` 的
+    `SpotRow.name`，**必须有默认值**——老版本写的缓存没有这一列，缺默认值会让整份文件解码
+    失败，用户升级后白丢一次图层缓存）。
   - **停车点图层缓存**（2026-09-28 用户口径；2026-09-29 收小半径，`ZoneCacheStore` + `domain/ZoneCache`）：
     覆盖半径 **50 米**、新鲜期 **12 小时**、最多 **12 条**、同视野（100 米）写入替换、
     **空结果不写**（可能是"这一带确实没有"也可能是解析兜底，宁勿把"没有"缓存半天）。

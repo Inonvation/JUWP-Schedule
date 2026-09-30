@@ -27,8 +27,9 @@
   主界面下方那条气泡**（用户口径：「导入成功提醒是软件内下方那个一行的气泡提醒，不是弹窗
   提醒」）。通道是 `ui/jwvw/JwImportResultBus`，**不再有「导入完成」弹窗**——留着它，用户
   点完「完成」就 finish，反馈停在他看不见的那个窗口里。
-- **五个落点**各调一次 `JwImportOutcomeEffect(snackbar)`：课表页 / 今日页 / 成绩页 /
-  学校统一认证页 / 课表中心页（后两个是本页的「导入课表」「导入成绩」入口，导入窗口 finish
+- **六个落点**各调一次 `JwImportOutcomeEffect(snackbar)`：课表页 / 今日页 / 成绩页 /
+  学校统一认证页 / 课表中心页 / 考试页（`ui/exam/ExamScreen.kt`，2026-09-30 加；后三个
+  是本页的「导入课表」「导入成绩」「导入考试安排」入口，导入窗口 finish
   后落回的就是它们）。新增落点页面时别忘了同时补 `AppSnackbarHost`；`JwAccountScreen` 的
   Scaffold 把 `contentWindowInsets` 归零了，提示条要自己 `navigationBarsPadding()`。
 - 四条别改坏：① 课表/考试与成绩两条路径都发，文案各自拼（成绩不报课表名）；
@@ -103,8 +104,17 @@
   单测钉住 value 属性 / 纯文本 / data-selected 三种形态），抽不到直接 Failed，**不猜学期**
   （猜错的学期会拿空基线当「首跑」吞掉真变动，或拿错学期基线刷一屏假通知）。
 - **考试绝不写课程表**：`ExamSync` 只读 + 与 `ExamSnapshotStore`（filesDir 基线）比对 +
-  发通知；点通知落 `JwImportActivity`（Schedule 模式）让用户手动确认导入。给这条链加
-  「顺手写库」等于把静默写课表做进后台，禁止。
+  发通知；点通知落**考试页**（`SubpageScreen.EXAMS`，2026-09-30 由直达 `JwImportActivity`
+  改过来），导入入口在该页页尾。给这条链加「顺手写库」等于把静默写课表做进后台，禁止。
+- **`startAtExam` 只改登录后的落页**（2026-09-30）：`JwImportActivity.start(startAtExam = true)`
+  让课表模式的窗口登录后直接开 `xsksap_query`，从而**不触发** `autoImportOnTheoryReady`
+  的一键导入（理论+实验）。考试页的导入卡必须带这个参数——不带的话，用户点「导入考试安排
+  到课表」看到的是「一键导入课表」（真机复现过）。它不动抽取、写库与确认弹窗任何一环。
+- **考试安排也自动跑**（2026-09-30，`autoImportOnExamReady`）：落到考试安排查询页就抓一轮，
+  与理论课表的 `autoImportOnTheoryReady` 同构、共用 `autoImportTried` 与 `busy`，
+  两条各判自己的页型。出口两条：有安排 → 识别结果确认弹窗（默认合并）；没安排 →
+  「暂时没有考试安排」弹窗（`emptyExamTerm`，教务考前数周才录入，`count=0` 是正常空态，
+  文案不要写成错误）。**这是省点击不是省确认**：写库仍要过确认弹窗，红线不变。
 - **首跑/换学期不通知**：基线为空或 `Snapshot.term` 与本次抓到的学期不一致 → 只存基线、
   返回空变更。删掉这道闸，用户开开关的那一刻会被整表考试刷屏。
 - **检查时刻只在成功后落**（`score_check_millis` / `exam_check_millis`），失败不写——
@@ -118,14 +128,23 @@
   给成绩写库加新调用点时想想它绕过了这道 diff 会怎样。
 - **设置入口两处、间隔一份（2026-09-30）**：成绩提醒在 `ScoreSettingsScreen`
   （`SubpageScreen.SCORE_SETTINGS`，成绩页齿轮进入；分组/排序/任选课口径也在这页），
-  考试提醒在 `TimetableHubScreen` 的 `ExamAlertRows`（课表 hub「使用」区）。两边
+  考试提醒在考试页 `ExamScreen`（`SubpageScreen.EXAMS`，入口「我的 → 学习 → 成绩与考试 →
+  考试安排」；同日先内联在课表 hub 的 `ExamAlertRows`，再收成课表 hub 入口行，傍晚挪进
+  学习 hub——**别搬回课表 hub**，用户口径是「考试跟成绩一起看」）。两边
   **共用 `alert_interval_hours`**——改任意一边另一边跟着变，别给它加「按提醒分开」的键；
   `ScoreAlertReminder.ensurePeriodicWork` 只排一个周期任务，两链共用。
+- **考试页的列表与提醒同源**（2026-09-30）：列表读 `ExamSnapshotStore`（`ExamSync` 每次
+  成功检查落的基线），所以**没把考试导进课表也能看**；页尾的导入卡只是「进课表」的口子，
+  考试进课表仍然只有手动导入一条路。列表里「新增/调整」标用 `ExamChangeDetector.keyOf`
+  算的身份键——**别在 UI 里另写一套键**，两份迟早漂。顶栏「更新」= `ExamSync.sync(force = true)`。
 - **任选课口径开关只在成绩设置页**（2026-09-30）：成绩页汇总卡的重复开关已删，
   note 行的 `excludedCount` 文案负责展示当前口径生效中。别在两处各放一个开关——
   改口径的地方一多，用户永远对不上「我看到的是按哪个口径算的」。
-- **没有「立即检查」**（用户删，2026-09-30）：`onSettingsChanged` 的 one-shot 已经是
-  「改完设置当场评估一次」的通道，不要往设置页再选手动触发入口；要最新数据走成绩页
-  「从教务导入」（WebView 强制路径）。
+- **设置项里没有「立即检查」**（用户删，2026-09-30）：`onSettingsChanged` 的 one-shot
+  已经是「改完设置当场评估一次」的通道，不要往设置页再塞手动触发入口。
+  **数据页的刷新不算这条**：成绩页「从教务导入」（WebView 强制路径）与考试页顶栏
+  「更新」（`ExamSync.sync(force = true)`，OkHttp）都是列表数据的刷新入口，允许存在。
+  注意「更新」会顺手落新基线，本次变动不再由周期任务重复通知——卡上的「新增/调整」标
+  就是这次的结果。
 - **通知 requestCode 与 id 解耦**（3008/3009 vs 1008/1009），两落点 intent 只差 extra、
   都无 action——requestCode 撞了会互相改写落点（§3.13 3005/3006 同坑）。
