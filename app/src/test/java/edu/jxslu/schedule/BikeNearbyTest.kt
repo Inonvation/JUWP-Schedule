@@ -7,6 +7,8 @@ import edu.jxslu.schedule.domain.NearbyParseResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -517,5 +519,61 @@ class BikeNearbyTest {
         val jxnu = ok(response(car(campus = "江西师大"))).first()
         assertEquals("江西师大", jxnu.campusName)
         assertFalse(BikeNearby.isOurCampus(jxnu.campusName))
+    }
+
+    // ---- 单车详情（queryOneCar，2026-09-30） ----
+
+    /** 单车详情响应：`result` 直接是车辆对象（官方 `loadOneCar` 消费五字段同款）。 */
+    private fun single(
+        carJson: String,
+        errorCode: String = "0",
+    ): String = """{"result":$carJson,"resultCode":1,"errorCode":$errorCode,"resultMsg":"请求成功"}"""
+
+    @Test
+    fun `单车详情解析同构响应`() {
+        val bike = BikeNearby.parseSingle(single(car()), centerLat, centerLng)
+        assertNotNull(bike)
+        assertEquals("100000652", bike!!.carNum)
+        assertEquals(28.6883209, bike.lat, 1e-9)
+        assertEquals(92.8, bike.batteryPercent!!, 1e-9)
+        assertEquals(BikeStatus.Available, bike.status)
+        // 距离按查询中心本地算：fixture 的车就停在中心
+        assertTrue(bike.distanceMeters < 5)
+    }
+
+    @Test
+    fun `单车详情缺在线启用字段不当成失联`() {
+        // 详情接口的字段口径只确认过五个（carNum/lat/lng/deviceType/currentPercent）；
+        // onlineStatus/status 缺了就当在线可用——用户是拿完整车号点名查这辆车，
+        // 缺数据不该把它标成"失联"（与附近列表"坏了丢一条"的口径不同）
+        val raw = """{"result":{"carNum":"100000652","lat":$centerLat,"lng":$centerLng,
+            "currentPercent":"64"},"resultCode":1,"errorCode":0}"""
+        val bike = BikeNearby.parseSingle(raw, centerLat, centerLng)
+        assertNotNull(bike)
+        assertEquals(BikeStatus.Available, bike!!.status)
+        assertEquals(64.0, bike.batteryPercent!!, 1e-9)
+    }
+
+    @Test
+    fun `单车详情明确离线与停用照旧生效`() {
+        val offline = BikeNearby.parseSingle(single(car(online = "0")), centerLat, centerLng)
+        assertEquals(BikeStatus.Offline, offline?.status)
+        val disabled = BikeNearby.parseSingle(single(car(status = "0")), centerLat, centerLng)
+        assertEquals(BikeStatus.Disabled, disabled?.status)
+    }
+
+    @Test
+    fun `单车详情坏车号与业务错误返回 null`() {
+        // 出不了码的车号：与附近列表同一道闸
+        assertNull(BikeNearby.parseSingle(single(car(carNum = "abc")), centerLat, centerLng))
+        // 业务错误（errorCode != 0）
+        assertNull(
+            BikeNearby.parseSingle(
+                """{"resultCode":1,"errorCode":30001,"resultMsg":"车辆不存在","result":null}""",
+                centerLat, centerLng,
+            ),
+        )
+        // 非 JSON
+        assertNull(BikeNearby.parseSingle("<html>", centerLat, centerLng))
     }
 }

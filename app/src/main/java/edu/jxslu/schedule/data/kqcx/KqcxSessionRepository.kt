@@ -1,9 +1,13 @@
 package edu.jxslu.schedule.data.kqcx
 
+import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.domain.KvcProtocolException
 import edu.jxslu.schedule.domain.KvcxZones
+import edu.jxslu.schedule.domain.NearbyBike
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -234,6 +238,53 @@ class KqcxSessionRepository(
             if (index < attempts - 1) delay(SETTLE_POLL_INTERVAL_MS)
         }
         return last
+    }
+
+    /**
+     * 响铃寻车（2026-09-30）：让在案订单的车鸣笛。服务端没有在案订单时会报业务错误，
+     * 原样抛给调用方提示（控制器在本地已先挡一层）。
+     */
+    override suspend fun ringFindCar() {
+        ensureSession()
+        server { KqcxAuth.parseSuccess(client.findCarJson(requireToken())) }
+    }
+
+    /**
+     * 按车号查单车（2026-09-30）：附近列表里没有目标车时的兜底（官方 `loadOneCar` 同款）。
+     * token 允许空——这个读接口不需要凭证（与 [queryZones] 同口径），小程序方式也能用
+     * 「按车号定位」。解析不出（车号不存在 / 坐标无效）返回 null，**不抛错**：调用方
+     * 把"查不到"当正常结果提示。
+     */
+    suspend fun queryCarDetail(carNum: String, centerLat: Double, centerLng: Double): NearbyBike? =
+        runCatching {
+            BikeNearby.parseSingle(
+                client.oneCarJson(token.orEmpty(), carNum, centerLat, centerLng),
+                centerLat,
+                centerLng,
+            )
+        }.getOrNull()
+
+    /**
+     * 账户资产（快趣账号页「快趣资产」区，只读）：余额 / 卡券 / 会员卡，三个接口**并行**拉。
+     * 单个接口失败不影响其它块（余额给 null、列表给空）；登录缺失 / 失效照常抛错。
+     */
+    suspend fun queryAssets(): KqcxAuth.Assets {
+        ensureSession()
+        val current = requireToken()
+        return coroutineScope {
+            val balance = async {
+                runCatching { KqcxAuth.parseBalance(client.userInfoJson(current)) }.getOrNull()
+            }
+            val coupons = async {
+                runCatching { KqcxAuth.parseCoupons(client.userCouponJson(current)) }
+                    .getOrDefault(emptyList())
+            }
+            val members = async {
+                runCatching { KqcxAuth.parseMembers(client.userMemberJson(current)) }
+                    .getOrDefault(emptyList())
+            }
+            KqcxAuth.Assets(balance = balance.await(), coupons = coupons.await(), members = members.await())
+        }
     }
 
     // ---------- 内部 ----------

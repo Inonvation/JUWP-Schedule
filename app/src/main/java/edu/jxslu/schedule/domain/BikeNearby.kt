@@ -494,6 +494,61 @@ object BikeNearby {
     }
 
     /**
+     * 解析「按车号查单车」（`/v2.0.0/queryOneCar`，2026-09-30）的响应为一辆车。
+     *
+     * 附近列表里没有目标车（被筛掉 / 还没查到那一片）时，App 拿完整车号向快趣点名查一次，
+     * 拿到真实坐标与电量后高亮定位——官方扫码后的 `loadOneCar` 就是这条路。
+     *
+     * 响应 `result` 是**单个车辆对象**（官方只消费 `carNum/lat/lng/deviceType/currentPercent`
+     * 五个字段）；信封非成功或解析不出车返回 null，调用方提示"查不到"。
+     */
+    fun parseSingle(raw: String, centerLat: Double, centerLng: Double): NearbyBike? {
+        val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
+        val obj = root as? JsonObject ?: return null
+        val errorCode = obj["errorCode"].intValue()
+        if (errorCode == null || errorCode != 0) return null
+        val car = obj["result"] as? JsonObject ?: return null
+        return parseSingleCar(car, centerLat, centerLng)
+    }
+
+    /**
+     * 单车响应 → [NearbyBike]。与 [parseBike] 的差别在**缺字段的假设**：
+     * 附近列表是"一次拿一批、坏了丢一条"，在线 / 启用字段缺失按坏数据处理；
+     * 这里是用户拿着完整车号**点名**查这一辆，详情接口的字段口径只确认过五个，
+     * 在线 / 启用缺了就当在线可用——缺数据不该把一辆真车标成"失联"。
+     */
+    private fun parseSingleCar(car: JsonObject, centerLat: Double, centerLng: Double): NearbyBike? {
+        val carNum = car["carNum"].stringValue()?.trim().orEmpty()
+        if (EbikeQr.bikeUrl(carNum) == null) return null
+        val lat = car["lat"].doubleValue() ?: return null
+        val lng = car["lng"].doubleValue() ?: return null
+        if (!isUsableCoordinate(lat, lng)) return null
+
+        val battery = car["currentPercent"].doubleValue()?.takeIf { it in 0.0..100.0 }
+        val lowBattery = car["lowBattery"].doubleValue()?.takeIf { it in 0.0..100.0 }
+        val online = car["onlineStatus"].intValue()
+        val enabled = car["status"].intValue()
+        val status = when {
+            online == 0 -> BikeStatus.Offline
+            enabled == 0 -> BikeStatus.Disabled
+            online == null || enabled == null -> BikeStatus.Available
+            else -> deriveStatus(online == 1, enabled == 1, battery, lowBattery)
+        }
+        return NearbyBike(
+            carNum = carNum,
+            lat = lat,
+            lng = lng,
+            batteryPercent = battery,
+            status = status,
+            model = car["carTypeName"].stringValue().orEmpty().trim(),
+            siteName = correctSiteName(car["givecarName"].stringValue().orEmpty().trim()),
+            campusName = car["servicesiteName"].stringValue().orEmpty().trim(),
+            distanceMeters = distanceMeters(centerLat, centerLng, lat, lng)
+                .roundToInt().coerceAtLeast(0),
+        )
+    }
+
+    /**
      * 状态推导。电量判定的前提是两项都拿到了：接口少给一个字段时不该把车说成电量低，
      * 那会让一辆正常车在地图上变灰。真正不可用的信号（离线、运营方停用）照旧生效。
      */

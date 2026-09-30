@@ -180,8 +180,11 @@ data class BikeMapUiState(
 class BikeMapViewModel(
     private val client: KqcxBikeClient,
     private val prefs: DisplayPrefsStore,
-    /** 快趣会话（DESIGN §4.32）：本机开锁 / 锁车 / 还车与「当前用车」标记都靠它。 */
-    kqcx: KqcxSessionRepository? = null,
+    /**
+     * 快趣会话（DESIGN §4.32）：本机开锁 / 锁车 / 还车与「当前用车」标记都靠它；
+     * 「按车号查单车」（2026-09-30）也走它——那是个不需要凭证的读接口。
+     */
+    private val kqcx: KqcxSessionRepository? = null,
     /** 还车点 / 禁停区图层的数据源（只读；未登录时为 null）。 */
     private val zoneSource: KvcxZoneSource? = null,
     /**
@@ -496,7 +499,7 @@ class BikeMapViewModel(
         pushCamera(lat, lng, zoom = null, animated = true)
     }
 
-    /** 找一辆车（按完整车号）并展开所在簇、把镜头移过去；找不到就提示等下一笔查询。 */
+    /** 找一辆车（按完整车号）并展开所在簇、把镜头移过去；列表里没有就向快趣点名查一次。 */
     fun focusCar(carNum: String) {
         if (!carNum.isNotBlank()) return
         _uiState.update { it.copy(highlightCarNum = carNum) }
@@ -504,10 +507,9 @@ class BikeMapViewModel(
         val cluster = _uiState.value.clusters.firstOrNull { c -> c.bikes.any { it.carNum == carNum } }
         if (cluster == null) {
             // 当前列表里没有：可能是筛掉了、车被骑走了或还没查到这一片。
-            // 号先记着（下一笔查询找到就亮），提示给条出路而不是干等
-            _events.trySend(
-                BikeMapEvent.Notice("附近列表里暂时没有这辆车；移动地图或点刷新后再试", NoticeTone.Info),
-            )
+            // 向快趣按车号点一次名（`queryOneCarV2`，官方 loadOneCar 同款），
+            // 拿到真实坐标就高亮定位；查不到才提示等下一笔查询
+            fetchCarDetail(carNum)
             return
         }
         _uiState.update {
@@ -518,6 +520,45 @@ class BikeMapViewModel(
             )
         }
         pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
+    }
+
+    /**
+     * 按车号向快趣查单辆车（2026-09-30「单车详情」）：附近列表里没有它时的兜底。
+     * 查到就高亮 + 移镜头（电量与位置随车辆卡展示）；查不到（车号不存在 / 网络失败）
+     * 给旧口径的出路提示。
+     *
+     * 查询中心用**当前视野中心**（官方传扫当时的定位，同是"以哪为上下文"）。
+     * 不轮询：一次查不到就到此为止，等用户下一次动作；连点期间只放一个在飞。
+     */
+    private var fetchedCarDetail: NearbyBike? = null
+    private var carDetailJob: Job? = null
+
+    private fun fetchCarDetail(carNum: String) {
+        val session = kqcx ?: run {
+            _events.trySend(
+                BikeMapEvent.Notice("附近列表里暂时没有这辆车；移动地图或点刷新后再试", NoticeTone.Info),
+            )
+            return
+        }
+        if (carDetailJob?.isActive == true) return
+        carDetailJob = viewModelScope.launch {
+            val detail = runCatching {
+                session.queryCarDetail(carNum, pendingLat, pendingLng)
+            }.getOrNull()
+            if (detail == null) {
+                _events.trySend(
+                    BikeMapEvent.Notice("快趣上也查不到车 $carNum；确认车号后再试，或移动地图找它", NoticeTone.Info),
+                )
+                return@launch
+            }
+            fetchedCarDetail = detail
+            _uiState.update { it.copy(highlightCarNum = carNum) }
+            rebuildClusters()
+            pushCamera(detail.lat, detail.lng, zoom = null, animated = true)
+            _events.trySend(
+                BikeMapEvent.Notice("已在地图标出车 $carNum（${detail.batteryText}）", NoticeTone.Info),
+            )
+        }
     }
 
     /**
@@ -658,9 +699,12 @@ class BikeMapViewModel(
             }
         }
         _uiState.update { current ->
-            // 高亮车按号在最新结果里重找：找得到才画（车被骑走 / 被筛掉时高亮自然消失）
+            // 高亮车按号在最新结果里重找：找得到才画（车被骑走 / 被筛掉时高亮自然消失）。
+            // 列表里没有时退回按车号查到的那一份（`fetchCarDetail`，2026-09-30）——
+            // 它就是为"不在这一批里"的车兜底的
             val highlighted = current.highlightCarNum?.let { num ->
                 clusters.asSequence().flatMap { it.bikes }.firstOrNull { it.carNum == num }
+                    ?: fetchedCarDetail?.takeIf { it.carNum == num }
             }
             current.copy(
                 clusters = clusters,

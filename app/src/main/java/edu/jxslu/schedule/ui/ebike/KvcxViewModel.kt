@@ -42,6 +42,14 @@ data class KvcxUiState(
     val querying: Boolean = false,
     /** null = 已查询且无骑行在案；查询失败沿用上次结果不动它。 */
     val ride: KqcxAuth.Ride? = null,
+    /**
+     * 快趣资产（2026-09-30，只读）：余额 / 卡券 / 会员卡。进页拉一次 + 手动刷新；
+     * null = 还没查到过（查询失败沿用 null，页面给"再试一次"的出路）。
+     */
+    val assets: KqcxAuth.Assets? = null,
+    val assetsLoading: Boolean = false,
+    /** 最近一次资产查询颗粒无收（三块全空或请求失败）；页面据此给重试出路。 */
+    val assetsFailed: Boolean = false,
 )
 
 class KvcxViewModel(
@@ -100,7 +108,10 @@ class KvcxViewModel(
         }
         // 进页自动查一次骑行状态：只在账号登录方式下（见 [accountMode]）
         viewModelScope.launch {
-            if (session.loggedIn.value && accountMode()) refreshRide()
+            if (session.loggedIn.value && accountMode()) {
+                refreshRide()
+                refreshAssets()
+            }
         }
     }
 
@@ -134,6 +145,7 @@ class KvcxViewModel(
                 notice("登录成功", NoticeTone.Success)
                 _uiState.update { it.copy(loggingIn = false, password = "") }
                 refreshRide()
+                refreshAssets()
             }
             .onFailure {
                 _uiState.update { it.copy(loggingIn = false) }
@@ -161,6 +173,33 @@ class KvcxViewModel(
             .onFailure {
                 _uiState.update { it.copy(querying = false) }
                 notice(queryErrorText(it), NoticeTone.Error)
+            }
+    }
+
+    // ── 快趣资产（2026-09-30，只读） ──
+
+    /**
+     * 查一次账户资产（余额 / 卡券 / 会员卡）：进页、登录成功、手动刷新各一次。
+     * **失败沿用上次结果**：资产是展示性数据，查不到不该把用户已看到的清成空白；
+     * 三块全空才算"颗粒无收"，页面给重试出路。失败不打扰（不弹提示，区块内给一行说明）。
+     */
+    fun refreshAssets() = viewModelScope.launch {
+        if (!session.loggedIn.value) return@launch
+        if (!accountMode()) return@launch
+        if (_uiState.value.assetsLoading) return@launch
+        _uiState.update { it.copy(assetsLoading = true) }
+        runCatching { session.queryAssets() }
+            .onSuccess { assets ->
+                _uiState.update {
+                    if (assets.isEmpty) {
+                        it.copy(assetsLoading = false, assetsFailed = true)
+                    } else {
+                        it.copy(assetsLoading = false, assetsFailed = false, assets = assets)
+                    }
+                }
+            }
+            .onFailure {
+                _uiState.update { it.copy(assetsLoading = false, assetsFailed = true) }
             }
     }
 

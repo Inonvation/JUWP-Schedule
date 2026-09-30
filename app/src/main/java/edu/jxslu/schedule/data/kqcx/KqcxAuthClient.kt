@@ -62,6 +62,27 @@ class KqcxAuthClient private constructor(private val http: OkHttpClient) {
          */
         private const val ENDPOINT_ZONES = "$BASE/v1.0.0/queryZoneList"
 
+        /**
+         * 响铃寻车（`greenCarFind`，2026-09-30）：让**在案订单**的车鸣笛，官方骑行页
+         * 「响铃寻车」同款（无参数、作用于当前订单）。
+         */
+        private const val ENDPOINT_FIND_CAR = "$BASE/v1.0.0/greenCarFind"
+
+        /**
+         * 按车号查单车（`/v2.0.0/queryOneCar`，2026-09-30）：官方扫码后 `loadOneCar`
+         * 用它拿单辆车的真实坐标与电量。只读接口。
+         */
+        private const val ENDPOINT_ONE_CAR = "$BASE/v2.0.0/queryOneCar"
+
+        /** 用户信息（`getUserInfo`）：充值 / 赠送余额都在 `result` 里。只读。 */
+        private const val ENDPOINT_USER_INFO = "$BASE/v2.0.0/getUserInfo"
+
+        /** 用户持有卡券（`queryUserCoupon`）：`list[]`，剩余次数与免费时长。只读。 */
+        private const val ENDPOINT_USER_COUPON = "$BASE/v2.0.0/queryUserCoupon"
+
+        /** 会员卡（`queryUserMemberCoupon`，官方传 `{page:1,rows:20}`）。只读。 */
+        private const val ENDPOINT_USER_MEMBER = "$BASE/v1.0.0/queryUserMemberCoupon"
+
         /** 小程序请求头的 `client-type: 1`；服务端按 token 认人，此头照抄即可。 */
         private const val CLIENT_TYPE = "1"
 
@@ -207,6 +228,48 @@ class KqcxAuthClient private constructor(private val http: OkHttpClient) {
             }
             execute(request.post(body).build(), "还车点查询")
         }
+
+    /** 响铃寻车：无参数（作用于在案订单），成功即车已响。 */
+    suspend fun findCarJson(token: String): String = withContext(Dispatchers.IO) {
+        execute(authed(ENDPOINT_FIND_CAR, token).post(FormBody.Builder().build()).build(), "响铃寻车")
+    }
+
+    /**
+     * 按车号查单车。参数逐字对齐官方 `loadOneCar`：`{carNum, lat, lng}`（坐标是查询上下文，
+     * 官方传扫当时的定位）。token 允许空串——与 [zonesJson] 同口径的只读接口，
+     * 小程序方式（无会话）也要能用「按车号定位」。
+     */
+    suspend fun oneCarJson(token: String, carNum: String, lat: Double, lng: Double): String =
+        withContext(Dispatchers.IO) {
+            val body = FormBody.Builder()
+                .add("carNum", carNum)
+                .add("lat", lat.toString())
+                .add("lng", lng.toString())
+                .build()
+            val request = if (token.isBlank()) {
+                baseRequest(ENDPOINT_ONE_CAR)
+            } else {
+                authed(ENDPOINT_ONE_CAR, token)
+            }
+            execute(request.post(body).build(), "单车查询")
+        }
+
+    /** 账户资产三件套（只读）：余额 / 卡券 / 会员卡，参数都是空表单（会员卡带分页）。 */
+    suspend fun userInfoJson(token: String): String = withContext(Dispatchers.IO) {
+        execute(authed(ENDPOINT_USER_INFO, token).post(FormBody.Builder().build()).build(), "资产查询")
+    }
+
+    suspend fun userCouponJson(token: String): String = withContext(Dispatchers.IO) {
+        execute(authed(ENDPOINT_USER_COUPON, token).post(FormBody.Builder().build()).build(), "卡券查询")
+    }
+
+    suspend fun userMemberJson(token: String): String = withContext(Dispatchers.IO) {
+        val body = FormBody.Builder()
+            .add("page", "1")
+            .add("rows", "20")
+            .build()
+        execute(authed(ENDPOINT_USER_MEMBER, token).post(body).build(), "会员卡查询")
+    }
 
     /** 公共头：form + `client-type: 1` + UA（对齐小程序 client 构造）。 */
     private fun baseRequest(url: String): Request.Builder = Request.Builder()

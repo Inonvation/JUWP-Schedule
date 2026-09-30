@@ -572,3 +572,41 @@
 - **编排的依赖收窄**（`KvcxRideSession` / `KvcxSideEffects`）：这不是为了分层好看，是为了
   `KvcxRideControllerTest` 能在 JVM 里假造会话与副作用。**加新的写动作或改闸门顺序时，
   先在测试里补一条**——四道闸只有这一处有测试保护。
+
+## 只读补全：响铃寻车 · 锁状态查询 · 单车详情 · 账户资产（2026-09-30）
+
+- **协议出处**：小程序 V6.0.0 的全量接口清单（PC 微信缓存解包产物 `%TEMP%\kvcoo\unpacked`，
+  只读分析；官方 Android APK 是 360 加固，静态提不出接口，只见权限：蓝牙开锁通道 + 高德地图）。
+  这四件全部**无计费后果**，挑它们就是因为安全；`KvcxAction` 因此多了 `RING` / `QUERY_LOCK`
+  两枚，`kvcxConfirmDialog` 对它们返回 null——**别给这两件加确认弹窗**（它们也不走
+  `pendingAction` 那条闸）。
+- **响铃寻车**（`greenCarFind`，`KvcxRideController.ringFindCar`）：无参数、作用于**在案订单**。
+  本地先挡「没有骑行」（`state.ride == null` 直接提示、不发请求——服务端按当前订单定位车辆）；
+  成功文案「已发送响铃，留意身边的提示音」。入口是骑行仪表盘头行那枚 `BellRing`
+  （40dp 密集规格，与定位/刷新并排），**别挪进底部动作行**——那一行是锁车 / 还车这两个
+  计费动作的位置。
+- **锁状态查询不走 `carLockFlag`**：解包确认它在小程序 V6 里**只有定义没有调用**（死导出，
+  参数与响应形态无参考，别照接口名猜协议）。权威来源是在案订单的 `lockStatus`——
+  `queryLockState` 现查 `queryUnderwayOrder` 并把答案说出来（「车辆已锁上；订单还在，计费继续」
+  /「车辆未锁，正在计费」，`KvcxRideControllerTest` 钉住）。UI = 骑行卡锁徽标**可点**，
+  查询中徽标原位翻成「查询中…」（不跳位置；busy 复用同一 single-flight）。
+- **单车详情**（`queryOneCar` v2，`KqcxSessionRepository.queryCarDetail` → `BikeNearby.parseSingle`）：
+  只用于 `focusCar` 在附近列表里找不到目标车时的兜底（`fetchCarDetail`：查到就高亮 + 移镜头 +
+  车辆卡带电量，车辆卡**优先认这份查回来的车**）；查不到退回「移动地图或点刷新」旧提示。
+  解析口径与附近列表不同：**缺在线 / 启用字段按在线可用算**——用户是拿完整车号点名查这辆车，
+  缺数据不该标成失联（`BikeNearbyTest` 钉住；在线/停用字段**明确给了**时照旧生效）。
+  token 允许空（免凭证读接口，与 `zonesJson` 同口径，小程序方式也能用）；连点只放一个在飞
+  （`carDetailJob`），查不到就停，**不轮询**。
+- **账户资产**（`getUserInfo` + `queryUserCoupon` + `queryUserMemberCoupon` 三接口**并行**，
+  `KqcxSessionRepository.queryAssets`）：展示在快趣账号页「快趣资产」区（`AssetsSection`），
+  **只读**——充值 / 退押 / 买卡是微信收银台流程，App 不碰支付，区标题下一行就把出路说清，
+  别让人在这张卡里找充值按钮。失败**保留上次结果**、区块内给一行说明与「刷新」出路
+  （资产不是本页主任务，不打扰）；三块全空才算失败（`KqcxAuth.Assets.isEmpty`）。
+  字段口径（`KqcxAuthTest` 钉住）：余额 `rechargeBalance` / `giftBalance` 单位**分**、缺数据
+  不显示成 ¥0；卡券 `remainFrequency > 1e5` = 官方「无限次数卡」、`freeTime` 是**秒**（展示
+  /60 成分钟、0 不显示）、`deviceType` 1=电单车 / 2=单车、`endTime` 取日期段；会员
+  `discount×10` = 「X 折」。查询时机在 `KvcxViewModel.refreshAssets`：进页 / 登录成功 /
+  手动刷新各一次，先判 `accountMode()`（读原始流，同既有口径）。
+- **能力矩阵没有加新 if**：响铃 / 查锁只在骑行仪表盘里出现（那里已经被
+  `ride = if (caps.inAppRide) kvcx.ride else null` 收口）；单车详情两档都可用（接口不要凭证）；
+  资产区只在快趣账号页（本页入口本身就按模式显隐）。**别为它们在页面里另写一份 `caps` 判断**。

@@ -39,6 +39,10 @@ enum class KvcxAction {
     RESUME,
     LOCK,
     RETURN,
+    /** 响铃寻车（2026-09-30）：让在案订单的车鸣笛。无计费后果，不弹确认。 */
+    RING,
+    /** 锁状态查询（2026-09-30）：按权威来源（在案订单）现查一次锁没锁上。 */
+    QUERY_LOCK,
 }
 
 /**
@@ -335,6 +339,55 @@ class KvcxRideController internal constructor(
         _state.update { it.copy(returnSummary = null) }
     }
 
+    /**
+     * 响铃寻车（2026-09-30）：车停在车堆里认不出时，让在案订单的车鸣笛。
+     * 官方骑行页同款（无确认、无计费后果）；本地先挡一层「没有骑行」，
+     * 服务端按当前订单定位车辆。
+     */
+    fun ringFindCar() {
+        if (_state.value.ride == null) {
+            onNotice("没有进行中的骑行，响铃寻车用不上", NoticeTone.Warning)
+            return
+        }
+        run(KvcxAction.RING) { session ->
+            session.ringFindCar()
+            onNotice("已发送响铃，留意身边的提示音", NoticeTone.Success)
+        }
+    }
+
+    /**
+     * 锁状态查询（2026-09-30）：骑行卡上的锁徽标**点了就现查一次**，结果用提示说出答案。
+     *
+     * 权威来源是在案订单（`queryUnderwayOrder` 的 `lockStatus`）——解包确认小程序 V6 里
+     * `carLockFlag` 只有定义没有调用（参数与响应无参考，死导出），**不走它**；徽标上
+     * 显示的是最近一次拉取的快照，所以「查」= 重新拉 + 把答案说出来。
+     */
+    fun queryLockState() {
+        val session = session ?: return
+        if (_state.value.busy != null) return
+        scope.launch {
+            _state.update { it.copy(busy = KvcxAction.QUERY_LOCK) }
+            try {
+                val ride = session.queryUnderway()
+                _state.update {
+                    it.copy(ride = ride, fetchedAt = System.currentTimeMillis())
+                }
+                onNotice(
+                    when {
+                        ride == null -> "没有进行中的订单"
+                        ride.locked == true -> "车辆已锁上；订单还在，计费继续"
+                        else -> "车辆未锁，正在计费"
+                    },
+                    NoticeTone.Info,
+                )
+            } catch (error: Throwable) {
+                onNotice(kvcxErrorText(error), NoticeTone.Error)
+            } finally {
+                _state.update { it.copy(busy = null) }
+            }
+        }
+    }
+
     /** 写动作的统一壳：同一时刻只允许一个在跑（busy 态禁用按钮），异常统一转提示。 */
     private fun run(action: KvcxAction, block: suspend (KvcxRideSession) -> Unit) {
         val session = session
@@ -409,6 +462,8 @@ internal fun kvcxConfirmDialog(
         "重试开锁",
     )
     KvcxAction.LOCK, KvcxAction.RESUME -> null
+    // 响铃寻车 / 锁状态查询没有新增计费后果，也不经二次确认闸（不走 pendingAction）
+    KvcxAction.RING, KvcxAction.QUERY_LOCK -> null
     KvcxAction.RETURN -> Triple(
         "还车？",
         "将先静默锁车再结束订单。请确认：车辆已停好、随身物品已带走。\n" +

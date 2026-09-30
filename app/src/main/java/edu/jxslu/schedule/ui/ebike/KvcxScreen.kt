@@ -44,11 +44,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.RideRecord
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
+import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
@@ -128,6 +130,8 @@ fun KvcxScreen(
             if (appRideEnabled) {
                 if (state.loggedIn) {
                     AccountSection(state, viewModel)
+                    // 快趣资产（2026-09-30）：余额 / 卡券 / 会员卡，只读
+                    AssetsSection(state = state, onRefresh = viewModel::refreshAssets)
                 } else {
                     LoginSection(state, viewModel)
                 }
@@ -251,6 +255,95 @@ private fun RideRecordRow(record: RideRecord) {
 }
 
 private val RECORD_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.US)
+
+// ── 快趣资产（2026-09-30，只读） ──
+
+/**
+ * 「快趣资产」：余额 / 卡券 / 会员卡的**只读**展示（DESIGN §4.32）。
+ *
+ * 充值、退押、买卡都走微信收银台（App 不做支付，DESIGN §4.32 红线），所以这里只有"看"——
+ * 区标题下一行就把出路说清，别让人在这张卡里找充值按钮。进页自动查一次，失败保留
+ * 已有内容、只给一行说明与「刷新」出路（不打扰：资产不是本页的主任务）。
+ */
+@Composable
+private fun AssetsSection(state: KvcxUiState, onRefresh: () -> Unit) {
+    SettingsSection(
+        title = "快趣资产",
+        subtitle = "只读展示；充值、退押、买卡在快趣官方渠道（微信小程序）完成。",
+    ) {
+        when {
+            state.assetsLoading && state.assets == null -> LoadingHint("正在查询资产…")
+
+            state.assets == null -> Text(
+                text = "资产查询失败，点「刷新」再试一次。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+
+            else -> {
+                val assets = state.assets
+                // 余额行：充值 + 赠送（官方钱包页同两项；缺数据不显示成 ¥0）
+                assets.balance?.displayText?.let { balance ->
+                    SettingItem(title = balance, subtitle = "充值余额与赠送余额")
+                }
+                assets.coupons.forEach { coupon -> AssetCouponRow(coupon) }
+                assets.members.forEach { member -> AssetMemberRow(member) }
+            }
+        }
+        TextButton(onClick = onRefresh, enabled = !state.assetsLoading) {
+            Text(if (state.assetsLoading) "查询中…" else "刷新")
+        }
+    }
+}
+
+/** 一张骑行卡券：标题（次数 / 无限 + 车型）+ 副行（免费时长与有效期）。 */
+@Composable
+private fun AssetCouponRow(coupon: KqcxAuth.AssetCoupon) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+    ) {
+        Text(
+            text = "${coupon.titleText} · ${coupon.deviceLabel}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
+        if (coupon.detailText.isNotBlank()) {
+            Text(
+                text = coupon.detailText,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/** 一张会员卡：折扣 + 有效期。 */
+@Composable
+private fun AssetMemberRow(member: KqcxAuth.AssetMember) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+    ) {
+        Text(
+            text = listOfNotNull("会员卡", member.discountText?.let { "$it 优惠" }).joinToString(" · "),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
+        member.endAt?.trim()?.takeIf { it.isNotEmpty() }?.let { end ->
+            Text(
+                text = "有效期至 ${end.split(" ").first()}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
 
 // ── 已登录：账号 ──
 

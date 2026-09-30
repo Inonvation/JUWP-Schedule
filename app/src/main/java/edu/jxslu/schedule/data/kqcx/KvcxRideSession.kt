@@ -63,4 +63,11 @@ interface KvcxRideSession {
      * （带金额，UI 显示出来）；null = 查询失败（交给用户去小程序核对）。
      */
     suspend fun confirmUnpaidSettled(attempts: Int = 3): KqcxAuth.UnpayState?
+
+    /**
+     * 响铃寻车（2026-09-30）：让**在案订单**的车鸣笛，帮用户从车堆里认出它。
+     * 无参数（服务端按当前订单定位车辆）、无计费后果——官方骑行页「响铃寻车」同款，
+     * 不属于写操作四道闸的对象，但仍走动作的 single-flight。
+     */
+    suspend fun ringFindCar()
 }

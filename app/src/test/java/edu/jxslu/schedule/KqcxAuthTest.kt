@@ -262,4 +262,99 @@ class KqcxAuthTest {
         assertEquals("服务端说了什么", KqcxAuth.errorMessage(123456, "服务端说了什么"))
         assertEquals("兜底", KqcxAuth.errorMessage(null, "兜底"))
     }
+
+    // ── 账户资产（2026-09-30：余额 / 卡券 / 会员卡） ──
+
+    @Test
+    fun `余额解析与文案`() {
+        // 官方钱包页 rechargeBalance/100：单位分，类型宽容（字符串 / 小数都收）
+        val json = """{"resultCode":1,"errorCode":0,
+            "result":{"rechargeBalance":"1200","giftBalance":0.0,"mobile":"13800000000"}}"""
+        val balance = KqcxAuth.parseBalance(json)
+        assertEquals(1200L, balance.rechargeCents)
+        assertEquals(0L, balance.giftCents)
+        assertEquals("充值 ¥12.00 · 赠送 ¥0.00", balance.displayText)
+
+        // 只有一项也照常出文案
+        assertEquals("充值 ¥3.50", KqcxAuth.parseBalance(
+            """{"resultCode":1,"errorCode":0,"result":{"rechargeBalance":350}}""",
+        ).displayText)
+
+        // 两项都缺 = 没有数据，文案为 null（别把缺数据显示成 ¥0）
+        assertNull(
+            KqcxAuth.parseBalance("""{"resultCode":1,"errorCode":0,"result":{}}""").displayText,
+        )
+        assertNull(
+            KqcxAuth.parseBalance("""{"resultCode":1,"errorCode":0,"result":null}""").displayText,
+        )
+    }
+
+    @Test
+    fun `卡券解析次数与无限口径`() {
+        val json = """{"resultCode":1,"errorCode":0,"result":{"list":[
+            {"deviceType":2,"remainFrequency":5,"freeTime":"900","endTime":"2026-10-31 23:59:59"},
+            {"deviceType":"1","remainFrequency":200000,"freeTime":0},
+            {"remainFrequency":3},
+            {"bad":1}
+        ]}}"""
+        val coupons = KqcxAuth.parseCoupons(json)
+        assertEquals(4, coupons.size)
+        // 第一张：5 次、15 分钟免费、有效期取日期段
+        assertEquals("剩余 5 次", coupons[0].titleText)
+        assertEquals("单车", coupons[0].deviceLabel)
+        assertEquals("每次前 15 分钟免费 · 有效期至 2026-10-31", coupons[0].detailText)
+        // 第二张：>1e5 = 官方「无限次数卡」口径；deviceType 给字符串也认
+        assertTrue(coupons[1].unlimited)
+        assertEquals("无限次数卡", coupons[1].titleText)
+        assertEquals("电单车", coupons[1].deviceLabel)
+        // freeTime 为 0 不说「前 0 分钟免费」
+        assertEquals("", coupons[1].detailText)
+        // 第三张：缺 deviceType 给兜底标签，次数未知不编数字
+        assertEquals("卡券", coupons[2].deviceLabel)
+        assertEquals("剩余 3 次", coupons[2].titleText)
+    }
+
+    @Test
+    fun `卡券列表缺失或形态不符给空列表`() {
+        // result 为 null / 没有 list / list 是 null：都是"没有卡券"，不是错误
+        assertTrue(KqcxAuth.parseCoupons("""{"resultCode":1,"errorCode":0,"result":null}""").isEmpty())
+        assertTrue(KqcxAuth.parseCoupons("""{"resultCode":1,"errorCode":0,"result":{}}""").isEmpty())
+        assertTrue(
+            KqcxAuth.parseCoupons("""{"resultCode":1,"errorCode":0,"result":{"list":null}}""").isEmpty(),
+        )
+        // 业务错误照常抛
+        try {
+            KqcxAuth.parseCoupons("""{"resultCode":0,"errorCode":20001,"resultMsg":"登录失效"}""")
+            throw AssertionError("应当抛业务错误")
+        } catch (e: KvcBusinessError) {
+            assertEquals(20001, e.errorCode)
+        }
+    }
+
+    @Test
+    fun `会员卡折扣折算`() {
+        // 官方卡券详情页 discount*10 显示为「X 折」：服务端 0.9 → 9 折
+        val json = """{"resultCode":1,"errorCode":0,"result":{"list":[
+            {"discount":0.9,"endTime":"2026-12-01 00:00:00"},
+            {"discount":"0.85"}
+        ]}}"""
+        val members = KqcxAuth.parseMembers(json)
+        assertEquals(2, members.size)
+        assertEquals("9 折", members[0].discountText)
+        assertEquals("2026-12-01", members[0].endAt!!.split(" ").first())
+        assertEquals("8.5 折", members[1].discountText)
+        // 折扣缺失不给「无折扣」这种编造
+        assertNull(members[1].endAt)
+    }
+
+    @Test
+    fun `parseSuccess 只认信封成功`() {
+        KqcxAuth.parseSuccess("""{"resultCode":1,"errorCode":0,"result":null,"resultMsg":"ok"}""")
+        try {
+            KqcxAuth.parseSuccess("""{"resultCode":1,"errorCode":13001,"resultMsg":"没有在案订单"}""")
+            throw AssertionError("应当抛业务错误")
+        } catch (e: KvcBusinessError) {
+            assertEquals(13001, e.errorCode)
+        }
+    }
 }

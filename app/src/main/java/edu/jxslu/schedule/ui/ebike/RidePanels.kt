@@ -109,6 +109,7 @@ import edu.jxslu.schedule.ui.common.rememberSheetDismisser
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.delay
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.Filter
@@ -201,6 +202,10 @@ internal fun RideActionArea(
     onReturn: () -> Unit,
     onRetryUnlock: () -> Unit,
     onRefreshRide: () -> Unit,
+    /** 响铃寻车（2026-09-30）：让在案订单的车鸣笛。 */
+    onRingFind: () -> Unit,
+    /** 锁状态查询（2026-09-30）：点骑行卡上的锁徽标现查一次。 */
+    onQueryLock: () -> Unit,
     onEndTimer: () -> Unit,
     onTimerExpired: () -> Unit,
     onSettle: () -> Unit,
@@ -288,6 +293,8 @@ internal fun RideActionArea(
                 onGenerateForCar = onGenerateForCar,
                 onFocusCar = onFocusCar,
                 onRefreshRide = onRefreshRide,
+                onRingFind = onRingFind,
+                onQueryLock = onQueryLock,
                 onFocusRide = onFocusRide,
                 onTimerExpired = onTimerExpired,
             )
@@ -394,6 +401,8 @@ private fun RideActionUpper(
     onGenerateForCar: (String) -> Unit,
     onFocusCar: (String) -> Unit,
     onRefreshRide: () -> Unit,
+    onRingFind: () -> Unit,
+    onQueryLock: () -> Unit,
     onFocusRide: () -> Unit,
     onTimerExpired: () -> Unit,
 ) {
@@ -405,6 +414,8 @@ private fun RideActionUpper(
             timerActive = timerActive,
             timerStartAt = timerStartAt,
             onRefresh = onRefreshRide,
+            onRingFind = onRingFind,
+            onQueryLock = onQueryLock,
             onLocateCar = onFocusRide,
             onTimerExpired = onTimerExpired,
         )
@@ -414,8 +425,11 @@ private fun RideActionUpper(
         else -> carNumOf(key)?.let { car ->
             RideCarUpper(
                 carNum = car,
-                bike = state.clusters.asSequence().flatMap { it.bikes }
-                    .firstOrNull { it.carNum == car },
+                // 单车详情（2026-09-30）：按车号从快趣查到的车不在簇列表里，但它就是
+                // 高亮那辆——优先认它，列表里的簇车次之
+                bike = state.highlightedCar?.takeIf { it.carNum == car }
+                    ?: state.clusters.asSequence().flatMap { it.bikes }
+                        .firstOrNull { it.carNum == car },
                 caps = caps,
                 distanceFromUser = state.distanceFromUser,
                 onFocus = onFocusCar,
@@ -639,6 +653,8 @@ private fun RideRidingUpper(
     timerActive: Boolean,
     timerStartAt: Long,
     onRefresh: () -> Unit,
+    onRingFind: () -> Unit,
+    onQueryLock: () -> Unit,
     onLocateCar: () -> Unit,
     onTimerExpired: () -> Unit,
 ) {
@@ -664,15 +680,26 @@ private fun RideRidingUpper(
             )
             ride?.locked?.let { locked ->
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (locked) "已锁" else "未锁",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                // 锁徽标**可点**（2026-09-30）：它显示的是最近一次拉取的快照，
+                // 点它 = 现查一次并把答案说出来（查询中在原位翻文案，不跳位置）
+                Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                        .clickable(enabled = busy == null, onClick = onQueryLock)
                         .padding(horizontal = 8.dp, vertical = 2.dp),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = when {
+                            busy == KvcxAction.QUERY_LOCK -> "查询中…"
+                            locked -> "已锁"
+                            else -> "未锁"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             if (ride != null) {
@@ -681,6 +708,14 @@ private fun RideRidingUpper(
                     label = "在地图上定位到车",
                     enabled = busy == null,
                     onClick = onLocateCar,
+                )
+                IconButtonSmall(
+                    // 响铃寻车（2026-09-30）：车在车堆里认不出时让车鸣笛。没有计费后果，
+                    // 不用确认；与官方骑行页「响铃寻车」同一位置语义
+                    icon = HugeIcons.BellRing,
+                    label = "响铃寻车",
+                    enabled = busy == null,
+                    onClick = onRingFind,
                 )
                 IconButtonSmall(
                     icon = HugeIcons.Refresh,

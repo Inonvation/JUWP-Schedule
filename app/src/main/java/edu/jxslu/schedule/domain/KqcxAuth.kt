@@ -3,6 +3,7 @@ package edu.jxslu.schedule.domain
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -270,6 +271,131 @@ object KqcxAuth {
         if (env.errorCode == NO_UNPAY_ORDER_ERROR_CODE) return UnpayState.Settled
         throw KvcBusinessError(env.errorCode, env.resultMsg ?: "查询未支付订单失败")
     }
+
+    // ---------- 账户资产（2026-09-30：余额 / 卡券 / 会员卡，全部只读） ----------
+
+    /** 只判信封成功、不消费 `result`（响铃寻车这类"成功本身就是全部信息"的接口用）。 */
+    fun parseSuccess(jsonText: String) {
+        parseEnvelope(jsonText)
+    }
+
+    /** 余额（`getUserInfo` 的 `result`；单位**分**——官方钱包页 `rechargeBalance/100` 同口径）。 */
+    data class Balance(val rechargeCents: Long?, val giftCents: Long?) {
+        /** 一句话余额（「充值 ¥12.00 · 赠送 ¥0.00」）；两项都缺时为 null（别把缺数据显示成 ¥0）。 */
+        val displayText: String?
+            get() {
+                val parts = buildList {
+                    rechargeCents?.let { add("充值 ¥%.2f".format(it / 100.0)) }
+                    giftCents?.let { add("赠送 ¥%.2f".format(it / 100.0)) }
+                }
+                return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+            }
+    }
+
+    fun parseBalance(jsonText: String): Balance {
+        val env = parseEnvelope(jsonText)
+        val obj = env.result as? JsonObject ?: return Balance(null, null)
+        return Balance(rechargeCents = obj.long("rechargeBalance"), giftCents = obj.long("giftBalance"))
+    }
+
+    /**
+     * 用户持有的一张骑行卡券（`queryUserCoupon` 的 `list` 项）。
+     *
+     * 字段口径来自小程序钱包卡券详情页（`pages/wallet/coupon/detail`）：
+     * `remainFrequency`（**剩余次数**，官方 `>1e5` 显示成「无限次数卡」）、
+     * `freeTime`（**秒**，官方 `/60` 变分钟）、`startTime` / `endTime`（`yyyy-MM-dd HH:mm:ss`）、
+     * `deviceType`（1 = 电单车 / 2 = 单车，官方 `syncCoupon` 按它分 `coupon` / `couponBike`）。
+     */
+    data class AssetCoupon(
+        val deviceType: Int?,
+        val remainFrequency: Long?,
+        /** 每次骑车免计费的时长（分钟）。 */
+        val freeMinutes: Long?,
+        val endAt: String?,
+    ) {
+        /** 官方口径：剩余次数超过 1e5 视为无限次（「无限次数卡」）。 */
+        val unlimited: Boolean get() = remainFrequency != null && remainFrequency > UNLIMITED_FREQUENCY_THRESHOLD
+
+        /** 标题：「无限次数卡」/「剩余 5 次」；次数未知时不编数字。 */
+        val titleText: String
+            get() = when {
+                unlimited -> "无限次数卡"
+                remainFrequency != null -> "剩余 $remainFrequency 次"
+                else -> "骑行卡券"
+            }
+
+        /** 车型标签：官方按 deviceType 分电单车 / 单车两条资产线。 */
+        val deviceLabel: String
+            get() = when (deviceType) {
+                1 -> "电单车"
+                2 -> "单车"
+                else -> "卡券"
+            }
+
+        /** 副行：「每次前 15 分钟免费 · 有效期至 2026-10-31」；两项都可能缺。 */
+        val detailText: String
+            get() = listOfNotNull(
+                freeMinutes?.takeIf { it > 0 }?.let { "每次前 $it 分钟免费" },
+                endAt?.trim()?.takeIf { it.isNotEmpty() }?.let { "有效期至 ${it.split(" ").first()}" },
+            ).joinToString(" · ")
+    }
+
+    fun parseCoupons(jsonText: String): List<AssetCoupon> {
+        val env = parseEnvelope(jsonText)
+        val list = (env.result as? JsonObject)?.get("list") as? JsonArray ?: return emptyList()
+        return list.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            AssetCoupon(
+                deviceType = obj.int("deviceType"),
+                remainFrequency = obj.long("remainFrequency"),
+                freeMinutes = obj.long("freeTime")?.div(60),
+                endAt = obj.text("endTime"),
+            )
+        }
+    }
+
+    /**
+     * 会员卡（`queryUserMemberCoupon` 的 `list` 项）。官方卡券详情页把 `discount` 乘 10
+     * 显示成「X 折」（服务端给 0.9 → 「9 折」）。
+     */
+    data class AssetMember(
+        val discount: Double?,
+        val endAt: String?,
+    ) {
+        /** 「9 折」/「8.5 折」；折扣未知时为 null（不给「无折扣」这种编造）。 */
+        val discountText: String?
+            get() = discount?.let { times10 ->
+                val folded = times10 * 10
+                val rounded = Math.round(folded * 10.0) / 10.0
+                if (rounded == Math.floor(rounded)) "${rounded.toLong()} 折" else "$rounded 折"
+            }
+    }
+
+    fun parseMembers(jsonText: String): List<AssetMember> {
+        val env = parseEnvelope(jsonText)
+        val list = (env.result as? JsonObject)?.get("list") as? JsonArray ?: return emptyList()
+        return list.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            AssetMember(discount = obj.double("discount"), endAt = obj.text("endTime"))
+        }
+    }
+
+    /**
+     * 账户资产的聚合（快趣账号页「快趣资产」区）。三个接口**并行拉**，单个失败不影响
+     * 其它块——余额失败时 [balance] 为 null，卡券 / 会员失败给空列表。
+     */
+    data class Assets(
+        val balance: Balance?,
+        val coupons: List<AssetCoupon>,
+        val members: List<AssetMember>,
+    ) {
+        /** 三块全空 = 这次查询什么都没拿到，调用方按"查询失败"提示而不是画一个空区。 */
+        val isEmpty: Boolean
+            get() = balance == null && coupons.isEmpty() && members.isEmpty()
+    }
+
+    /** 官方「无限次数卡」的次数阈值（卡券详情页 `remainFrequency > 1e5`）。 */
+    private const val UNLIMITED_FREQUENCY_THRESHOLD = 100_000L
 
     // ---------- 错误码文案 ----------
 

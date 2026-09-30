@@ -59,6 +59,7 @@ class KvcxRideControllerTest {
         var retryCalls = 0
         var lockCalls = 0
         var returnCalls = 0
+        var ringCalls = 0
 
         override suspend fun queryUnderway(): KqcxAuth.Ride? = underway
 
@@ -90,6 +91,10 @@ class KvcxRideControllerTest {
         }
 
         override suspend fun confirmUnpaidSettled(attempts: Int): KqcxAuth.UnpayState? = settled()
+
+        override suspend fun ringFindCar() {
+            ringCalls++
+        }
     }
 
     private class FakeEffects(private val reminderWasOff: Boolean = false) : KvcxSideEffects {
@@ -398,6 +403,64 @@ class KvcxRideControllerTest {
 
         assertNull(kvcx.state.value.ride)
         assertFalse(kvcx.loggedIn.value)
+    }
+
+    // ---------- 响铃寻车与锁状态查询（2026-09-30） ----------
+
+    @Test
+    fun `响铃寻车有骑行时发送并提示成功`() {
+        val session = FakeSession()
+        val kvcx = controller(session)
+        // 真机路径上响铃只在骑行卡露出来时才点得到（骑行卡 = 有在案订单），
+        // 测试里先用 query 把骑行状态落位
+        kvcx.query()
+
+        kvcx.ringFindCar()
+
+        assertEquals(1, session.ringCalls)
+        assertEquals("已发送响铃，留意身边的提示音", notices.single().first)
+        assertEquals(NoticeTone.Success, notices.single().second)
+        assertNull(kvcx.state.value.busy)
+    }
+
+    @Test
+    fun `响铃寻车没有骑行时本地挡下`() {
+        // 本地先挡：没有在案订单就不打扰服务端（服务端按当前订单定位车辆）
+        val session = FakeSession()
+        session.underway = null
+        val kvcx = controller(session)
+
+        kvcx.ringFindCar()
+
+        assertEquals(0, session.ringCalls)
+        assertEquals(NoticeTone.Warning, notices.single().second)
+        assertTrue(notices.single().first.contains("没有进行中的骑行"))
+    }
+
+    @Test
+    fun `锁状态查询把答案说出来`() {
+        // 已锁：徽标是快照，点它 = 现查一次；答案里说清"订单还在、计费继续"
+        val session = FakeSession()
+        session.underway = ride(locked = true)
+        val kvcx = controller(session)
+        kvcx.query()
+
+        kvcx.queryLockState()
+
+        assertEquals(ride(locked = true), kvcx.state.value.ride)
+        assertEquals("车辆已锁上；订单还在，计费继续", notices.single().first)
+        assertNull(kvcx.state.value.busy)
+    }
+
+    @Test
+    fun `锁状态查询无订单时如实说没有`() {
+        val session = FakeSession()
+        session.underway = null
+        val kvcx = controller(session)
+
+        kvcx.queryLockState()
+
+        assertEquals("没有进行中的订单", notices.single().first)
     }
 
     @Test

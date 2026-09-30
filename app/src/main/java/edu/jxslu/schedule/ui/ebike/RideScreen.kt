@@ -677,6 +677,16 @@ fun RideScreen(
                             haptics.tap()
                             viewModel.refreshRide()
                         },
+                        // 响铃寻车（2026-09-30）：控制器本地先挡「没有骑行」，这里只管触发
+                        onRingFind = {
+                            haptics.tap()
+                            viewModel.kvcx.ringFindCar()
+                        },
+                        // 锁状态查询（2026-09-30）：点骑行卡上的锁徽标现查一次
+                        onQueryLock = {
+                            haptics.tap()
+                            viewModel.kvcx.queryLockState()
+                        },
                         onEndTimer = { showEndTimerConfirm = true },
                         onTimerExpired = { timerExpired = true },
                         onSettle = {
@@ -843,6 +853,8 @@ fun RideScreen(
                             KvcxAction.RESUME -> viewModel.kvcx.resumeRide()
                             KvcxAction.LOCK -> viewModel.kvcx.tempLock()
                             KvcxAction.RETURN -> viewModel.kvcx.returnBike()
+                            // 响铃寻车 / 锁状态查询不走二次确认闸，到不了这里
+                            KvcxAction.RING, KvcxAction.QUERY_LOCK -> Unit
                         }
                     }) {
                         Text(
