@@ -63,6 +63,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -870,7 +871,17 @@ internal fun RideBikePanel(
     val clusterOffsets = remember { mutableMapOf<String, Int>() }
     LaunchedEffect(state.focusNonce) {
         val key = state.focusKey ?: return@LaunchedEffect
-        val y = clusterOffsets[key] ?: return@LaunchedEffect
+        // 面板里现在不是车辆列表（骑行态让位给还车点）：记账里留着的是**上一批车辆卡**的偏移，
+        // 拿去滚还车点列表只会跳到不相干的位置。按车号定位那条路（`focusCar`）在骑行态也会
+        // 设 focusKey，所以这道闸必须留着。
+        if (showSpots) return@LaunchedEffect
+        // **等这张卡的位置落定再滚**（判据见 [awaitSettledOffset]）：点地图上的数字时，
+        // 列表里上一张展开的卡正在收起（[BAR_FALL_MS] 的高度动画），目标卡还在往上走——
+        // 按当场记下的位置直接滚过去会**滚过头**，卡片落到视口上方，用户看到的是"列表滚了、
+        // 要找的那张卡没了"（2026-10-01 真机报的「点了地图上的圆圈，有时候不会滚到对应卡片」）。
+        // 旧版是 LazyColumn + `animateScrollToItem`，它内部会分趟逼近移动中的目标；换成手写
+        // 偏移之后那层保护没了，**别退回"读一次记账就 animateScrollTo"的写法**。
+        val y = awaitSettledOffset(key, clusterOffsets) ?: return@LaunchedEffect
         scrollState.animateScrollTo((y - 8).coerceAtLeast(0))
     }
 
@@ -1058,6 +1069,60 @@ internal fun RideBikePanel(
             }
         }
     }
+}
+
+/** 目标卡位置"连续多少帧没动"才算落定（60Hz 上 ≈50ms；缓动尾巴每帧的位移已经不到 1px）。 */
+private const val FOCUS_SETTLE_FRAMES = 3
+
+/**
+ * 等目标卡位置的**时间**上限（毫秒）：[BAR_FALL_MS] 的多倍余量。
+ *
+ * 按时间封顶、**不按帧数**（2026-10-01 终审改）：帧数和刷新率挂钩，同样 20 帧在 60Hz 是
+ * 333ms、在 120Hz 只有 167ms——后者会赶在收起动画（190ms）结束前启程，等于白等。真机
+ * （Redmi K70）就是 120Hz。
+ */
+private const val FOCUS_SETTLE_MAX_MS = 300L
+
+/**
+ * 等 [key] 这张卡在滚动内容里的位置**落定**，返回落定后的 y 偏移；卡不在列表里时回 null。
+ *
+ * 位置由布局回调每帧写进 [offsets]（[RideBikePanel] 里的 `clusterOffsets`），这里逐帧读它
+ * 当轮询：连续 [FOCUS_SETTLE_FRAMES] 帧没变 = 上一张卡的收起动画走完了。
+ *
+ * 为什么必须等：点地图上的数字会**同时**做两件事——展开目标卡、收起上一张展开的卡。
+ * 后者的高度动画（[BAR_FALL_MS]）会把目标卡一路上推，当帧记下的位置是最"低"的那一份；
+ * 拿它直接滚就是滚过头（卡片落到视口上方，用户以为"没滚到对应卡片"）。等到落定再滚，
+ * 一次到位、不回头，也不用为此写死一个动画时长。
+ *
+ * **别把"读一次记账就滚"改回来**，也别在这里改成 `delay(动画时长)`：前者是这条报障的成因，
+ * 后者把延迟写死了——本来就没在动的时候（第一次点标记）白等一段。
+ */
+private suspend fun awaitSettledOffset(key: String, offsets: Map<String, Int>): Int? {
+    var last: Int? = null
+    var stable = 0
+    var baseNanos = -1L
+    var waitedMs = 0L
+    while (waitedMs < FOCUS_SETTLE_MAX_MS) {
+        withFrameNanos { frameNanos ->
+            if (baseNanos < 0L) baseNanos = frameNanos
+            waitedMs = (frameNanos - baseNanos) / 1_000_000L
+        }
+        val now = offsets[key]
+        if (now == null) {
+            // 还没布局（列表刚换了一批）：重置计时。"没有"不算稳定，等满时限就当作不在列表里
+            last = null
+            stable = 0
+            continue
+        }
+        if (now == last) {
+            stable += 1
+            if (stable >= FOCUS_SETTLE_FRAMES) return now
+        } else {
+            last = now
+            stable = 0
+        }
+    }
+    return offsets[key]
 }
 
 /**
