@@ -8,6 +8,7 @@ import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
+import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
@@ -64,6 +65,11 @@ class JuwApplication : Application() {
             // 已成功检查过的来源当天不会重复打第三方接口（闸门在 check 内部）。
             BalanceAlertReminder.ensurePeriodicWork(this@JuwApplication)
             BalanceAlertReminder.enqueueCheck(this@JuwApplication)
+            // 成绩/考试变动提醒（DESIGN §4.33）：排周期核对（间隔 = 设置档位），两个开关
+            // 都关时内部会撤销任务；冷启动再补查一次，兜住「周期任务还没跑」的间隔。
+            // 间隔闸门在 ScoreSync / ExamSync 内部（成功才落时刻），不会重复打教务。
+            ScoreAlertReminder.ensurePeriodicWork(this@JuwApplication)
+            ScoreAlertReminder.enqueueCheck(this@JuwApplication)
         }
         // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
         // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链
@@ -79,7 +85,13 @@ class JuwApplication : Application() {
                 // 之后 7 天一次；不满足闸门时内部是零网络的空跑。失败静默——它们是
                 // 后台补充，不该在冷启动弹任何东西。顺序上先成绩后学业：成绩条数少、
                 // 先落库，用户打开「我的 → 学习」时大概率已经有数据。
+                //
+                // 成绩检查内部自带两套闸门（DESIGN §4.33）：提醒开着走小时级间隔
+                // （`score_check_millis`），关着走 7 天日期闸门，所以这里不必判开关。
+                // 通知的发出在 ScoreAlertReminder 的 worker 里，不走这条路——
+                // 这只是「打开应用后台查一次」的那一次（用户要求的口径）。
                 runCatching { Graph.scoreSync(this@JuwApplication).sync() }
+                runCatching { Graph.examSync(this@JuwApplication).sync() }
                 runCatching { Graph.scholarProgressSync(this@JuwApplication).sync() }
             }
         }

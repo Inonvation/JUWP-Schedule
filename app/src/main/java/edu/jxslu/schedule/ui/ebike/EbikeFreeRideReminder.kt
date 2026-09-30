@@ -15,7 +15,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.EbikeFreeRide
-import edu.jxslu.schedule.domain.WechatRentNotice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -85,16 +84,15 @@ object EbikeFreeRideReminder {
     /**
      * 点「打开微信扫一扫」：记起点、清上一轮的提醒态、起常驻倒计时、排下一个精确闹钟。
      *
-     * **换车（上一轮还没结束就再扫一辆）走的是同一条路**：已发键与校准标记清空、上一轮
+     * **换车（上一轮还没结束就再扫一辆）走的是同一条路**：已发键清空、上一轮
      * 挂在通知栏的提醒撤掉、起点重写、闹钟重排（同一个 PendingIntent，新闹钟替换旧的）；
      * 常驻倒计时由 [EbikeFreeRideService.start] 按「起点变了」自动重建 tick
      * ——2026-09-24 修：早先它在「服务已在跑」时直接返回，于是换车后倒计时不重置。
      */
     suspend fun startRide(context: Context, startAtMillis: Long): Outcome = guarded {
         val prefs = Graph.displayPrefs(context)
-        // 换车重新计时：上一轮的已发键与校准标记都必须清，否则这一轮的提醒会被「已发过」吃掉
+        // 换车重新计时：上一轮的已发键必须清，否则这一轮的提醒会被「已发过」吃掉
         prefs.updateEbikeFreeNotifiedKeys { emptySet() }
-        prefs.setEbikePreciseCalibratedAt(0L)
         // 上一轮的提醒可能还挂在通知栏（提前量那条），换车时一并撤掉
         EbikeFreeRideNotifier.cancelReminders(context)
         prefs.setEbikeRideStartAt(startAtMillis)
@@ -118,70 +116,13 @@ object EbikeFreeRideReminder {
         Outcome.Started
     }
 
-    /**
-     * 「精确倒计时」：收到微信的租车成功通知后，把计时起点校准到通知到达那一刻
-     * （DESIGN §3.9，2026-09-24）。返回 true = 这次真的校准了。
-     *
-     * 四道闸，缺一不可：
-     * 1. 开关开着（默认关——它要「通知使用权」，得用户自己去系统设置里开）；
-     * 2. 有在案的计时（没计时就无从校准）；
-     * 3. 通知落在「点扫一扫」之后的 [WechatRentNotice.WINDOW_MS] 内（排除借充电宝这类
-     *    同样走「先享后付」的误命中）；
-     * 4. 这一轮还没校准过（微信对同一笔支付可能重复推送，重复校准会把计时一直往后推）。
-     *
-     * 校准 = 用新起点重跑 [startRide]（清已发键与校准标记、撤上一轮通知、写起点、重排闹钟；
-     * 常驻倒计时由服务按「起点变了」自动重建 tick），再记下校准标记。起点直接取通知到达时刻、
-     * 不加偏移：通知投递的延迟没有可测的固定量，宁可保守（起点晚一点 = 提醒晚一点），
-     * 也不去猜一个偏移。
-     */
-    suspend fun calibrateRideStart(context: Context, noticeAtMillis: Long): Boolean = guardedBool {
-        val prefs = Graph.displayPrefs(context)
-        if (!prefs.ebikePreciseCountdownEnabled.first()) return@guardedBool false
-        val startAt = prefs.ebikeRideStartAt.first()
-        if (!WechatRentNotice.isWithinWindow(startAt, noticeAtMillis)) return@guardedBool false
-        if (prefs.ebikePreciseCalibratedAt.first() == startAt) return@guardedBool false
-        startRide(context, noticeAtMillis)
-        prefs.setEbikePreciseCalibratedAt(noticeAtMillis)
-        true
-    }
-
-    /** 结束骑行：清起点、已发键与校准标记，撤闹钟，停服务（常驻通知随之摘掉），清通知栏上的提醒。 */
+    /** 结束骑行：清起点与已发键，撤闹钟，停服务（常驻通知随之摘掉），清通知栏上的提醒。 */
     suspend fun endRide(context: Context): Outcome = guarded {
         val prefs = Graph.displayPrefs(context)
         prefs.setEbikeRideStartAt(0L)
         prefs.updateEbikeFreeNotifiedKeys { emptySet() }
-        prefs.setEbikePreciseCalibratedAt(0L)
         cancelAll(context)
         Outcome.Ended
-    }
-
-    /**
-     * 「精确倒计时」的另一半（2026-09-28）：收到微信的「[先享后付]服务完成通知」后
-     * **自动结束计时**——终点原本只能等免费结束闹钟或用户手动点「结束骑行」，现在取
-     * 真正还车的时刻。返回 true = 这次真的结束了。
-     *
-     * 三道闸，缺一不可：
-     * 1. 开关开着（与起点校准同一开关：走的是同一条「通知使用权」授权，不另设项）；
-     * 2. 有在案计时——**这一条同时就是幂等闸**：微信对同一笔订单可能重复推送完成通知，
-     *    第一次结束已把起点清成 0，重复通知在这里被挡住，不需要额外的已结束标记；
-     * 3. 通知落在「点扫一扫」之后的 [WechatRentNotice.COMPLETION_WINDOW_MS] 内（15 分钟
-     *    免费时长 + 5 分钟结束迟到窗口）：**不能**复用起点校准的 5 分钟窗口——正常骑行
-     *    routinely 超过 5 分钟，复用它自动结束就只在超短骑行下生效。这个上限与 `check`
-     *    把过期计时收干净的视界一致；骑得更久时起点已被收干净，第 2 道闸挡住。
-     *
-     * 结束 = [endRide] 全套清理 + [burnSavedCodes]：手动结束（`EbikeViewModel.onEndRide`）
-     * 会 `burnPending(force = true)`，通知链路没有 VM 在场，与 `check` 的结束分支同口径
-     * 到点即焚——免费时段用完了，码没有留下来的理由。
-     */
-    suspend fun endRideFromNotice(context: Context, noticeAtMillis: Long): Boolean = guardedBool {
-        val prefs = Graph.displayPrefs(context)
-        if (!prefs.ebikePreciseCountdownEnabled.first()) return@guardedBool false
-        val startAt = prefs.ebikeRideStartAt.first()
-        if (startAt <= 0L) return@guardedBool false
-        if (!WechatRentNotice.isWithinCompletionWindow(startAt, noticeAtMillis)) return@guardedBool false
-        endRide(context)
-        burnSavedCodes(context)
-        true
     }
 
     /**
@@ -367,13 +308,6 @@ object EbikeFreeRideReminder {
         runCatching { action() }.getOrElse {
             Log.w(TAG, "ebike free ride action failed", it)
             Outcome.Failed(it.message ?: "提醒调度失败")
-        }
-
-    /** 布尔型入口的兜异常版本（[calibrateRideStart]：失败就当没校准）。 */
-    private suspend fun guardedBool(action: suspend () -> Boolean): Boolean =
-        runCatching { action() }.getOrElse {
-            Log.w(TAG, "ebike free ride action failed", it)
-            false
         }
 }
 

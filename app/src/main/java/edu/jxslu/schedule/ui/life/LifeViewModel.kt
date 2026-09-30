@@ -84,8 +84,8 @@ data class LifeUiState(
     /**
      * 电费段是否还在等平台流水链路跑完一次（成功失败都算）。
      *
-     * 单独一个标志的理由：[PowerCardState.loading] 只管读数那一段，读数落到界面之后流水
-     * 才开始请求（两条串行），拿它当「流水就绪」会早判一步。
+     * 单独一个标志的理由：[PowerCardState.loading] 只管读数那一段，流水与读数并行请求
+     * （2026-09-30 起，此前串行）它完全不覆盖，拿它当「流水就绪」会不准。
      *
      * 与 [campusFeedLoading] **分段就绪**（2026-09-26 用户报「最近流水加载太慢」）：
      * 整卡共用一个 loading 时，本地一卡通要陪电费的网络请求一起挂骨架。现在谁就绪谁先
@@ -137,8 +137,9 @@ class LifeViewModel(
     val events = _events.receiveAsFlow()
 
     init {
-        // 冷启动先用上次落盘的流水把电费段顶起来：进页链路是 登录 → 项目详情 → 读表 → 流水
-        // 串行四条请求，进程刚起时 token 与内存缓存（120 秒 TTL）全空，手机网络上要好几秒，
+        // 冷启动先用上次落盘的流水把电费段顶起来：进页读数链是 登录 → 项目详情 → 读表
+        // 三条串行（流水与读数并行，2026-09-30 起），进程刚起时 token 与内存缓存
+        // （120 秒 TTL）全空，手机网络上要好几秒，
         // 这段时间电费段只能挂骨架（2026-09-26 用户报「一打开一直是骨架屏，手动一刷新反而
         // 秒出」——刷新快是因为那时 token 已经热了）。刷新到货后原地替换。
         // 链路已经跑完（powerFeedLoaded = true，含没开凭证的短路）就不用旧数据盖新的。
@@ -177,8 +178,8 @@ class LifeViewModel(
     /**
      * 电费流水这条链路是否跑完过一次（成功或失败都算）。
      *
-     * 单独一个标志的理由：[PowerCardState.loading] 只管读数那一段，读数落到界面之后流水
-     * 才开始请求（两条串行），拿它当「流水就绪」会早判一步。
+     * 单独一个标志的理由：[PowerCardState.loading] 只管读数那一段，流水与读数并行请求
+     * （2026-09-30 起，此前串行）它完全不覆盖，拿它当「流水就绪」会不准。
      */
     private val powerFeedLoaded = MutableStateFlow(false)
 
@@ -233,6 +234,21 @@ class LifeViewModel(
         }
         _power.update { it.copy(loading = true, error = null, noCredentials = false) }
         viewModelScope.launch {
+            // 流水与读数并行（2026-09-30）：两条只共享 token（并发冷启动由 PowerRepository
+            // 的登录互斥去重，只登一次），没有数据依赖；串行只是让流水段白等一条读表的时间。
+            // 流水是附加信息：取不到不影响读数，也不额外打扰用户
+            launch {
+                runCatching { powerRepo.history(credentials.username, credentials.password, force = force) }
+                    .onSuccess { turnovers ->
+                        _powerTurnovers.value = turnovers
+                        // 落盘给下次冷启动当种子（IO 线程写；空结果不写，见 PowerHistoryCache.save）
+                        if (turnovers.isNotEmpty()) {
+                            viewModelScope.launch(Dispatchers.IO) { historyCache.save(turnovers) }
+                        }
+                    }
+                // 成功或失败都算「问过一次」：失败时卡片落到空态提示，不再无限骨架
+                powerFeedLoaded.value = true
+            }
             try {
                 val snapshot = powerRepo.snapshot(credentials.username, credentials.password, force = force)
                 _power.update { it.copy(loading = false, snapshot = snapshot, error = null) }
@@ -253,17 +269,6 @@ class LifeViewModel(
             } catch (e: Exception) {
                 _power.update { it.copy(loading = false, error = "电费读取失败：${e.message ?: "未知错误"}") }
             }
-            // 流水是附加信息：取不到不影响读数，也不额外打扰用户
-            runCatching { powerRepo.history(credentials.username, credentials.password, force = force) }
-                .onSuccess { turnovers ->
-                    _powerTurnovers.value = turnovers
-                    // 落盘给下次冷启动当种子（IO 线程写；空结果不写，见 PowerHistoryCache.save）
-                    if (turnovers.isNotEmpty()) {
-                        viewModelScope.launch(Dispatchers.IO) { historyCache.save(turnovers) }
-                    }
-                }
-            // 成功或失败都算「问过一次」：失败时卡片落到空态提示，不再无限骨架
-            powerFeedLoaded.value = true
         }
     }
 

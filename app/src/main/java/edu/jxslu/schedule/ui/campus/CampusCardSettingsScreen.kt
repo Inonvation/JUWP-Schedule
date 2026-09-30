@@ -91,6 +91,8 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -865,12 +867,18 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             val enabledNow = prefs.campusCardEnabled.first()
             if (!enabledNow) return
             val saved = credentialStore.read() ?: return
-            val cards = repo.cards(saved.username, saved.password, force = force)
-            if (cards.isNotEmpty()) {
-                _balance.value = buildSnapshot(cards, force = force)
-                // 账号条姓名（DESIGN §3.3）：queryCard 原生带持卡人姓名，
-                // 首张非空即落库；班级仍归教务学籍卡管（一卡通没有这个字段）。
-                prefs.setProfile(cards.firstOrNull { it.ownerName.isNotBlank() }?.ownerName, null)
+            // 正式卡与电子账户两问并行（2026-09-30）：都只共享 token，没有数据依赖；
+            // 串行时下拉刷新指示器要多等一条 queryCard 的时间。电子账户一问先发、
+            // 失败照旧当 0（原口径）；正式卡一问决定有没有快照可落。
+            coroutineScope {
+                val accountFen = async { accountFenOf(saved.username, saved.password, force) }
+                val cards = repo.cards(saved.username, saved.password, force = force)
+                if (cards.isNotEmpty()) {
+                    _balance.value = snapshotOf(cards, accountFen.await())
+                    // 账号条姓名（DESIGN §3.3）：queryCard 原生带持卡人姓名，
+                    // 首张非空即落库；班级仍归教务学籍卡管（一卡通没有这个字段）。
+                    prefs.setProfile(cards.firstOrNull { it.ownerName.isNotBlank() }?.ownerName, null)
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -886,6 +894,9 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      * 由 queryCard 构造余额快照（DESIGN §3.10 账户口径）：正式卡 = card 表字段；
      * 电子账户 = accinfo[] 首项 balance（独立钱包，2026-09-23 实测 codebarPayinfo
      * 的 ACCOUNT 行是正式卡镜像，不能用作电子账户余额）。accinfo 取不到当 0。
+     *
+     * 到账轮询等调用点走这条（卡片到手后串行补电子账户一问）；生活页下拉那条路要
+     * 两问并行，直接用 [accountFenOf] + [snapshotOf]（见 [fetchBalance]）。
      */
     private suspend fun buildSnapshot(
         cards: List<YktCard>,
@@ -893,21 +904,29 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     ): PayCodeViewModel.BalanceSnapshot {
         val credentials = credentialStore.read()
         val accountFen = if (credentials != null) {
-            runCatching {
-                repo.rechargeAccountDetail(credentials.username, credentials.password, force = force)
-            }
-                .getOrNull()?.second ?: 0L
+            accountFenOf(credentials.username, credentials.password, force)
         } else {
             0L
         }
-        return PayCodeViewModel.BalanceSnapshot(
-            cards = cards,
-            totalFen = cards.sumOf { it.cardBalanceFen },
-            cardFen = cards.sumOf { it.cardBalanceFen },
-            accountFen = accountFen,
-            elecFen = cards.sumOf { it.elecBalanceFen },
-        )
+        return snapshotOf(cards, accountFen)
     }
+
+    /** 电子账户余额一问（分）。取不到（网络失败 / 平台不支持）当 0，原口径。 */
+    private suspend fun accountFenOf(username: String, password: String, force: Boolean): Long =
+        runCatching { repo.rechargeAccountDetail(username, password, force = force) }
+            .getOrNull()?.second ?: 0L
+
+    /** 快照拼装（纯计算）：正式卡与电子账户两问的汇合点。 */
+    private fun snapshotOf(
+        cards: List<YktCard>,
+        accountFen: Long,
+    ): PayCodeViewModel.BalanceSnapshot = PayCodeViewModel.BalanceSnapshot(
+        cards = cards,
+        totalFen = cards.sumOf { it.cardBalanceFen },
+        cardFen = cards.sumOf { it.cardBalanceFen },
+        accountFen = accountFen,
+        elecFen = cards.sumOf { it.elecBalanceFen },
+    )
 
     init {
         // 今日页也挂本 VM（卡片余额+弹窗充值）；开关关时绝不发起任何一卡通网络动作

@@ -20,7 +20,7 @@ class ScoreRepository(private val db: JuwDatabase) {
     /** 有成绩的学期（倒序，最新在前）。 */
     fun observeTerms(): Flow<List<String>> = dao.observeTerms()
 
-    /** 库里有没有成绩（自动导入闸门用，见 `AutoSyncRules`）。 */
+    /** 「有没有成绩」的廉价判定（自动导入闸门用，见 `AutoSyncRules`）。 */
     suspend fun hasData(): Boolean = dao.count() > 0
 
     fun observeForTerm(term: String): Flow<List<ScoreRecord>> =
@@ -29,6 +29,9 @@ class ScoreRepository(private val db: JuwDatabase) {
     /** 全部成绩按学期分组（成绩页两个分组视图共用）。 */
     fun observeAllGroupedByTerm(): Flow<Map<String, List<ScoreRecord>>> =
         dao.observeAll().map { list -> list.map { it.toDomain() }.groupBy { it.term } }
+
+    /** 全量快照（变更检测在写库前比对用，DESIGN §4.33）。 */
+    suspend fun getAll(): List<ScoreRecord> = dao.getAll().map { it.toDomain() }
 
     /** 按学期替换：该学期先删后插，importedAt 统一取本次导入时间。 */
     suspend fun replaceTerm(term: String, records: List<ScoreRecord>) {

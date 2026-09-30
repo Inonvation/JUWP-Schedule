@@ -30,6 +30,7 @@ class ScheduleExporterTest {
         isCustomTime: Boolean = false,
         customStartTime: String? = null,
         customEndTime: String? = null,
+        kind: CourseKind = CourseKind.Theory,
     ) = Course(
         id = id,
         name = name,
@@ -42,6 +43,7 @@ class ScheduleExporterTest {
         isCustomTime = isCustomTime,
         customStartTime = customStartTime,
         customEndTime = customEndTime,
+        kind = kind,
     )
 
     @Test
@@ -194,5 +196,61 @@ class ScheduleExporterTest {
             SemesterConfig(startDate = "not-a-date", totalWeeks = 20),
         )
         assertEquals(0, bad.ok.size)
+    }
+
+    @Test
+    fun `考试随课表展开且标题带考试标记`() {
+        // 考试以 kind=Exam + 自定义时刻的课程行入库（ExamMapper 的有损编码），
+        // 日历同步没有按 kind 过滤，考试就是这样被一起带进日历的——这条钉住别丢
+        val events = ScheduleExporter.expandEvents(
+            listOf(
+                course(
+                    name = "高等数学",
+                    kind = CourseKind.Exam,
+                    day = 3,
+                    weeks = setOf(16),
+                    isCustomTime = true,
+                    customStartTime = "14:00",
+                    customEndTime = "16:00",
+                    position = "教学楼A-101",
+                ),
+            ),
+            slots,
+            semester,
+        ).ok
+        assertEquals(1, events.size)
+        assertEquals(LocalDate.parse("2026-12-23"), events[0].date) // 第16周周三
+        assertEquals("2026-12-23T14:00", events[0].start.toString())
+        assertEquals("2026-12-23T16:00", events[0].end.toString())
+        assertEquals("高等数学（考试）", events[0].name)
+        assertEquals("教学楼A-101", events[0].position)
+    }
+
+    @Test
+    fun `普通课标题不带考试标记`() {
+        val events = ScheduleExporter.expandEvents(
+            listOf(course(name = "大学英语", weeks = setOf(1))),
+            slots,
+            semester,
+        ).ok
+        assertEquals("大学英语", events[0].name)
+    }
+
+    @Test
+    fun `考试越界周同样被丢弃`() {
+        val events = ScheduleExporter.expandEvents(
+            listOf(
+                course(
+                    kind = CourseKind.Exam,
+                    weeks = setOf(21),
+                    isCustomTime = true,
+                    customStartTime = "14:00",
+                    customEndTime = "16:00",
+                ),
+            ),
+            slots,
+            semester,
+        ).ok
+        assertEquals(0, events.size)
     }
 }

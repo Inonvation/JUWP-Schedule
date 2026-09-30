@@ -35,6 +35,7 @@ import edu.jxslu.schedule.ui.notes.NoteCourseScreen
 import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
 import edu.jxslu.schedule.ui.score.ScoreScreen
+import edu.jxslu.schedule.ui.score.ScoreSettingsScreen
 import edu.jxslu.schedule.ui.score.TranscriptHistoryScreen
 import edu.jxslu.schedule.ui.qzxy.QzxyScreen
 import edu.jxslu.schedule.ui.qzxy.QzxyDebugScreen
@@ -71,6 +72,8 @@ enum class SubpageScreen {
     SHORTCUTS,
     /** 我的 → 成绩查询（按学期存储，DESIGN §4.15） */
     SCORES,
+    /** 成绩查询 → 成绩设置（分组 · 排序 · 统计口径 · 成绩变动提醒，DESIGN §4.33） */
+    SCORE_SETTINGS,
     /** 我的 → 学习 → 学业完成情况（培养方案达成度，DESIGN §3.17 / §4.29） */
     SCHOLAR,
     /** 导出成绩单 → 最近导出（DESIGN §3.14；列表即 filesDir/transcripts，最多 10 份） */
@@ -221,6 +224,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SHORTCUTS ->
                 ShortcutSettingsScreen(onBack = onBack, focusItemId = focusItemId)
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
+            SubpageScreen.SCORE_SETTINGS -> ScoreSettingsScreen(onBack = onBack)
             SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)
             SubpageScreen.TRANSCRIPTS -> TranscriptHistoryScreen(onBack = onBack)
             // focusItemId 对 RIDE 复用为「进页即定位的车号」（2026-09-29）：识别 / 深链

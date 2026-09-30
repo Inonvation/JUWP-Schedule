@@ -86,4 +86,51 @@ class AutoSyncRulesTest {
             ),
         )
     }
+
+    // ---- 毫秒级间隔闸门（成绩/考试变动提醒，DESIGN §4.33）----
+
+    private val now = 1_800_000_000_000L
+
+    @Test
+    fun `毫秒闸门_没成功过立即抓`() {
+        assertTrue(AutoSyncRules.shouldAttemptAt(null, intervalHours = 6, nowMillis = now))
+        assertTrue(AutoSyncRules.shouldAttemptAt(0L, intervalHours = 6, nowMillis = now))
+        assertTrue(AutoSyncRules.shouldAttemptAt(-5L, intervalHours = 6, nowMillis = now))
+    }
+
+    @Test
+    fun `毫秒闸门_间隔内不抓`() {
+        val last = now - 5 * 60 * 60 * 1000L
+        assertFalse(AutoSyncRules.shouldAttemptAt(last, intervalHours = 6, nowMillis = now))
+    }
+
+    @Test
+    fun `毫秒闸门_刚好到间隔就抓`() {
+        val last = now - 6 * 60 * 60 * 1000L
+        assertTrue(AutoSyncRules.shouldAttemptAt(last, intervalHours = 6, nowMillis = now))
+        assertTrue(
+            AutoSyncRules.shouldAttemptAt(
+                now - 25 * 60 * 60 * 1000L,
+                intervalHours = 6,
+                nowMillis = now,
+            ),
+        )
+    }
+
+    @Test
+    fun `毫秒闸门_时钟回拨不抓`() {
+        val last = now + 60 * 60 * 1000L
+        assertFalse(AutoSyncRules.shouldAttemptAt(last, intervalHours = 6, nowMillis = now))
+    }
+
+    @Test
+    fun `毫秒闸门_脏间隔按1小时兜底`() {
+        // 间隔是 DataStore 里的脏值（0/负数）时按 1 小时兜底，不能退化成「每次都抓」
+        assertFalse(
+            AutoSyncRules.shouldAttemptAt(now - 30 * 60 * 1000L, intervalHours = 0, nowMillis = now),
+        )
+        assertTrue(
+            AutoSyncRules.shouldAttemptAt(now - 2 * 60 * 60 * 1000L, intervalHours = -3, nowMillis = now),
+        )
+    }
 }

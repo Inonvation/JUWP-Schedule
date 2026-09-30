@@ -59,17 +59,22 @@ object JwImportResultBus {
  * 落点有五个（课表页 / 今日页 / 成绩页 / 学校统一认证页 / 课表中心页），各自记一遍
  * 「订阅 + 消费 + 判新鲜」容易写岔，收成一个调用。
  *
- * 顺序要紧：**先 [JwImportResultBus.consume] 再判新鲜**。反过来的话，过期的那条会一直留在
- * 通道里，下一次组合又读到、又判过期，白跑一轮。
+ * 清通道的时机要紧（2026-09-30 修正，此前「先 consume 再 show」五处落点全都不显示）：
+ * [JwImportResultBus.consume] 把 flow 置 null 后，`LaunchedEffect(outcome)` 会在下一帧以 null
+ * 重启、取消还挂在 `showSnackbar` 上的这个协程——M3 的契约是「caller cancelled → snackbar
+ * removed from display」，气泡刚挂上去就被撤掉。所以过期消息在**进 show 之前**丢（防止它在
+ * 后续组合里反复触发），新鲜消息**等 `showSnackbar` 返回后**才清。
  */
 @Composable
 fun JwImportOutcomeEffect(snackbar: SnackbarHostState) {
     val outcome by JwImportResultBus.outcome.collectAsStateWithLifecycle()
     LaunchedEffect(outcome) {
         val pending = outcome ?: return@LaunchedEffect
-        JwImportResultBus.consume()
-        if (pending.isFresh()) {
-            snackbar.showSnackbar(AppNoticeVisuals(pending.text, tone = pending.tone))
+        if (!pending.isFresh()) {
+            JwImportResultBus.consume()
+            return@LaunchedEffect
         }
+        snackbar.showSnackbar(AppNoticeVisuals(pending.text, tone = pending.tone))
+        JwImportResultBus.consume()
     }
 }

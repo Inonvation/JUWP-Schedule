@@ -23,6 +23,8 @@ import edu.jxslu.schedule.data.qzxy.QzxyWateringStore
 import edu.jxslu.schedule.data.qzxy.QzxyGattLink
 import edu.jxslu.schedule.data.qzxy.QzxySessionStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
+import edu.jxslu.schedule.data.repo.ExamSnapshotStore
+import edu.jxslu.schedule.data.repo.ExamSync
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
@@ -103,6 +105,9 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var scoreSync: ScoreSync? = null
+
+    @Volatile
+    private var examSync: ExamSync? = null
 
     @Volatile
     private var textbookSync: TextbookSync? = null
@@ -209,6 +214,16 @@ private var qzxyRepository: QzxyRepository? = null
                 repo = scoreRepository(context),
                 prefs = displayPrefs(context),
             ).also { scoreSync = it }
+        }
+
+    /** 考试安排自动检查单例（DESIGN §4.33）：只服务变动提醒，绝不写课程表。 */
+    fun examSync(context: Context): ExamSync =
+        examSync ?: synchronized(this) {
+            examSync ?: ExamSync(
+                cas = casSession(context),
+                prefs = displayPrefs(context),
+                snapshotStore = ExamSnapshotStore(context),
+            ).also { examSync = it }
         }
 
     /** 教材抓取单例（DESIGN §4.31）：教务导入课表成功后顺带抓对应学期，静默失败。 */

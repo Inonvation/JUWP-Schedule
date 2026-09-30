@@ -43,4 +43,21 @@ object AutoSyncRules {
             ?: return true
         return ChronoUnit.DAYS.between(last, today) >= REFRESH_INTERVAL_DAYS
     }
+
+    /**
+     * 毫秒级间隔闸门（DESIGN §4.33，成绩/考试变动提醒用）。提醒间隔是小时级，
+     * [shouldAttempt] 的日期粒度不够用。
+     *
+     * - 从没成功过（last 无效/≤0）→ 抓；
+     * - 时钟被回拨（last 在未来）→ 不抓，等它自然走到区间内（与 [shouldAttempt] 同口径）；
+     * - [intervalHours] 是脏值（≤0）按 1 小时兜底，不能让坏配置退化成「每次都抓」。
+     */
+    fun shouldAttemptAt(lastSuccessMillis: Long?, intervalHours: Int, nowMillis: Long): Boolean {
+        val hours = intervalHours.coerceAtLeast(1)
+        val last = lastSuccessMillis?.takeIf { it > 0 } ?: return true
+        if (last > nowMillis) return false
+        return nowMillis - last >= hours * MILLIS_PER_HOUR
+    }
+
+    private const val MILLIS_PER_HOUR = 60L * 60L * 1000L
 }

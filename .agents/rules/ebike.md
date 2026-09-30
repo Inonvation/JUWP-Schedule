@@ -1,13 +1,13 @@
 # 共享单车 · 地图 · 免费时长提醒
 
-作用域：改快趣出行出码、附近车辆地图、免费时长提醒、精确倒计时时读。规格见 DESIGN §3.9 / §4.23 / §4.32。
+作用域：改快趣出行出码、附近车辆地图、免费时长提醒时读（「精确倒计时」已删，见同节墓碑）。规格见 DESIGN §3.9 / §4.23 / §4.32。
 
 ## 使用方式：小程序 / 账号两档（2026-09-29）
 
 - 一个显式设置把两套能力隔开：`domain/EbikeUseMode.kt`（纯 JVM 可测）+ DataStore 键
   `ebike_use_mode`（**默认 `MiniProgram`**）。**能力的唯一判据是 `EbikeUseMode.capabilities()`
-  算出的 `EbikeCapabilities`**（同文件：`wechatScan` / `wechatNoticeCalibration` / `inAppRide` /
-  `directUnlock`），页面与监听器只消费那几个布尔量，**不要在任何地方再写一份 `if`**
+  算出的 `EbikeCapabilities`**（同文件：`wechatScan` / `inAppRide` /
+  `directUnlock`），页面只消费那几个布尔量，**不要在任何地方再写一份 `if`**
   （矩阵本身由 `EbikeUseModeTest` 钉住）。切换入口 = 出码页的「使用方式」卡（`UseModeSection`，
   摆在出码卡正下方）+ 快趣出行账号页顶部（**同一份组件**，两处都能切）。
 
@@ -17,7 +17,6 @@
   | 打开微信扫一扫（顺带起免费计时） | ✅ | ❌ |
   | 直接开锁 / 临时锁车 / 还车 | ❌ | ✅（需登录） |
   | 快趣账号页 / 本机骑行记录 | ❌ | ✅ |
-  | 精确倒计时（微信通知校准） | ✅ | ❌ |
   | 地图：附近车辆（含校园围栏） | ✅ | ✅ |
   | 地图：还车点 / 禁停区图层 | ✅（接口不需要凭证） | ✅ |
   | 地图：车行「开锁」与「当前用车」卡 | ❌ | ✅ |
@@ -33,9 +32,6 @@
 - **首帧真值**：`EbikeViewModel.initialUseMode` / `BikeMapViewModel.useMode` 的初值
   **阻塞读一次**（同 `MeViewModel.initialPrefs` 的模式）。模式决定首帧露出哪一套按钮，
   初值给错会先按另一档画一帧再翻过来——那是看得见的闪。
-- 微信通知校准（`WechatRentListener`）在**服务端**再判一道能力（`wechatNoticeCalibration`）：
-  只有小程序方式才处理通知，否则**不读、不处理**用户通知（隐私上最稳的一档）；
-  读不到偏好同样不处理。
 - 「校园服务 → 快趣出行」入口按模式显隐（小程序方式不展示账号页，切回去入口自然回来）；
   账号页在小程序方式下把账号 / 骑行状态 / 本机记录整片收起，只留切换开关与一句说明。
 - 免责文案随模式换口径：小程序方式写明「只出码与计时，不代你开锁、不触碰计费与订单」。
@@ -164,14 +160,17 @@
   「去微信扫一扫」出路；`kvcxConfirmDialog` 的 UNLOCK 文案里同样写了这两句
   （`KvcxRideControllerTest` 钉住「微信支付分」「客服」两个关键词）。
 
-## 快趣出行只剩桌面启动意图
+## 快趣出行跳转已删（2026-09-30）
 
-- **不再需要 `WRITE_SECURE_SETTINGS`**（2026-09-23 起）：快趣出行的「助手通道」
-  （改写系统 `Settings.Secure.assistant` + 反射 `launchAssist` 直达未导出的首页）连同
-  `KILL_BACKGROUND_PROCESSES` 权限一起删了，因为内置单车地图（`ui/ebike/BikeMapScreen.kt`）
-  已经承担「看车在哪」。现在「打开快趣出行」只剩桌面启动意图一级，打开的是启动页。
-  manifest 里保留 `com.kvcoo.go` 的 `queries` 声明仍是必须的，否则包可见性会让
-  `getLaunchIntentForPackage` 对已装应用也返回 null。**别把助手通道当漏项加回来**。
+- 「打开官方快趣出行 App」按用户要求**整体删除**，别当漏项加回来：设置弹层的「其他」区与
+  入口、`EbikeActions.openKvcoo` / `KVCOO_PACKAGE`、manifest `queries` 的 `com.kvcoo.go`
+  包可见性声明都没了（声明当时是为 `getLaunchIntentForPackage` 的包可见性留的，入口没了
+  它也没用了）。官方 App 不再是任何流程的必经步骤，要用的人自己去桌面打开；
+  本页地图已承担「看车在哪」。快趣 API 域名 `api.kvcoogo.com` 与车身码链接
+  `www.kvcoogo.com` 是另一回事，照旧。
+- 更早删掉的（2026-09-23）：「助手通道」（改写系统 `Settings.Secure.assistant` + 反射
+  `launchAssist` 直达未导出的首页）连同 `WRITE_SECURE_SETTINGS` / `KILL_BACKGROUND_PROCESSES`
+  权限与未安装下载引导弹窗——理由同上。**别把助手通道当漏项加回来**。
 
 ## 附近单车地图
 
@@ -347,30 +346,21 @@
   **别改成「有起点就显示」**——同一个计时在两页说法不一样比不显示更糟。起点与开关从
   `Graph.displayPrefs` 直接读，不往 `DisplayPrefs` 合并读模型里加字段（那条 combine 已满员）。
 
-## 精确倒计时
+## 精确倒计时（已删除，2026-09-30）
 
-- 「精确倒计时」（DESIGN §3.9，2026-09-24，**默认关**）：`ui/ebike/WechatRentListener.kt`
-  （`NotificationListenerService`）识别微信的租车成功通知（关键词「先享后付」），
-  把计时起点从「点扫一扫」校准到真正开始计费那一刻。**它要「通知使用权」**——读用户全部
-  通知，只能用户去系统设置手动勾选（应用没有 API 能申请），所以默认关、开关旁给未授权提示；
-  匹配与窗口口径在 `domain/WechatRentNotice.kt`（四道闸见 DESIGN §3.9）。
-  **隐私红线**：只读包名与文本用于当次匹配，**不落盘、不上传**；命中原文的日志只在
-  `BuildConfig.DEBUG` 下打（抓真实文案用），**release 一行都不许打**。
-  常驻倒计时的起停判据是**起点是否变化**（`EbikeFreeRideService.start`）：起点变了就重新
+- 「精确倒计时」（微信通知校准，DESIGN §3.9 曾有）**已按用户要求整套删除**，别当漏项加回来：
+  `ui/ebike/WechatRentListener.kt`（`NotificationListenerService`，要「通知使用权」）、
+  `domain/WechatRentNotice.kt`、`EbikeFreeRideReminder.calibrateRideStart` / `endRideFromNotice`
+  两个入口、prefs 两键（`ebike_precise_countdown_enabled` / `ebike_precise_calibrated_at`）、
+  设置弹层的开关与授权提示、`EbikeCapabilities.wechatNoticeCalibration` 能力位、
+  manifest 里的服务声明、`WechatRentNoticeTest`。
+  免费时长提醒本身**不受影响**：计时起点固定为「点扫一扫」（小程序方式）与「开锁成功」
+  （账号方式）两个口径，不再校准。
+- **仍适用的口径**（原记在这一节，与服务有关，别丢）：常驻倒计时的起停判据是
+  **起点是否变化**（`EbikeFreeRideService.start`）：起点变了就重新
   `onStartCommand` 重建 tick，起点没变才跳过。**别退回「服务在跑就跳过」**——上一轮没结束
-  就换车时 tick 循环握着旧起点，倒计时不会重置（2026-09-24 用户报的 bug，当时是我加的
-  `running` 幂等标记惹的）。换车（`startRide`）还要顺手清掉上一轮挂在通知栏的提醒与校准标记。
-
-- 自动结束（2026-09-28）：骑行结束微信再推一条「[先享后付]服务完成通知」（标题与「服务使用
-  通知」只差两个字），`WechatRentListener` 识别后走 `EbikeFreeRideReminder.endRideFromNotice`
-  自动结束计时（= `endRide` 全套清理 + `burnSavedCodes` 焚码，与 `check` 结束分支同口径）。
-  **分流必须先判完成、再判开始**：完成通知正文同样含「先享后付」，`matches` 已排除含
-  「服务完成通知」的文本——别把这个排除当冗余删掉，删了短骑行（完成通知落在 5 分钟窗口内）
-  会把起点校准到骑行的结尾。`endRideFromNotice` 的幂等靠「起点清零」：微信重复推送完成通知时
-  第二次在 `startAt <= 0` 被挡，**不要**再加已结束标记；完成通知窗口是专用的
-  `isWithinCompletionWindow`（`COMPLETION_WINDOW_MS` = 20 分钟 = 免费 15 + 结束迟到窗口 5，
-  与 `check` 收干净过期计时的视界一致）——**别复用起点校准的 `isWithinWindow`（5 分钟）**，
-  正常骑行 routinely 超过 5 分钟，复用它自动结束就只在超短骑行下生效。
+  就换车时 tick 循环握着旧起点，倒计时不会重置（2026-09-24 用户报的 bug，当时是
+  `running` 幂等标记惹的）。换车（`startRide`）还要顺手清掉上一轮挂在通知栏的提醒。
 
 ## 快趣出行登录与用车（DESIGN §4.32，2026-09-28；A 只读 + B/C 用车）
 

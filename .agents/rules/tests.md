@@ -37,7 +37,6 @@
 `JwHttpSessionTest`（检测登录链路：重定向解析参数顺序、IPv4 优先 DNS、**登录页不算会话**）、
 `EbikeQrTest`（共享单车出码：URL 拼装/车号校验/BitMatrix 参数/最近车号序列化）、
 `EbikeFreeRideTest`（免费时长提醒：提醒点/下一个未过点/迟到窗口/去重键带起点/通知 id 不撞号）、
-`WechatRentNoticeTest`（精确倒计时：只认微信包名/关键词命中先享后付/窗口两端与越界）、
 `YktKeyboardTest`（校园卡键盘：字形 MD5 表/双射硬校验/密文构造/协议自检）、
 `YktModelsTest`（一卡通响应解析：BOM 剥离/错误码/CARD 账户提取）、
 `MarkdownParserTest`（Markdown 子集：块/行内/嵌套/未闭合按字面回退/中文数字混排）、

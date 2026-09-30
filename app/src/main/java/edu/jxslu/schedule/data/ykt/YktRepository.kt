@@ -48,10 +48,8 @@ class YktRepository(
     }
 
     /** 验证登录可用并返回 token（不缓存）——设置页「开启即验证」与登录共用。 */
-    suspend fun loginForToken(username: String, password: String): YktToken {
-        val token = doLogin(username, password)
-        return YktToken(token, expiresIn = 0)
-    }
+    suspend fun loginForToken(username: String, password: String): YktToken =
+        YktToken(login(username, password), expiresIn = 0)
 
     /** 取 CARD 账户 + 一批付款码（内部自动登录；[cachedToken] 存在则先试它）。 */
     suspend fun fetchPayCode(
@@ -63,21 +61,24 @@ class YktRepository(
             val data = tryLoadBarcodes(token)
             if (data != null) return data
         }
-        val token = doLogin(username, password)
+        val token = doLogin(username, password, staleToken = cachedToken)
         return tryLoadBarcodes(token)
             ?: throw YktException.Protocol("登录成功但取码失败（非凭证问题），请稍后重试")
     }
 
-    /** 登录并把 token 塞进内存缓存；返回 token 供上层复用（本对象内的 cached）。 */
-    suspend fun login(username: String, password: String): String = doLogin(username, password)
+    /** 登录并把 token 塞进内存缓存；返回 token 供上层复用（本对象内的 cached）。强制真登录。 */
+    suspend fun login(username: String, password: String): String = loginMutex.withLock {
+        loginLocked(username, password)
+    }
 
     /** 取一批付款码（token 生命周期完全归本仓库：内存缓存 + 401 重登一次）。 */
     suspend fun payCodes(username: String, password: String): YktBarcodeData {
-        cachedToken?.let { token ->
+        val seen = cachedToken
+        seen?.let { token ->
             val data = tryLoadBarcodes(token)
             if (data != null) return data
         }
-        val fresh = doLogin(username, password)
+        val fresh = doLogin(username, password, staleToken = seen)
         return tryLoadBarcodes(fresh)
             ?: throw YktException.Protocol("登录成功但取码失败（非凭证问题），请稍后重试")
     }
@@ -108,10 +109,11 @@ class YktRepository(
             return YktModels.cardsFrom(env.data)
         }
         val result = run {
-            cachedToken?.let { token ->
+            val seen = cachedToken
+            seen?.let { token ->
                 load(token)?.let { return@run it }
             }
-            val fresh = doLogin(username, password)
+            val fresh = doLogin(username, password, staleToken = seen)
             load(fresh) ?: throw YktException.Protocol("登录成功但取余额失败")
         }
         cachedCards = result
@@ -159,8 +161,9 @@ class YktRepository(
             }
             return YktModels.payAccountsFrom(env.data)
         }
-        cachedToken?.let { token -> load(token)?.let { return it } }
-        val fresh = doLogin(username, password)
+        val seen = cachedToken
+        seen?.let { token -> load(token)?.let { return it } }
+        val fresh = doLogin(username, password, staleToken = seen)
         return load(fresh) ?: throw YktException.Protocol("登录成功但取账户失败")
     }
 
@@ -422,10 +425,11 @@ class YktRepository(
             }
             return YktModels.turnoverPageFrom(env.data)
         }
-        cachedToken?.let { token ->
+        val seen = cachedToken
+        seen?.let { token ->
             load(token)?.let { return it }
         }
-        val fresh = doLogin(username, password)
+        val fresh = doLogin(username, password, staleToken = seen)
         return load(fresh) ?: throw YktException.Protocol("登录成功但取流水失败")
     }
 
@@ -435,8 +439,22 @@ class YktRepository(
 
     private val loginMutex = Mutex()
 
-    /** 登录链路：取键盘 → 字形映射 → 构造密文 → OAuth token。全程互斥（防并发双登录）。 */
-    private suspend fun doLogin(username: String, password: String): String = loginMutex.withLock {
+    /**
+     * 登录链路（对外入口）：取键盘 → 字形映射 → 构造密文 → OAuth token。全程互斥（防并发双登录）。
+     *
+     * [staleToken] = 调用方刚试废（401）的那个 token：等锁期间若已有别路登出新 token
+     * 就直接复用，只把废的挡掉；传 null = 调用方手里没有废 token（冷启动 / 只需要一个
+     * token），锁内任何现成 token 都可用——并发冷启动（下拉刷新的余额与流水两路）由此
+     * 只真登一次（2026-09-30）。
+     */
+    private suspend fun doLogin(username: String, password: String, staleToken: String? = null): String =
+        loginMutex.withLock {
+            cachedToken?.takeIf { it != staleToken }?.let { return@withLock it }
+            loginLocked(username, password)
+        }
+
+    /** 真登录（调用方持 [loginMutex]）。 */
+    private suspend fun loginLocked(username: String, password: String): String {
         // [1] 安全键盘
         val kbRaw = client.get("/berserker-secure/keyboard?type=Number&order=1")
         val kbEnv = parse(kbRaw)
@@ -496,7 +514,7 @@ class YktRepository(
         tokenCache?.saveToken(accessToken, clock())
         // 登录成功 = 凭证有效，清掉「已失效」标记（用户改密码后状态卡自动恢复）
         SessionStatus.clearSuspended(LoginTarget.Ykt)
-        accessToken
+        return accessToken
     }
 
     /**

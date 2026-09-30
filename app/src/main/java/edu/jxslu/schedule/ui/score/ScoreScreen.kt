@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -58,6 +60,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.JwImportActivity
+import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.TranscriptActivity
 import edu.jxslu.schedule.domain.ScoreCalculator
 import edu.jxslu.schedule.domain.ScoreGroups
@@ -122,7 +126,6 @@ fun ScoreScreen(onBack: () -> Unit) {
     val sortMode by prefsStore.scoreSortMode.collectAsState(initial = ScoreSortMode.Default)
     var selectedTerm by remember { mutableStateOf<String?>(null) }
     var selectedYear by remember { mutableStateOf<String?>(null) }
-    var sortMenuOpen by remember { mutableStateOf(false) }
 
     // 列表到位后的默认选择：最新有数据的学期/学年；用户切换后以用户为准
     LaunchedEffect(terms) {
@@ -166,22 +169,8 @@ fun ScoreScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { sortMenuOpen = true }) {
-                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "排序")
-                    }
-                    DropdownMenu(
-                        expanded = sortMenuOpen,
-                        onDismissRequest = { sortMenuOpen = false },
-                    ) {
-                        SortMenuItem("默认顺序", ScoreSortMode.Default, sortMode) { mode ->
-                            scope.launch { prefsStore.setScoreSortMode(mode) }
-                        }
-                        SortMenuItem("成绩从高到低", ScoreSortMode.ByScore, sortMode) { mode ->
-                            scope.launch { prefsStore.setScoreSortMode(mode) }
-                        }
-                        SortMenuItem("绩点从高到低", ScoreSortMode.ByGradePoint, sortMode) { mode ->
-                            scope.launch { prefsStore.setScoreSortMode(mode) }
-                        }
+                    IconButton(onClick = { SubpageActivity.start(context, SubpageScreen.SCORE_SETTINGS) }) {
+                        Icon(Icons.Filled.Settings, contentDescription = "成绩设置")
                     }
                     IconButton(onClick = {
                         JwImportActivity.start(context, JwImportMode.Scores)
@@ -214,7 +203,8 @@ fun ScoreScreen(onBack: () -> Unit) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding),
+                        .padding(padding)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.Center,
                 ) {
                     EmptyHint(
@@ -230,6 +220,16 @@ fun ScoreScreen(onBack: () -> Unit) {
                     ExportTranscriptCard(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         onClick = { TranscriptActivity.start(context) },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    // 提醒等出分是主场景之一：空态给一行设置入口（设置页承载开关与间隔）
+                    EmptyHint(
+                        title = "出分提醒",
+                        body = "在新出成绩或复查改分时收到通知，到成绩设置里开启。",
+                        actionLabel = "去设置",
+                        onAction = {
+                            SubpageActivity.start(context, SubpageScreen.SCORE_SETTINGS)
+                        },
                     )
                 }
             }
@@ -657,3 +657,4 @@ private fun trimNum(v: Double?): String {
     s = s.trimEnd('0').trimEnd('.')
     return s.ifEmpty { "0" }
 }
+

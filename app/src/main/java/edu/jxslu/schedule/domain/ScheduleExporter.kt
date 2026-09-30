@@ -34,6 +34,8 @@ object ScheduleExporter {
      *
      * - 周次超出 `semester.totalWeeks` 的丢弃
      * - 时刻算不出（作息表缺节 / 自定义时间脏数据）的事件跳过，不阻断整体
+     * - 考试（`kind=Exam`）随课表一起展开（2026-09-30 钉明），标题带「（考试）」标记，
+     *   系统日历里区分考试与上课
      * - 结果按日期 + 开始时间排序，与日历呈现顺序一致
      */
     fun expandEvents(
@@ -56,7 +58,11 @@ object ScheduleExporter {
                         .plusDays((course.day - 1).toLong())
                     add(
                         CourseEvent(
-                            name = course.name,
+                            name = if (course.kind == CourseKind.Exam) {
+                                "${course.name}（考试）"
+                            } else {
+                                course.name
+                            },
                             teacher = course.teacher,
                             position = course.position,
                             date = date,

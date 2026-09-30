@@ -2,6 +2,8 @@ package edu.jxslu.schedule.data.power
 
 import edu.jxslu.schedule.data.session.LoginTarget
 import edu.jxslu.schedule.data.session.SessionStatus
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -24,6 +26,8 @@ class PowerRepository(
 
     private var cachedToken: String? = null
 
+    private val loginMutex = Mutex()
+
     /** 读数缓存（项目详情 + 电表读数）。 */
     private var cachedSnapshot: PowerSnapshot? = null
     private var cachedSnapshotAtMs = 0L
@@ -32,8 +36,24 @@ class PowerRepository(
     private var cachedHistory: List<PowerTurnover>? = null
     private var cachedHistoryAtMs = 0L
 
-    /** 登录并换回 access_token（供深链复用）。 */
-    suspend fun login(username: String, password: String): String {
+    /** 登录并换回 access_token（供深链复用）。强制真登录，不吃缓存。 */
+    suspend fun login(username: String, password: String): String = loginMutex.withLock {
+        loginLocked(username, password)
+    }
+
+    /**
+     * 取一个「应该可用」的 token：有缓存先用缓存；等锁期间别路已登好的也直接复用——
+     * 下拉刷新的读数与流水两路并发冷启动时只真登一次（2026-09-30）。
+     * 401 重登那条路传 [staleToken] = 刚试废的 token，它不会被复用。
+     */
+    private suspend fun doLogin(username: String, password: String, staleToken: String? = null): String =
+        loginMutex.withLock {
+            cachedToken?.takeIf { it != staleToken }?.let { return@withLock it }
+            loginLocked(username, password)
+        }
+
+    /** 真登录（调用方持 [loginMutex]）。 */
+    private suspend fun loginLocked(username: String, password: String): String {
         val raw = client.login(username, password)
         // 401 = 学号或查询密码不对 → 标记平台失效（DESIGN §3.16）。
         // 与 token 过期区分开：那个在 [withToken] 里重登一次，属正常轮换，标了会让
@@ -340,11 +360,12 @@ class PowerRepository(
         password: String,
         block: suspend (String) -> T,
     ): T {
-        val token = cachedToken ?: login(username, password)
+        val token = cachedToken ?: doLogin(username, password)
         return try {
             block(token)
         } catch (e: PowerException.Credential) {
-            block(login(username, password))
+            // 传刚试废的 token：若并发的另一路已经重登出新 token 就直接复用，不白登
+            block(doLogin(username, password, staleToken = token))
         }
     }
 

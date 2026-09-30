@@ -8,7 +8,6 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import edu.jxslu.schedule.startActivityOutsideApp
 
@@ -125,29 +124,6 @@ object AppPermissions {
             context.startActivityOutsideApp(
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                     .setData(Uri.parse("package:${context.packageName}")),
-            )
-        }
-    }
-
-    /**
-     * 「通知使用权」（`NotificationListenerService`）是否已授予本应用（DESIGN §3.9 精确倒计时）。
-     *
-     * 与 [notification] 是两个完全不同的东西：那个是「本应用能不能发通知」，
-     * 这个是「本应用能不能读**别人的**通知」——后者隐私敏感度高得多，只能由用户在
-     * 系统设置里手动勾选，应用没有任何 API 能主动申请（`RequestPermission` 那种弹框不存在）。
-     */
-    fun notificationListenerGranted(context: Context): Boolean =
-        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
-
-    /**
-     * 跳系统的「通知使用权」列表页。它是标准 Settings action，没有厂商私有坑；
-     * 用户在这一页里勾选本应用后才生效。跳不出去时静默（与 [jumpAppDetails] 同口径）。
-     */
-    fun jumpNotificationListenerSettings(context: Context) {
-        runCatching {
-            context.startActivityOutsideApp(
-                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
     }

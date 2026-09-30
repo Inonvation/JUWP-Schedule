@@ -1100,8 +1100,8 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 而两者的计时语义互斥（「点扫一扫即起计时」vs「开锁即计时起点」）。现在用一档**显式选择**隔开：
 `domain/EbikeUseMode.kt`（`mini_program` / `account`，**默认 `mini_program`**）+ DataStore 键
 `ebike_use_mode`。**能力的唯一判据是 `EbikeUseMode.capabilities()` 算出的 `EbikeCapabilities`**
-（同文件：`wechatScan` / `wechatNoticeCalibration` / `inAppRide` / `directUnlock`），页面与
-监听器只消费那几个布尔量，矩阵本身由 `EbikeUseModeTest` 钉住。
+（同文件：`wechatScan` / `inAppRide` / `directUnlock`），页面只消费那几个布尔量，
+矩阵本身由 `EbikeUseModeTest` 钉住。
 
 | 能力 | 微信小程序 | 账号登录 |
 |------|-----------|---------|
@@ -1109,7 +1109,6 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 | 打开微信扫一扫（顺带起免费计时） | ✅ | ❌ |
 | 直接开锁 / 临时锁车 / 还车 | ❌ | ✅（需登录） |
 | 快趣账号页 / 本机骑行记录 | ❌ | ✅ |
-| 精确倒计时（微信通知校准） | ✅ | ❌ |
 | 地图：附近车辆（含校园围栏） | ✅ | ✅ |
 | 地图：还车点 / 禁停区图层 | ✅（接口不需要凭证，请求不带 token） | ✅ |
 | 地图：车行「开锁」与「当前用车」卡 | ❌ | ✅ |
@@ -1178,8 +1177,7 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
   非官方客户端、善后以快趣为准。开锁前的支付分授权提示见下。
 - **隔离落点**：骑行页 `val ride = if (caps.inAppRide) kvcx.ride else null`（一处收口，
   切换模式后残留订单不冒头）；骑行状态的查询都先判能力，
-  **读 DataStore 原始流**；`WechatRentListener` 在服务端再判一道，非小程序方式**不读不处理**
-  用户通知；「校园服务 → 快趣出行」入口按模式显隐；免责文案随模式换口径。
+  **读 DataStore 原始流**；「校园服务 → 快趣出行」入口按模式显隐；免责文案随模式换口径。
 - **支付分授权的提示（用户要求，2026-09-29）**：账号方式下开锁前必须让用户知道「可能需要
   跳转微信做微信支付分授权」，以及唯一能让本机直接开锁端到端可用的出路——**联系快趣客服
   关闭该授权**。两处落点：① 出码卡里常驻一句（未命中 11035 时）；② 命中 11035 后换成
@@ -1211,7 +1209,7 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 | 提示 | 「打开微信扫一扫」按钮 best-effort 三级兜底：`ShortCutDispatchAction`（微信桌面长按快捷方式真身，直达扫一扫）→ `BIZSHORTCUT` 旧式入口 → 微信首页手动引导；失败走页内 Snackbar；manifest `queries` 声明微信包可见性仅用于该探测 |
 | 打开快趣出行（2026-09-21 首版；2026-09-23 降级为文字入口） | 降为页面最下方一行 `TextButton`，与免责声明相邻。**助手通道整套删除**（`Settings.Secure.assistant` 改写 + 反射 `launchAssist` + `WRITE_SECURE_SETTINGS` + `KILL_BACKGROUND_PROCESSES` + `queries` 里的 `com.kvcoo.go` + 未安装引导弹窗）：内置地图（见下节）已经承担「看车在哪」这件事，官方 App 不再是必经步骤，而那条链路要用户先跑一次 adb 授权、且只在小米 ROM 上真机验证过。现在只剩桌面启动意图一级：装了则打开（启动页），未装给一句 Snackbar 提示，不再弹下载引导 |
 | 提亮 | **不做**自动屏幕提亮（用户拍板） |
-| 免费时长倒计时（2026-09-22 首版；2026-09-23 改系统日历；**2026-09-24 改回 App 通知**） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点**：微信小程序方式 = 点「打开微信扫一扫」的时刻（偏保守，比真正开车早 1~2 分钟），**账号登录方式 = 服务端确认的开锁时刻**（见「本机用车」行；那一档没有扫一扫这个动作）。开关 `ebikeFreeReminderEnabled` 默认关（通知是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。**有在案计时**就显示倒计时块（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」；2026-09-28 起并入置顶的「当前骑行」卡，有快趣订单在案时不给「结束骑行」——还车即结束）——页面上的倒计时**不再看提醒开关**（2026-09-28 用户口径：能软件开车的今天，开车后的免费计时要同步显示）；开关只管通知（闹钟 + 常驻倒计时通知），一个通知偏好不该把事实藏起来。**本机开锁成功时若开关关着会顺手打开它**（见下「本机用车」行），所以开锁后的倒计时通知照常来。**提醒 = 两条 App 通知**（`NotificationIds.LEAD` / `END`，channel `ebike_free_ride_alert_v2`，HIGH + **震动**（双震 pattern；channel 建出来后震动与 importance 都改不动，而「删掉重建」也无效——delete 是异步的、紧接着 create 会被当成更新，所以直接换了新 id，旧 id 清掉），category 用 `EVENT` 与上课提醒对齐）：提前量点（免费结束前 N 分钟）与免费结束那一刻各一次，由 `AlarmManager.setAlarmClock` **精确**触发——系统级闹钟，到点唤醒设备、不受 Doze/省电推迟，且不需要任何特殊权限（与上课提醒同一手法）。**通知栏常驻倒计时**由前台服务 `EbikeFreeRideService` 承载（`specialUse` 类型，`FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE` 权限），剩余时间由服务**每秒**重发一次通知文案（`EbikeFreeRide.countdownText`，「免费剩余 mm:ss」）；**不用**系统 chronometer——2026-09-24 真机实测（Redmi K70 / 澎湃OS）面板静止时系统不主动重绘 chronometer，用户看到的是一个不动的数字。**只有亮屏才刷**（用户拍板省电口径）：灭屏时通知栏没人看，一个 notify 都不发（协程阻塞在屏幕事件上等，零 CPU），点亮瞬间补刷一次——省电与「点亮即准」两头都占。三层兜底：精确闹钟（主）→ 前台服务进程（中）→ `EbikeFreeRideCheckWorker` 周期核对 + 进页 / 冷启动核对（兜，**类名别改**——老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排；周期 15 分钟 = WorkManager 的最小周期，且**只在计时期间排**，平时由 `cancelPeriodicWork` 撤掉，省掉「没骑行也每 15 分钟冷启动一次进程」）。迟到窗口（用户拍板 2026-09-24）：提前量那条**只要免费时段没结束就补发**，结束那条结束后 5 分钟内仍发（`EbikeFreeRide.END_WINDOW_MS`），越过静默。去重键带计时起点（`lead` / `end` 前缀 + 起点毫秒，落 DataStore 已发集合），闹钟与周期核对共用。换车 = 再点一次「扫一扫」重新计时（已发键与校准标记清空、上一轮挂在通知栏的提醒撤掉、闹钟重排；常驻倒计时由 `EbikeFreeRideService.start` 按**起点是否变化**自动重建 tick——判据**不是**「服务在不在跑」，否则上一轮没结束就换车时倒计时不会重置，2026-09-24 修）。**系统日历链路整套删除**（`EbikeCalendarEvents.kt`、`ebikeFreeEventId`、`水贝贝骑行提醒` 标记、日历权限申请），理由：日历 App 发提醒时 App 自己没法展示倒计时，体验是两套。开机补排**不做**（用户拍板，重启后进行中的计时静默失效）。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖提醒点 / 迟到窗口 / 去重键 / 吸附 / 倒计时 / 有效期 / 通知 id 契约），通知构建在 `ui/ebike/EbikeFreeRideNotifier.kt`（**PendingIntent requestCode 与通知 id 分离**：2000/2005/2006，2026-09-24 修——此前直接用通知 id 当 requestCode，与余额提醒撞号、两边落点互相改写，见 §3.13 余额提醒「通知」行）。**「精确倒计时」（2026-09-24 新增，默认关；2026-09-28 起兼听完成通知；**2026-09-29 起仅小程序方式**）**：计时起点原本只能取「点扫一扫」的时刻（比真正开车早 1~2 分钟，用户还要在微信里选车确认），开启后由 `ui/ebike/WechatRentListener.kt`（`NotificationListenerService`）识别微信的租车成功通知（「先享后付」），把起点校准到通知到达那一刻。**账号登录方式下这条链路整条不参与**：那一档的起点已是服务端确认的开锁时刻、也不走微信扫一扫，没有可校准的偏差；开关在页面上不出现，且 `WechatRentListener` 自己**先判使用方式**——非小程序方式**不读、不处理**用户通知（隐私上最稳的一档，读不到偏好同样不处理）。**2026-09-28 增加第二个出口**：骑行结束微信再推一条「[先享后付]服务完成通知」，识别到后自动结束计时（`EbikeFreeRideReminder.endRideFromNotice`）——终点原本只能等免费结束闹钟或手动点「结束骑行」，现在取真正还车的时刻；结束 = `endRide` 全套清理 + `burnSavedCodes`（与 `check` 结束分支同口径，到点即焚码）。**完成通知同样含「先享后付」**，匹配分流**先判完成（`matchesCompletion`）、再判开始（`matches` 排除含「服务完成通知」的）**——倒过来短骑行会把起点校准到骑行的结尾；结束的三道闸：开关开着 + 有在案计时（**同时是幂等闸**，微信重复推送在起点清零后被挡）+ 通知落在「点扫一扫」后 `WechatRentNotice.COMPLETION_WINDOW_MS`（**20 分钟 = 免费 15 + 结束迟到窗口 5**，与 `check` 收干净过期计时的视界一致；**不能**复用起点校准的 5 分钟窗口——正常骑行 routinely 超过 5 分钟，复用它自动结束就只在超短骑行下生效）。**它需要「通知使用权」**——读取用户**全部**通知，隐私敏感度最高的一类权限，只能由用户在系统设置里手动勾选（`Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`，应用没有任何 API 能主动申请），所以默认关，开关旁对「开了但没授权」给一行提示 + 跳设置入口。起点校准的四道闸：开关开着 + 有在案计时 + 通知落在「点扫一扫」后 `WechatRentNotice.WINDOW_MS`（5 分钟）内（排除借充电宝/雨伞这类同样走「先享后付」的误命中）+ 这一轮还没校准过（微信对同一笔支付可能重复推送）。校准 = 用新起点重跑 `startRide`（清已发键与校准标记、撤上一轮通知、重排闹钟；常驻倒计时同样按「起点变了」重建），起点取通知时刻、不加偏移（投递延迟没有可测的固定量，宁可保守）。隐私口径：只读包名与文本用于**当次**匹配，不落盘、不上传；**只有 debug 构建**会打一行命中原文的日志（用来抓真实文案把规则钉死，release 一行不打）。识别口径在 `domain/WechatRentNotice.kt`（`WechatRentNoticeTest` 覆盖包名 / 关键词 / 窗口边界 / 使用与完成两条真机原文的分流） |
+| 免费时长倒计时（2026-09-22 首版；2026-09-23 改系统日历；**2026-09-24 改回 App 通知**） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点**：微信小程序方式 = 点「打开微信扫一扫」的时刻（偏保守，比真正开车早 1~2 分钟），**账号登录方式 = 服务端确认的开锁时刻**（见「本机用车」行；那一档没有扫一扫这个动作）。开关 `ebikeFreeReminderEnabled` 默认关（通知是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。**有在案计时**就显示倒计时块（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」；2026-09-28 起并入置顶的「当前骑行」卡，有快趣订单在案时不给「结束骑行」——还车即结束）——页面上的倒计时**不再看提醒开关**（2026-09-28 用户口径：能软件开车的今天，开车后的免费计时要同步显示）；开关只管通知（闹钟 + 常驻倒计时通知），一个通知偏好不该把事实藏起来。**本机开锁成功时若开关关着会顺手打开它**（见下「本机用车」行），所以开锁后的倒计时通知照常来。**提醒 = 两条 App 通知**（`NotificationIds.LEAD` / `END`，channel `ebike_free_ride_alert_v2`，HIGH + **震动**（双震 pattern；channel 建出来后震动与 importance 都改不动，而「删掉重建」也无效——delete 是异步的、紧接着 create 会被当成更新，所以直接换了新 id，旧 id 清掉），category 用 `EVENT` 与上课提醒对齐）：提前量点（免费结束前 N 分钟）与免费结束那一刻各一次，由 `AlarmManager.setAlarmClock` **精确**触发——系统级闹钟，到点唤醒设备、不受 Doze/省电推迟，且不需要任何特殊权限（与上课提醒同一手法）。**通知栏常驻倒计时**由前台服务 `EbikeFreeRideService` 承载（`specialUse` 类型，`FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE` 权限），剩余时间由服务**每秒**重发一次通知文案（`EbikeFreeRide.countdownText`，「免费剩余 mm:ss」）；**不用**系统 chronometer——2026-09-24 真机实测（Redmi K70 / 澎湃OS）面板静止时系统不主动重绘 chronometer，用户看到的是一个不动的数字。**只有亮屏才刷**（用户拍板省电口径）：灭屏时通知栏没人看，一个 notify 都不发（协程阻塞在屏幕事件上等，零 CPU），点亮瞬间补刷一次——省电与「点亮即准」两头都占。三层兜底：精确闹钟（主）→ 前台服务进程（中）→ `EbikeFreeRideCheckWorker` 周期核对 + 进页 / 冷启动核对（兜，**类名别改**——老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排；周期 15 分钟 = WorkManager 的最小周期，且**只在计时期间排**，平时由 `cancelPeriodicWork` 撤掉，省掉「没骑行也每 15 分钟冷启动一次进程」）。迟到窗口（用户拍板 2026-09-24）：提前量那条**只要免费时段没结束就补发**，结束那条结束后 5 分钟内仍发（`EbikeFreeRide.END_WINDOW_MS`），越过静默。去重键带计时起点（`lead` / `end` 前缀 + 起点毫秒，落 DataStore 已发集合），闹钟与周期核对共用。换车 = 再点一次「扫一扫」重新计时（已发键与校准标记清空、上一轮挂在通知栏的提醒撤掉、闹钟重排；常驻倒计时由 `EbikeFreeRideService.start` 按**起点是否变化**自动重建 tick——判据**不是**「服务在不在跑」，否则上一轮没结束就换车时倒计时不会重置，2026-09-24 修）。**系统日历链路整套删除**（`EbikeCalendarEvents.kt`、`ebikeFreeEventId`、`水贝贝骑行提醒` 标记、日历权限申请），理由：日历 App 发提醒时 App 自己没法展示倒计时，体验是两套。开机补排**不做**（用户拍板，重启后进行中的计时静默失效）。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖提醒点 / 迟到窗口 / 去重键 / 吸附 / 倒计时 / 有效期 / 通知 id 契约），通知构建在 `ui/ebike/EbikeFreeRideNotifier.kt`（**PendingIntent requestCode 与通知 id 分离**：2000/2005/2006，2026-09-24 修——此前直接用通知 id 当 requestCode，与余额提醒撞号、两边落点互相改写，见 §3.13 余额提醒「通知」行）。**「精确倒计时」（微信通知校准）已整套删除（2026-09-30）**：`WechatRentListener` / `domain/WechatRentNotice` / prefs 两键 / 设置开关 / manifest 服务声明都没了，计时起点固定为「点扫一扫」（小程序方式）与「开锁成功」（账号方式）两个口径，别加回来。 |
 
 #### 附近单车地图（2026-09-23，`ui/ebike/BikeMapScreen`）
 
@@ -1565,14 +1563,14 @@ loading 时，就绪等的是两段里最慢的电费（网络往返），本地
 
 两段「就绪」各看各的：一卡通侧看 Room 流首帧；电费侧看流水那条链路跑完一次
 （**成功或失败都算**，失败时该段落到空态提示，不会一直挂着骨架），没开凭证时直接算就绪。
-不要用 `PowerCardState.loading` 代替——它只管读数那一段，读数上屏之后流水才开始请求，
-拿它判会早一步。
+不要用 `PowerCardState.loading` 代替——它只管读数那一段，流水与读数并行请求（2026-09-30
+起，此前串行）它完全不覆盖，拿它判会不准。
 
 电费段另有一条兜底（2026-09-26 同日晚）：上次成功流水落 `PowerHistoryCache`（filesDir
-JSON，§4.24「请求节流」有完整口径），进页先用种子顶上、链路跑完原地替换——冷启动要串行
-跑 登录→详情→读表→流水 四条请求，此前这段时间电费段只能挂骨架（用户报「一打开一直是
-骨架屏，手动一刷新反而秒出」，刷新快是因为那时 token 已经热了）。骨架因此只在真·首次
-启动（还没有种子）出现。
+JSON，§4.24「请求节流」有完整口径），进页先用种子顶上、链路跑完原地替换——冷启动读数链
+要串行跑 登录→详情→读表 三条（流水与它并行，2026-09-30 起），此前这段时间电费段只能挂
+骨架（用户报「一打开一直是骨架屏，手动一刷新反而秒出」，刷新快是因为那时 token 已经热了）。
+骨架因此只在真·首次启动（还没有种子）出现。
 
 **钱包卡的读数同理（2026-09-27）**：电费栏此前是唯一还会从「—／读取中…」起步的地方
 （用户报「首次进入生活页电费余额还是很慢，手动下拉就秒出」），而它等的正是这条链路的
@@ -1611,6 +1609,16 @@ ready 门闸」**（两条流不同帧到达，冷启动照样闪一次，同 §
 生活页不自定义阈值，用默认件。下拉一次刷三样：电费读数 + 一卡通流水增量同步 + 一卡通余额，
 **全部 `force = true`**（用户明确要看最新，不走缓存与 10 分钟闸门，§4.24「请求节流」）。
 「点卡片刷新」两处保留——它们各管各的那张卡，下拉是「一次全刷」。
+
+**三路并发、登录只登一次（2026-09-30，用户报「下拉刷新要刷新很久」）**：指示器等的原是两条
+**全串行**链的较慢者——电费读数（登录→项目详情→读表）与一卡通余额（安全键盘→OAuth→
+`queryCard`→`queryCard?scene=recharge`）——冷 token 时各自还要先登一次。收口成三处并行/去重：
+① `LifeViewModel.refreshPower` 电费流水与读数**并行**（原先串在读表之后）；②
+`CampusCardViewModel.fetchBalance` 正式卡与电子账户两问**并行**；③ `YktRepository` /
+`PowerRepository` 的登录互斥锁内**复用**等锁期间别路登好的 token（并发冷启动两平台各只真登
+一次；401 重登传 `staleToken`，只挡刚试废的那个）。指示器口径不变：等「读数链」与「余额链」
+较慢者归零 + 650ms 最短驻留；流水两条不挡指示器。**公开的 `login` / `loginForToken` 仍是
+强制真登录**（设置页「保存并开启」要验用户现输的密码，别给它加复用）。
 
 两个细节（都照今日页的口径，改之前先读）：
 
@@ -3092,7 +3100,14 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
   debug 与 release 是两个包名，各自只认领自己写的事件。
   **事件正文只放 `教师：xxx`**（复用 `ScheduleExporter.teacherDescription` 唯一实现），
   无教师时不写该列。此前正文尾部那行「水贝贝课表同步」已去掉（用户要求只留关键信息）
-- 每个事件：标题=课程名、`EVENT_LOCATION`=教室、`AVAILABILITY=BUSY`，另插 `Reminders`
+- **考试事件（2026-09-30 钉明）**：考试以 `kind=Exam` + 自定义时刻的课程行随课表一起
+  展开（全链路——仓库查询、`ScheduleExporter.expandEvents`、`CalendarSyncer`——都没有按
+  kind 过滤），CSV 导出同一份展开。考试事件标题带「（考试）」后缀
+  （`ScheduleExporter` 单处拼装），系统日历里区分考试与上课；`ScheduleExporterTest`
+  有用例钉住「考试随课表展开 + 标题带标记 + 越界周丢弃」。已知局限：考试日期是从
+  weeks+day+学期起点**重构**的（导入时的有损编码，原始日期不落库），学期起点改过或
+  当初按估算周导入的考试，日历日期会跟着漂；考试周超出学期总周数的会被静默丢弃。
+- 每个事件：标题=课程名（考试见上）、`EVENT_LOCATION`=教室、`AVAILABILITY=BUSY`，另插 `Reminders`
   一条提前提醒（时长见下）。`METHOD` 用 `METHOD_ALERT` 而不是 `METHOD_DEFAULT`
   （2026-09-24）：DEFAULT 的语义是「听账户默认值」，第三方写入没有账户默认值可依，
   写死 ALERT 语义才明确（平台文档说两者都会被处理）
@@ -3323,7 +3338,7 @@ lightlife，菜鸟自绘矢量）；自定义条目从注册表选 HugeIcons；�
   车号与生成乘车码；`RideFilterSheet` / `RideModeSheet` 弹层；共用小件）、
   `EbikeActions.kt`（跨页共用动作：页内提示、通知权限门、拉起微信、打开官方 App、免责）、
   `EbikeFreeRideReminder` / `EbikeFreeRideService` /
-  `EbikeFreeRideNotifier` / `WechatRentListener`（免费时长提醒链路，见 §3.9；监听器先判使用方式）、
+  `EbikeFreeRideNotifier`（免费时长提醒链路，见 §3.9）、
   `BikeMapViewModel` + `OsmMapView` + `BikeMarkerOverlay`（地图与车辆数据；车行「开锁」、
   骑行态的锁车 / 还车都从这里发起，**仅账号登录方式**）、
   `KvcxRideController` + `KvcxRideState` + `KvcxAction` + `KvcxReturnSummary`（**本机用车的唯一
@@ -3355,23 +3370,14 @@ lightlife，菜鸟自绘矢量）；自定义条目从注册表选 HugeIcons；�
   **带震动**、category `EVENT`；带震动的提醒 channel 用新 id `_v2`，早期无震动的旧 id 由
   `ensureChannels` 清掉——channel 建出来后震动改不动，「删掉重建」也因 delete 异步而无效）。
   prefs 键：`ebike_free_reminder_enabled` / `ebike_free_lead_minutes` / `ebike_ride_start_at` /
-  `ebike_free_notified_keys`（stringSet，已发键）/
-  `ebike_precise_countdown_enabled`（「精确倒计时」开关，默认关）/ `ebike_precise_calibrated_at`
-  （本轮已校准到的起点，等于当前起点时说明已校准过）。
-- 「精确倒计时」（2026-09-24；2026-09-28 兼听完成通知）：`ui/ebike/WechatRentListener.kt` 是
-  `NotificationListenerService`，把通知的标题/正文/子标题拼成一串交给 `domain/WechatRentNotice`
-  判包名与关键词，分流两个出口：**先判完成**（`matchesCompletion`，标题带「服务完成通知」）
-  → `EbikeFreeRideReminder.endRideFromNotice` 自动结束计时（开关 / 在案计时即幂等 /
-  20 分钟完成窗口三道闸都在那里；结束 = `endRide` 全套清理 + `burnSavedCodes` 焚码），
-  **再判开始**（`matches`，排除含完成标题的）→ `calibrateRideStart`（开关 / 窗口 / 已校准
-  三道闸都在那里）。完成通知同样含「先享后付」，**顺序不能倒**——倒过来短骑行会把起点
-  校准到骑行的结尾；完成窗口是专用 `COMPLETION_WINDOW_MS`（20 分钟），**别复用**起点
-  校准的 5 分钟 `WINDOW_MS`（正常骑行 routinely 超过 5 分钟）。
-  `EbikeFreeRideService.start()` 的起停判据是**起点是否变化**（变了就重新 `onStartCommand`
-  重建 tick）——换车与校准都靠它；**不要**退回「只看服务在不在跑」的幂等，那会让「上一轮没结束
+  `ebike_free_notified_keys`（stringSet，已发键）。
+- 「精确倒计时」（微信通知校准）已整套删除（2026-09-30，用户要求）：`ui/ebike/WechatRentListener.kt`
+  （`NotificationListenerService`）、`domain/WechatRentNotice`、设置弹层的开关与授权提示、
+  `AppPermissions` 的通知使用权查 / 跳两函数、manifest 里的服务声明都没了，**别当漏项加回来**。
+  `EbikeFreeRideService.start()` 的起停判据仍是**起点是否变化**（变了就重新 `onStartCommand`
+  重建 tick）——换车重新计时靠它；**不要**退回「只看服务在不在跑」的幂等，那会让「上一轮没结束
   就换车」时倒计时不重置（2026-09-24 修的 bug）。换车时 `startRide` 还会清掉上一轮挂在
-  通知栏的提醒与校准标记。
-  授权状态用 `AppPermissions.notificationListenerGranted` 查、`jumpNotificationListenerSettings` 跳。
+  通知栏的提醒。
   已删除（2026-09-24）：`data/calendar/EbikeCalendarEvents.kt`、`ebike_free_event_id`、
   `水贝贝骑行提醒` 日历标记、日历权限申请、一次性到期清理任务。
 - 扫完即焚（2026-09-20）：`EbikeQrBitmaps.saveToGallery` 成功返回 `SaveResult.Saved`
@@ -4323,8 +4329,9 @@ JSON 后连 2024 年的过期单也能删（平台**不自动清理** `status=0`
 | 谁绕过缓存 | 生活页**进页**刷新走缓存（切 Tab 回来不重复请求）；点电费卡、账单页下拉刷新、充值成功后刷新一律 `force = true`。用户明确要看的那一刻必须是新值，省请求只省「没人看的时候」 |
 | 未支付单清理 | **只在打开电费充值弹层时清**（`preparePowerRecharge`，1 + N 条），下单前 `join()` 它。不清的代价是新下单 500（平台不自动清过期单），而清理放在「马上要下单」这一刻，正好卡在需要之前，刷新链路一条请求都不多打 |
 | 落点 | token 只在内存、不落盘（红线不变）；读数缓存只在内存（进程结束即失效）。**流水的上次成功结果**另有落盘种子（下一行） |
-| 流水落盘种子（2026-09-26） | `PowerHistoryCache`（`filesDir/power_history_cache.json`）存上次成功流水。冷启动进程里内存缓存全空，进页要串行跑 登录→项目详情→读表→流水 四条请求，此前这段时间电费段只能挂骨架（用户报「一打开一直是骨架屏，手动一刷新反而秒出」——刷新快是因为那时 token 已经热了）。`LifeViewModel` init 在 IO 线程读出种子先顶上，刷新到货原地替换；链路已跑完（含没开凭证的短路）就不用旧数据盖新的；**空结果不落盘**（宁旧勿空）。种子只当首屏数据，节流口径不变 |
+| 流水落盘种子（2026-09-26） | `PowerHistoryCache`（`filesDir/power_history_cache.json`）存上次成功流水。冷启动进程里内存缓存全空，进页读数链（登录→项目详情→读表）要串行三条、流水与它并行（2026-09-30 起口径；此前四条全串行），此前这段时间电费段只能挂骨架（用户报「一打开一直是骨架屏，手动一刷新反而秒出」——刷新快是因为那时 token 已经热了）。`LifeViewModel` init 在 IO 线程读出种子先顶上，刷新到货原地替换；链路已跑完（含没开凭证的短路）就不用旧数据盖新的；**空结果不落盘**（宁旧勿空）。种子只当首屏数据，节流口径不变 |
 | 读数首屏种子（2026-09-27） | 生活页**电费卡**同样起步为空（「—／读取中…」），冷启动要等 登录→项目详情→读表 三条串行请求（用户报「首次进入生活页电费余额还是很慢，手动下拉就秒出」）。种子换成 Room `power_readings` 最新一条（`PowerReadingStore.latest()`，零网络），经 `PowerModels.snapshotSeedOf` 拼成展示用快照顶上：度数、单价、房号、读数时刻都照抄，单价未知就不折算、副行给「上次读数」。仅当卡上还没有数时填（真读数与「刷新失败保留的上次读数」都不许被旧种子盖掉），凭证没开直接跳过。种子不用新建文件、也不写回仓库缓存——同一份读数本就在库里（写入仍只有 `PowerRepository.snapshot()` 一处） |
+| 请求并行与登录去重（2026-09-30） | 用户报「下拉刷新要刷新很久」，根因是指示器等的是两条全串行链的较慢者（电费读数链、一卡通余额链，冷 token 各登一次）。三处收口：① `LifeViewModel.refreshPower` 电费流水与读数并行；② `CampusCardViewModel.fetchBalance` 正式卡与电子账户两问并行；③ `YktRepository` / `PowerRepository` 登录互斥锁内复用等锁期间别路登好的 token（`staleToken` 只挡刚试废的），并发冷启动两平台各只真登一次。成功路径请求总数不变（冷启动反而少登一次），只是不再串行排队；失败路径会多发那条附加请求（读数挂了流水照样发、卡挂了电子账户照样发——「附加信息取不到不打扰」的既有口径）。详情见 §3.13「三路并发、登录只登一次」 |
 | 不做的 | 不加重试（失败即停，防撞风控）、不做后台轮询 |
 
 > **2026-09-24（§4.27）**：电费 token 仍不落盘（3599 秒，落盘收益近零，
@@ -5462,18 +5469,17 @@ API，第三方 App 无法代调**（支付分 App SDK 需商户侧把应用登�
 | 结清复查 | 复用 `queryUnPayOrder` | **本机「未结清」只是还车那一刻没确认到**（7.5 秒窗口），用户随后在微信里付清 App 并不知道——记录会永远挂着（2026-09-30 用户实测 0.8 元）。快趣账号页进页 / 登录成功各核一次：本机有未结清记录才查一次 `queryUnPayOrder`，快趣已无欠费 → 本机全部翻「已结清」并提示（`RideRecordStore.markUnsettledSettled`；判据成立是因为快趣同时至多一笔待支付订单）。查询失败静默。**为什么 App 内付不了**：快趣支付协议只有小程序 JSAPI 通道（`appletOrderPay {jsCode}` → `wx.requestPayment`），jsCode 只能 `wx.login` 产出、JSAPI 参数绑定小程序 appid+openid 且只能在微信内消费——与一卡通充值能拉起微信收银台的区别在于那边是**H5 支付渠道（checkmweb → `weixin://wap/pay`，不绑调用方）+ 平台把服务端下单暴露成了公开签名可复现的 HTTP 接口**（DESIGN §4.19）。结清引导两条路（解包确认）：小程序主页「待支付」横幅（60 秒节流、关过冷却 5 分钟）、历史订单里的待支付记录 |
 
 **计时联动**：开锁成功 → `EbikeFreeRideReminder.startRide(now)`（免费时长起点钉在真正开锁
-时刻，不再依赖微信通知校准；通知照旧推送时只是幂等校准），并**顺手打开免费时长提醒开关**
+时刻），并**顺手打开免费时长提醒开关**
 （`KvcxRideController.ensureFreeReminderEnabled`：开锁是"确定在骑行"的信号，关着就打开并在
 提示里说明；读偏好失败按"开着"处理，宁可不写不误开）；还车成功 → 手动「结束骑行」同口径
 （`endRide` + `burnPending(force=true)` 焚码）。
 
 **使用方式（2026-09-29 用户口径）**：账号与用车这一整套（登录、开锁 / 锁车 / 还车、本机骑行记录、
-地图上的「开锁」与「当前用车」卡、精确倒计时）现在由一档显式设置把关——
+地图上的「开锁」与「当前用车」卡）现在由一档显式设置把关——
 `domain/EbikeUseMode.kt`（`mini_program` / `account`，**默认 `mini_program`**）+ DataStore 键
 `ebike_use_mode`，能力表与交互规格见 §3.9。`KvcxRideController` 与它的四道闸**本身不变**
 （它只在账号方式下被驱动）；变的是「谁可以驱动它」：出码页 / 地图页 / 账号页的查询与渲染
-都先判模式（`val ride = if (accountMode) kvcx.ride else null` 一处收口），`WechatRentListener`
-在服务端再判一道，非小程序方式不读不处理通知。切换入口 = 出码页的「使用方式」卡与账号页顶部
+都先判模式（`val ride = if (accountMode) kvcx.ride else null` 一处收口）。切换入口 = 出码页的「使用方式」卡与账号页顶部
 （共用 `UseModeSection`，含账号方式的风险提示）。**为什么默认小程序方式**：账号方式要凭证、
 有计费后果、还有支付分授权门槛，只能显式选择；认不出的存储值一律退回这一档。
 
@@ -5509,6 +5515,83 @@ busy 不重入、还车出结果卡并记账……）。改这块先跑那组测
 追加的**只读展示**（见上表），支付类动作仍全部不做。已验证：
 `KqcxAuthTest`（24 例）+ `BikeNearbyTest`（39 例）+ `KvcxRideControllerTest`（24 例）全绿 +
 `assembleDebug`；响铃寻车 / 锁状态查询 / 单车详情 / 资产区已装真机（2026-09-30），点验由用户执行。
+
+---
+
+### 4.33 成绩/考试变动提醒（2026-09-30，P6；设置入口在成绩页底部）
+
+期末成绩一门一门出的场景：用户开着提醒，教务一出分就收到通知。考试同理（发布、
+时间/考场调整）。**设置入口 2026-09-30 拆成两处**（同日把初版的「立即检查」按钮删掉，
+用户口径：自动检查就够，不要手动触发）：
+
+- **成绩变动提醒**在「我的 → 学习 → 成绩查询 → 齿轮（成绩设置）」——成绩页的展示
+  （分组/排序）、统计口径（任选课）与出分提醒单独成页 `ScoreSettingsScreen`
+  （`SubpageScreen.SCORE_SETTINGS`）；成绩页空态留一行「出分提醒 → 去设置」的引导；
+- **考试变动提醒**在「我的 → 课表 → 使用」区（`ExamAlertRows`）——考试跟着课表走，
+  开关 + 间隔就内联在课表 hub，不再单独开页；
+- 两处**共用同一个检查间隔**（`alert_interval_hours`，两条链同属 `ScoreAlertReminder`
+  的一个周期任务），一处改了两边生效。
+
+#### 数据链（三条，全部静默，失败不重试）
+
+| 链 | 实现 | 存储 | 变更判据 |
+|----|------|------|----------|
+| 成绩 | `ScoreSync`（§4.29 既有的自动导入，本节扩其闸门） | Room `scores`（按学期替换，不变） | `ScoreChangeDetector`：写库前对旧库快照 diff。出分 = 旧无分新有分（含待评教解锁、新记录带分）；改分 = 两侧有分但值/串不同；撤录忽略 |
+| 考试 | `ExamSync`（新）：OkHttp 直取壳页 `xsksap_query`（正则抽学期下拉选中项，抽不到即失败**不猜学期**）+ `xsksap_list` 翻页，解析复用 `ExamScheduleParser.parseFetchJson` | `ExamSnapshotStore`（filesDir `exam_snapshot.json`，学期 + 条目最小字段；损坏当空；空结果不落盘） | `ExamChangeDetector`：身份键 = 课程号（空则课名）+ 日期；调整 = 同键起止时刻/考场/校区/座位任一变；撤考忽略；日期缺失的行跳过（键会漂移成「每次都是新的」） |
+| 通知 | `ScoreAlertReminder`（`ui/reminder/`）+ `ScoreAlertCheckWorker` | DataStore（见下） | 只按变更列表发；无变更静默 |
+
+红线三条：**考试绝不写课程表**——点通知落 `JwImportActivity`（Schedule 模式），
+用户在导入页确认后才写库，考试进课表只有手动导入一条路；**解析口径与 WebView 导入
+完全共用**（同一份 Parser，只是传输层换 OkHttp，同 `ScoreSync` 与成绩页的关系）；
+**失败不写任何时刻**（检查时刻 = 成功才落，失败下个周期自动补查）。
+
+#### 闸门与设置（`ScoreAlertDefaults` 单一口径）
+
+- 开关两个：`score_alert_enabled` / `exam_alert_enabled`，默认关，各自独立；
+- 间隔档位 `alert_interval_hours`：1 / 3 / 6 / 12 / 24 小时，默认 6（`coerceIntervalHours`
+  兜非法值）；提醒开着时 `ScoreSync` 走**小时级**毫秒闸门（`score_check_millis`），
+  关着维持原 7 天日期闸门（`scoreSyncDate`）——关提醒后自动导入节奏不变（§4.29 不受影响）；
+  `ExamSync` 只服务提醒（开关关 = Skipped，零请求），闸门 `exam_check_millis`；
+- **冷启动自动查一次**（用户要求的口径）：`JuwApplication` 既有的成绩自动导入链之后
+  追加 `examSync.sync()`；各链内部被开关与间隔闸门挡住，不满足就是零网络空跑；
+- 周期核对 WorkManager `score_alert_periodic`：间隔 = 档位；**两开关全关撤销任务**；
+  幂等 = 「已排周期记 DataStore `alert_periodic_interval`，档位没变 KEEP、变了 REPLACE」
+  （WorkManager 2.7 没有 UPDATE 策略）；设置变更 `onSettingsChanged` = 重排周期 +
+  one-shot 立即评估（**不清检查时刻**——首跑本来就要建基线，不需要额外清）；
+- Worker 类名 `ScoreAlertCheckWorker` 与工作名一经发布不可改（KEEP/REPLACE 按类名
+  实例化，同 `BalanceAlertCheckWorker` 的坑位说明）。
+
+#### 通知与「首跑静默」
+
+渠道 `score_alert`「成绩与考试提醒」DEFAULT（出分不是横幅级的事）；成绩通知 id/tag/
+requestCode = 1008 / `score_alert` / 3008，考试 = 1009 / `exam_alert` / 3009
+（requestCode 与 id 解耦，同 §3.13 的 3005/3006 纪律）。成绩通知正文 = 「课程名：分数」
+逐行列出（>4 门折叠「等 N 门」），点击 `subpageLaunchIntent(SCORES)` 落成绩页；
+考试通知正文 = 「新增/调整：课程 日期 时刻 考场」，点击直达 `JwImportActivity`。
+
+**首跑/基线纪律（防刷屏）**：首次开启或换学期，第一次抓到的全量是**基线不是变动**——
+`ScoreSync` 用 `firstImport`（旧库为空）标记、`ExamSync` 用「快照为空或学期切换」标记，
+两种情况都只落库/存快照**不发通知**。之后才只有真变动才响。**没有「立即检查」按钮**
+（2026-09-30 用户删）：开关/间隔变更本身就会触发一次即时评估（`onSettingsChanged`
+的 one-shot），无需再留手动入口；想要当场看最新，成绩页的「从教务导入」就是强制路径。
+
+#### 已知边界
+
+- 提醒依赖「我的」页已存教务凭证（静默续登），凭证失效时链路静默失败、
+  `LoginStateNotifier`（§3.16）会另行提醒登录状态；
+- 考试「改期」（日期变了）在检测里表现为「旧键消失 + 新键出现 = 新增」一条
+  （撤考不报），通知文案会列出新日期，可接受；
+- 成绩「按学期替换」对**旧侧有、新侧无**的记录不通知（成绩不会平白消失，
+  多半是教务调整，宁可少打扰）；
+- 已验：`ScoreChangeDetectorTest`（10 例）/ `ExamChangeDetectorTest`（8 例）/
+  `ExamSyncTermFromShellTest`（5 例）/ `ScoreAlertDefaultsTest`（4 例）/
+  `AutoSyncRulesTest` 扩毫秒闸门（5 例）/ `ScheduleExporterTest` 扩考试事件
+  （3 例），全量 117 类 1152 例 0 失败 + `assembleDebug` 通过；debug 包已装真机
+  （2026-09-30，同日重构后重装），点验由用户执行：开关与权限弹窗、间隔轮选、
+  成绩设置页与课表 hub 两处入口、日历/CSV 里考试标题带「（考试）」、
+  真实出分/考试发布时的通知与点击落点。
+
+---
 
 ---
 
@@ -5810,19 +5893,18 @@ P6 追加（2026-09-28 / 09-29，共享单车：出码页重排 → 地图用车
 P6 追加（2026-09-29，共享单车：使用方式拆成两档，§3.9 / §4.32）：账号登录的本机用车与
 小程序方式的「点扫一扫」是两套互斥的计时语义，此前叠在同一页上。现在用一档显式设置隔开——
 `domain/EbikeUseMode.kt`（`mini_program` / `account`，**默认小程序方式**）+ DataStore 键
-`ebike_use_mode`，能力表与两套布局见 §3.9。**小程序方式**：出码 + 微信扫一扫开车 + 免费计时 +
-精确倒计时，**页面按用户要求承接旧版平铺布局**（整宽码区、地图入口整行卡、独立计时条、
+`ebike_use_mode`，能力表与两套布局见 §3.9。**小程序方式**：出码 + 微信扫一扫开车 + 免费计时，
+**页面按用户要求承接旧版平铺布局**（整宽码区、地图入口整行卡、独立计时条、
 无折叠；地图缓存卡与车号核对行作为「与形状无关的修正」保留），App 内不出现任何写操作（无「直接开锁」、无「当前骑行」卡的订单部分、
 无「快趣账号」行、地图车行只有「出码」、地图上没有「当前用车」卡与标记、不查订单）；
-**账号方式**：登录后 App 内开锁 / 锁车 / 还车，去掉「打开微信扫一扫」与精确倒计时
+**账号方式**：登录后 App 内开锁 / 锁车 / 还车，去掉「打开微信扫一扫」
 （保留出码与保存），并按要求把风险与支付分授权口径写进页面——出码卡常驻一句
 「部分账号开锁要跳微信做支付分授权，可联系快趣客服关闭该授权后直接开锁」，
 命中 11035 后换成「去微信扫一扫」的实打实出路，`kvcxConfirmDialog` 的开锁文案同口径。
 切换入口 = 出码页的「使用方式」卡 + 快趣出行账号页顶部（共用 `UseModeSection`）；
-「校园服务 → 快趣出行」入口按模式显隐；`WechatRentListener` 在服务端再判一道模式
-（非小程序方式不读不处理通知）；页面首帧真值走一次阻塞读，避免按钮先按另一档画一帧。
-能力判据收敛成一个纯函数 `EbikeUseMode.capabilities()`（出码页 / 地图页 / 账号页 / 校园服务入口 /
-通知监听器都只消费 `EbikeCapabilities`，不再各自写 `if`）。
+「校园服务 → 快趣出行」入口按模式显隐；页面首帧真值走一次阻塞读，避免按钮先按另一档画一帧。
+能力判据收敛成一个纯函数 `EbikeUseMode.capabilities()`（出码页 / 地图页 / 账号页 / 校园服务入口
+都只消费 `EbikeCapabilities`，不再各自写 `if`）。
 2026-09-29 又过了一轮**排版与交互收敛**（用户口径「统一风格，简洁低调大方」）：出码位两档统一
 240dp、用码动作统一主次、小程序方式的两张设置卡合并成「骑行设置」、「使用方式」从页顶挪进设置区、
 免责收成一句、账号页登录表单卡片化、四处重复区块抽成共用组件（`RecentChips` / `MapCacheCard` /
@@ -5843,6 +5925,24 @@ AVD `jw35`，见 AGENTS.md「模拟器必须避开 WinNAT 保留端口段」）�
 已修并复验（切模式后副行在「微信扫一扫开车」/「本机开锁用车」间正确切换，无需重启）。
 **仍需用户点验的只剩登录后那两处**（要真快趣账号）：出码页「直接开锁」旁的支付分授权说明、
 地图车行「开锁」与「当前用车」卡（两者都挂 `caps.directUnlock = inAppRide && 已登录 && 无在案订单`）。
+
+P6 删减（2026-09-30，用户要求删「精确倒计时」）：微信通知校准这条链路整体移除——`WechatRentListener`（通知监听服务）、`domain/WechatRentNotice`、prefs 两键（`ebike_precise_countdown_enabled` / `ebike_precise_calibrated_at`）、设置弹层的开关与「通知使用权」授权提示、`EbikeCapabilities.wechatNoticeCalibration` 能力位、manifest 服务声明，以及 `EbikeFreeRideReminder.calibrateRideStart` / `endRideFromNotice` 两个入口与配套`WechatRentNoticeTest`。**免费时长提醒本身不受影响**：计时起点回到「点扫一扫」（小程序方式）与「开锁成功」（账号方式）两个固定口径；全量单测 1117 例 0 失败。
+
+P6 删减（2026-09-30，用户要求删「打开官方快趣出行 App」跳转）：设置弹层的「其他」区与入口、`EbikeActions.openKvcoo` / `KVCOO_PACKAGE`、manifest `queries` 的 `com.kvcoo.go` 包可见性声明一并移除；官方 App 的使用完全交回用户自己去桌面（内置地图早已接管「看车在哪」）。快趣 API 域名 `api.kvcoogo.com` 与车身码链接 `www.kvcoogo.com` 不受影响。
+
+P6 追加（2026-09-30，成绩/考试变动提醒，§4.33）：出分提醒（期末一门一门出分的场景）+
+考试变动提醒（发布 / 时间考场调整，**只提醒不写课表**，点通知进教务导入页确认）。
+`ScoreSync` 扩闸门（提醒开着走小时级毫秒闸门，关着维持 7 天日期闸门）与写库前变更检测；
+新增 `ExamSync`（OkHttp 直取考试接口，解析复用 `ExamScheduleParser`）+
+`ExamSnapshotStore`（filesDir 基线）+ `ScoreAlertReminder`（渠道/周期 worker/通知）；
+设置卡在成绩页底部（空态也可见），间隔档位 1/3/6/12/24 小时默认 6。
+同日把「考试随课表进日历」钉明并加「（考试）」标题标记（§4.12，此前全链路无 kind
+过滤是隐含行为，无测试无文档）。
+本地单测 117 类 **1152 例**全绿，`assembleDebug` 通过；debug 包已装真机，
+点验由用户执行（开关联动权限、间隔轮选、考试日历标题、真实变动的通知落点）。
+同日晚按用户口径重构：成绩设置单独成页（`SCORE_SETTINGS`，分组/排序/统计口径自成绩页迁入），
+考试变动提醒挪进课表 hub「使用」区，两处提醒共用间隔；「立即检查」按钮删除
+（设置变更本身触发即时评估）。
 
 ---
 

@@ -63,10 +63,6 @@
         <!-- 共享单车页（DESIGN §3.9）：「打开微信扫一扫」按钮 best-effort 拉起微信，
              需包可见性做 resolve 探测（不可见时按钮直接给手动扫码引导） -->
         <package android:name="com.tencent.mm" />
-        <!-- 共享单车页（DESIGN §3.9）：「打开快趣出行」入口需要包可见性，
-             否则 getLaunchIntentForPackage 对已安装的 App 也会返回 null（误报未安装）。
-             2026-09-23 删掉了助手通道与下载引导，这条声明仍要留：文字入口还在 -->
-        <package android:name="com.kvcoo.go" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="pinduoduo" />
@@ -287,21 +283,6 @@
         <receiver
             android:name=".ui.ebike.EbikeFreeRideAlarmReceiver"
             android:exported="false" />
-
-        <!-- 「精确倒计时」（DESIGN §3.9，2026-09-24）：读微信的租车成功通知，把计时起点
-             校准到真正开始计费那一刻。**默认关**——它要「通知使用权」（读取全部通知），
-             用户在系统设置里手动开启后系统才会绑定本服务，未授权时一个回调都收不到。
-             BIND_NOTIFICATION_LISTENER_SERVICE 是系统要求的签名级权限，缺了服务起不来。
-             label 会显示在系统「通知使用权」列表里。 -->
-        <service
-            android:name=".ui.ebike.WechatRentListener"
-            android:exported="false"
-            android:label="@string/app_name"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
 
         <!-- 快趣相机扫一扫（2026-09-29）：覆盖库自带的 CaptureActivity——锁竖屏
              （与其它窗口同一理由：扫码时转屏会销毁重建相机预览）；

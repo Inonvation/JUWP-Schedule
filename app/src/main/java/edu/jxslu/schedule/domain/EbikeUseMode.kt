@@ -16,7 +16,6 @@ package edu.jxslu.schedule.domain
  * | 内置相机扫一扫（扫车身码识别车号） | ❌ | ✅ |
  * | 直接开锁 / 临时锁车 / 还车 | ❌ | ✅（需登录） |
  * | 快趣账号页 / 本机骑行记录 | ❌ | ✅ |
- * | 精确倒计时（微信通知校准） | ✅ | ❌ |
  * | 地图：附近车辆 + 还车点 / 禁停区 | ✅ | ✅ |
  * | 地图：车行「开锁」与「当前用车」卡 | ❌ | ✅ |
  *
@@ -56,8 +55,8 @@ enum class EbikeUseMode(val id: String, val label: String) {
 /**
  * 「当前这一档 + 当前登录/订单状态」下**具体能做什么**（纯 JVM 可测）。
  *
- * 存在的理由：能力矩阵原本散在出码页、地图页、账号页、校园服务入口与通知监听器里
- * 各自写 `if`，改口径时容易漏一处。现在**判据只有 [EbikeUseMode.capabilities] 一个函数**，
+ * 存在的理由：能力矩阵原本散在出码页、地图页、账号页与校园服务入口里各自写 `if`，
+ * 改口径时容易漏一处。现在**判据只有 [EbikeUseMode.capabilities] 一个函数**，
  * 页面只消费这里的布尔量；矩阵本身由 `EbikeUseModeTest` 钉住。
  *
  * 注意 [wechatScan] 同时决定「点扫一扫起免费计时」那条路——两者是同一个动作。
@@ -65,8 +64,6 @@ enum class EbikeUseMode(val id: String, val label: String) {
 data class EbikeCapabilities(
     /** 出码卡给「打开微信扫一扫」（小程序方式的目标动作）。 */
     val wechatScan: Boolean,
-    /** 精确倒计时（微信通知校准）的开关与监听链路。 */
-    val wechatNoticeCalibration: Boolean,
     /**
      * App 内用车这一整套：骑行状态查询、骑行卡、账号行 / 账号页、本机骑行记录、
      * 地图上的「开锁」与「当前用车」卡。
@@ -94,14 +91,12 @@ fun EbikeUseMode.capabilities(
 ): EbikeCapabilities = when (this) {
     EbikeUseMode.MiniProgram -> EbikeCapabilities(
         wechatScan = true,
-        wechatNoticeCalibration = true,
         inAppRide = false,
         directUnlock = false,
         cameraScan = false,
     )
     EbikeUseMode.Account -> EbikeCapabilities(
         wechatScan = false,
-        wechatNoticeCalibration = false,
         inAppRide = true,
         directUnlock = loggedIn && !hasRide,
         cameraScan = true,

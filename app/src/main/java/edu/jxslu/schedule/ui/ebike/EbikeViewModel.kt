@@ -68,8 +68,6 @@ data class EbikePrefsSnapshot(
     val freeLeadMinutes: Int = EbikeFreeRide.DEFAULT_LEAD_MINUTES,
     /** 本次骑行计时起点（epoch 毫秒）；0 = 无进行中计时。 */
     val rideStartAt: Long = 0L,
-    /** 「精确倒计时」开关（DESIGN §3.9）：识别微信租车成功通知校准起点，默认关。 */
-    val preciseCountdownEnabled: Boolean = false,
     /**
      * 使用方式（DESIGN §3.9 / §4.32）：小程序方式 / 账号登录。页面按它隔离能力，
      * 默认 [EbikeUseMode.Default]（小程序方式，与存储默认一致）。
@@ -120,7 +118,7 @@ class EbikeViewModel(
         runCatching { prefs.ebikeUseMode.first() }.getOrDefault(EbikeUseMode.Default)
     }
 
-    /** 骑行相关偏好（卡开关不归本页管，其余在本页用）。免费提醒四个流合进快照。 */
+    /** 骑行相关偏好（卡开关不归本页管，其余在本页用）。免费提醒相关流合进快照。 */
     val ebikePrefs: StateFlow<EbikePrefsSnapshot> = combine(
         prefs.ebikeAutoSave,
         prefs.ebikeBurnAfterScan,
@@ -129,7 +127,6 @@ class EbikeViewModel(
         prefs.ebikeFreeReminderEnabled,
         prefs.ebikeFreeLeadMinutes,
         prefs.ebikeRideStartAt,
-        prefs.ebikePreciseCountdownEnabled,
         prefs.ebikeUseMode,
     ) { array ->
         val autoSave = array[0] as Boolean
@@ -140,8 +137,7 @@ class EbikeViewModel(
         val freeEnabled = array[4] as Boolean
         val freeLead = array[5] as Int
         val rideStartAt = array[6] as Long
-        val preciseEnabled = array[7] as Boolean
-        val useMode = array[8] as EbikeUseMode
+        val useMode = array[7] as EbikeUseMode
         EbikePrefsSnapshot(
             autoSave = autoSave,
             burnAfterScan = burnAfterScan,
@@ -150,7 +146,6 @@ class EbikeViewModel(
             freeReminderEnabled = freeEnabled,
             freeLeadMinutes = freeLead,
             rideStartAt = rideStartAt,
-            preciseCountdownEnabled = preciseEnabled,
             useMode = useMode,
         )
     }.stateIn(

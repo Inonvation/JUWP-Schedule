@@ -22,8 +22,8 @@ import kotlinx.coroutines.launch
 /**
  * 快趣出行的跨页面动作与提示出口（DESIGN §3.9）。
  *
- * 抽成一份的理由与 `KvcxRideController` 相同：拉起微信、打开官方 App、通知权限门、页内提示
- * 这四件事在快趣出行页的多个位置都要用，各写一份迟早漂移（提示语气、失败兜底文案都是口径）。
+ * 抽成一份的理由与 `KvcxRideController` 相同：拉起微信、通知权限门、页内提示
+ * 这三件事在快趣出行页的多个位置都要用，各写一份迟早漂移（提示语气、失败兜底文案都是口径）。
  */
 
 /** 页内一次性提示（Snackbar）的统一出口。 */
@@ -104,32 +104,4 @@ internal fun openWechatScan(context: Context, onError: (String) -> Unit) {
         }
     }
     onError("无法自动打开微信，请手动打开「扫一扫」扫码")
-}
-
-/** 「快趣出行」App 包名（DESIGN §3.9）。 */
-internal const val KVCOO_PACKAGE = "com.kvcoo.go"
-
-/**
- * 打开「快趣出行」App（需已安装）。
- *
- * 只剩桌面启动意图一级（2026-09-23 收敛）：内置地图已经把「看车在哪」接过来，
- * 官方 App 不再是必经步骤。装了则打开（启动页），未装给一句提示。
- * manifest 里保留 `com.kvcoo.go` 的 `queries` 声明仍是必须的，否则包可见性
- * 会让 `getLaunchIntentForPackage` 对已装应用也返回 null。
- */
-internal fun openKvcoo(context: Context, onError: (String) -> Unit) {
-    val launch = try {
-        context.packageManager.getLaunchIntentForPackage(KVCOO_PACKAGE)
-    } catch (_: Exception) {
-        null
-    }
-    if (launch == null) {
-        onError("未安装快趣出行；可直接用本页地图找车，或输入车号生成乘车码")
-        return
-    }
-    try {
-        context.startActivityOutsideApp(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    } catch (_: Exception) {
-        onError("打开快趣出行失败，请手动打开")
-    }
 }

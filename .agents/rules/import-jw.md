@@ -33,8 +33,12 @@
   Scaffold 把 `contentWindowInsets` 归零了，提示条要自己 `navigationBarsPadding()`。
 - 四条别改坏：① 课表/考试与成绩两条路径都发，文案各自拼（成绩不报课表名）；
   ② 发布放在**写库之后、`onBack()` 之前**，顺序反了就是「窗口关了、消息还没发」；
-  ③ 消费方**先 `consume()` 再判 `isFresh()`**，过期就丢——从二级页进的用户要等切 Tab 才
-  组合主界面那两页，没有闸门会凭空冒出一条旧提示；④ 别把落点改回「只在课表页消费」。
+  ③ 清通道的时机：**过期消息在进 `showSnackbar` 之前丢，新鲜消息等 `showSnackbar` 返回后才
+  `consume()`**——consume 把 flow 置 null 会让 `JwImportOutcomeEffect` 的 `LaunchedEffect(outcome)`
+  下一帧以 null 重启、取消还挂在 `showSnackbar` 上的协程，而 M3 的契约是
+  「caller cancelled → snackbar removed」：气泡刚挂上去就被撤掉（2026-09-30 修正此前
+  「先 consume 再 show」导致五处落点全都不显示）；过期即丢仍然挡着「旧消息在后续组合里
+  反复触发」那条老问题；④ 别把落点改回「只在课表页消费」。
 - 新鲜期常数在 `JwImportOutcome.FRESH_WINDOW_MS`，边界由 `JwImportResultBusTest` 钉住。
 
 ## 确认弹窗支持切换学期（2026-09-28）
@@ -88,3 +92,37 @@
 - **解析结果先校验再整体替换**（`ScholarProgressRules.validate`）：教务改版时保留旧数据，
   不拿残值覆盖。注意校验里**没有**「要求学分合计 > 0」这条通用闸门——公选课类别维度全是 0.0，
   加了会把整个维度永久判失败；那条检查只在 `validateCreditTotal` 里对课程体系维度用。
+
+## 成绩/考试变动提醒（2026-09-30，DESIGN §4.33）
+
+- **考试自动检查链（`ExamSync`）与手动导入共用同一份 `ExamScheduleParser.parseFetchJson`**，
+  只是传输层换成 `CasSession.fetchHtml`（OkHttp）。改解析字段或接口参数时两处一起看；
+  接口地址常量在 `ExamSync` 伴生对象（壳页 `xsksap_query` / 数据 `xsksap_list`，
+  **不带 .do**——带 .do 的同名地址回 no-open 页，别把「功能被校方关闭」当「没数据」）。
+- **缺省学期以教务为准**：先 GET 壳页正则抽 `select#xnxqid` 选中项（`ExamSync.termFromShell`，
+  单测钉住 value 属性 / 纯文本 / data-selected 三种形态），抽不到直接 Failed，**不猜学期**
+  （猜错的学期会拿空基线当「首跑」吞掉真变动，或拿错学期基线刷一屏假通知）。
+- **考试绝不写课程表**：`ExamSync` 只读 + 与 `ExamSnapshotStore`（filesDir 基线）比对 +
+  发通知；点通知落 `JwImportActivity`（Schedule 模式）让用户手动确认导入。给这条链加
+  「顺手写库」等于把静默写课表做进后台，禁止。
+- **首跑/换学期不通知**：基线为空或 `Snapshot.term` 与本次抓到的学期不一致 → 只存基线、
+  返回空变更。删掉这道闸，用户开开关的那一刻会被整表考试刷屏。
+- **检查时刻只在成功后落**（`score_check_millis` / `exam_check_millis`），失败不写——
+  下个周期自动补查。**失败也不重试**（不加重试 = 防撞风控，与自动导入同口径）。
+- **闸门有两套**（都在 `ScoreSync.syncLocked` 的分支里）：成绩提醒开着 →
+  `AutoSyncRules.shouldAttemptAt` 毫秒间隔（小时级）；关着 → 原 7 天日期闸门
+  （`scoreSyncDate` 照旧写，§4.29 的自动导入节奏不变）。别把两套合并——关提醒的
+  用户不该被逼着接受小时级请求频率。
+- **成绩变更检测在写库前**：`replaceTerm` 是盲替换，旧值过了这村就没法 diff 了。
+  顺序固定 = `repo.getAll()` 快照 → `ScoreChangeDetector.detect` → 逐学期替换。
+  给成绩写库加新调用点时想想它绕过了这道 diff 会怎样。
+- **设置入口两处、间隔一份（2026-09-30）**：成绩提醒在 `ScoreSettingsScreen`
+  （`SubpageScreen.SCORE_SETTINGS`，成绩页齿轮进入；分组/排序/任选课口径也在这页），
+  考试提醒在 `TimetableHubScreen` 的 `ExamAlertRows`（课表 hub「使用」区）。两边
+  **共用 `alert_interval_hours`**——改任意一边另一边跟着变，别给它加「按提醒分开」的键；
+  `ScoreAlertReminder.ensurePeriodicWork` 只排一个周期任务，两链共用。
+- **没有「立即检查」**（用户删，2026-09-30）：`onSettingsChanged` 的 one-shot 已经是
+  「改完设置当场评估一次」的通道，不要往设置页再选手动触发入口；要最新数据走成绩页
+  「从教务导入」（WebView 强制路径）。
+- **通知 requestCode 与 id 解耦**（3008/3009 vs 1008/1009），两落点 intent 只差 extra、
+  都无 action——requestCode 撞了会互相改写落点（§3.13 3005/3006 同坑）。

@@ -21,6 +21,7 @@ import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.FirstRunNotice
+import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
@@ -425,6 +426,60 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_SCORE_SYNC_DATE] = dateKey }
     }
 
+    // ---- 成绩/考试变动提醒（DESIGN §4.33）----
+
+    /** 成绩变动提醒开关。默认关。 */
+    val scoreAlertEnabled: Flow<Boolean> =
+        context.displayDataStore.data.map { it[KEY_SCORE_ALERT_ENABLED] ?: false }
+
+    suspend fun setScoreAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_SCORE_ALERT_ENABLED] = value }
+    }
+
+    /** 考试变动提醒开关。默认关。 */
+    val examAlertEnabled: Flow<Boolean> =
+        context.displayDataStore.data.map { it[KEY_EXAM_ALERT_ENABLED] ?: false }
+
+    suspend fun setExamAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EXAM_ALERT_ENABLED] = value }
+    }
+
+    /** 自动检查间隔（小时）。设置页只允许档位表里的值，这里不再兜底（档位表单一来源在 [ScoreAlertDefaults]）。 */
+    val alertIntervalHours: Flow<Int> =
+        context.displayDataStore.data.map { it[KEY_ALERT_INTERVAL_HOURS] ?: ScoreAlertDefaults.INTERVAL_DEFAULT }
+
+    suspend fun setAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit { it[KEY_ALERT_INTERVAL_HOURS] = value }
+    }
+
+    /** 成绩上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写。 */
+    suspend fun scoreAlertCheckMillis(): Long =
+        context.displayDataStore.data.first()[KEY_SCORE_CHECK_MILLIS] ?: 0L
+
+    suspend fun setScoreAlertCheckMillis(millis: Long) {
+        context.displayDataStore.edit { it[KEY_SCORE_CHECK_MILLIS] = millis }
+    }
+
+    /** 考试上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写。 */
+    suspend fun examAlertCheckMillis(): Long =
+        context.displayDataStore.data.first()[KEY_EXAM_CHECK_MILLIS] ?: 0L
+
+    suspend fun setExamAlertCheckMillis(millis: Long) {
+        context.displayDataStore.edit { it[KEY_EXAM_CHECK_MILLIS] = millis }
+    }
+
+    /**
+     * 已排的周期核对间隔（小时，[ScoreAlertReminder] 用）。0 = 当前没有在排的周期任务。
+     * 用途：WorkManager 2.7 没有 UPDATE 策略，周期任务只在「间隔档位变了」时才 REPLACE，
+     * 否则 KEEP 保相位——这里记着「上次排的是几小时」。
+     */
+    suspend fun alertPeriodicInterval(): Int =
+        context.displayDataStore.data.first()[KEY_ALERT_PERIODIC_INTERVAL] ?: 0
+
+    suspend fun setAlertPeriodicInterval(value: Int) {
+        context.displayDataStore.edit { it[KEY_ALERT_PERIODIC_INTERVAL] = value }
+    }
+
     /**
      * 教材的上次成功抓取日期（ISO）。空 = 从没成功过。
      * 教材跟着「导入课表」走（一学期一次），这里只做记录与展示，不做时间闸门。
@@ -482,27 +537,6 @@ class DisplayPrefsStore(private val context: Context) {
      */
     val ebikeFreeNotifiedKeys: Flow<Set<String>> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_FREE_NOTIFIED_KEYS] ?: emptySet()
-    }
-
-    /**
-     * 「精确倒计时」开关（DESIGN §3.9，2026-09-24）。**默认关**：它需要「通知使用权」
-     * ——读取用户**全部**通知，是 Android 上隐私敏感度最高的一类权限，必须用户自己
-     * 去系统设置里开。开了之后由 `WechatRentListener` 识别微信的租车成功通知，
-     * 把计时起点从「点扫一扫的时刻」校准到「真正开始计费的那一刻」；
-     * 2026-09-28 起兼听「服务完成通知」，还车后自动结束计时。
-     */
-    val ebikePreciseCountdownEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_EBIKE_PRECISE_COUNTDOWN] ?: false
-    }
-
-    /**
-     * 本轮骑行已按微信通知校准到的起点（epoch 毫秒）；0 = 没校准过。
-     *
-     * 值等于当前 `ebikeRideStartAt` 时说明**这一轮已经校准过**，不再接受第二次
-     * ——微信对同一笔支付可能重复推送，重复校准会把计时一直往后推。
-     */
-    val ebikePreciseCalibratedAt: Flow<Long> = context.displayDataStore.data.map { p ->
-        p[KEY_EBIKE_PRECISE_CALIBRATED_AT] ?: 0L
     }
 
     /**
@@ -931,16 +965,6 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_RIDE_START_AT] = value }
     }
 
-    /** 「精确倒计时」开关（DESIGN §3.9）。 */
-    suspend fun setEbikePreciseCountdownEnabled(value: Boolean) {
-        context.displayDataStore.edit { it[KEY_EBIKE_PRECISE_COUNTDOWN] = value }
-    }
-
-    /** 记录本轮已校准到的起点（0 = 清除校准标记，换车/结束骑行时调）。 */
-    suspend fun setEbikePreciseCalibratedAt(value: Long) {
-        context.displayDataStore.edit { it[KEY_EBIKE_PRECISE_CALIBRATED_AT] = value }
-    }
-
     /**
      * 免费时长提醒已发键的统一写入口（DESIGN §3.9）：读-改-写整个集合，同值跳写
      * （口径同 [updateEbikePendingDelete]）。清空用 `{ emptySet() }`。
@@ -1318,9 +1342,9 @@ class DisplayPrefsStore(private val context: Context) {
         // 键定义一并删掉——旧设备上的残留值没人读，也不会自己消失，但无害。
         val KEY_EBIKE_FREE_NOTIFIED_KEYS = stringSetPreferencesKey("ebike_free_notified_keys")
 
-        // 「精确倒计时」（2026-09-24）：开关 + 本轮校准到的起点
-        val KEY_EBIKE_PRECISE_COUNTDOWN = booleanPreferencesKey("ebike_precise_countdown_enabled")
-        val KEY_EBIKE_PRECISE_CALIBRATED_AT = longPreferencesKey("ebike_precise_calibrated_at")
+        // 「精确倒计时」已删（2026-09-30）：开关与校准标记两键
+        // （ebike_precise_countdown_enabled / ebike_precise_calibrated_at）随之停用，
+        // 同上面日历事件 id 的口径——旧设备上的残留值没人读，无害。
         val KEY_CURRENT_TIMETABLE = longPreferencesKey("current_timetable_id")
         val KEY_DEFAULT_CONFIG_SOURCE = longPreferencesKey("default_config_source_id")
         val KEY_SLOT_SCHEMA = intPreferencesKey("slot_schema_version")
@@ -1382,6 +1406,14 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCHOLAR_SYNC_DATE = stringPreferencesKey("scholar_sync_date")
         val KEY_SCORE_SYNC_DATE = stringPreferencesKey("score_sync_date")
         val KEY_TEXTBOOK_SYNC_DATE = stringPreferencesKey("textbook_sync_date")
+
+        // 成绩/考试变动提醒（DESIGN §4.33）：两开关 + 间隔 + 各自上次成功检查时刻
+        val KEY_SCORE_ALERT_ENABLED = booleanPreferencesKey("score_alert_enabled")
+        val KEY_EXAM_ALERT_ENABLED = booleanPreferencesKey("exam_alert_enabled")
+        val KEY_ALERT_INTERVAL_HOURS = intPreferencesKey("alert_interval_hours")
+        val KEY_SCORE_CHECK_MILLIS = longPreferencesKey("score_check_millis")
+        val KEY_EXAM_CHECK_MILLIS = longPreferencesKey("exam_check_millis")
+        val KEY_ALERT_PERIODIC_INTERVAL = intPreferencesKey("alert_periodic_interval")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

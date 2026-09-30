@@ -20,7 +20,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,19 +29,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.EbikeCapabilities
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppCardRow
-import edu.jxslu.schedule.ui.common.AppPermissions
-import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingItem
@@ -61,8 +55,11 @@ import me.rerere.hugeicons.stroke.UserAccount
  * 「快趣出行设置」弹层（2026-09-29 界面收敛，DESIGN §3.9）：**快趣相关设置的唯一入口**。
  *
  * 快趣出行页顶栏 ⚙ 打开这一份，两档共用。2026-09-30 按主题分组：
- * **账号 / 出码 / 提醒 / 地图 / 其他**——低频项不再和高频开关挤在同一张卡里。
+ * **账号 / 出码 / 提醒 / 地图**——低频项不再和高频开关挤在同一张卡里。
  * 使用方式不在这里：它搬到快趣出行页标题栏那枚常驻 chip（`RideModeChip`）。
+ * 「打开官方快趣出行 App」文字入口已删（2026-09-30，用户要求）：官方 App 不再是
+ * 任何流程的必经步骤，要用的人自己去桌面打开；`openKvcoo` 与 manifest 的
+ * `com.kvcoo.go` 包可见性声明一并移除，别加回来。
  *
  * 弹层自带「当前配置速览」副行：使用方式 · 登录态 · 提醒开关 · 地图缓存占用，
  * 不展开就能看到现在是什么口径。
@@ -90,21 +87,6 @@ internal fun EbikeSettingsSheet(
     var showClearCache by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         cacheUsage = EbikeMapCache.measure(context)
-    }
-    // 「通知使用权」是否已授予（精确倒计时用）：进弹层读一次，从系统设置回来
-    // （ON_RESUME）再读一次——用户刚勾选完回来，未授权的提示行要立刻消失。
-    var listenerGranted by remember {
-        mutableStateOf(AppPermissions.notificationListenerGranted(context))
-    }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                listenerGranted = AppPermissions.notificationListenerGranted(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val withNotificationPermission = rememberNotificationPermissionGate()
     val caps = prefs.useMode.capabilities(loggedIn = loggedIn, hasRide = false)
@@ -175,7 +157,6 @@ internal fun EbikeSettingsSheet(
             ReminderSettingsSection(
                 prefs = prefs,
                 caps = caps,
-                listenerGranted = listenerGranted,
                 onFreeReminderChanged = viewModel::onFreeReminderChanged,
                 onReminderPermissionGranted = viewModel::onReminderPermissionGranted,
                 withNotificationPermission = withNotificationPermission,
@@ -191,8 +172,6 @@ internal fun EbikeSettingsSheet(
                     }
                 },
             )
-
-            OpenKvcooButton(onClick = { openKvcoo(context) { message -> onNotice(message, NoticeTone.Warning) } })
         }
     }
 
@@ -337,23 +316,21 @@ private fun CodeSettingsSection(prefs: EbikePrefsSnapshot) {
 }
 
 /**
- * 「提醒」区：免费时长提醒（含提前量）与精确倒计时。
+ * 「提醒」区：免费时长提醒（含提前量）。
  *
- * 两档只有两处不同，都由参数决定：**免费时长提醒的副标题**（计时起点是「点扫一扫」
- * 还是「开锁成功」）与**精确倒计时是否出现**（`caps.wechatNoticeCalibration`）。
+ * 两档只有一处不同，由参数决定：**免费时长提醒的副标题**——计时起点是
+ * 「点扫一扫」（小程序方式）还是「开锁成功」（账号方式）。
  */
 @Composable
 private fun ReminderSettingsSection(
     prefs: EbikePrefsSnapshot,
     caps: EbikeCapabilities,
-    listenerGranted: Boolean,
     onFreeReminderChanged: () -> Unit,
     onReminderPermissionGranted: () -> Unit,
     withNotificationPermission: (() -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val haptics = rememberAppHaptics()
     var freeEnabled by remember(prefs.freeReminderEnabled) {
         mutableStateOf(prefs.freeReminderEnabled)
     }
@@ -398,46 +375,6 @@ private fun ReminderSettingsSection(
                     }
                 },
             )
-
-            // 「精确倒计时」（DESIGN §3.9）：默认关，开启后要「通知使用权」。
-            // 计时起点原本只能取「点打开微信扫一扫」的时刻，开了它就能拿微信的租车成功
-            // 通知把起点校准到真正开始计费那一刻；兼听完成通知，还车后自动结束计时。
-            // **只在微信小程序方式下出现**：账号方式的开锁时刻本来就是服务端确认的，
-            // 留着只会让用户去开一个用不上的高危权限（服务端侧也按能力拦了一道）
-            if (caps.wechatNoticeCalibration) {
-                var preciseEnabled by remember(prefs.preciseCountdownEnabled) {
-                    mutableStateOf(prefs.preciseCountdownEnabled)
-                }
-                SettingSwitchRow(
-                    title = "精确倒计时",
-                    subtitle = "识别微信的先享后付通知：租车成功校准计时起点，还车后自动结束计时",
-                    checked = preciseEnabled,
-                    onCheckedChange = { checked ->
-                        preciseEnabled = checked
-                        scope.launch {
-                            Graph.displayPrefs(context).setEbikePreciseCountdownEnabled(checked)
-                        }
-                        // 只有开启才要授权：关闭是「不再校准」。通知使用权只能由用户去
-                        // 系统设置里勾选，没有弹框可申请
-                        if (checked && !AppPermissions.notificationListenerGranted(context)) {
-                            AppPermissions.jumpNotificationListenerSettings(context)
-                        }
-                    },
-                )
-                // 开关开着但还没授权：功能不会生效，得让用户看得见（并且点得到设置页）
-                if (preciseEnabled && !listenerGranted) {
-                    InlineNoticeRow(
-                        message = "还没授予通知使用权，精确倒计时不会生效",
-                        tone = NoticeTone.Warning,
-                    )
-                    TextButton(onClick = {
-                        haptics.tap()
-                        AppPermissions.jumpNotificationListenerSettings(context)
-                    }) {
-                        Text("去开启通知使用权")
-                    }
-                }
-            }
         }
     }
 }
@@ -465,27 +402,6 @@ private fun MapCacheCard(usage: EbikeMapCache.Usage?, onClear: () -> Unit) {
                 "浏览地图时自动缓存，超过 60 MB 自动回收旧瓦片"
             },
             onClick = onClear,
-        )
-    }
-}
-
-/**
- * 「打开官方快趣出行」文字入口：内置地图已经能看车在哪，官方 App 不再是必经步骤，
- * 留一个入口给习惯用它的人。低频，所以收进设置弹层。
- *
- * 标题带「官方」（2026-10-01）：本 App 里那个页面现在也叫快趣出行，不带限定词会出现
- * 两行同名、一个开本页一个开别的 App。
- */
-@Composable
-private fun OpenKvcooButton(onClick: () -> Unit) {
-    SettingsSection(
-        title = "其他",
-        subtitle = null,
-    ) {
-        SettingItem(
-            title = "打开官方快趣出行 App",
-            subtitle = "已安装则直达官方 App 启动页（与本页不是同一个东西）",
-            onClick = onClick,
         )
     }
 }

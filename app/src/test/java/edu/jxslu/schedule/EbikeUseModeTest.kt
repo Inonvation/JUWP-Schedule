@@ -11,7 +11,7 @@ import org.junit.Test
  * 快趣出行「使用方式」（DESIGN §3.9 / §4.32，2026-09-29）。
  *
  * 两档的差异是**能力全集**而不是文案（小程序方式不碰账号、不做写操作；账号方式去掉
- * 扫一扫与微信通知校准），页面里所有判据都从这里出发，所以默认档、脏值兜底与
+ * 微信扫一扫），页面里所有判据都从这里出发，所以默认档、脏值兜底与
  * 两个判据值得钉住。
  */
 class EbikeUseModeTest {
@@ -69,7 +69,6 @@ class EbikeUseModeTest {
     fun `小程序方式只出码与扫一扫`() {
         val caps = EbikeUseMode.MiniProgram.capabilities(loggedIn = true, hasRide = true)
         assertTrue(caps.wechatScan)
-        assertTrue(caps.wechatNoticeCalibration)
         assertFalse("小程序方式没有任何 App 内用车", caps.inAppRide)
         assertFalse("小程序方式不给直接开锁", caps.directUnlock)
         // 内置相机扫一扫是账号方式的能力（小程序方式的目标动作是打开微信扫一扫）
@@ -77,10 +76,9 @@ class EbikeUseModeTest {
     }
 
     @Test
-    fun `账号方式去掉扫一扫与微信校准`() {
+    fun `账号方式去掉微信扫一扫`() {
         val caps = EbikeUseMode.Account.capabilities(loggedIn = true, hasRide = false)
         assertFalse("账号方式没有微信扫一扫（保留出码）", caps.wechatScan)
-        assertFalse("账号方式的开锁时刻就是起点，无需校准", caps.wechatNoticeCalibration)
         assertTrue(caps.inAppRide)
         assertTrue(caps.directUnlock)
         // 2026-09-29 加：内置相机扫一扫扫的是车身码，账号方式专有
