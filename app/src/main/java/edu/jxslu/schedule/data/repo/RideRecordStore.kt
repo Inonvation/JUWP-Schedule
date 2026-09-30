@@ -50,6 +50,17 @@ class RideRecordStore(private val dao: RideRecordDao) {
     suspend fun clear() {
         withContext(Dispatchers.IO) { dao.clear() }
     }
+
+    /** 还有多少条「未结清」（结清复查的前置闸）。 */
+    suspend fun countUnsettled(): Int = withContext(Dispatchers.IO) { dao.countUnsettled() }
+
+    /**
+     * 快趣侧确认已无欠费时，把全部「未结清」翻成「已结清」，返回更新的行数。
+     * 语义见 `KvcxViewModel.recheckUnsettledRecords`：本机的「未结清」只是**当时没确认到**，
+     * 不是欠费事实；快趣已无欠费即事实结清。
+     */
+    suspend fun markUnsettledSettled(): Int =
+        withContext(Dispatchers.IO) { dao.markUnsettledSettled() }
 }
 
 private fun RideRecordEntity.toDomain(): RideRecord = RideRecord(

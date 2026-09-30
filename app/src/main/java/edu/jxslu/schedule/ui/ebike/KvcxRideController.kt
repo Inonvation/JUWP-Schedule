@@ -95,13 +95,19 @@ data class KvcxReturnSummary(
     /**
      * 结算状态一句话（单测锁定）。**别把"没确认到"说成"欠费"**：扣款可能比我们那 7.5 秒
      * 的轮询窗口慢，所以金额未知时只说"结算中或未结清"。
+     *
+     * 欠费那行把**能直达付款页的两条路**写出来（2026-09-30，从小程序解包确认）：
+     * 主页的待支付横幅（关过一次会冷却 5 分钟）、历史订单里的待支付记录——
+     * 光说"去小程序结清"用户进了小程序也找不到支付入口。
      */
     val settleText: String
         get() = when {
             needPay == null -> "订单已在其他端结束"
             !needPay -> "本次无需支付"
             settled == true -> "费用已自动结清"
-            owedCents != null -> "有未结算费用 ¥%.2f，可在快趣小程序结清".format(owedCents / 100.0)
+            owedCents != null ->
+                "有未结算费用 ¥%.2f；进快趣小程序点主页「待支付」横幅，或在历史订单里点那笔待支付"
+                    .format(owedCents / 100.0)
             else -> "费用结算中或未结清，可在快趣小程序核对"
         }
 
@@ -545,8 +551,11 @@ internal suspend fun startFreeRideNotice(): Pair<String, NoticeTone> {
 /**
  * 打开微信（结清欠费的唯一去处）：待支付页在快趣小程序里，而**微信不给第三方直达小程序
  * 具体页面**——URL Scheme / 短链必须由小程序自己的服务端生成（要它的 appsecret），
- * 开放平台拉起小程序又要求 App 与小程序在同一开放平台账号下绑定。所以只能把用户送到微信，
- * 让他从「最近使用的小程序」进快趣结清。这一句提示就是这个原因。
+ * 开放平台拉起小程序又要求 App 与小程序在同一开放平台账号下绑定。所以只能把用户送到微信。
+ *
+ * 到了微信之后用户为什么"找不到支付入口"（2026-09-30 用户实测）：官方的待支付页不挂菜单，
+ * 只有两条路能到——**主页的「待支付」横幅**（onShow 查一次、60 秒节流、关过一次冷却 5 分钟）
+ * 和**历史订单里的待支付记录**（点进去就是支付页）。提示把这两条写出来，别让用户白进一趟。
  */
 internal fun openWechatForSettle(context: android.content.Context, onHint: (String) -> Unit) {
     val launch = try {
@@ -560,9 +569,12 @@ internal fun openWechatForSettle(context: android.content.Context, onHint: (Stri
     }
     try {
         context.startActivityOutsideApp(launch)
-        onHint("微信已打开：从「最近使用的小程序」进快趣结清订单")
+        onHint(
+            "微信已打开：进快趣小程序后，主页会出现「待支付」横幅（之前关过要等 5 分钟），" +
+                "或在「历史订单」里点那笔待支付订单直接付",
+        )
     } catch (_: Exception) {
-        onHint("无法打开微信，请手动打开并进快趣小程序结清")
+        onHint("无法打开微信；请手动进快趣小程序，主页「待支付」横幅或历史订单可直达付款页")
     }
 }
 

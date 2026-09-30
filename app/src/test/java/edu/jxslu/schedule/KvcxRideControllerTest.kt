@@ -347,7 +347,10 @@ class KvcxRideControllerTest {
         assertTrue(summary.settleWarning)
         assertTrue(summary.needsSettle)
         assertEquals(350L, summary.owedCents)
-        assertEquals("有未结算费用 ¥3.50，可在快趣小程序结清", summary.settleText)
+        assertEquals(
+            "有未结算费用 ¥3.50；进快趣小程序点主页「待支付」横幅，或在历史订单里点那笔待支付",
+            summary.settleText,
+        )
     }
 
     @Test
@@ -372,9 +375,9 @@ class KvcxRideControllerTest {
         // 金额未知（轮询没确认到 / 查询失败）：不说成"欠费"，只说结算中或未结清
         assertEquals("费用结算中或未结清，可在快趣小程序核对", summary(needPay = true, settled = null).settleText)
         assertTrue(summary(needPay = true, settled = null).settleWarning)
-        // 金额已知：写出来
+        // 金额已知：写出来，并把两条能直达付款页的路一并给（2026-09-30 用户实测踩的坑）
         assertEquals(
-            "有未结算费用 ¥3.50，可在快趣小程序结清",
+            "有未结算费用 ¥3.50；进快趣小程序点主页「待支付」横幅，或在历史订单里点那笔待支付",
             summary(needPay = true, settled = false).copy(owedCents = 350).settleText,
         )
         // 无需支付时不给出路

@@ -61,4 +61,15 @@ interface RideRecordDao {
     /** 清空本机记录（用户在快趣页手动清）。 */
     @Query("DELETE FROM ride_records")
     suspend fun clear()
+
+    /** 还有多少条「未结清」记录（结清复查的前置闸：没有就不去打扰快趣接口）。 */
+    @Query("SELECT COUNT(*) FROM ride_records WHERE settled = 0")
+    suspend fun countUnsettled(): Int
+
+    /**
+     * 把全部「未结清」翻成「已结清」（快趣侧已无欠费时，见 `KvcxViewModel.recheckUnsettledRecords`）。
+     * 返回更新的行数（0 = 本来就没有）。
+     */
+    @Query("UPDATE ride_records SET settled = 1 WHERE settled = 0")
+    suspend fun markUnsettledSettled(): Int
 }

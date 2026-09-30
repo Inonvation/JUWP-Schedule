@@ -111,6 +111,7 @@ class KvcxViewModel(
             if (session.loggedIn.value && accountMode()) {
                 refreshRide()
                 refreshAssets()
+                recheckUnsettledRecords()
             }
         }
     }
@@ -146,6 +147,7 @@ class KvcxViewModel(
                 _uiState.update { it.copy(loggingIn = false, password = "") }
                 refreshRide()
                 refreshAssets()
+                recheckUnsettledRecords()
             }
             .onFailure {
                 _uiState.update { it.copy(loggingIn = false) }
@@ -201,6 +203,32 @@ class KvcxViewModel(
             .onFailure {
                 _uiState.update { it.copy(assetsLoading = false, assetsFailed = true) }
             }
+    }
+
+    // ── 结清复查（2026-09-30） ──
+
+    /**
+     * 核对快趣侧的结清状态，把本机过期的「未结清」记录翻成「已结清」。
+     *
+     * 本机记录的「未结清」只是**还车那一刻**（约 7.5 秒的扣款确认窗口）没确认到，
+     * 用户随后在微信里付清时 App 并不知道，记录就永远挂着「未结清」（2026-09-30
+     * 用户实测：小程序里付了 0.8 元，本机记录仍显示未结清）。快趣同时至多一笔
+     * 待支付订单（有欠费不让开新车，官方同款约束），所以「快趣现在无欠费」⇒
+     * 历史上那些没确认到的订单都已结清，可以放心翻。
+     *
+     * 时机：进页 / 登录成功各一次；先查本机有没有「未结清」记录，**没有就不打扰
+     * 第三方接口**（同「查询也要跟着停」的口径）。查询失败静默，下次进页再核。
+     */
+    fun recheckUnsettledRecords() = viewModelScope.launch {
+        if (!session.loggedIn.value || !accountMode()) return@launch
+        if (runCatching { records.countUnsettled() }.getOrDefault(0) == 0) return@launch
+        val state = runCatching { session.confirmUnpaidSettled(attempts = 1) }.getOrNull()
+        if (state is KqcxAuth.UnpayState.Settled) {
+            val changed = runCatching { records.markUnsettledSettled() }.getOrDefault(0)
+            if (changed > 0) {
+                notice("快趣侧已无欠费；本机 $changed 条「未结清」记录已更新为已结清", NoticeTone.Success)
+            }
+        }
     }
 
     /** 登录失败的文案分类：业务错误给服务端原文，网络类给可操作建议。 */
