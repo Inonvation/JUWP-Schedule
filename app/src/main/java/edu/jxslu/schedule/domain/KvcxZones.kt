@@ -15,10 +15,15 @@ import kotlinx.serialization.json.jsonObject
  *
  * ```
  * result:
- *   givecarList[]:   { lat, lng, scopeArray: [{lat,lng}], device }   ← 还车点（多边形 + 图标位）
+ *   givecarList[]:   { lat, lng, name, scopeArray: [{lat,lng}], device }
+ *                                                                   ← 还车点（多边形 + 图标位 + 名称）
  *   nogoZoneList[]:  { scopeArray: [{lat,lng}] }                     ← 禁停区
  *   servicesiteZoneList[]: { servicesiteId, scopeArray }             ← 服务区大围栏（**不画**，见下）
  * ```
+ *
+ * `name` 是运营方给这个还车点起的名字（实测「教学北大楼左侧」「北大楼」「土建楼」），
+ * 列表里直接当标题用（2026-09-30 用户口径：一排「还车点 · 距你 XX 米」看不出是哪儿）。
+ * 少数点没有名字，回落到 [KvcxParkSpot.displayName] 的兜底文案。
  *
  * **服务区那层不画**：我们已有手绘的校园围栏（`BikeNearby.CAMPUS_FENCE`，用户对照官方逐边复核过），
  * 语义相同，再叠一层只会两片蓝糊在一起；校园围栏还兼着「只看本校」的过滤，不能拿它替。
@@ -62,7 +67,12 @@ data class KvcxZones(
                 val obj = item as? JsonObject ?: return@mapNotNull null
                 val lat = obj.doubleAt("lat") ?: return@mapNotNull null
                 val lng = obj.doubleAt("lng") ?: return@mapNotNull null
-                KvcxParkSpot(lat = lat, lng = lng, outline = obj.outline())
+                KvcxParkSpot(
+                    lat = lat,
+                    lng = lng,
+                    outline = obj.outline(),
+                    name = obj.stringAt("name"),
+                )
             }
             val nogo = result.arr("nogoZoneList").mapNotNull { item ->
                 val outline = (item as? JsonObject)?.outline() ?: return@mapNotNull null
@@ -73,12 +83,21 @@ data class KvcxZones(
     }
 }
 
-/** 一个还车点：图标落在 [lat] / [lng]，[outline] 是它的范围（不足 3 点 = 只有落点没有范围）。 */
+/**
+ * 一个还车点：图标落在 [lat] / [lng]，[outline] 是它的范围（不足 3 点 = 只有落点没有范围）。
+ *
+ * [name] 是运营方起的点位名（「教学北大楼左侧」）；接口没给时是空串，展示一律走
+ * [displayName]，别在页面里自己写 `ifBlank`（同一批点的说法要一致）。
+ */
 data class KvcxParkSpot(
     val lat: Double,
     val lng: Double,
     val outline: List<GcjPoint>,
-)
+    val name: String = "",
+) {
+    /** 列表里的标题：没有名字时退回通用说法，不留空行。 */
+    val displayName: String get() = name.ifBlank { "还车点" }
+}
 
 // ---------- 宽容取值（与 KqcxAuth 同口径，但这里只用得上 Double 与数组） ----------
 
@@ -87,6 +106,10 @@ private fun JsonObject.arr(key: String): List<Any?> =
 
 private fun JsonObject.doubleAt(key: String): Double? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+
+/** 字符串字段（缺字段 / null 都回空串，调用方用 displayName 兜底）。 */
+private fun JsonObject.stringAt(key: String): String =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
 
 /** 多边形顶点：`scopeArray: [{lat, lng}, …]`；缺字段 / 坏点直接丢那一项。 */
 private fun JsonObject.outline(): List<GcjPoint> =

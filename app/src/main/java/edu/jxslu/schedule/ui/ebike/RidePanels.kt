@@ -162,6 +162,37 @@ private val SPOT_COLOR = Color(0xFFD7535D)
 // ──────────────────────────── 悬浮动作区 ────────────────────────────
 
 /**
+ * 动作区当前形态的 key（DESIGN §3.9）。**唯一出处**，页面与动作区共用。
+ *
+ * key 必须把**找车态的四种排版**都分开（2026-09-30 用户反馈）：出过码之后主动作会从
+ * 「按车号出码」翻成「打开微信扫一扫」，只按 phase 分的话它会在 `when` 里硬切、
+ * 一点过渡都没有。车号也进 key：在车辆卡上换一辆车（点列表里另一行）时上区要重走一遍
+ * 升起动画（2026-09-30 用户口径「切换车辆时也要有动画」）。
+ *
+ * **为什么提到页面一层**：key 一变，[RideActionArea] 里 `AnimatedContent` 的
+ * `SizeTransform` 就会跑一段 240ms 的高度动画；页面要据此把地图的让位高度**冻结**
+ * （否则动画每帧都 resize 一次地图、osmdroid 每帧整幅重绘——2026-10-01 用户报的
+ * 「开锁后掉帧、然后骑行面板弹出来」就是这一段）。
+ */
+internal fun rideBarKey(
+    phase: RidePhase,
+    caps: EbikeCapabilities,
+    loggedIn: Boolean,
+    pickedCar: String?,
+    hasCode: Boolean,
+): String = when (phase) {
+    RidePhase.Riding -> BAR_RIDING
+    RidePhase.Settled -> BAR_SETTLED
+    RidePhase.Finding -> when {
+        pickedCar != null -> BAR_CAR + ":" + pickedCar
+        caps.wechatScan && hasCode -> BAR_FINDING_CODE
+        caps.wechatScan -> BAR_FINDING_PLAIN
+        !loggedIn -> BAR_FINDING_LOGIN
+        else -> BAR_FINDING_SCAN
+    }
+}
+
+/**
  * 页面底部的**常驻动作区**（2026-09-30 结构，2026-10-01 搬到面板之外）。
  *
  * 用户口径一直是「跟说明文字那样固定在弹窗底部」，所以它和免责那行同住页面底部的常驻块
@@ -210,27 +241,13 @@ internal fun RideActionArea(
     onTimerExpired: () -> Unit,
     onSettle: () -> Unit,
     onContinue: () -> Unit,
+    /** 当前形态的 key（唯一出处 [rideBarKey]）：它一变，上面的上区就升/沉一次。 */
+    barKey: String,
     modifier: Modifier = Modifier,
 ) {
     // 动作条换内容时**走交叉淡入 + 高度过渡**：旧版是"啪"地换一块，
-    // 眼睛每次都要重新找主动作落在哪，状态一多就显得毛躁。
-    //
-    // key 必须把**找车态的四种排版**都分开（2026-09-30 用户反馈）：出过码之后主动作会从
-    // 「按车号出码」翻成「打开微信扫一扫」，只按 phase 分的话它会在 `when` 里硬切、
-    // 一点过渡都没有。
-    val barKey = when (phase) {
-        RidePhase.Riding -> BAR_RIDING
-        RidePhase.Settled -> BAR_SETTLED
-        RidePhase.Finding -> when {
-            // 车号也进 key：在车辆卡上直接换一辆车（点列表里另一行）时上区要重走一遍升起动画，
-            // 不然只有文字原地换掉（2026-09-30 用户口径「切换车辆时也要有动画」）
-            pickedCar != null -> BAR_CAR + ":" + pickedCar
-            caps.wechatScan && hasCode -> BAR_FINDING_CODE
-            caps.wechatScan -> BAR_FINDING_PLAIN
-            !loggedIn -> BAR_FINDING_LOGIN
-            else -> BAR_FINDING_SCAN
-        }
-    }
+    // 眼睛每次都要重新找主动作落在哪，状态一多就显得毛躁。key 由 [rideBarKey] 给
+    // （提到页面一层了：那一段高度动画每帧都会改页面布局，页面要据此冻结地图的高度）
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -335,7 +352,8 @@ internal fun RideActionArea(
 }
 
 /** 上区升起 / 收回的时长；下区不参与，所以只有这两个值在管"窗口升降"的手感。 */
-private const val BAR_RISE_MS = 240
+/** 动作区上区升起 / 容器高度过渡的时长。**RideScreen 也用它**（冻结地图让位高度要等这么久）。 */
+internal const val BAR_RISE_MS = 240
 private const val BAR_FALL_MS = 190
 
 /** 动作条状态之间做交叉淡入，别让内容"啪"地换一块。 */
@@ -1692,6 +1710,8 @@ private fun RideRecentChip(label: String, selected: Boolean, onClick: () -> Unit
  * 骑行态的面板内容：附近还车点按距离列最近的几个。
  *
  * 骑行中用户要找的是"停哪儿"，车辆列表在那一刻没有用（地图也改画还车点了）。
+ * 每行以**运营方给的点位名**当标题（「教学北大楼左侧」），没有名字的才退回「还车点」——
+ * 一排「还车点 · 距你 120 米」看不出是哪儿（2026-09-30 用户口径）。
  */
 @Composable
 private fun RideSpotsContent(
@@ -1742,7 +1762,7 @@ private fun RideSpotsContent(
             nearest.forEach { (spot, meters) ->
                 AppCardRow(
                     onClick = { onSpotTap(spot) },
-                    onClickLabel = "把镜头对准这个还车点",
+                    onClickLabel = "把镜头对准${spot.displayName}",
                 ) {
                     Icon(
                         HugeIcons.MapPin,
@@ -1751,12 +1771,22 @@ private fun RideSpotsContent(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = "还车点 · 距${if (refFromUser) "你" else "中心"} " +
-                            BikeNearby.formatDistance(meters),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f),
-                    )
+                    // 两行：点位名（主）+ 距离（次）。与停车点卡的头行同一套排布
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = spot.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = "距${if (refFromUser) "你" else "中心"} " +
+                                BikeNearby.formatDistance(meters),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                    }
                     Icon(
                         HugeIcons.ChevronRight,
                         contentDescription = null,

@@ -127,4 +127,26 @@ object AppPermissions {
             )
         }
     }
+
+    /**
+     * 跳系统「应用通知设置」页——通知渠道细分的入口（横幅 / 悬浮、震动、声音都在那里）。
+     *
+     * 免费时长提醒弹不出来时，这是用户唯一能改的地方（见 `EbikeFreeRideNotifier` 的 KDoc），
+     * 所以它得和 [jumpAppDetails] 一样稳定。ROM 不认这个 action 时兜底到应用详情页。
+     *
+     * **不跳单个渠道页**（`ACTION_CHANNEL_NOTIFICATION_SETTINGS`）：国产 ROM 改写过这个
+     * action 的概率更高，而应用通知设置页本来就能进到渠道列表。走 [startActivityOutsideApp]：
+     * 系统设置返回时不重放二级页的右推入过渡（2026-09-26 修「界面跳动」）。
+     */
+    fun jumpNotificationSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        val started = runCatching {
+            if (intent.resolveActivity(context.packageManager) == null) return@runCatching false
+            context.startActivityOutsideApp(intent)
+            true
+        }.getOrDefault(false)
+        if (started) return
+        jumpAppDetails(context)
+    }
 }

@@ -304,9 +304,22 @@ class KvcxRideControllerTest {
         // 以及唯一能让本机直接开锁端到端可用的出路——联系快趣客服关闭该授权。
         // 这是用户唯一一次看清的机会，文案只在 kvcxConfirmDialog 里
         val dialog = kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669")!!
-        assertTrue(dialog.second.contains("微信支付分"))
-        assertTrue(dialog.second.contains("客服"))
-        assertTrue(dialog.second.contains("车 100000669"))
+        val text = dialog.points.joinToString("\n")
+        assertTrue(text.contains("微信支付分"))
+        assertTrue(text.contains("客服"))
+        assertTrue(text.contains("车 100000669"))
+        // 要点一条一件事（2026-10-01 打磨）：计费、车号核对、支付分各一条
+        assertEquals(3, dialog.points.size)
+        assertEquals("开锁", dialog.confirmLabel)
+    }
+
+    @Test
+    fun `只有开锁弹窗允许免确认`() {
+        // 「不再提醒」只给开锁（2026-10-01 用户要求）：四道闸里它是唯一"用户对自己账号"的
+        // 授权；还车涉及结算与调度费、重试开锁是异常路径，都保留每次确认
+        assertTrue(kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669")!!.allowSkip)
+        assertFalse(kvcxConfirmDialog(KvcxAction.RETRY_UNLOCK, "车 100000669")!!.allowSkip)
+        assertFalse(kvcxConfirmDialog(KvcxAction.RETURN, "车 100000669")!!.allowSkip)
     }
 
     // ---------- 还车 ----------

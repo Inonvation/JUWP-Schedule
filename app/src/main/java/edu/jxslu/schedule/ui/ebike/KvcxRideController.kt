@@ -441,40 +441,66 @@ class KvcxRideController internal constructor(
 }
 
 /**
- * 用车动作确认弹窗的文案（标题 / 正文 / 确认键），**两页共用同一份**：
+ * 用车动作确认弹窗的规格（标题 / 要点 / 确认键 / 能不能免掉），**两页共用同一份**：
  * 这是用户唯一一次看清「开锁起计费」「还车可能产生调度费」的机会，不许各写一份。
  *
- * 返回 null = 该动作**不需要二次确认**（调用方直接发）。当前是**临时锁车**与
- * **解锁继续骑**：前者订单与计费继续、随时可再解锁，后者本来就在计费中——
- * 两者都没有新增的计费后果，误触代价低于多一次确认的打扰（2026-09-28 用户拍板）。
+ * 正文是**要点列表**而不是一整段：弹窗里那几件事（计费、核对车号、支付分出路）
+ * 各是一条独立责任，糊成一段谁都不看（2026-10-01 打磨）。
+ */
+internal data class KvcxConfirm(
+    val title: String,
+    /** 正文要点，逐条渲染（一条一句话，别把几件事塞进一条）。 */
+    val points: List<String>,
+    val confirmLabel: String,
+    /**
+     * 要不要在弹窗里给「不再提醒」的勾选（**只有开锁给**）。勾选后开锁直接发指令，
+     * 落 `ebike_unlock_confirm`，出路在快趣出行设置 → 开锁与还车。
+     *
+     * **为什么只放开锁这一项**：四道闸里只有它是"用户对自己账号"的授权，而且开锁之后
+     * App 侧一路有进度、成功与失败提示；还车涉及结算与可能的调度费，重试开锁是异常路径，
+     * 都保留每次确认。
+     */
+    val allowSkip: Boolean = false,
+)
+
+/**
+ * 取某个动作的确认弹窗规格。返回 null = 该动作**不需要二次确认**（调用方直接发）：
+ * 当前是**临时锁车**与**解锁继续骑**——前者订单与计费继续、随时可再解锁，后者本来就在
+ * 计费中，两者都没有新增的计费后果，误触代价低于多一次确认的打扰（2026-09-28 用户拍板）。
+ * 响铃寻车与锁状态查询是只读动作，同样不弹。
  */
 internal fun kvcxConfirmDialog(
     action: KvcxAction,
     carLabel: String,
-): Triple<String, String, String>? = when (action) {
-    KvcxAction.UNLOCK -> Triple(
-        "直接开锁？",
-        "将用你的快趣账号为 $carLabel 创建订单并开锁，从开锁起按快趣规则计费。\n" +
-            "水贝贝是非官方客户端，请确认车辆与车号一致；开锁失败的善后以快趣为准。\n\n" +
+): KvcxConfirm? = when (action) {
+    KvcxAction.UNLOCK -> KvcxConfirm(
+        title = "直接开锁？",
+        points = listOf(
+            "将用你的快趣账号为 $carLabel 创建订单并开锁，从开锁起按快趣规则计费。",
+            "水贝贝是非官方客户端，请确认车辆与车号一致；开锁失败的善后以快趣为准。",
             // 支付分授权只能跳微信（wxpayScoreUse 是微信客户端专属 API，见 §4.32 的 11035）；
             // 唯一能让「本机直接开锁」端到端可用的出路是找客服关掉授权（2026-09-28 用户实测）
             "若账号为微信支付分免押，开锁时需跳转微信完成支付分授权（微信限制，App 无法代做）；" +
-            "可联系快趣客服为账号关闭该授权，之后即可直接开锁。",
-        "开锁",
+                "可联系快趣客服为账号关闭该授权，之后即可直接开锁。",
+        ),
+        confirmLabel = "开锁",
+        allowSkip = true,
     )
-    KvcxAction.RETRY_UNLOCK -> Triple(
-        "重试开锁？",
-        "将再次向 $carLabel 发送开锁指令（不会重复创建订单）。",
-        "重试开锁",
+    KvcxAction.RETRY_UNLOCK -> KvcxConfirm(
+        title = "重试开锁？",
+        points = listOf("将再次向 $carLabel 发送开锁指令（不会重复创建订单）。"),
+        confirmLabel = "重试开锁",
     )
     KvcxAction.LOCK, KvcxAction.RESUME -> null
     // 响铃寻车 / 锁状态查询没有新增计费后果，也不经二次确认闸（不走 pendingAction）
     KvcxAction.RING, KvcxAction.QUERY_LOCK -> null
-    KvcxAction.RETURN -> Triple(
-        "还车？",
-        "将先静默锁车再结束订单。请确认：车辆已停好、随身物品已带走。\n" +
+    KvcxAction.RETURN -> KvcxConfirm(
+        title = "还车？",
+        points = listOf(
+            "将先静默锁车再结束订单。请确认：车辆已停好、随身物品已带走。",
             "还车后订单结束；若不在还车区可能产生调度费（App 不会替你确认调度费）。",
-        "还车",
+        ),
+        confirmLabel = "还车",
     )
 }
 

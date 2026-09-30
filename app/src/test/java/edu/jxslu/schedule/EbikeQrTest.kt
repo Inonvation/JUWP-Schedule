@@ -95,6 +95,38 @@ class EbikeQrTest {
         assertNull(EbikeQr.parseScannedCarNum("https://www.kvcoogo.com/ebike?id=1000"))
     }
 
+    // ---- decodeFromPixels：相册图片的二维码解码（2026-09-30） ----
+
+    /** [EbikeQr.qrMatrix] 的位阵 → ARGB 像素（黑模块 0xFF000000、白底 0xFFFFFFFF）。 */
+    private fun matrixPixels(matrix: com.google.zxing.common.BitMatrix): IntArray =
+        IntArray(matrix.width * matrix.height) { i ->
+            val x = i % matrix.width
+            val y = i / matrix.width
+            if (matrix[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+        }
+
+    @Test
+    fun `相册像素解出码内容`() {
+        val url = EbikeQr.bikeUrl("100000669")!!
+        val matrix = EbikeQr.qrMatrix(url)
+        val pixels = matrixPixels(matrix)
+        assertEquals(url, EbikeQr.decodeFromPixels(pixels, matrix.width, matrix.height))
+        // 与相机那条路同一个出口：解出的内容照 parseScannedCarNum 取车号
+        assertEquals(
+            "100000669",
+            EbikeQr.parseScannedCarNum(EbikeQr.decodeFromPixels(pixels, matrix.width, matrix.height)!!),
+        )
+    }
+
+    @Test
+    fun `相册像素认不出时返回null`() {
+        // 纯白图（用户在相册里随手挑了一张）
+        assertNull(EbikeQr.decodeFromPixels(IntArray(64 * 64) { 0xFFFFFFFF.toInt() }, 64, 64))
+        // 尺寸与像素对不上：脏输入直接拒，别把越界读带进解码器
+        assertNull(EbikeQr.decodeFromPixels(IntArray(10), 64, 64))
+        assertNull(EbikeQr.decodeFromPixels(IntArray(0), 0, 0))
+    }
+
     // ---- normalizeCarInput：输入框入口口径 ----
 
     @Test

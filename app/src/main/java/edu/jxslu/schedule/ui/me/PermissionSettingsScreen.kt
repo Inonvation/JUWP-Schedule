@@ -1,12 +1,8 @@
 package edu.jxslu.schedule.ui.me
 
 import android.Manifest
-import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -108,7 +104,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
         // 拒绝后不再原地重弹：系统第二次起会静默拒绝（申请框根本不出现），
         // 用户在同一个按钮上反复点只会觉得"点了没用"。直接带去系统通知设置页，
         // 那里是拒绝之后唯一还能把开关打开的地方
-        if (!granted) jumpNotificationSettings(context)
+        if (!granted) AppPermissions.jumpNotificationSettings(context)
     }
 
     val calendarPermissionLauncher = rememberLauncherForActivityResult(
@@ -142,7 +138,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
         ) {
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            jumpNotificationSettings(context)
+            AppPermissions.jumpNotificationSettings(context)
         }
     }
 
@@ -290,20 +286,4 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             }
         }
     }
-}
-
-/** 跳系统「应用通知设置」页（渠道细分入口）；ROM 不支持该 action 时兜底应用详情页。 */
-private fun jumpNotificationSettings(context: Context) {
-    val appNotify = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-    val started = runCatching {
-        if (appNotify.resolveActivity(context.packageManager) == null) {
-            return@runCatching false
-        }
-        context.startActivity(appNotify)
-        true
-    }.getOrDefault(false)
-    if (started) return
-    // 兜底：应用详情页（与 WidgetCapabilities 的最终兜底同一落点）
-    AppPermissions.jumpAppDetails(context)
 }

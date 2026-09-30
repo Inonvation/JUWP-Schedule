@@ -136,6 +136,38 @@ private const val TILE_CACHE_MAX_BYTES = 60L * 1024 * 1024
 private const val TILE_CACHE_TRIM_BYTES = 50L * 1024 * 1024
 
 /**
+ * 叠加层要画的那几样输入（2026-10-01）。
+ *
+ * **为什么要有这一份**：`AndroidView` 的 `update` 块**每次外层重组都会跑一遍**（update 的
+ * lambda 每轮都是新实例，组合器跳不过去），而它的收尾是 `view.invalidate()` —— 一次整幅
+ * 地图重绘（瓦片 + 校园围栏 + 车标 + 还车点）。也就是说，**页面上任何与地图无关的状态变化**
+ * （开确认弹窗、按钮 busy、Snackbar、偏好变化…）都会顺带把地图重画一遍，正好撞在同一两帧上，
+ * 表现就是"卡一下"（2026-10-01 用户报「点确认开锁后卡」时定位到这条）。
+ *
+ * 所以 update 里先比对这一份，**只有画的东西真的变了才 invalidate**；回调照旧每轮都写
+ * （它们是闭包，换了不需要重画）。
+ */
+private data class MapOverlayInputs(
+    val colors: BikeMarkerColors,
+    val clusters: List<BikeCluster>,
+    val selectedKey: String?,
+    val userPoint: GcjPoint?,
+    val ridePoint: GcjPoint?,
+    val highlightPoint: GcjPoint?,
+    val highlightLabel: String?,
+    val zones: KvcxZones,
+)
+
+/**
+ * `update` 块里记「上一次真正画上去的输入」。**别换成 `mutableStateOf`**：update 跑在应用的
+ * apply 阶段，往里写状态会再触发一轮重组；这里只是记账，不进组合、不驱动任何东西。
+ *
+ * 生命周期与 [OsmMapView] 里的 `mapView` / `overlay` 一致（同一个 `remember` 作用域），
+ * 所以地图视图被重建时这一份也一起重置，不会出现"新视图什么都没画"。
+ */
+private class DrawnOverlayInputs(var value: MapOverlayInputs? = null)
+
+/**
  * 附近单车地图（DESIGN §3.9）。
  *
  * osmdroid 是 View 体系的库，用 [AndroidView] 桥接；它的生命周期不认 Compose，
@@ -207,6 +239,8 @@ internal fun OsmMapView(
             fence = BikeNearby.CAMPUS_FENCE
         }
     }
+    // 上一次真正画上去的叠加层输入（见 MapOverlayInputs / DrawnOverlayInputs 的注释）
+    val drawn = remember { DrawnOverlayInputs() }
     val mapView = remember {
         ensureOsmdroidConfiguration(context)
         MapView(context).apply {
@@ -255,30 +289,46 @@ internal fun OsmMapView(
         factory = { mapView },
         modifier = modifier.onSizeChanged { size -> mapSize = size },
         update = { view ->
-            overlay.colors = colors
-            overlay.clusters = clusters
-            overlay.selectedKey = selectedKey
-            overlay.userPoint = if (userLat != null && userLng != null) {
-                GcjPoint(userLat, userLng)
-            } else {
-                null
+            // 只重画"画的东西真变了"的那一次（见 MapOverlayInputs 的注释）：页面上任何与地图
+            // 无关的重组都会跑到这里，无脑 invalidate 就会把地图整幅重绘一遍
+            val inputs = MapOverlayInputs(
+                colors = colors,
+                clusters = clusters,
+                selectedKey = selectedKey,
+                userPoint = if (userLat != null && userLng != null) {
+                    GcjPoint(userLat, userLng)
+                } else {
+                    null
+                },
+                ridePoint = if (rideLat != null && rideLng != null) {
+                    GcjPoint(rideLat, rideLng)
+                } else {
+                    null
+                },
+                // 识别高亮（2026-09-29「车号识别联动」）：识别条定位过来的那辆车
+                highlightPoint = if (highlightLat != null && highlightLng != null) {
+                    GcjPoint(highlightLat, highlightLng)
+                } else {
+                    null
+                },
+                highlightLabel = highlightLabel,
+                zones = zones,
+            )
+            if (drawn.value != inputs) {
+                overlay.colors = inputs.colors
+                overlay.clusters = inputs.clusters
+                overlay.selectedKey = inputs.selectedKey
+                overlay.userPoint = inputs.userPoint
+                overlay.ridePoint = inputs.ridePoint
+                overlay.highlightPoint = inputs.highlightPoint
+                overlay.highlightLabel = inputs.highlightLabel
+                overlay.zones = inputs.zones
+                drawn.value = inputs
+                view.invalidate()
             }
-            overlay.ridePoint = if (rideLat != null && rideLng != null) {
-                GcjPoint(rideLat, rideLng)
-            } else {
-                null
-            }
-            // 识别高亮（2026-09-29「车号识别联动」）：识别条定位过来的那辆车
-            overlay.highlightPoint = if (highlightLat != null && highlightLng != null) {
-                GcjPoint(highlightLat, highlightLng)
-            } else {
-                null
-            }
-            overlay.highlightLabel = highlightLabel
-            overlay.zones = zones
+            // 回调不进上面那份比对：它们只是闭包，每轮重组换新实例很正常，换了不需要重画地图
             overlay.onClusterTap = tapCallback
             overlay.onRideTap = rideTapCallback
-            view.invalidate()
         },
     )
 

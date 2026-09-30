@@ -11,6 +11,7 @@ import org.junit.Test
  * fixture 逐字段对齐解包产物里的消费代码（`service/area/index.js` 的
  * `loadNearbyAreaPolygons`）：`givecarList[]` 带 `lat/lng + scopeArray`，
  * `nogoZoneList[].scopeArray`，另有我们不画的 `servicesiteZoneList`。
+ * `name`（还车点名）按 2026-09-30 实测的真实响应放在 item 顶层。
  */
 class KvcxZonesTest {
 
@@ -20,7 +21,7 @@ class KvcxZonesTest {
             {"resultCode":1,"errorCode":0,"result":{
               "servicesiteZoneList":[{"servicesiteId":7,"scopeArray":[{"lat":28.6,"lng":115.8}]}],
               "givecarList":[
-                {"lat":28.681,"lng":115.851,"scopeArray":[{"lat":28.681,"lng":115.851},{"lat":28.682,"lng":115.852},{"lat":28.680,"lng":115.853}],"device":{"name":"东门"}},
+                {"lat":28.681,"lng":115.851,"name":"东门","scopeArray":[{"lat":28.681,"lng":115.851},{"lat":28.682,"lng":115.852},{"lat":28.680,"lng":115.853}],"device":{"name":"东门"}},
                 {"lat":"28.690","lng":"115.860","scopeArray":[]}
               ],
               "nogoZoneList":[{"scopeArray":[{"lat":28.7,"lng":115.9},{"lat":28.71,"lng":115.91},{"lat":28.70,"lng":115.92}]}]
@@ -35,6 +36,9 @@ class KvcxZonesTest {
         // 数值给字符串也认（快趣字段类型不稳定，与 KqcxAuth 同一教训）
         assertEquals(28.690, zones.parkSpots[1].lat, 0.0001)
         assertTrue(zones.parkSpots[1].outline.isEmpty())
+        // 点位名直接进列表标题；缺名字的那条回落到通用说法
+        assertEquals("东门", zones.parkSpots[0].displayName)
+        assertEquals("还车点", zones.parkSpots[1].displayName)
         assertEquals(1, zones.nogoZones.size)
         assertEquals(3, zones.nogoZones[0].size)
         // 服务区那层我们不画（已有手绘校园围栏），解析层直接忽略它，别当成还车点
@@ -87,6 +91,30 @@ class KvcxZonesTest {
         assertEquals(1, filtered.nogoZones.size)
         // 原对象不被改动（纯函数）
         assertEquals(2, zones.parkSpots.size)
+    }
+
+    @Test
+    fun `点位名缺字段或空串都回落到还车点`() {
+        val json = """
+            {"resultCode":1,"errorCode":0,"result":{
+              "givecarList":[
+                {"lat":28.680,"lng":115.850,"name":"  教学北大楼左侧  "},
+                {"lat":28.681,"lng":115.851,"name":""},
+                {"lat":28.682,"lng":115.852,"name":null},
+                {"lat":28.683,"lng":115.853}
+              ],
+              "nogoZoneList":[]
+            }}
+        """.trimIndent()
+
+        val zones = KvcxZones.parse(json)
+
+        assertEquals(4, zones.parkSpots.size)
+        // 首尾空白去掉：服务端偶尔带空格，直接进 Text 会顶出不齐的缩进
+        assertEquals("教学北大楼左侧", zones.parkSpots[0].displayName)
+        assertEquals("还车点", zones.parkSpots[1].displayName)
+        assertEquals("还车点", zones.parkSpots[2].displayName)
+        assertEquals("还车点", zones.parkSpots[3].displayName)
     }
 
     @Test

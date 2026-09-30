@@ -1,7 +1,9 @@
 package edu.jxslu.schedule.ui.ebike
 
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,14 +11,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,6 +39,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,7 +70,9 @@ import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
+import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.capabilities
+import edu.jxslu.schedule.ui.common.AppHaptics
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -68,6 +80,8 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.theme.semanticColors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -181,8 +195,13 @@ fun RideScreen(
     var showModeSheet by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showEndTimerConfirm by remember { mutableStateOf(false) }
-    /** 待确认的写操作与它针对的车号（开锁用；其余动作不需要车号）。 */
-    var pendingAction by remember { mutableStateOf<Pair<KvcxAction, String?>?>(null) }
+    /**
+     * 待确认的写操作与它针对的车号（开锁用；其余动作不需要车号）。
+     *
+     * 故意用**裸 state 对象**（不在本函数体里 `by` 读它）：读的位置决定重组范围，读在这里
+     * 就会让开关弹窗重组整页——见 [KvcxConfirmHost] 的注释。
+     */
+    val pendingAction = remember { mutableStateOf<Pair<KvcxAction, String?>?>(null) }
 
     val phase = when {
         summary != null -> RidePhase.Settled
@@ -234,22 +253,34 @@ fun RideScreen(
             viewModel.kvcx.tempLock()
         } else if (action == KvcxAction.RESUME) {
             viewModel.kvcx.resumeRide()
+        } else if (action == KvcxAction.UNLOCK && !prefs.unlockConfirm) {
+            // 用户在开锁弹窗勾过「不再提醒」（或关了设置里的开关）：直接发指令。
+            // 这是四道闸里唯一允许用户自己关的一道，定位前置照旧在前面挡着；
+            // 免确认的后果（按一下就开始计费）在勾选那一刻已经写明。
+            carNum?.let(viewModel.kvcx::unlock)
         } else {
-            pendingAction = action to carNum
+            pendingAction.value = action to carNum
         }
     }
     val withNotificationPermission = rememberNotificationPermissionGate()
 
     // 内置相机扫车身码（账号方式）：识别后**回填车号 + 换成车辆卡**，不自动开锁——写操作仍走确认闸
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val carNum = result.contents?.let(EbikeQr::parseScannedCarNum)
-        if (carNum == null) {
-            showNotice(scope, snackbar, "未识别到有效车号，请对准车身上的二维码", NoticeTone.Warning)
-        } else {
-            haptics.tap()
-            ebikeViewModel.onCarInput(carNum)
-            pickedCar = carNum
-            viewModel.focusCar(carNum)
+        val raw = result.contents
+        val carNum = raw?.let(EbikeQr::parseScannedCarNum)
+        when {
+            // 内容为空 = **取消**：取景页没扫到就被关掉（返回键 / 手势返回）都落这里。
+            // 取消不是失败——报一句「未识别到有效车号」等于每次放弃扫码都挨一次无端报错
+            raw == null -> Unit
+            // 扫到了、但内容不是车号（名片码 / 小程序码 / 别的链接）：这才是识别失败
+            carNum == null ->
+                showNotice(scope, snackbar, "未识别到有效车号，请对准车身上的二维码", NoticeTone.Warning)
+            else -> {
+                haptics.tap()
+                ebikeViewModel.onCarInput(carNum)
+                pickedCar = carNum
+                viewModel.focusCar(carNum)
+            }
         }
     }
     val scanBodyCode: () -> Unit = {
@@ -260,6 +291,8 @@ fun RideScreen(
                 setPrompt("对准车身上的二维码")
                 setBeepEnabled(false)
                 setOrientationLocked(true)
+                // 自带的 CaptureActivity 只有取景框 + 提示，没有手电筒与相册入口（扫描窗口见它）
+                setCaptureActivity(EbikeScanActivity::class.java)
             },
         )
     }
@@ -427,14 +460,57 @@ fun RideScreen(
     val rideMarkerLat = if (rideFollowsUser) state.userLat else ride?.lat
     val rideMarkerLng = if (rideFollowsUser) state.userLng else ride?.lng
     /**
-     * 页面底部常驻块（动作区 + 免责）的实际高度，量出来才敢用它算面板上限——它随状态变
-     * （骑行态最高）。先给个估值，量到了再纠正，避免首帧把面板限错。
+     * 页面底部常驻块（动作区 + 免责）**稳定态的实测高度**（含导航栏内边距）：面板上限要按
+     * 它扣、地图才留得住三成，Snackbar 也靠它抬到常驻块之上。首帧先用估值兜底。
      *
-     * 提到 Scaffold 之外还有一个用处：Snackbar 默认贴在窗口最底，正好压住主动作
-     * （骑行态的提示一来就看不见「还车」）。这里量出来的高度让它整个抬到常驻块上方。
+     * **不按 phase 重置**：换形态时保留上一档的值，等动画结束量到新值再改（见 [mapReserveDp]）。
+     * 按 phase 重置成估值的话，切换那一帧地图会先跳到估值、动画结束再跳一次真值——两次多余的
+     * 整幅重绘，还可能露出地图底边与面板之间的空档。
      */
-    var bottomBlockDp by remember(phase) {
+    var measuredBlockDp by remember {
         mutableStateOf(if (phase == RidePhase.Riding) 250f else 120f)
+    }
+    /** 布局回调里的**实时**高度。普通持有者：换形态期间只记账，不驱动重组。 */
+    val blockHeight = remember { DpHolder(measuredBlockDp) }
+    /**
+     * 常驻块的实时高度，**只给 Snackbar 用**。
+     *
+     * 与 [measuredBlockDp] 分成两个状态是因为读点不同：这个只在 `snackbarHost` 的 lambda 里读，
+     * 每帧写也只重组那一个作用域；而 [measuredBlockDp] 被 `BoxWithConstraints` 读，写它等于
+     * 整页重组。分开之后 Snackbar 能跟着常驻块平稳上移（开锁成功的提示正好挂在换形态那一刻），
+     * 页面本身仍然安静。
+     */
+    var liveBlockDp by remember { mutableStateOf(measuredBlockDp) }
+    /**
+     * 地图给底部让位用的高度（**冻结值**，与 [measuredBlockDp] 不是一回事）。
+     *
+     * [barKey] 一变，`RideActionArea` 就走一次 240ms 的高度动画（`AnimatedContent` 的
+     * `SizeTransform`）。地图若跟着实时高度走，这 240ms 里**每一帧**都会 resize 一次视图，
+     * osmdroid 每次 resize 都整幅重绘（瓦片 + 校园围栏 + 车标 + 还车点）——用户报的
+     * 「开锁后掉帧、然后骑行面板弹出来」就是这一段（2026-10-01 定位）。
+     *
+     * 现在的分工：动画期间地图尺寸**不动**，升起来的底部块直接盖在它下沿；动画结束再一次性
+     * 落位（被切掉的那一截正好在已经升上去的块后面，看不见）。视觉仍是"底部窗口升起"，
+     * 但整段动画只 resize 一次地图。
+     */
+    var mapReserveDp by remember { mutableStateOf(measuredBlockDp) }
+    /** 底部块是否正在换形态（见 [mapReserveDp]）。 */
+    var blockAnimating by remember { mutableStateOf(false) }
+    val barKey = rideBarKey(phase, caps, kvcxLoggedIn, pickedCar, hasCode)
+    var lastBarKey by remember { mutableStateOf(barKey) }
+    LaunchedEffect(barKey) {
+        // 首次组合不是"换形态"：只有 key 真的变了才冻结
+        if (lastBarKey == barKey) return@LaunchedEffect
+        lastBarKey = barKey
+        blockAnimating = true
+        // 等高度动画走完（多留一点余量，动画末帧还有一次落位）
+        delay(BAR_RISE_MS.toLong() + BLOCK_SETTLE_MS)
+        measuredBlockDp = blockHeight.value
+        blockAnimating = false
+    }
+    // 不换形态时随时跟随实测值（首帧的估值就是这么被纠正的）
+    LaunchedEffect(measuredBlockDp, blockAnimating) {
+        if (!blockAnimating) mapReserveDp = measuredBlockDp
     }
 
     Scaffold(
@@ -481,7 +557,8 @@ fun RideScreen(
             )
         },
         snackbarHost = {
-            AppSnackbarHost(snackbar, Modifier.padding(bottom = bottomBlockDp.dp))
+            // 用**实时**高度：提示要落在常驻块此刻真实的上缘之上（换形态时跟着一起上移）
+            AppSnackbarHost(snackbar, Modifier.padding(bottom = liveBlockDp.dp))
         },
     ) { padding ->
         BoxWithConstraints(
@@ -493,7 +570,8 @@ fun RideScreen(
             // 上限被两道压：窗口比例（面板 + 常驻块合计留三成给地图）与绝对上限
             val maxPanelDp = minOf(
                 MAX_PANEL_HEIGHT_DP,
-                maxHeight.value * PANEL_MAX_RATIO - bottomBlockDp,
+                // 用冻结值：面板上限在动画期间不该跟着变（那会让面板与地图同时动）
+                maxHeight.value * PANEL_MAX_RATIO - mapReserveDp,
             ).coerceAtLeast(MIN_PANEL_HEIGHT_DP)
             LaunchedEffect(maxPanelDp, state.panelHeightDp) {
                 viewModel.clampPanelHeight(MIN_PANEL_HEIGHT_DP, maxPanelDp)
@@ -501,12 +579,16 @@ fun RideScreen(
             val panelHeight = state.panelHeightDp.coerceIn(MIN_PANEL_HEIGHT_DP, maxPanelDp).dp
 
             // 地图在上、面板与动作区在下（**不是覆盖**）：动作区展开时地图跟着让位。
-            // 覆盖式布局会把「我的位置」压在动作区底下——地图中心即用户位置
-            Column(modifier = Modifier.fillMaxSize()) {
+            // 覆盖式布局会把「我的位置」压在动作区底下——地图中心即用户位置。
+            //
+            // 结构上地图与底部分层叠在同一个 Box 里：地图按 mapReserveDp（冻结值）让位、
+            // 底部（面板 + 常驻块）贴底。换形态的 240ms 里地图不动、被升起来的底部块盖住，
+            // 动画结束才一次性落位——理由见 mapReserveDp 的注释。
+            Box(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                        .fillMaxSize()
+                        .padding(bottom = panelHeight + mapReserveDp.dp),
                 ) {
                     OsmMapView(
                         // 账号方式的骑行态让位给还车点：那一刻用户要找的是"停哪儿"。
@@ -575,142 +657,156 @@ fun RideScreen(
 
                 }
 
-                // 底部车辆面板：默认就展开着（用户 2026-09-30 口径），高度可拖。
-                // 「按车号」在地图之外的头行里（见 showCarNumberEntry）：地图上不再挂
-                // 第二枚浮动图标，那一枚压在面板上沿、跟拖动把手抢位置
-                RideBikePanel(
-                    state = state,
-                    caps = caps,
-                    showSpots = showSpots,
-                    showCarNumberEntry = showCarNumberEntry,
-                    spots = state.zones.parkSpots,
-                    refLat = state.userLat ?: BikeNearby.DEFAULT_CENTER_LAT,
-                    refLng = state.userLng ?: BikeNearby.DEFAULT_CENTER_LNG,
-                    refFromUser = state.distanceFromUser,
-                    panelHeight = panelHeight,
-                    onResize = { dragPx ->
-                        viewModel.resizePanelBy(
-                            deltaDp = -dragPx / density,
-                            minDp = MIN_PANEL_HEIGHT_DP,
-                            maxDp = maxPanelDp,
-                        )
-                    },
-                    onResizeFinished = viewModel::persistPanelHeight,
-                    onClusterTap = { key ->
-                        // 触感由 RideClusterCard 自己发（AppCard 口径：组件内部统一触发）
-                        viewModel.onClusterTap(key)
-                    },
-                    onPick = { carNum ->
-                        // 点列表里的车 = 动作条换成车辆卡；触感由 RideBikeRow 自己发
-                        ebikeViewModel.onCarInput(carNum)
-                        pickedCar = carNum
-                    },
-                    onUnlock = { carNum -> requestKvcxAction(KvcxAction.UNLOCK, carNum) },
-                    onResetToCampus = {
-                        haptics.tap()
-                        viewModel.onResetToCampus()
-                    },
-                    onRefresh = {
-                        haptics.tap()
-                        viewModel.refresh()
-                    },
-                    onOpenCarNumber = openCarNumberSheet,
-                    onOpenFilter = {
-                        haptics.tap()
-                        showFilterSheet = true
-                    },
-                    // 行尾的「生成乘车码」直接进车号面板（账号方式那枚是「开锁」，走确认闸）
-                    onGenerateForCar = generateForCar,
-                    onSpotTap = { spot ->
-                        // 触感由 AppCardRow 自己发
-                        viewModel.onFocusPoint(spot.lat, spot.lng)
-                    },
-                )
-
-                // 页面底部常驻块：主动作 + 免责那一行。它在面板**之外**——面板定高、
-                // 动作区变高，装在一起就是把按钮挤出去（骑行仪表盘就是装不下的那个）。
-                // 导航栏内边距归这一块吃，面板不再自己垫。
+                // 面板 + 常驻块：贴底、叠在地图之上（换形态时它们就是"盖在图上"升起来的）
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(scheme.surface)
+                        .align(Alignment.BottomCenter),
+                ) {
+                    // 底部车辆面板：默认就展开着（用户 2026-09-30 口径），高度可拖。
+                    // 「按车号」在地图之外的头行里（见 showCarNumberEntry）：地图上不再挂
+                    // 第二枚浮动图标，那一枚压在面板上沿、跟拖动把手抢位置
+                    RideBikePanel(
+                        state = state,
+                        caps = caps,
+                        showSpots = showSpots,
+                        showCarNumberEntry = showCarNumberEntry,
+                        spots = state.zones.parkSpots,
+                        refLat = state.userLat ?: BikeNearby.DEFAULT_CENTER_LAT,
+                        refLng = state.userLng ?: BikeNearby.DEFAULT_CENTER_LNG,
+                        refFromUser = state.distanceFromUser,
+                        panelHeight = panelHeight,
+                        onResize = { dragPx ->
+                            viewModel.resizePanelBy(
+                                deltaDp = -dragPx / density,
+                                minDp = MIN_PANEL_HEIGHT_DP,
+                                maxDp = maxPanelDp,
+                            )
+                        },
+                        onResizeFinished = viewModel::persistPanelHeight,
+                        onClusterTap = { key ->
+                            // 触感由 RideClusterCard 自己发（AppCard 口径：组件内部统一触发）
+                            viewModel.onClusterTap(key)
+                        },
+                        onPick = { carNum ->
+                            // 点列表里的车 = 动作条换成车辆卡；触感由 RideBikeRow 自己发
+                            ebikeViewModel.onCarInput(carNum)
+                            pickedCar = carNum
+                        },
+                        onUnlock = { carNum -> requestKvcxAction(KvcxAction.UNLOCK, carNum) },
+                        onResetToCampus = {
+                            haptics.tap()
+                            viewModel.onResetToCampus()
+                        },
+                        onRefresh = {
+                            haptics.tap()
+                            viewModel.refresh()
+                        },
+                        onOpenCarNumber = openCarNumberSheet,
+                        onOpenFilter = {
+                            haptics.tap()
+                            showFilterSheet = true
+                        },
+                        // 行尾的「生成乘车码」直接进车号面板（账号方式那枚是「开锁」，走确认闸）
+                        onGenerateForCar = generateForCar,
+                        onSpotTap = { spot ->
+                            // 触感由 AppCardRow 自己发
+                            viewModel.onFocusPoint(spot.lat, spot.lng)
+                        },
+                    )
+
+                    // 页面底部常驻块：主动作 + 免责那一行。它在面板**之外**——面板定高、
+                    // 动作区变高，装在一起就是把按钮挤出去（骑行仪表盘就是装不下的那个）。
+                    // 导航栏内边距归这一块吃，面板不再自己垫。
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(scheme.surface)
                         .onGloballyPositioned { coords ->
                             // 量的是含导航栏内边距的总高：面板上限要按它扣，地图才留得住三成
-                            bottomBlockDp = coords.size.height / density
+                            blockHeight.value = coords.size.height / density
+                            // Snackbar 用实时值（读点在它自己的作用域里，写它不贵）
+                            liveBlockDp = blockHeight.value
+                            // 换形态的动画期间只记账不写状态：每帧写一次会让整页跟着重组；
+                            // 动画结束时由那个协程统一取一次（见 measuredBlockDp 的注释）
+                            if (!blockAnimating) measuredBlockDp = blockHeight.value
                         }
-                        .navigationBarsPadding(),
-                ) {
-                    RideActionArea(
-                        phase = phase,
-                        caps = caps,
-                        loggedIn = kvcxLoggedIn,
-                        state = state,
-                        pickedCar = pickedCar,
-                        ride = ride,
-                        rideFetchedAt = kvcxState.fetchedAt,
-                        busy = kvcxState.busy,
-                        unlockPending = kvcxState.unlockPending,
-                        timerActive = timerActive,
-                        timerStartAt = prefs.rideStartAt,
-                        timerCanEnd = ride == null,
-                        summary = summary,
-                        hasCode = hasCode,
-                        onDismissPicked = { pickedCar = null },
-                        onWechatScan = wechatScanPlain,
-                        onScanBodyCode = scanBodyCode,
-                        onOpenCarNumber = openCarNumberSheet,
-                        onLogin = openAccount,
-                        onUnlock = { carNum -> requestKvcxAction(KvcxAction.UNLOCK, carNum) },
-                        onGenerateForCar = generateForCar,
-                        // 车辆卡头行那枚定位：把镜头移到这辆车（车号面板里那枚的卡片版）
-                        onFocusCar = { carNum -> viewModel.focusCar(carNum) },
-                        onFocusRide = {
-                            rideMarkerLat?.let { lat ->
-                                rideMarkerLng?.let { lng -> viewModel.onFocusPoint(lat, lng) }
-                            }
-                        },
-                        onTempLock = { requestKvcxAction(KvcxAction.LOCK, null) },
-                        onResume = { requestKvcxAction(KvcxAction.RESUME, null) },
-                        onReturn = { requestKvcxAction(KvcxAction.RETURN, null) },
-                        onRetryUnlock = { requestKvcxAction(KvcxAction.RETRY_UNLOCK, null) },
-                        onRefreshRide = {
-                            haptics.tap()
-                            viewModel.refreshRide()
-                        },
-                        // 响铃寻车（2026-09-30）：控制器本地先挡「没有骑行」，这里只管触发
-                        onRingFind = {
-                            haptics.tap()
-                            viewModel.kvcx.ringFindCar()
-                        },
-                        // 锁状态查询（2026-09-30）：点骑行卡上的锁徽标现查一次
-                        onQueryLock = {
-                            haptics.tap()
-                            viewModel.kvcx.queryLockState()
-                        },
-                        onEndTimer = { showEndTimerConfirm = true },
-                        onTimerExpired = { timerExpired = true },
-                        onSettle = {
-                            haptics.tap()
-                            openWechatForSettle(context) { message ->
-                                showNotice(scope, snackbar, message, NoticeTone.Info)
-                            }
-                        },
+                            .navigationBarsPadding(),
+                    ) {
+                        RideActionArea(
+                            phase = phase,
+                            caps = caps,
+                            loggedIn = kvcxLoggedIn,
+                            state = state,
+                            pickedCar = pickedCar,
+                            ride = ride,
+                            rideFetchedAt = kvcxState.fetchedAt,
+                            busy = kvcxState.busy,
+                            unlockPending = kvcxState.unlockPending,
+                            timerActive = timerActive,
+                            timerStartAt = prefs.rideStartAt,
+                            timerCanEnd = ride == null,
+                            summary = summary,
+                            hasCode = hasCode,
+                            onDismissPicked = { pickedCar = null },
+                            onWechatScan = wechatScanPlain,
+                            onScanBodyCode = scanBodyCode,
+                            onOpenCarNumber = openCarNumberSheet,
+                            onLogin = openAccount,
+                            onUnlock = { carNum -> requestKvcxAction(KvcxAction.UNLOCK, carNum) },
+                            onGenerateForCar = generateForCar,
+                            // 车辆卡头行那枚定位：把镜头移到这辆车（车号面板里那枚的卡片版）
+                            onFocusCar = { carNum -> viewModel.focusCar(carNum) },
+                            onFocusRide = {
+                                rideMarkerLat?.let { lat ->
+                                    rideMarkerLng?.let { lng -> viewModel.onFocusPoint(lat, lng) }
+                                }
+                            },
+                            onTempLock = { requestKvcxAction(KvcxAction.LOCK, null) },
+                            onResume = { requestKvcxAction(KvcxAction.RESUME, null) },
+                            onReturn = { requestKvcxAction(KvcxAction.RETURN, null) },
+                            onRetryUnlock = { requestKvcxAction(KvcxAction.RETRY_UNLOCK, null) },
+                            onRefreshRide = {
+                                haptics.tap()
+                                viewModel.refreshRide()
+                            },
+                            // 响铃寻车（2026-09-30）：控制器本地先挡「没有骑行」，这里只管触发
+                            onRingFind = {
+                                haptics.tap()
+                                viewModel.kvcx.ringFindCar()
+                            },
+                            // 锁状态查询（2026-09-30）：点骑行卡上的锁徽标现查一次
+                            onQueryLock = {
+                                haptics.tap()
+                                viewModel.kvcx.queryLockState()
+                            },
+                            onEndTimer = { showEndTimerConfirm = true },
+                            onTimerExpired = { timerExpired = true },
+                            onSettle = {
+                                haptics.tap()
+                                openWechatForSettle(context) { message ->
+                                    showNotice(scope, snackbar, message, NoticeTone.Info)
+                                }
+                            },
                         onContinue = {
                             haptics.tap()
                             pickedCar = null
                             viewModel.kvcx.dismissReturnSummary()
                         },
+                        // 形态 key 由页面算（唯一出处 rideBarKey）：页面靠它冻结地图让位高度
+                        barKey = barKey,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Text(
-                        text = "车辆数据来自快趣接口，可能延迟或不准，以运营平台为准。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurface.copy(alpha = 0.45f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = 8.dp),
-                    )
+                        Text(
+                            text = "车辆数据来自快趣接口，可能延迟或不准，以运营平台为准。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = scheme.onSurface.copy(alpha = 0.45f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 8.dp),
+                        )
+                    }
                 }
             }
         }
@@ -830,52 +926,182 @@ fun RideScreen(
         )
     }
 
-    // 本机用车确认（写操作二次确认；文案唯一出处 kvcxConfirmDialog）
-    pendingAction?.let { (action, carNum) ->
-        val carLabel = carNum?.let { "车 $it" }
-            ?: ride?.carNum?.let { "车 $it" }
-            ?: "选中的车"
-        val dialog = kvcxConfirmDialog(action, carLabel)
-        if (dialog == null) {
-            pendingAction = null
-        } else {
-            AlertDialog(
-                onDismissRequest = { pendingAction = null },
-                title = { Text(dialog.first) },
-                text = { Text(dialog.second) },
-                confirmButton = {
-                    TextButton(onClick = {
-                        pendingAction = null
-                        haptics.tap()
-                        when (action) {
-                            KvcxAction.UNLOCK -> carNum?.let(viewModel.kvcx::unlock)
-                            KvcxAction.RETRY_UNLOCK -> viewModel.kvcx.retryUnlock()
-                            KvcxAction.RESUME -> viewModel.kvcx.resumeRide()
-                            KvcxAction.LOCK -> viewModel.kvcx.tempLock()
-                            KvcxAction.RETURN -> viewModel.kvcx.returnBike()
-                            // 响铃寻车 / 锁状态查询不走二次确认闸，到不了这里
-                            KvcxAction.RING, KvcxAction.QUERY_LOCK -> Unit
-                        }
-                    }) {
+    // 本机用车确认（写操作二次确认；文案唯一出处 kvcxConfirmDialog）。
+    // 状态读在 KvcxConfirmHost 里面（见那处注释），本函数体不读它。
+    KvcxConfirmHost(
+        pending = pendingAction,
+        ride = ride,
+        kvcx = viewModel.kvcx,
+        scope = scope,
+        snackbar = snackbar,
+        haptics = haptics,
+        context = context,
+    )
+}
+
+/**
+ * 用车确认弹窗的宿主：**「待确认动作」这个状态由它自己读**，页面函数体只负责写。
+ *
+ * 为什么这么切（2026-10-01 用户报「点确认开锁后卡一下」）：写操作那几帧本来就要做不少事
+ * （关弹窗窗口、按钮切「开锁中…」、发请求），而状态若在 `RideScreen` 函数体里读，开关弹窗
+ * 会**重组整页**——连页面下半部的地图一起，`AndroidView` 的 update 跟着跑一遍（历史上那里
+ * 收尾无条件 `invalidate()`，一次整幅重绘）。把读收进这个小组件后，弹窗的开关只重组它自己
+ * （地图那侧另有一道"画的东西没变就不重画"的判定，见 `MapOverlayInputs`）。
+ */
+@Composable
+private fun KvcxConfirmHost(
+    pending: MutableState<Pair<KvcxAction, String?>?>,
+    ride: KqcxAuth.Ride?,
+    kvcx: KvcxRideController,
+    scope: CoroutineScope,
+    snackbar: SnackbarHostState,
+    haptics: AppHaptics,
+    context: Context,
+) {
+    val pendingAction by pending
+    val (action, carNum) = pendingAction ?: return
+    val carLabel = carNum?.let { "车 $it" }
+        ?: ride?.carNum?.let { "车 $it" }
+        ?: "选中的车"
+    val dialog = kvcxConfirmDialog(action, carLabel)
+    if (dialog == null) {
+        // 规格里没有这个动作（不该发生：调用方已经挡掉免确认的动作）
+        pending.value = null
+        return
+    }
+    // 勾选不记住：每次打开都从"没勾"开始——勾选是这一次的明确决定
+    var skipNextTime by remember(action, carNum) { mutableStateOf(false) }
+    KvcxConfirmDialog(
+        dialog = dialog,
+        skipNextTime = skipNextTime,
+        onSkipChange = { skipNextTime = it },
+        onConfirm = {
+            pending.value = null
+            haptics.tap()
+            if (dialog.allowSkip && skipNextTime) {
+                scope.launch {
+                    Graph.displayPrefs(context).setEbikeUnlockConfirm(false)
+                    showNotice(
+                        scope,
+                        snackbar,
+                        "以后开锁不再弹这个确认；在「快趣出行设置 → 开锁与还车」里可随时恢复",
+                        NoticeTone.Info,
+                    )
+                }
+            }
+            when (action) {
+                KvcxAction.UNLOCK -> carNum?.let(kvcx::unlock)
+                KvcxAction.RETRY_UNLOCK -> kvcx.retryUnlock()
+                KvcxAction.RESUME -> kvcx.resumeRide()
+                KvcxAction.LOCK -> kvcx.tempLock()
+                KvcxAction.RETURN -> kvcx.returnBike()
+                // 响铃寻车 / 锁状态查询不走二次确认闸，到不了这里
+                KvcxAction.RING, KvcxAction.QUERY_LOCK -> Unit
+            }
+        },
+        onDismiss = { pending.value = null },
+        // 还车是花钱那一刻：确认键用错误色，与其它动作的主色区分开
+        danger = action == KvcxAction.RETURN,
+    )
+}
+
+/**
+ * 用车确认弹窗（开锁 / 重试开锁 / 还车共用一份排版）。
+ *
+ * 正文是**编号要点**（规格与文案在 `KvcxConfirm` / `kvcxConfirmDialog`）：三件事各有各的
+ * 责任，糊成一段谁都不看。长文配 `heightIn(max)` + `verticalScroll`，小屏或大字体档位下
+ * 按钮不会被挤出可视区（这一条是 `ui-common.md` 对确认型弹窗的硬要求）。
+ *
+ * [skipNextTime] 只对 [KvcxConfirm.allowSkip] 的动作渲染（当前只有开锁）：勾上之后弹出一行
+ * 说明——「免确认」意味着按一下就开始计费，这件事必须在用户做决定的那一刻讲清楚，
+ * 而不是等他下次误触才发现。勾选框整行可点（48dp 交互区，与充值免责声明那份同一手法）。
+ */
+@Composable
+private fun KvcxConfirmDialog(
+    dialog: KvcxConfirm,
+    skipNextTime: Boolean,
+    onSkipChange: (Boolean) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    danger: Boolean,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(dialog.title) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                dialog.points.forEachIndexed { index, point ->
+                    Row(modifier = Modifier.padding(bottom = 8.dp)) {
                         Text(
-                            text = dialog.third,
-                            color = if (action == KvcxAction.RETURN) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
+                            text = "${index + 1}.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.width(20.dp),
+                        )
+                        Text(text = point, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                if (dialog.allowSkip) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSkipChange(!skipNextTime) },
+                    ) {
+                        Checkbox(checked = skipNextTime, onCheckedChange = onSkipChange)
+                        Text(
+                            text = "以后开锁不再确认",
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                },
-                dismissButton = {
-                    TextButton(onClick = { pendingAction = null }) { Text("取消") }
-                },
-            )
-        }
-    }
+                    AnimatedVisibility(visible = skipNextTime) {
+                        Text(
+                            text = "关掉后点「开锁」就直接发指令并开始计费；" +
+                                "要恢复去「快趣出行设置 → 开锁与还车」打开「开锁前确认」。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    text = dialog.confirmLabel,
+                    color = if (danger) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里允许位置信息，或手动拖动地图找车"
+
+/**
+ * 动作区高度动画结束后的落位余量（毫秒）：动画本身是 [BAR_RISE_MS]，多留一点，
+ * 让最后一帧的尺寸也落定再冻结地图的让位高度（见 RideScreen 里 mapReserveDp 的注释）。
+ */
+private const val BLOCK_SETTLE_MS = 60L
+
+/**
+ * 一个不进组合的可变格子：布局回调里记账用（RideScreen 的常驻块高度）。
+ * **别换成 `mutableStateOf`**——每帧写状态会让整页跟着重组。
+ */
+private class DpHolder(var value: Float)
 
 /**
  * 取一次定位并把镜头移过去。[silent] = 失败不弹提示（进页自动定位那条路用）。

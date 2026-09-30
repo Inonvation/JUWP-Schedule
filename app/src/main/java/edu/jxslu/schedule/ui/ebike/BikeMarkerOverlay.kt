@@ -211,7 +211,7 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow) return
-        val out = Point()
+        val out = tmpPoint
         val margin = cullMarginPx
         drawFence(canvas, mapView, out)
         // 图层压在围栏之上、车辆标记之下（与官方 zIndex：服务区 3 < 禁停 4 < 还车点 5 < 车 6 同序）
@@ -235,7 +235,7 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
             label.color = colors.label
             label.textSize = (if (selected) 13f else 12f) * density
-            val count = cluster.bikes.size.toString()
+            val count = countLabel(cluster.bikes.size)
             // 基线 = 圆心下移半点字高，比直接减 descent 稳（不同字体的 descent 差得多）
             canvas.drawText(count, x, y - (label.ascent() + label.descent()) / 2f, label)
         }
@@ -427,6 +427,22 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
      */
     private val tmpGeo = GeoPoint(0.0, 0.0)
 
+    /**
+     * 投影结果的落点与圆角方块/圆弧共用的矩形：**同样逐帧复用**（2026-10-01 顺手收的）。
+     * 每帧一个 `Point` + 每个还车点一个 `RectF` 看着不多，拖动时是每秒上千个小对象进 GC。
+     * 用法都是"写完立刻交给 drawXxx"，跨函数共用是安全的（`draw()` 里全是一次性调用）。
+     */
+    private val tmpPoint = Point()
+    private val tmpRect = RectF()
+
+    /**
+     * 簇内车辆数的文案缓存：`Int.toString()` 每簇每帧各来一发。数量只会是几十，
+     * 直接按值查表（越界回落到 [Int.toString]）。
+     */
+    private val countText = Array(100) { it.toString() }
+
+    private fun countLabel(size: Int): String = if (size in countText.indices) countText[size] else size.toString()
+
     private fun MapView.project(lat: Double, lng: Double, out: Point) {
         tmpGeo.latitude = lat
         tmpGeo.longitude = lng
@@ -467,7 +483,7 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         val y = out.y.toFloat()
         // 尺寸压到 15dp（原来 20dp 显得比车标还抢眼）；命中半径仍是 24dp，点得中
         val half = 7.5f * density
-        val rect = RectF(x - half, y - half, x + half, y + half)
+        val rect = tmpRect.apply { set(x - half, y - half, x + half, y + half) }
         val corner = 3f * density
         badgeFill.color = colors.spotBadge
         canvas.drawRoundRect(rect, corner, corner, badgeFill)
@@ -528,7 +544,7 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
             cx - radius, headY,
         )
         pinPath.addArc(
-            RectF(cx - radius, headY - radius, cx + radius, headY + radius),
+            tmpRect.apply { set(cx - radius, headY - radius, cx + radius, headY + radius) },
             180f,
             180f,
         )

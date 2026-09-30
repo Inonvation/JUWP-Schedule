@@ -419,5 +419,17 @@ private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
         ) {
             Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         }
+        // 忘记密码的出路（2026-09-30 用户口径）：改密码只能在小程序里做，App 这边既不存
+        // "找回"流程也没有客服通道，所以必须把去哪儿改写清楚。两个落点从解包产物核对过：
+        // 小程序登录页的「忘记密码」（手机号 + 短信验证码重设，`pages/login/forget`），
+        // 登录后「设置 → 修改密码」（只填新密码，`pages/setting/modifypassword`）。
+        Text(
+            text = "忘记或不知道密码？在微信里打开「快趣出行」小程序：登录页点「忘记密码」，" +
+                "用手机号 + 短信验证码重设；登录后在「设置 → 修改密码」也能改。" +
+                "密码只保存在本机（加密存储），请妥善保管。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            modifier = Modifier.padding(top = 10.dp),
+        )
     }
 }

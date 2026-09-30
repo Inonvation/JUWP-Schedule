@@ -37,6 +37,7 @@ import edu.jxslu.schedule.domain.EbikeCapabilities
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppCardRow
+import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingItem
@@ -48,6 +49,7 @@ import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.ChevronRight
+import me.rerere.hugeicons.stroke.Notification02
 import me.rerere.hugeicons.stroke.Settings01
 import me.rerere.hugeicons.stroke.UserAccount
 
@@ -150,6 +152,7 @@ internal fun EbikeSettingsSheet(
             if (caps.inAppRide) {
                 // 先让弹层滑走再进账号页，中间不留"弹层突然没了"的那一帧
                 KvcxAccountRow(loggedIn = loggedIn, onClick = { dismiss { onOpenKvcxAccount() } })
+                RideConfirmSettingsSection(prefs = prefs)
             }
 
             CodeSettingsSection(prefs = prefs)
@@ -279,6 +282,43 @@ private fun KvcxAccountRow(loggedIn: Boolean, onClick: () -> Unit) {
 }
 
 /**
+ * 「开锁与还车」区（2026-10-01 用户要求）。
+ *
+ * 开锁弹窗里那个「不再提醒」勾选**落的就是这一项**——勾完在这里看得见、也改得回来。
+ * 两个入口写同一份偏好（`ebike_unlock_confirm`），所以别在弹窗里另存一份状态。
+ *
+ * **只放开锁**：四道闸里它是唯一"用户对自己账号"的授权，而且开锁之后 App 侧一路有进度与
+ * 结果提示；还车（结算、可能的调度费）与重试开锁（异常路径）保留每次确认，那一行常显说明
+ * 就是写给用户看的——关不掉不是漏做。
+ */
+@Composable
+private fun RideConfirmSettingsSection(prefs: EbikePrefsSnapshot) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var unlockConfirm by remember(prefs.unlockConfirm) { mutableStateOf(prefs.unlockConfirm) }
+    SettingsSection(
+        title = "开锁与还车",
+        subtitle = "App 内的写操作都会先要一次确认；这里只放开锁那一项。",
+    ) {
+        SettingSwitchRow(
+            title = "开锁前确认",
+            subtitle = "开锁前弹一次：写明计费、车号核对与支付分出路。关掉后点「开锁」直接发指令并开始计费",
+            checked = unlockConfirm,
+            onCheckedChange = { checked ->
+                unlockConfirm = checked
+                scope.launch { Graph.displayPrefs(context).setEbikeUnlockConfirm(checked) }
+            },
+        )
+        Text(
+            text = "还车与重试开锁始终要确认：还车涉及结算与可能的调度费。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+        )
+    }
+}
+
+/**
  * 「乘车码」区：生成后自动保存、骑完车自动删除。
  *
  * 从 2026-09-30 起设置弹层按主题分组（账号 / 乘车码 / 提醒 / 地图 / 其他），
@@ -374,6 +414,16 @@ private fun ReminderSettingsSection(
                         onFreeReminderChanged()
                     }
                 },
+            )
+            // 横幅（heads-up）弹不弹由系统 / ROM 决定，App 只能把渠道设成 HIGH——
+            // 设置不对时（后台限制、通知里的「悬浮通知」被关）用户在这里有一条出路，
+            // 否则只能得到一个"通知了但看不到"的死局（2026-09-30 用户反馈）。
+            SettingItem(
+                title = "通知与悬浮",
+                subtitle = "没弹出、没震动时进系统通知设置：允许通知，并把「免费时长提醒」" +
+                    "设为横幅 / 悬浮通知 + 震动",
+                icon = HugeIcons.Notification02,
+                onClick = { AppPermissions.jumpNotificationSettings(context) },
             )
         }
     }

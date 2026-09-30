@@ -5,6 +5,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -22,6 +26,13 @@ import edu.jxslu.schedule.subpageLaunchIntent
  *   无声、不弹、`ongoing`，剩余时间由**系统 chronometer** 渲染（`setWhen` + countDown），
  *   App 不需要每秒 notify 一次；
  * - [EbikeFreeRide.NotificationIds.ALERT_CHANNEL]（HIGH）：两条到点提醒，要响要弹。
+ *
+ * 关于「弹不出来」（2026-09-30 用户报「只出现在通知栏，不在屏幕上弹出」）：App 这一侧
+ * 能做的只有「HIGH 渠道 + 不静音」——横幅（heads-up）到底弹不弹由系统与 ROM 决定，
+ * 不受 App 控制。国产 ROM 常见的拦法有两种：应用被后台限制（省电策略把通知降级成静默）、
+ * 以及通知设置里「悬浮通知 / 横幅」那一项被关。所以提醒除了通知，还有
+ * [vibrateAlert] 这条不依赖通知策略的震动，设置弹层里给一条进系统通知设置的出路
+ * （见 `EbikeSettingsSheet` 的提醒区）。
  *
  * 三个通知的落点都是「骑行」页（[SubpageScreen.RIDE]，2026-09-29 结构重构后出码页与地图页
  * 已合并成一个页面）：提醒响的时候用户要么在微信里扫码、要么刚还完车，点通知回到
@@ -41,6 +52,36 @@ internal object EbikeFreeRideNotifier {
      * 双震比单次更容易被注意到，总时长不到 1 秒，不烦人。
      */
     private val ALERT_VIBRATION_PATTERN = longArrayOf(0L, 400L, 250L, 400L)
+
+    /**
+     * 提醒额外交付一次**直接震动**（2026-09-30 用户口径「通知了但只在通知栏看到，
+     * 不弹出也没有震动」）。
+     *
+     * 那一轮的真根因是 manifest 一直没声明 `VIBRATE` 权限——Android 8 起渠道上的
+     * `vibrationPattern` 要靠它才生效，缺了系统静默丢弃（[ensureChannels] 里的
+     * `enableVibration(true)` 配了也白配）。权限已补；这里再叠一层与通知渠道无关的震动：
+     *
+     * - 渠道震动归系统通知设置管，用户把那条渠道的「震动」关掉、或 ROM 把通知静默折叠时
+     *   它就不会震；直接震动不看那个开关，横幅被拦掉时它也还在；
+     * - 一震到底：这条提醒关乎计费（超时开始扣钱），宁可多一次感知。
+     *   用户不想被打扰就把「免费时长提醒」开关关掉——那时整条链路在 [EbikeFreeRideReminder.check]
+     *   的第二步就早退了，不会有通知也不会有震动。
+     *
+     * 震不出来不算错（无马达设备、被省电策略拦下都可能是 false）：震动是叠加信号，
+     * 它失败不该影响提醒本身。
+     */
+    private fun vibrateAlert(context: Context) {
+        runCatching {
+            val effect = VibrationEffect.createWaveform(ALERT_VIBRATION_PATTERN, -1)
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Vibrator::class.java)
+            }
+            vibrator?.takeIf { it.hasVibrator() }?.vibrate(effect)
+        }.onFailure { Log.w(TAG, "vibrateAlert failed", it) }
+    }
 
     /** 通知点击落点的 requestCode：与通知 id（1000/1005/1006）和余额提醒（3005/3006）都错开。 */
     private const val REQUEST_COUNTDOWN = 2000
@@ -134,6 +175,9 @@ internal object EbikeFreeRideNotifier {
     /**
      * 提前量提醒。正文按**实际剩余**写（[EbikeFreeRide.leadText]）——
      * 闹钟被 ROM 推迟时，写死「还剩 3 分钟」而实际只剩 40 秒是假信息。
+     *
+     * 通知之外再补一次 [vibrateAlert]：渠道配的是「通知栏里那条」的震动，
+     * 直接震动是「手机本身」的，两路都走才不怕 ROM 只放行其中一路。
      */
     fun postLeadReminder(context: Context, startAtMillis: Long, nowMillis: Long): Boolean {
         ensureChannels(context)
@@ -150,7 +194,9 @@ internal object EbikeFreeRideNotifier {
             .setAutoCancel(true)
             .setContentIntent(contentIntent(context, REQUEST_LEAD))
             .build()
-        return post(context, EbikeFreeRide.NotificationIds.LEAD, notification)
+        val posted = post(context, EbikeFreeRide.NotificationIds.LEAD, notification)
+        vibrateAlert(context)
+        return posted
     }
 
     /** 结束提醒：免费时段已过，该还车了。 */
@@ -166,7 +212,9 @@ internal object EbikeFreeRideNotifier {
             .setAutoCancel(true)
             .setContentIntent(contentIntent(context, REQUEST_END))
             .build()
-        return post(context, EbikeFreeRide.NotificationIds.END, notification)
+        val posted = post(context, EbikeFreeRide.NotificationIds.END, notification)
+        vibrateAlert(context)
+        return posted
     }
 
     /**

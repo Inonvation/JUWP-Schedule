@@ -34,6 +34,11 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 上课提醒（DESIGN §3.7）：API 33+ 运行时权限，只在用户开启提醒开关那一刻申请 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 免费时长提醒的震动（DESIGN §3.9）：普通权限，安装即授予。
+         **Android 8 起通知渠道上的 `vibrationPattern` 要靠它才生效**，缺了系统静默丢弃
+         ——2026-09-30 用户报「通知了但没有震动」的根因就是一直没声明这一条
+         （渠道里 `enableVibration(true)` 配了也发不出去）。 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 共享单车免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务。
@@ -49,7 +54,8 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
     <!-- 快趣相机扫一扫（2026-09-29「车号识别联动」）：扫车身二维码识别车号。
-         运行时权限由扫码库的 CaptureActivity 自行申请，这里只声明 -->
+         运行时权限由扫码库的 CaptureManager 在进页时自行申请（`EbikeScanActivity` 只转发
+         申请结果），这里只声明；设备无补光灯时取景页不摆手电筒按钮 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 今日页快捷方式（DESIGN §4.16）：API 30+ 包可见性声明。
          三个 package 让预设包可见（getLaunchIntentForPackage 不再对已安装的 App
@@ -284,13 +290,19 @@
             android:name=".ui.ebike.EbikeFreeRideAlarmReceiver"
             android:exported="false" />
 
-        <!-- 快趣相机扫一扫（2026-09-29）：覆盖库自带的 CaptureActivity——锁竖屏
-             （与其它窗口同一理由：扫码时转屏会销毁重建相机预览）；
-             tool:replace 防止与库 manifest 的 screenOrientation 声明合并冲突 -->
+        <!-- 内置相机扫一扫（快趣账号方式的「扫车身码」，DESIGN §3.9）。
+             2026-09-30 起换成自己的窗口（`EbikeScanActivity`）——库自带的 CaptureActivity
+             只有取景框 + 一行提示，没有开关手电筒与「从相册选图」两个入口，而这两件正是
+             暗光 / 码已在相册里时的唯一出路。相机预览 / 权限 / 解码仍由库的
+             DecoratedBarcodeView + CaptureManager 承担，故主题沿用库的取景主题。
+             锁竖屏（与其它窗口同一理由：扫码时转屏会销毁重建相机预览）。 -->
         <activity
-            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:name=".ui.ebike.EbikeScanActivity"
+            android:exported="false"
             android:screenOrientation="portrait"
-            tools:replace="android:screenOrientation" />
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
 
         <!-- 导出成绩单的分享/打开通道（DESIGN §4.25）：成绩单落在应用私有目录，
              系统 PDF 阅读器与分享目标靠临时授权的内容 Uri 读取，不写公共目录、不申请存储权限。

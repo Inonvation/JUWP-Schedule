@@ -73,6 +73,13 @@ data class EbikePrefsSnapshot(
      * 默认 [EbikeUseMode.Default]（小程序方式，与存储默认一致）。
      */
     val useMode: EbikeUseMode = EbikeUseMode.Default,
+    /**
+     * 开锁前是否弹二次确认（DESIGN §3.9 / §4.32）。默认开；关掉后点「开锁」直接发指令。
+     * 与其余偏好同一条纪律：**这是界面视图**，行为判定以 DataStore 原始流为准
+     * （开锁动作由页面按本快照决定弹不弹窗，只在设置弹层刚改完的那一帧上会有滞后，
+     * 而滞后的方向是会弹窗——保守那一侧）。
+     */
+    val unlockConfirm: Boolean = true,
 )
 
 sealed interface EbikeEvent {
@@ -128,6 +135,7 @@ class EbikeViewModel(
         prefs.ebikeFreeLeadMinutes,
         prefs.ebikeRideStartAt,
         prefs.ebikeUseMode,
+        prefs.ebikeUnlockConfirm,
     ) { array ->
         val autoSave = array[0] as Boolean
         val burnAfterScan = array[1] as Boolean
@@ -138,6 +146,7 @@ class EbikeViewModel(
         val freeLead = array[5] as Int
         val rideStartAt = array[6] as Long
         val useMode = array[7] as EbikeUseMode
+        val unlockConfirm = array[8] as Boolean
         EbikePrefsSnapshot(
             autoSave = autoSave,
             burnAfterScan = burnAfterScan,
@@ -147,6 +156,7 @@ class EbikeViewModel(
             freeLeadMinutes = freeLead,
             rideStartAt = rideStartAt,
             useMode = useMode,
+            unlockConfirm = unlockConfirm,
         )
     }.stateIn(
         viewModelScope,

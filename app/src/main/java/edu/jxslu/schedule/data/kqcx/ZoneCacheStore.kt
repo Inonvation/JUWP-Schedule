@@ -73,6 +73,7 @@ class ZoneCacheStore(private val file: File) {
                             lat = spot.lat,
                             lng = spot.lng,
                             outline = spot.outline.map { GcjPoint(it.lat, it.lng) },
+                            name = spot.name,
                         )
                     },
                     nogoZones = row.nogo.map { outline -> outline.map { GcjPoint(it.lat, it.lng) } },
@@ -92,6 +93,7 @@ class ZoneCacheStore(private val file: File) {
                             lat = spot.lat,
                             lng = spot.lng,
                             outline = spot.outline.map { PointRow(it.lat, it.lng) },
+                            name = spot.name,
                         )
                     },
                     nogo = entry.zones.nogoZones.map { outline ->
@@ -116,6 +118,12 @@ class ZoneCacheStore(private val file: File) {
         val lat: Double,
         val lng: Double,
         val outline: List<PointRow> = emptyList(),
+        /**
+         * 还车点名（2026-09-30 加）。**必须有默认值**：老版本写下的缓存文件没有这一列，
+         * 缺默认值会让整份文件解码失败——那等于用户升级后白丢一次图层缓存
+         * （静默回归，页面只是少一层「P」，没人会报错）。
+         */
+        val name: String = "",
     )
 
     @Serializable

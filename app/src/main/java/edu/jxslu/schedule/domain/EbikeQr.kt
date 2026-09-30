@@ -1,7 +1,13 @@
 package edu.jxslu.schedule.domain
 
 import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
 import com.google.zxing.EncodeHintType
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.ReaderException
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import kotlinx.serialization.Serializable
@@ -124,6 +130,37 @@ object EbikeQr {
         val idParam = Regex("[?&]id=([0-9]{$CAR_NUM_MIN_LENGTH,$CAR_NUM_MAX_LENGTH})")
             .find(content)?.groupValues?.get(1)
         return idParam?.let(::resolveCarNum)
+    }
+
+    /**
+     * 相册图片 → 二维码内容（2026-09-30，「相机扫一扫」的相册入口）。
+     *
+     * 两个与相机预览那条路不同的口径，都是被「只解一次」逼出来的：
+     * - `TRY_HARDER` 开着——预览解码每秒几十帧、这帧不行还有下一帧，相册只有这一张，
+     *   多花一点时间换更全的采样与重试是划算的；
+     * - 候选格式只留二维码——车身码是 QR，放一维条码进来只是把尝试次数摊薄。
+     *
+     * 参数是 ARGB 像素 + 尺寸：取像素（Bitmap）留在 UI 层，本函数纯 JVM，测试直接喂
+     * [qrMatrix] 渲染出的像素（`EbikeQrTest`）。EXIF 旋转不用管——QR 的定位图案对任意
+     * 旋转都能检出（相机那一路本来就靠这个）。解不出（拍糊 / 裁掉了定位图案 / 不是码）
+     * 返回 null，调用方留在取景页让用户换一张。
+     */
+    fun decodeFromPixels(pixels: IntArray, width: Int, height: Int): String? {
+        if (width <= 0 || height <= 0 || pixels.size < width * height) return null
+        val binary = BinaryBitmap(HybridBinarizer(RGBLuminanceSource(width, height, pixels)))
+        val reader = MultiFormatReader().apply {
+            setHints(
+                mapOf(
+                    DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+                    DecodeHintType.TRY_HARDER to true,
+                ),
+            )
+        }
+        return try {
+            reader.decodeWithState(binary).text
+        } catch (_: ReaderException) {
+            null
+        }
     }
 
     /**

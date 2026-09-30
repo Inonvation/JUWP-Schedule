@@ -42,6 +42,7 @@ class ZoneCacheStoreTest {
                                     GcjPoint(28.6882, 116.0282),
                                     GcjPoint(28.6880, 116.0283),
                                 ),
+                                name = "教学北大楼左侧",
                             ),
                         ),
                         nogoZones = listOf(
@@ -60,6 +61,8 @@ class ZoneCacheStoreTest {
             assertEquals(1, back[0].zones.parkSpots.size)
             assertEquals(3, back[0].zones.parkSpots[0].outline.size)
             assertEquals(28.6882, back[0].zones.parkSpots[0].outline[1].lat, 1e-9)
+            // 点位名（2026-09-30 加的列）必须一起过一遍文件，丢了列表就只剩「还车点」
+            assertEquals("教学北大楼左侧", back[0].zones.parkSpots[0].displayName)
             assertEquals(1, back[0].zones.nogoZones.size)
             assertEquals(3, back[0].zones.nogoZones[0].size)
             // 往返后文件确实在，且占用可统计（「地图缓存」卡要用）
@@ -84,6 +87,14 @@ class ZoneCacheStoreTest {
             val back = store.load()
             assertEquals(1, back.size)
             assertTrue(back[0].zones.isEmpty)
+            // 老版本写下的还车点没有 `name` 列：读出来是空串，而不是整份文件解码失败
+            file.writeText(
+                """[{"lat":1.0,"lng":2.0,"fetchedAt":3,"spots":[{"lat":1.1,"lng":2.1,"outline":[]}]}]""",
+            )
+            val legacy = store.load()
+            assertEquals(1, legacy.size)
+            assertEquals(1, legacy[0].zones.parkSpots.size)
+            assertEquals("还车点", legacy[0].zones.parkSpots[0].displayName)
         } finally {
             file.delete()
         }

@@ -181,6 +181,15 @@ data class DisplayPrefs(
      */
     val ebikeBurnAfterScan: Boolean = true,
     /**
+     * 开锁前的二次确认弹窗（DESIGN §3.9 / §4.32）。**默认开**。
+     *
+     * 关掉 = 点「开锁」直接发指令（在开锁弹窗勾「不再提醒」也落这一项）。
+     * 这是四道闸里**唯一允许用户自己关**的一道——用户对自己账号的授权，
+     * 关掉不代表没有后果（一样计费、一样禁自动重试），所以另有设置开关可以反悔；
+     * 定位前置、零自动重试、降级官方渠道三道闸与它无关，任何情况下都不动。
+     */
+    val ebikeUnlockConfirm: Boolean = true,
+    /**
      * 最近生成的共享单车车号（**完整车号**，倒序去重，上限见 [EbikeQr.RECENT_LIMIT]）。
      * 2026-09-23 之前只存尾部 3 位，[EbikeQr.decodeRecent] 读旧数据时补前缀。
      */
@@ -613,6 +622,14 @@ class DisplayPrefsStore(private val context: Context) {
     /** 扫完即焚开关（DESIGN §3.9）。全局项，默认开。 */
     val ebikeBurnAfterScan: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_EBIKE_BURN_AFTER_SCAN] ?: true
+    }.distinctUntilChanged()
+
+    /**
+     * 开锁前是否弹二次确认（DESIGN §3.9 / §4.32）。全局项，默认开；关掉后点「开锁」
+     * 直接发指令。出口两个：开锁弹窗的「不再提醒」勾选、快趣出行设置 → 开锁与还车。
+     */
+    val ebikeUnlockConfirm: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_UNLOCK_CONFIRM] ?: true
     }.distinctUntilChanged()
 
     /**
@@ -1084,6 +1101,11 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_BURN_AFTER_SCAN] = value }
     }
 
+    /** 开锁前是否弹二次确认（DESIGN §3.9 / §4.32）。 */
+    suspend fun setEbikeUnlockConfirm(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_UNLOCK_CONFIRM] = value }
+    }
+
     /** 标记「已自动申请过定位权限」（DESIGN §3.9），见 [ebikeLocationAsked]。 */
     suspend fun setEbikeLocationAsked(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_LOCATION_ASKED] = value }
@@ -1357,6 +1379,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_USE_MODE = stringPreferencesKey("ebike_use_mode")
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
+        val KEY_EBIKE_UNLOCK_CONFIRM = booleanPreferencesKey("ebike_unlock_confirm")
         val KEY_EBIKE_LOCATION_ASKED = booleanPreferencesKey("ebike_location_asked")
         val KEY_EBIKE_MAP_ONLY_AVAILABLE = booleanPreferencesKey("ebike_map_only_available")
         val KEY_EBIKE_MAP_ONLY_OUR_CAMPUS = booleanPreferencesKey("ebike_map_only_our_campus")
