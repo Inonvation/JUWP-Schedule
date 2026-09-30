@@ -20,15 +20,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -39,7 +36,6 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -76,6 +72,8 @@ import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import kotlinx.coroutines.launch
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.BellRing
 
 /** 「全部」档的选中哨兵值：学期号/学年号不可能出现的字符串，避免与真实数据撞值。 */
 private const val SCOPE_ALL = "\u0000all"
@@ -222,15 +220,31 @@ fun ScoreScreen(onBack: () -> Unit) {
                         onClick = { TranscriptActivity.start(context) },
                     )
                     Spacer(Modifier.height(10.dp))
-                    // 提醒等出分是主场景之一：空态给一行设置入口（设置页承载开关与间隔）
-                    EmptyHint(
-                        title = "出分提醒",
-                        body = "在新出成绩或复查改分时收到通知，到成绩设置里开启。",
-                        actionLabel = "去设置",
-                        onAction = {
-                            SubpageActivity.start(context, SubpageScreen.SCORE_SETTINGS)
-                        },
-                    )
+                    // 提醒等出分是主场景之一：空态给一行入口卡（与导出卡同语言，
+                    // 开关与间隔在「成绩设置」页承载——别在这再长出一个设置块）
+                    AppCardRow(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        onClick = { SubpageActivity.start(context, SubpageScreen.SCORE_SETTINGS) },
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "出分提醒",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "新出成绩或复查改分时通知 · 在成绩设置里开启",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            )
+                        }
+                        Icon(
+                            HugeIcons.BellRing,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
             else -> {
@@ -301,9 +315,6 @@ fun ScoreScreen(onBack: () -> Unit) {
                             summary,
                             total = rows.count { it is ScoreRow.Record },
                             includeFreeElectives = includeFreeElectives,
-                            onIncludeFreeElectives = { value ->
-                                scope.launch { prefsStore.setScoreIncludeFreeElectives(value) }
-                            },
                         )
                     }
                     // 不设自定义 key：同学期同课号可能有多行（补考/重修批次），任何业务键组合
@@ -414,7 +425,6 @@ private fun SummaryCard(
     summary: TermSummary?,
     total: Int,
     includeFreeElectives: Boolean,
-    onIncludeFreeElectives: (Boolean) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -490,18 +500,14 @@ private fun SummaryCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("任选课计入统计", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "默认排除：本校综测同样不计任选课",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    )
-                }
-                Switch(checked = includeFreeElectives, onCheckedChange = onIncludeFreeElectives)
-            }
+            Spacer(Modifier.height(4.dp))
+            // 口径开关已迁「成绩设置」（2026-09-30）：卡上只留一行去向说明，
+            // 当前口径在 note 行里已经随 excludedCount 动态展示
+            Text(
+                "统计口径在「成绩设置」里调整",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
         }
     }
 }
@@ -513,25 +519,6 @@ private fun FormulaLine(text: String) {
         text,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-    )
-}
-
-/** 排序菜单项：当前选中的档位带对勾。 */
-@Composable
-private fun SortMenuItem(
-    label: String,
-    mode: ScoreSortMode,
-    current: ScoreSortMode,
-    onSelect: (ScoreSortMode) -> Unit,
-) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        trailingIcon = {
-            if (mode == current) {
-                Icon(Icons.Filled.Check, contentDescription = null)
-            }
-        },
-        onClick = { onSelect(mode) },
     )
 }
 

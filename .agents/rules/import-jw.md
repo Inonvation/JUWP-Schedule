@@ -121,6 +121,9 @@
   考试提醒在 `TimetableHubScreen` 的 `ExamAlertRows`（课表 hub「使用」区）。两边
   **共用 `alert_interval_hours`**——改任意一边另一边跟着变，别给它加「按提醒分开」的键；
   `ScoreAlertReminder.ensurePeriodicWork` 只排一个周期任务，两链共用。
+- **任选课口径开关只在成绩设置页**（2026-09-30）：成绩页汇总卡的重复开关已删，
+  note 行的 `excludedCount` 文案负责展示当前口径生效中。别在两处各放一个开关——
+  改口径的地方一多，用户永远对不上「我看到的是按哪个口径算的」。
 - **没有「立即检查」**（用户删，2026-09-30）：`onSettingsChanged` 的 one-shot 已经是
   「改完设置当场评估一次」的通道，不要往设置页再选手动触发入口；要最新数据走成绩页
   「从教务导入」（WebView 强制路径）。

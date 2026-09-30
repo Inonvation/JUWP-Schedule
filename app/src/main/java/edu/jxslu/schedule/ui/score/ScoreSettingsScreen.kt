@@ -167,7 +167,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
                 )
                 SettingItem(
                     title = "自动检查间隔",
-                    subtitle = "多久在后台自动核对一次成绩",
+                    subtitle = "多久在后台自动核对一次（与考试变动提醒共用）",
                     value = ScoreAlertDefaults.intervalLabel(intervalHours),
                     enabled = scoreAlertEnabled,
                     onClick = { intervalPickerOpen = true },
