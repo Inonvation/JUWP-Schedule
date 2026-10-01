@@ -39,6 +39,7 @@ import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Repair
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
+import me.rerere.hugeicons.stroke.WashingMachine
 
 /**
  * 我的 → 校园服务（DESIGN §3.3，2026-09-28 自「扩展服务」改名瘦身）。
@@ -68,6 +69,8 @@ fun ExtensionServicesHubScreen(
     onOpenKvcx: () -> Unit,
     /** 校历（DESIGN §4.34）：免登录，图来自仓库镜像 + 内置兜底。 */
     onOpenCampusCalendar: () -> Unit,
+    /** U净 洗衣房（DESIGN §4.37）：空闲看板 · 扫码识别；登录凭据在第三方手里。 */
+    onOpenUjing: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
     val context = LocalContext.current
@@ -77,6 +80,8 @@ fun ExtensionServicesHubScreen(
     val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
         .collectAsStateWithLifecycle()
     val kvcxLoggedIn by remember { Graph.kqcx(context).loggedIn }
+        .collectAsStateWithLifecycle()
+    val ujingLoggedIn by remember { Graph.ujing(context).loggedIn }
         .collectAsStateWithLifecycle()
     // 使用方式（DESIGN §3.9 / §4.32）：**快趣出行账号入口只属于账号登录方式**——
     // 小程序方式不碰快趣账号，入口留着就是它用不到的功能（切回去入口自然回来）。
@@ -178,6 +183,14 @@ fun ExtensionServicesHubScreen(
                         onClick = onOpenKvcx,
                     )
                 }
+                // U净（2026-10-01 加入）：美的校园洗衣——空闲看板 / 扫码识别（P1 只读）
+                SettingItem(
+                    title = "U净",
+                    subtitle = "洗衣房空闲 · 扫码识别洗衣机",
+                    icon = HugeIcons.WashingMachine,
+                    value = if (ujingLoggedIn) "已登录" else "点击登录",
+                    onClick = onOpenUjing,
+                )
             }
         }
     }

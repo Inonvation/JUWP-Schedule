@@ -22,6 +22,10 @@ import edu.jxslu.schedule.data.qzxy.QzxyClearStore
 import edu.jxslu.schedule.data.qzxy.QzxyWateringStore
 import edu.jxslu.schedule.data.qzxy.QzxyGattLink
 import edu.jxslu.schedule.data.qzxy.QzxySessionStore
+import edu.jxslu.schedule.data.ujing.UjingHouseStore
+import edu.jxslu.schedule.data.ujing.UjingOrderStore
+import edu.jxslu.schedule.data.ujing.UjingRepository
+import edu.jxslu.schedule.data.ujing.UjingSessionStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.CampusCalendarStore
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
@@ -146,6 +150,12 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var kqcxBikeClient: KqcxBikeClient? = null
+
+    @Volatile
+    private var ujingRepository: UjingRepository? = null
+
+    @Volatile
+    private var ujingHouseStore: UjingHouseStore? = null
 
     @Volatile
     private var powerRepository: PowerRepository? = null
@@ -304,6 +314,26 @@ private var qzxyRepository: QzxyRepository? = null
                 KqcxAuthClient.create(),
                 KqxCredentialStore(context.applicationContext),
             ).also { kqcxSession = it }
+        }
+
+    /**
+     * U净 仓库单例（DESIGN §4.37）。同为第三方的独立会话：token 落加密 prefs
+     * （secure_ujing.xml，已排除备份），与胖乖 / 趣智 / 快趣各存一份，互不牵连。
+     * 在案订单快照同属进程级状态（跨窗口 / 跨进程恢复），随仓库单例持有。
+     */
+    fun ujing(context: Context): UjingRepository =
+        ujingRepository ?: synchronized(this) {
+            ujingRepository ?: UjingRepository(
+                UjingSessionStore(context.applicationContext),
+                UjingOrderStore(context.applicationContext),
+            ).also { ujingRepository = it }
+        }
+
+    /** U净 收藏的洗衣房（DESIGN §4.37）。纯本地偏好（普通 prefs），与登录会话分开存。 */
+    fun ujingHouses(context: Context): UjingHouseStore =
+        ujingHouseStore ?: synchronized(this) {
+            ujingHouseStore ?: UjingHouseStore(context.applicationContext)
+                .also { ujingHouseStore = it }
         }
 
     /**

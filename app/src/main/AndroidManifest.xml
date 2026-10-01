@@ -80,6 +80,9 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="alipays" />
         </intent>
+        <!-- U净 支付（DESIGN §4.37 P2）：支付宝 SDK 拉起收银台走同一 scheme；
+             上面那条 queries 已覆盖，SDK 检测支付宝安装用包名——补一条声明防误判 -->
+        <package android:name="com.eg.android.AlipayGphone" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -271,6 +274,12 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- 洗衣完成提醒（DESIGN §4.37）：U净 订单洗涤中的精确闹钟落点——到点查一次
+             订单详情，已完成发「衣服洗好了」，还在跑按新剩余时间重排 -->
+        <receiver
+            android:name=".ui.reminder.UjingDoneReceiver"
+            android:exported="false" />
 
         <!-- 免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务，只在「开关开 + 计时中」
              这 15 分钟里存在。倒计时数字由系统 chronometer 渲染，服务本身不周期干活。

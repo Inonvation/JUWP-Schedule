@@ -44,6 +44,7 @@ import edu.jxslu.schedule.ui.qzxy.QzxyDebugScreen
 import edu.jxslu.schedule.ui.scholar.ScholarScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
+import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
 
 /** 二级页种类；通过 extra 传给 [SubpageActivity]，值必须与 enum 名一致。 */
@@ -124,6 +125,8 @@ enum class SubpageScreen {
     KVCX,
     /** 我的 → 校园服务 → 校历（仓库镜像 + 内置兜底，DESIGN §4.34） */
     CAMPUS_CALENDAR,
+    /** 我的 → 校园服务 → U净（美的校园洗衣：空闲看板 · 扫码识别，DESIGN §4.37） */
+    UJING,
 }
 
 /**
@@ -213,6 +216,7 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.WATER -> WaterScreen(onBack = onBack, autoStart = autoStart)
             SubpageScreen.KVCX -> KvcxScreen(onBack = onBack)
             SubpageScreen.CAMPUS_CALENDAR -> CampusCalendarScreen(onBack = onBack)
+            SubpageScreen.UJING -> UjingScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->
@@ -297,6 +301,7 @@ class SubpageActivity : ComponentActivity() {
                 onOpenCampusCalendar = {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CALENDAR)
                 },
+                onOpenUjing = { SubpageActivity.start(this, SubpageScreen.UJING) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

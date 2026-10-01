@@ -81,11 +81,29 @@ private const val GALLERY_MAX_EDGE = 2000
  * **返回结果与库自带窗口逐字段同形**（[CaptureManager.resultIntent]），`ScanContract`
  * 那侧不改：相册认出来的车号也从同一条通道回给 `RideScreen`。
  *
+ * 2026-10-01 起 U净 洗衣房（DESIGN §4.37）复用本窗口：调起时传
+ * [EXTRA_RESULT_MODE] = [MODE_RAW]，相册图不再解析车号、二维码原文原样回传
+ * （机身码的解析归 U净 服务端）。不传则维持骑行模式，行为不变。
+ *
  * 手电筒状态由库的 [DecoratedBarcodeView.TorchListener] 驱动——**别在页面里另存一份
  * 开关值**：暂停再回来（去相册选图就是）相机重开时 `CameraPreview` 会按它自己记住的状态
  * 把补光灯重新点亮，两处各记一份迟早对不上。
  */
 class EbikeScanActivity : ComponentActivity() {
+
+    companion object {
+        /**
+         * 回传模式（Intent extra）。默认骑行模式：相册图必须解析出车号才回传；
+         * [MODE_RAW] 把二维码原文原样回传（U净 扫码复用，见类注释）。
+         */
+        const val EXTRA_RESULT_MODE = "scan_result_mode"
+        const val MODE_BIKE = "bike"
+        const val MODE_RAW = "raw"
+    }
+
+    /** true = 原文模式（相册图不解析车号，直接回传二维码文本）。 */
+    private val rawMode: Boolean
+        get() = intent.getStringExtra(EXTRA_RESULT_MODE) == MODE_RAW
 
     private lateinit var scanner: DecoratedBarcodeView
     private lateinit var capture: CaptureManager
@@ -184,38 +202,44 @@ class EbikeScanActivity : ComponentActivity() {
     }
 
     /**
-     * 相册图 → 车号，认出来就走与相机识别同一条返回通道。
+     * 相册图 → 结果文本，认出来就走与相机识别同一条返回通道。
      *
      * 取像素与二值化放 IO 线程（一张 12MP 图取像素就是几十毫秒的量级）；认不出来留在
-     * 取景页给一句提示——相机还开着，换一张、直接对准车身都行。**这里先过一遍
+     * 取景页给一句提示——相机还开着，换一张、直接对准机器都行。骑行模式下**先过一遍
      * [EbikeQr.parseScannedCarNum]**：从相册挑图很容易挑到无关截图，那种情况踢回骑行页
      * 再报「未识别到有效车号」，等于把用户刚打开的面板关掉，不如就地重选。
+     * 原文模式不解析（U净 机身码归服务端识别），解出文本即回传。
      */
     private fun scanFromGallery(uri: Uri) {
         lifecycleScope.launch {
-            val carNum = withContext(Dispatchers.IO) { carNumFromGallery(uri) }
-            if (carNum == null) {
+            val raw = withContext(Dispatchers.IO) { rawTextFromGallery(uri) }
+            val result = if (rawMode) raw else raw?.let(EbikeQr::parseScannedCarNum)
+            if (result == null) {
                 showNotice(
                     lifecycleScope,
                     snackbar,
-                    "这张图里没认出车身二维码，换一张试试",
+                    if (rawMode) {
+                        "这张图里没认出二维码，换一张试试"
+                    } else {
+                        "这张图里没认出车身二维码，换一张试试"
+                    },
                     NoticeTone.Warning,
                 )
             } else {
-                finishWithResult(carNum)
+                finishWithResult(result)
             }
         }
     }
 
-    /** 相册图 → 完整车号；认不出（不是码 / 拍糊 / 读不出来）返回 null。IO 线程调用。 */
-    private fun carNumFromGallery(uri: Uri): String? {
+    /** 相册图 → 二维码原文；认不出（不是码 / 拍糊 / 读不出来）返回 null。IO 线程调用。 */
+    private fun rawTextFromGallery(uri: Uri): String? {
         val bitmap = readSampledBitmap(uri) ?: return null
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         bitmap.recycle()
-        return EbikeQr.decodeFromPixels(pixels, width, height)?.let(EbikeQr::parseScannedCarNum)
+        return EbikeQr.decodeFromPixels(pixels, width, height)
     }
 
     /**
@@ -246,14 +270,15 @@ class EbikeScanActivity : ComponentActivity() {
     }
 
     /**
-     * 把车号当作一次「扫码结果」返回给 `RideScreen`（`ScanContract` 的解析口径不变）。
+     * 把结果文本当作一次「扫码结果」返回（`CaptureManager` 的回传口径不变）：
+     * 骑行模式是车号，原文模式是二维码原文（U净 扫码复用，见类注释）。
      *
      * `SourceData` 只为满足 [BarcodeResult] 的构造器：`resultIntent` 只读 `Result` 的
      * 文本 / 格式 / 字节，像素那一段不参与回传（也不申请 barcodeImagePath）。
      */
-    private fun finishWithResult(carNum: String) {
+    private fun finishWithResult(text: String) {
         val scanned = BarcodeResult(
-            Result(carNum, null, null, BarcodeFormat.QR_CODE),
+            Result(text, null, null, BarcodeFormat.QR_CODE),
             SourceData(ByteArray(1), 1, 1, 0, 0),
         )
         setResult(RESULT_OK, CaptureManager.resultIntent(scanned, null))

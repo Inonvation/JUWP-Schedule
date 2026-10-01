@@ -644,6 +644,14 @@ class DisplayPrefsStore(private val context: Context) {
     }.distinctUntilChanged()
 
     /**
+     * U净 使用须知的最近确认时刻（DESIGN §4.37）。0 = 从未确认（首次进入要弹），
+     * 距上次确认超过一周也会再弹一次（窗口口径在 `UjingViewModel`）。
+     */
+    val ujingNoticeSeenAt: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_UJING_NOTICE_SEEN_AT] ?: 0L
+    }.distinctUntilChanged()
+
+    /**
      * 附近单车地图「只看可用」筛选的记住开关（DESIGN §3.9）。
      *
      * 默认开（2026-09-24 用户拍板）：这个筛选本身就是想找能骑的车，列表与地图标记
@@ -1111,6 +1119,11 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_LOCATION_ASKED] = value }
     }
 
+    /** 记录「已读 U净 使用须知」的时刻（DESIGN §4.37），见 [ujingNoticeSeenAt]。 */
+    suspend fun setUjingNoticeSeenAt(millis: Long) {
+        context.displayDataStore.edit { it[KEY_UJING_NOTICE_SEEN_AT] = millis }
+    }
+
     /** 记住附近单车地图「只看可用」筛选（DESIGN §3.9），见 [ebikeMapOnlyAvailable]。 */
     suspend fun setEbikeMapOnlyAvailable(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_MAP_ONLY_AVAILABLE] = value }
@@ -1381,6 +1394,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")
         val KEY_EBIKE_UNLOCK_CONFIRM = booleanPreferencesKey("ebike_unlock_confirm")
         val KEY_EBIKE_LOCATION_ASKED = booleanPreferencesKey("ebike_location_asked")
+        val KEY_UJING_NOTICE_SEEN_AT = longPreferencesKey("ujing_notice_seen_at")
         val KEY_EBIKE_MAP_ONLY_AVAILABLE = booleanPreferencesKey("ebike_map_only_available")
         val KEY_EBIKE_MAP_ONLY_OUR_CAMPUS = booleanPreferencesKey("ebike_map_only_our_campus")
         val KEY_EBIKE_VIEW_LAT = floatPreferencesKey("ebike_view_lat")
