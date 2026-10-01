@@ -22,11 +22,12 @@
 | 卡片 / 弹层 / 一次性提示 | `.agents/rules/ui-common.md` |
 | 今日页 / 课表网格 / 作息表 / 课程时间 | `.agents/rules/today-ui.md` |
 | 桌面小组件 | `.agents/rules/widget.md` |
-| 教务课表导入 / 考试 / 成绩 / 教材 | `.agents/rules/import-jw.md` |
+| 教务课表导入 / 考试 / 成绩 / 教材 / 选课 | `.agents/rules/import-jw.md` |
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 | `.agents/rules/ebike.md` |
 | 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
+| U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
 | 学工表单 / 盖章成绩单 | `.agents/rules/xg-transcript.md` |
 
 其他只读参考：
@@ -52,7 +53,7 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 | AGP | **8.7.3** |
 | Kotlin | **2.1.21**（compose / serialization 同版本；KSP `2.1.21-2.0.1`） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
-| Room DB | **v16**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`（v15 起 `fromAccount` / `accType` 记交易账户，消费流水「充值到哪」的钥匙）、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）、`ride_records`（本机骑行记录，v16，只记本机用车那条链路）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑） |
+| Room DB | **v17**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`（v15 起 `fromAccount` / `accType` 记交易账户，消费流水「充值到哪」的钥匙）、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）、`ride_records`（本机骑行记录，v16，只记本机用车那条链路）、`course_selections`（选课记录，v17，按学期替换，DESIGN §4.35）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑） |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN §3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**）。**不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不存在）；不要打开传递依赖（会拉 `androidx.core` 1.17，AGP 8.7 / compileSdk 35 编不过） |
@@ -150,7 +151,7 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
 
 ## 爬虫脚本（scripts/）
 
-正式脚本 8 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 9 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
@@ -160,6 +161,7 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
 | `fetch_exams.py` | 考试安排（`--term` 可选，缺省取教务当前学期；JSON 接口） | `scripts/out/exams.json` |
 | `fetch_scores.py` | 课程成绩（`--term` 可选，缺省全部学期；JSON 接口） | `scripts/out/scores.json` |
 | `fetch_textbooks.py` | 学生教材确认（`--term` 可选，缺省教务当前学期；JSON 接口 `/jsxsd/nxsjc/xsjcqr`） | `scripts/out/textbooks.json` |
+| `fetch_selections.py` | 选课记录 + 选课轮次（`--term` 可重复，缺省当前学期+下一学期；layui JSON；**只读**，退课接口绝不碰） | `scripts/out/selections.json` |
 | `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9A101`） | `scripts/out/power.json` |
 | `fetch_transcript.py` | 教务处**盖章成绩单**（金格签章系统 `jwxyxx.juwp.edu.cn`，**非强智教务**；`--list` / `--term` 可多个 / `--out`） | `scripts/out/transcript_<标签>.pdf` |
 
@@ -172,6 +174,7 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_textbooks.py
+.\.venv-scraper\Scripts\python.exe scripts\fetch_selections.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py --list   # 出单：--term 2025-2026-2
 ```
@@ -195,13 +198,17 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
   不要把「功能被校方关闭」误判成「暂无数据」。学期参数：课表页 `xnxq01id`，考试 `xnxqid`，成绩 `kksj`。
 - 教材确认同款 layui 接口 `/jsxsd/nxsjc/xsjcqr`（`xnxqid` + 分页；`fetch_textbooks.py` §5.7）。
   **`xsjcisxy.do` 是征订确认写操作（POST），脚本与 App 只读 `xsjcqr`，绝不触碰**。
+- 选课同款 layui 接口：选课日志 `loadXsxkjgList?lx=xkrz&type=list&xnxqid=`、轮次
+  `xsxk/xklc_list_data`（`fetch_selections.py` §5.8；**轮次接口的 `code` 是字符串 `"0"`**）。
+  **`Xsxkjg_tk.do`（申请退课，POST）与 `mzlist.do`（免责声明查询）绝不触碰**；
+  选课/退课只在 App 的 WebView 里由用户自己在教务页面上操作。
 - 登录链路、DOM 规则、排错表、WebView 注入 JS：**`scripts/README.md`**（比 DESIGN 更细）。
 
 ## 架构（改代码前对齐）
 
 ```
 MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开，DESIGN §3.13）+ 路由 jw_import；
-               SubpageActivity 承载二级页（含成绩查询 SCORES、
+               SubpageActivity 承载二级页（含成绩查询 SCORES、选课 SELECTIONS·SELECTION_WISHES、
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
@@ -213,18 +220,21 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + LifeFeed（一卡通与电费流水分段，§3.13）
  + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
  + QzxyClData·QzxySessionLink·QzxyPhoneMask·QzxyWatering（会话串 · 手机号遮蔽 · 用水记账）
-data/local/      Room v14：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
+data/local/      Room v17：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
                  / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
                  / power_readings（v12 起；房号显示名 roomName）/ textbooks（v14）
+                 / ride_records（v16）/ course_selections（v17，选课记录按学期替换，§4.35）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
                  ScholarProgressRepository；ScoreSync / ScholarProgressSync（自动导入，DESIGN §4.29）
                  TextbookSync（导入课表后抓教材，§4.31）
+                 SelectionRepository / SelectionSync / SelectionRoundsStore（选课记录与轮次，§4.35）
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
                  + ScholarProgressParser（学业完成情况 = 教务返 HTML，按表头名映射，非 JSON）
                  + TextbookParser（教材 = layui JSON 接口，§4.31）
+                 + SelectionParser（选课日志与轮次 = layui JSON，§4.35）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
@@ -239,7 +249,7 @@ data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIG
 data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
                  QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
                  QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|timetable|common|theme|widget|ebike|notes|homework
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|selection|timetable|common|theme|widget|ebike|notes|homework
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -327,6 +337,35 @@ App 冷启动 7 天闸门静默刷 + 页内手动刷新，内置兜底图永不�
 目标卡一路上移，当帧算出的偏移直接滚就是**滚过头**（卡片落到视口上方）。现在等位置落定
 （`RidePanels.awaitSettledOffset`：逐帧读记账、连续 3 帧不动才启程）再滚一次到位；模拟器
 （jw35）已复现并验证三种场景（目标在上/在下/原报障序列）。真机点验待用户执行。
+选课（2026-10-01，DESIGN §3.19 / §3.20 / §3.21 / §3.22 / §4.35 / §4.36；规则见 `.agents/rules/import-jw.md`）：
+我的 → 学习 → 选课——选课记录（教务「选课日志」，Room v17 `course_selections` 按学期替换，
+OkHttp 直取默认抓当前学期+下一学期）、选课轮次卡（`SelectionRoundsStore` 快照 +
+「应用内选课 / 教务页面」双入口）、轮次提醒
+（开始前 30 分钟 / 截止前 6 小时，`setAlarmClock` 精确闹钟，周期核对搭成绩/考试那趟车、
+间隔共用）。同日修「进入选课中心卡加载中」（自动落页触发点改 `onPageCommitVisible` +
+看门狗，见 `.agents/rules/import-jw.md`）、加**轮次直达**（`selectionRoundId` 白名单）与
+**预选清单**（§3.20，DataStore JSON）；**B 阶段落地抢课骨架**（§3.21 面板 + §4.36 引擎/策略/
+前台服务/须知——**接口未接入**，唯一替换点 `Graph.selectionCenterClient`，窗口期在下学期）；
+**应用内选课中心**（§3.22：课程列表 / 搜索筛选 / 选课 · 退课逐次确认——回答了
+「所有操作都在 App 内」，教务页面降为备用入口）。
+**选课页排版收口**（2026-10-01，§3.19）：主页只放轮次卡 + 功能入口 + 提醒三块；
+选课记录挪进独立二级页「已选课程」（`SELECTION_RECORDS`）；**教务 WebView 全页只留
+「教务网页」一个备用入口**，可操作轮次行改直达应用内中心（轮次 id 走 `focusItemId` 通道）；
+同轮微调：学习 hub 入口标「选课（beta）」（接口联调前）、轮次卡加「上次同步/失败」脚注、
+轮次相位每分钟重算、预选清单加已选/课表防重复对照、固定高按钮改 `heightIn` 防大字体裁字。
+**红线**：`Xsxkjg_tk.do`（申请退课，POST）全链路不碰；写操作只做加课、只在用户显式开始后发出，
+不并发、连续失败自动停；应用内的退课是逐次确认的手动操作，抢课引擎永不调退课。
+轮次展示与提醒的时间解析要等选课期才有真实样本（`xksj` 格式），这是唯一未验证面。
+U净 洗衣房 P1+P2（2026-10-01，DESIGN §3.23 / §4.37；规则见 `.agents/rules/ujing.md`）：
+我的 → 校园服务 → U净——登录（手机号 + 短信验证码）→ 洗衣房空闲看板 → 扫码识别设备与套餐 →
+**下单 → 支付宝 SDK 支付 → 订单卡（倒计时 / 取消 / 云端启动）**。协议来自社区多份独立逆向
+成果交叉核对（无客户端签名；NcepuJw 为 GPL、仅取协议事实）。实测定论：匿名 `scanWasherCode`
+= 401，只读也必须登录。**遗留实测**：JWT 有效期、学校机型 `moduleType`（定 P3 是否需要
+BLE 通道）。debug 包已装真机，点验待用户执行。
+同日体验补：下单可选参数按「服务端声明需要才发」（水温 chips / 强制投放标准档 / 烘干
+`dryTime`）、洗衣完成提醒（`setAlarmClock` + 渠道 `ujing_done`，无 App 内开关）、页面排版
+收口（订单 > 扫码 > 看板 > 账号，进度条 + 2 分钟支付窗口倒计时）、登录态联动补数据。
+全量 1262 例 0 失败，装机完成。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

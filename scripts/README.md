@@ -25,6 +25,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py         # 考试安排（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py        # 课程成绩（缺省全部学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_textbooks.py     # 学生教材确认（缺省当前学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_selections.py    # 选课记录 + 选课轮次（缺省当前学期 + 下一学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py         # 寝室电费（非教务，无 --term；本人绑定房间剩余电量）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history   # 追加电费充值流水
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py    # 教务处盖章成绩单 PDF（非强智教务，见 §5.6）
@@ -41,6 +42,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `scripts/out/exams.json` | 考试安排（考试时间已拆成 date/startTime/endTime） |
 | `scripts/out/scores.json` | 课程成绩（`term` + `terms` 双口径；`pendingReview` 标记评教锁定） |
 | `scripts/out/textbooks.json` | 学生教材确认书目（课程名与课表课名逐字一致，可直接关联） |
+| `scripts/out/selections.json` | 选课记录（按学期）+ 选课轮次 + 学期下拉全量（`rounds` 非选课期为空属正常） |
 | `scripts/out/xskb_vt0.html` | 理论课表页快照 |
 | `scripts/out/syxkb.html` | 实验课表页快照 |
 | `scripts/out/*_raw.json` / `exams_raw.json` / `scores_raw.json` | 解析中间产物（含原始文本，排错用） |
@@ -60,6 +62,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
 | `fetch_scores.py` | 课程成绩 → JSON | 同上；`--term` 缺省查全部学期 |
 | `fetch_textbooks.py` | 学生教材确认 → JSON | layui JSON 接口；`--term` 缺省当前学期；学期校验用行内 `xnxq01id`，见 §5.7 |
+| `fetch_selections.py` | 选课记录 + 选课轮次 → JSON | layui JSON 接口；默认抓「当前学期 + 下一学期」，`--term` 可重复，见 §5.8 |
 | `fetch_power.py` | 寝室电费 → JSON | 新开普缴费平台，学号 + 查询密码；**与教务链路无关** |
 | `fetch_transcript.py` | 教务处盖章成绩单 → PDF | 金格签章系统（`jwxyxx`）；共用 CAS，但**不经过强智教务**，见 §5.6 |
 | `gen_week_layout_preview.py` | 生成课表排版提案 HTML | 与爬取无关 |
@@ -398,6 +401,35 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
 
 ---
 
+### 5.8 选课（选课日志与轮次，2026-09-30 实测）
+
+教务「培养管理 → 选课管理」下两条链，与考试/成绩/教材同一套 **layui JSON** 形态
+（`{code,count,data}`，分页 `pageNum/pageSize`，**不带 .do**）：
+
+```
+壳页  GET /jsxsd/xkgl/loadXsxkjgList?lx=xkrz          ← 学期下拉（select#xnxqid）在这里
+数据  GET /jsxsd/xkgl/loadXsxkjgList?lx=xkrz&type=list&xnxqid=<学期>&pageNum=1&pageSize=200
+轮次  GET /jsxsd/xsxk/xklc_list_data
+```
+
+- 选课日志字段：`kc_mc` 课程名称 / `kch` 课程编号 / `xm` 上课教师 / `zxs` 总学时 / `xf` 学分 /
+  `kclb_mc` 课程属性 / `kcxz_mc` 课程性质 / `ktmc` 教学班 / `yx_mc` 开课学院 /
+  `sksj` 上课时间（`<br>` 多行）/ `skdd` 地点 / `shzt`·`yy` 审核状态与意见。
+  实测 2026-2027-1 有 12 条、2025-2026-2 与 2024-2025-1 各 16 条——**全年可用**。
+- 轮次列名来自页面表格定义（非选课期无样本）：`xqmc` 学年学期 / `xklc_mc` 选课名称 /
+  `xksj` 选课时间 / `jx0502zbid` 轮次 id / `yxzt == '1'` 可预览。
+  **`code` 是字符串 `"0"`**（日志接口是数字）——判等统一按字符串比。
+- 空态不是故障：轮次在非选课期 `count=0`；预选（`/jsxsd/xkgl/xsyxgl?type=list`、
+  `/jsxsd/xkgl/loadYxxkList`）当前无数据、查询页学期下拉为空。
+- **红线**：`/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，POST，`lx=tk`/`lx=ww`）与
+  `/jsxsd/xsxk/mzlist.do`（免责声明查询，POST）是写/副作用路径，脚本与 App 都**只读**，
+  绝不触碰；「进入选课」（`/jsxsd/xsxk/newXsxkzx?jx0502zbid=`）只在 App 的 WebView 里
+  由用户自己操作。
+- 未验证面：`xksj` 时间字符串的真实格式要等选课期才有样本，脚本原样输出 `timeText`，
+  App 侧容错解析（`SelectionRounds.parseTimeRange`），解析不了就不排提醒。
+
+---
+
 ## 6. 故障排查
 
 | 症状 | 原因 | 处理 |
@@ -409,6 +441,8 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
 | 考试/成绩接口返回「系统功能暂未开放」 | 用了带 `.do` 的地址，或校方关闭了功能 | 改用不带 `.do` 的接口地址；仍 no-open 则是校方侧开关，等开放 |
 | 考试/成绩接口返回空但 len 也异常小 | 分页参数用了 `page/limit` | 改成 `pageNum` / `pageSize`（§5.4） |
 | 教材接口行内 `xnxq01id` 与请求学期不一致 | 教务没按参数过滤 / 学期号写错 | 脚本会直接报错；核对 `--term` 取值（§5.7） |
+| 选课轮次接口报 `code` 不为 0 | 该接口的 `code` 是**字符串** `"0"`，按数字判等会误报 | 统一按字符串判等（§5.8） |
+| 选课记录为空 / 轮次为 0 | 非选课期轮次为空属正常；预选当前无数据 | 选课季再看；选课日志全年有数据（§5.8） |
 | 课程全部堆在周一 | 用了 `qz-hasCourse-N` 当星期 | 改回按 `<td>` 列序 + carry |
 | 周次解析为空 | 详情文本格式变化 | 看 `out/*_raw.json` 里的 `detail_raw` / `weeks_raw` |
 | 电费登录返回 `{"error":"unauthorized"}` | 用了教务密码 | 填缴费平台查询密码（`powerPassword`），两套密码不通用（§5.5） |
@@ -428,4 +462,6 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
   调课自动检测（DESIGN §4.17，默认关闭）开启后，用户显式提供的凭证加密存本机
   （`jw_credentials.xml`，已排除云备份与设备迁移），仅用于本机向教务登录
 - 不刷积分、不绕过付费、不伪造官方身份
+- **选课链路只读**：`Xsxkjg_tk.do`（申请退课）与 `mzlist.do`（免责声明查询）绝不调用；
+  选课/退课只在 App 的 WebView 里由用户自己在教务页面上操作（DESIGN §4.35）
 - 页面结构以 `out/` 快照为准；改解析器前先更新快照，避免对着过期结构改代码

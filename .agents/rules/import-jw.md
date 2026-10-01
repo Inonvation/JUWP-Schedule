@@ -148,3 +148,58 @@
   就是这次的结果。
 - **通知 requestCode 与 id 解耦**（3008/3009 vs 1008/1009），两落点 intent 只差 extra、
   都无 action——requestCode 撞了会互相改写落点（§3.13 3005/3006 同坑）。
+
+## 选课（2026-10-01，DESIGN §3.19 / §3.20 / §3.21 / §4.35 / §4.36）
+
+- 选课结果 = 教务「选课日志」`loadXsxkjgList?lx=xkrz&type=list&xnxqid=<学期>`（**不带 .do**，
+  layui JSON）；轮次 = `xsxk/xklc_list_data`。解析 `data/jw/SelectionParser.kt`，同步
+  `SelectionSync`（OkHttp + `CasSession`），落 Room v17 `course_selections`（按学期替换）。
+  接口字段与实测见 DESIGN §4.35，脚本侧 §5.8（`fetch_selections.py`）。
+- **读路径的红线**：`/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，POST，`lx=tk`/`lx=ww`）与
+  `/jsxsd/xsxk/mzlist.do`（免责声明查询，POST）任何路径都不碰。选课/退课主路径是应用内
+  选课中心（`SelectionCenterClient`，§3.22）；`JwImportMode.Selection` 的 WebView 只是
+  备用入口（选课页「教务网页」行 + 中心接口未接入时的逃生门），里面由用户自己操作。
+- **抢课是唯一的写路径**（2026-10-01 起，DESIGN §3.21 / §4.36）：只提交用户**预选清单**
+  匹配到的课程、**只加课不自动退课**；不并发、固定间隔（5–60 秒可调）、连续失败 5 次自动停、
+  单场上限 2 小时；遇验证码/异常页面立即停止并通知，**不绕过**。所有教务读写都走
+  `SelectionCenterClient` 抽象（`Graph.selectionCenterClient` 是唯一替换点），
+  真实实现等窗口期实测后接入——**现在这个位置是 `UnconfiguredSelectionCenterClient`**。
+- **默认抓「当前学期 + 紧邻下一学期」**：选课常发生在学期末选下学期，光抓当前学期会漏掉
+  「已选下学期」这件最要紧的事（`SelectionSync.resolveDefaultTerms`，学期从壳页选中项来、
+  不猜）。先全部抓到内存、再一次性落库——中途失败不留半套。
+- **轮次快照允许存空**（`SelectionRoundsStore` 与 `ExamSnapshotStore` 的「宁旧勿空」相反）：
+  `count=0`（非选课期）是教务的权威状态，存空才会让页面如实显示、让过期提醒被撤销。
+- **提醒的时间解析容错到「解析不了就不排」**：`xksj` 的真实格式要等选课期才有样本
+  （`SelectionRounds.parseTimeRange` 支持 日期+时刻对 / 仅日期对 / 单个时刻）。
+  提醒点 = 开始前 30 分钟 + 截止前 6 小时；已发键 `轮次id|start` / `轮次id|end` 落 DataStore，
+  闹钟与周期核对共用去重；发不出去不落键（同作业提醒）。
+- **周期核对搭 `ScoreAlertReminder` 的周期任务**（间隔共用 `alert_interval_hours`，
+  **不为它单开键**）：`ensurePeriodicWork` 的开关条件与 `check` 里多了选课一路，
+  改那两处时三个开关（成绩/考试/选课）一起想。闹钟落点 `SelectionAlertReceiver`
+  （requestCode 4004，与 4002/4003 错开），开机补排在 `ReminderBootReceiver` 里顺带叫它。
+- **`JwImportMode.Selection` 没有导入动作**：底部只给「选课中心」一个入口，
+  `if (mode != JwImportMode.Selection)` 挡住的导入按钮别顺手取消；落页判据用
+  `JwUrls.isSelectionCenterUrl`（**不要**用 `/jsxsd/xsxk/` 前缀——轮次页、进选课页
+  `newXsxkzx`、预览页 `yxxsxk_index` 都在它下面）。
+- **轮次直达**（2026-10-01；同日排版收口后语义变化）：选课页轮次行现在直达**应用内
+  选课中心**（轮次 id 走二级页 `focusItemId` 通道 → `SelectionCenterScreen.focusRoundId`，
+  快照认不出退回 `pickTarget`）。带轮次 id 开教务 WebView（`JwImportActivity.start(...,
+  selectionRoundId=)` → `autoNavTarget = JwUrls.selectionRoundUrl(id)`，`newXsxkzx?jx0502zbid=`）
+  只剩中心「打开教务页面（备用）」一处调用。轮次 id **必须过 `ROUND_ID_PATTERN` 白名单**
+  （会拼进 URL，同 `TERM_PATTERN` 纪律），不合法一律退回选课中心列表。未实测：教务从列表
+  进去会先 POST `mzlist.do`（免责声明），直接进若被挡，退回列表即可（窗口底部的
+  「选课中心」按钮）。
+
+## 自动落页：触发点用 onPageCommitVisible（2026-10-01 修）
+
+- **登录落地（`xsMainV`）→ 各模式目标页的自动跳转，触发点必须是 `onPageCommitVisible`
+  （首选）或 `onPageFinished` 的探针回调（兜底），两者共用 `startAutoNav`**，
+  别改回「只在 `onPageFinished` 里 `postDelayed`」——那条链会被挂住的子资源拖住，
+  迟迟不来时页面永远停在 `onPageStarted` 写的「加载中…」且**没有任何后续触发点**
+  （2026-10-01 用户报障：点「进入选课中心」卡在教务主页面，手动再点一次才走）。
+- 三条配套纪律：① 会话探针守卫不变（未登录时登录页就地渲染在 `xsMainV` 上，不看清内容就跳
+  会跳到登录页上）；② **只跳一次**（`autoNavDone`），延迟复核失败/看门狗到点都要把状态
+  解锁成 `Ready` + 可操作提示，**任何路径都不允许悬在 Loading 且无出口**；
+  ③ 顶栏刷新与错误浮层重试会把 `autoNavDone` 放开重试一次（看门狗的提示就指向刷新）。
+- `autoNavPending` 是「本轮跳转在途」的闸门：用户在途期间手动发导航（底部按钮/刷新）
+  会清掉它，在途的那一跳据此作废（回调里先判 `autoNavPending`）。

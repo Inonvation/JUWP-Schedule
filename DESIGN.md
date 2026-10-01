@@ -175,7 +175,9 @@
   **上课提醒 2026-09-28 迁往「提醒与桌面」**；成绩查询 2026-09-24 挪入学习页
   （调课自动检测已移除，2026-09-24，见 §4.17）
 - **学习**（`LEARNING_HUB`，§3.11）：笔记·课件（副标题「N 篇 · K 门课」/「暂无内容」）/
-  作业（副标题「N 项未完成」/「暂无作业」）/ 成绩查询（§4.15，2026-09-24 自课表汇总挪入）——
+  作业（副标题「N 项未完成」/「暂无作业」）/ 成绩查询（§4.15，2026-09-24 自课表汇总挪入）
+  / 考试安排（§4.33，2026-09-30 自课表 hub 挪入）/ 学业完成情况（§4.29）/
+  **选课（beta）**（§3.19，2026-09-30 新增：轮次 + 应用内选课 / 预选清单 / 已选课程 / 抢课 + 轮次提醒；接口窗口期联调前入口标 beta）——
   成绩查询是成绩数据入口（非按课程名归属，但同属学习内容），笔记与作业按课程名归属，
   **不随课表**（换课表后仍可查）
 - **提醒与桌面**（`WIDGET_CALENDAR_HUB`，2026-09-28 自「小组件与日历」改名扩容；
@@ -2336,6 +2338,168 @@ ViewModel 只保留「联网下单（签名与登记 MAC）+ 界面文案 + 登�
 
 ---
 
+### 3.19 选课（2026-09-30，P6；2026-10-01 排版收口；接口与解析见 §4.35）
+
+**入口**：我的 → 学习 → 选课（`SubpageScreen.SELECTIONS`，`ui/selection/SelectionScreen`）。
+学习 hub 的「选课」节一行，副标题按「轮次进行中 > 即将开始 > 最新学期记录数 > 空态」报状态
+（轮次快照在文件里，hub 里 IO 线程读一次；`Unknown` 的轮次不参与前两档——不编「进行中」）。
+
+**页面三块**（2026-10-01 收口：主页只放「要做的事」，记录平铺与学期切换全部收进二级页）：
+
+| 区块 | 内容 |
+|------|------|
+| 选课轮次卡（紧凑） | 目标轮次（`SelectionRounds.pickTarget`：进行中优先，其次最近即将开始）置顶：名称 + 状态标签（进行中 · 即将开始 · 已结束；时间解析不出不打标签）+ 确定性时间文案（「MM-dd HH:mm 开始/截止/已结束」，解析不出回退教务原文）；其余轮次收成紧凑行，**只有可操作（进行中/即将开始）的能点** = 直达应用内选课中心对应轮次（轮次 id 走二级页 `focusItemId` 通道，§3.22），已结束/时间未知的行是纯信息。唯一主按钮总在：有目标轮次是「进入选课」，没有是「打开选课中心」（页内自说明非选课期），**高度用 `heightIn(min=40dp)`**——系统大字体档位下按钮撑高不裁字。卡底两条小字：同步失败原因（**轮次非空时也显示**，不弹窗）+「上次同步 HH:mm（当日）/ MM-dd HH:mm」。轮次相位**每分钟重算一次**（页面可能被「等开抢」的用户长停） |
+| 功能入口 | `SettingsSection「功能」`四行：**已选课程**（`SELECTION_RECORDS`，记录列表整体挪入；副标题报「N 个学期 · 共 M 门」）· **预选清单**（§3.20）· **自动抢课**（§3.21，副标题报实时状态）· **教务网页**（**全页唯一的教务 WebView 入口**，备用；选课/退课尽量在应用内完成） |
+| 选课提醒 | 开关（**默认关**，与成绩/考试提醒同口径）+ 「自动检查间隔」（与成绩与考试提醒共用一档）+ 说明行；轮次开始前 30 分钟、截止前 6 小时各一条通知 |
+
+**已选课程页**（`SubpageScreen.SELECTION_RECORDS`，`ui/selection/SelectionRecordsScreen`，
+2026-10-01 自主页挪出——原主页直接平铺记录卡太占空间）：教务「选课日志」按学期展示；
+学期 chips（默认最新有数据的学期；「更多学期」列出教务学期下拉全量、点选即抓该学期，
+抓到为空也留 chip 并显示空态）+ 汇总行（N 门 · X 学分）+ 记录卡（课程名 / 学分 / 属性·性质 /
+教师·教学班 / 上课时间与地点逐行 / 审核状态）。
+
+**执行口径**：
+- 主页与已选课程页进页都会自动同步一次（`SelectionSync.MIN_REFRESH_MS` 30 分钟闸门内
+  直接用缓存）；顶栏「更新」= 强制同步并回报结果（气泡）。自动刷新失败**不进气泡**——
+  有旧数据用旧的、没数据由空态说明原因。
+- 提醒只在轮次时间解析成功时排；通知点击落选课主页。**不做高频轮询**：周期核对搭
+  成绩/考试的周期任务（间隔共用 `alert_interval_hours`）。
+- **教务 WebView 只留一个入口**（2026-10-01）：主页「教务网页」行；轮次卡与轮次行都不再
+  直达教务页。选课/退课的主路径是应用内选课中心（§3.22），抢课引擎只加课（§4.36 红线），
+  教务网页仅备用。
+
+---
+
+### 3.20 预选清单（2026-10-01，P6；技术见 §4.36）
+
+**入口**：我的 → 学习 → 选课 → 预选清单（`SubpageScreen.SELECTION_WISHES`，
+`ui/selection/SelectionWishesScreen`）。选课开放前把想选的课录好，抢课按它匹配。
+
+**一条预选 = 课程名关键词（必填）+ 教师名关键词（可选）+ 优先级（高/中/低）+ 备注（可选）**：
+
+| 项 | 口径 |
+|----|------|
+| 匹配 | 课程名**包含**关键词（去空白、忽略大小写）；填了教师关键词则同时要求教师串包含（`SelectionWishes.matches`，纯 JVM 可测） |
+| 优先级 | 高=2 / 中=1 / 低=0，抢课时从高到低（同档保持录入顺序，`SelectionWishes.sorted` 稳定排序） |
+| 存储 | DataStore JSON（`selection_wishes_json`），口径同快捷方式：坏数据回空表，不占 Room 迁移 |
+| 页面 | 列表（卡上带优先级标签与删除按钮，点卡编辑）+ 顶栏「+」新增 + 弹窗编辑（三档 chips）；2026-10-01 加**防重复对照**：每条预选在「已选课程」（Room 选课日志）与「当前课表」里本地匹配（同一套 `SelectionWishes.matches` 口径），命中在卡上标「已选：课程名（学期）」/「课表已有：课程名」——录清单最常见的错是课其实已经选过/已有，纯本机数据先拦一道 |
+| 边界文案 | 页脚明说：清单只在本机保存，抢课**只在你手动开始后**发出指令——录完清单不会自动开抢 |
+
+**明确不做（本期）**：不含「按上课时间/学分」的结构化条件（先只做课程名 + 教师两类关键词）；
+不导入课表已有课程当清单（那是「对照课表」的另一件事）。
+
+---
+
+### 3.21 抢课面板（2026-10-01，P6；技术见 §4.36）
+
+**入口**：我的 → 学习 → 选课 → 抢课（`SubpageScreen.SELECTION_GRAB`，
+`ui/selection/SelectionGrabScreen`）。选课页「抢课」节入口行的副标题报实时状态
+（进行中 M/N > 接口待接入 > 上次结果 > 默认说明）。
+
+**三块**：
+
+| 区块 | 内容 |
+|------|------|
+| 状态卡 | 轮次（取快照里**进行中**的那个；没有就明说）+ 目标（清单 N 条）+ 进度（已抢到 M/N）+ 上次结果；底部「开始抢课 / 停止」——「开始」要求**接口已接入 + 有进行中的轮次 + 清单非空 + 未在跑**，缺哪条就写哪条原因（不允许「灰着按钮不解释」） |
+| 抢课设置 | 检查间隔（5/10/20/30/60 秒滚轮，会话进行中不可改）+ 抢课须知（随时可看） |
+| 日志 | 每轮检查 / 抢到 / 被拒的最近 40 条（`SelectionGrabStore`：服务写、页面读），带「清空」 |
+
+**抢课须知**（首次进面板自动弹一次、确认后不再弹；确认按钮 3 秒阅读锁）：四条——① 写操作
+声明（首次对教务做写操作）；② 合规与风控风险自负；③ 只加课不自动退课 + 节制口径
+（不并发、固定间隔、连续失败自动停）；④ 不保证成功、遇验证码或异常页面立即停止并通知。
+
+**本期不做**：不做「到点自动开始」的闹钟（窗口期有真实轮次后再加，见 §4.36 C 阶段）；
+不提供批量退课。
+
+---
+
+### 3.22 应用内选课中心（2026-10-01，P6；技术见 §4.36）
+
+**入口**：选课页轮次卡主按钮「进入选课」，以及可操作轮次行的点选（轮次 id 走二级页
+`focusItemId` 通道直达对应轮次，快照里认不出就退回自动挑选）。`SubpageScreen.SELECTION_CENTER`，
+`ui/selection/SelectionCenterScreen`。教务 WebView 的入口全页只剩选课页「教务网页」一个
+备用行（2026-10-01 收口，§3.19）；本页状态卡里那个「打开教务页面（备用）」只在接口未接入
+时出现，是联调期的逃生门，接入后消失。
+
+**定位**：**不经过 WebView**——用已存凭证直连接口拉课程列表、提交选课/退课。这就是
+「所有操作都在 App 内」：浏览、筛选、选课、退课全在应用内完成，教务页面只作兜底。
+（目标轮次用 `SelectionRounds.pickTarget`：进行中优先，其次最近的即将开始；没有就明说。）
+
+**页面**：
+
+| 区块 | 内容 |
+|------|------|
+| 状态卡 | 轮次名与时间 + 汇总（共 N 门 · 已选 X · 可选 Y）+ 未接入/错误说明（**教务的原话原样透传**，如实测的「当前不在选课时间范围内，具体请查看学校选课通知！」）+「打开教务页面（备用）」 |
+| 搜索与筛选 | 关键词（课程名/教师/时间地点任一包含，忽略大小写）+ chips：只看有余额 / 只看已选 / 课程属性（列表里出现过的去重）+ 排序菜单（教务顺序 / 余量多优先 / 课程名 / 教师） |
+| 课程卡 | 课程名 + 余量标签（「余 N」/「已满」/未知不显）+ 已选标记 + 教师·学分·属性·性质 + 时间地点逐行 + 操作按钮（未选 = 选课，已选 = 退课） |
+
+**操作口径**：
+- **选课**：逐次确认弹窗 → 提交；成功后本地先把「已选」置上（下次刷新以教务为准）；
+  被拒（名额满/冲突）用气泡报原因。
+- **退课**：同样逐次确认（弹窗明说「以教务处理结果为准，可能涉及选课规则」）；**抢课引擎
+  永不调退课**（红线：只加课不自动退课）——应用内的退课是用户逐次确认的**手动**操作。
+- 余量为 0 的卡禁用「选课」；**余量未知不禁**（交给教务裁定，不猜已满）。
+- 筛选/排序/汇总全是纯逻辑（`domain/SelectionCourseFilter.kt` 的 `SelectionCourses`，单测
+  钉住）；「余量未知的按可选处理」是筛选与汇总的共同口径，别改岔。
+- 筛选/排序结果在**组合层**算好（`remember(courses, filter, sort)`），LazyColumn 里只消费——
+  `LazyListScope` 不是 @Composable 上下文，里面不能调 `remember`（编译期就拦）。
+
+**未接入现状**：`UnconfiguredSelectionCenterClient` 让整页显示「接口待接入…」+
+「打开教务页面（备用）」；列表/提交/退课的真实字段与返回码等窗口期实测（§4.36 C 阶段），
+解析落在 `SelectionCenterParser`，替换点仍只有 `Graph.selectionCenterClient` 一处。
+
+---
+
+### 3.23 U净 洗衣房（2026-10-01，P6；接口与协议见 §4.37）
+
+**入口**：我的 → 校园服务 → 「U净」（第三方账号节，行右侧带登录态；`SubpageScreen.UJING`，
+`ui/ujing/UjingScreen`）。
+
+**P1（已交付，全只读）**：
+
+| 区块 | 内容 |
+|------|------|
+| 登录卡 | 手机号 + 短信验证码（发送按钮上 60 秒冷却倒计时）；未登录只显示这一块 |
+| 账号行 | 手机号遮蔽（`QzxyPhoneMask`，与趣智 / 胖乖同口径）+ 退出（二次确认） |
+| 洗衣房空闲看板 | 收藏的店每行：店名 + 「空闲 N/M」或「暂无空闲 · 约等 X 分钟」（全满时）；行尾删除（二次确认）；「添加」走**附近洗衣房弹层**——定位一次拉 `stores/near`，点行收藏、已收藏置灰 |
+| 扫码识别 | 按钮起内置取景窗口（**原文模式**，复用骑行扫码窗口）→ 设备卡：机型 + 状态徽标（空闲 / 使用中 / 故障 / 离线）+ 机号 + 通信模块 + 套餐列表（名称 / ¥价格 · 时长，服务端动态下发） |
+
+**P2（已交付，交易闭环）**：
+
+| 区块 | 内容 |
+|------|------|
+| 下单确认 | 点套餐行（仅「空闲」可点，行尾「下单」落点）→ 弹层核对设备 · 模式 · 价格 · **水温**（机型开放时）· **烘干档**（烘干机，= 时长/10）+ "2 分钟独占期"提示 → 「去支付」 |
+| 水温选择 | 机型声明 `isWashTemperatureEnable` 且非烘干机时，设备卡出**水温 chips**（常温 / 30℃ / 40℃ / 60℃，协议固定枚举 1–4），默认常温，随下单 body 的 `washTemperatureId` 发送 |
+| 支付 | 下单即取 `payment/arguments` → **官方支付宝 SDK** 拉起（orderInfo 服务端签发，App 不经手资金）；9000 成功 / 6001 取消 / 其余失败；回跳后 `lastPayStatus` + `detail` 双查 |
+| 订单卡 | 在案订单（`UjingOrderStore` 落盘，**跨进程恢复**）：设备 · 模式 · 价格 + 状态文案（服务端 `statusRemark` 优先）+ 运行中本地每秒倒计时（快照换算，不每秒请求）与**洗涤进度条**（总量 = 下单所选模式时长）；未支付时显示**支付窗口倒计时**（下单时刻 + 2 分钟，旧快照无 `createdAt` 则退回静态提示）；按钮按状态给：未付 = 「去支付 / 取消订单（二次确认）」，窗口内（20/22/35）= 「启动」，终结 = 「知道了」清快照 |
+| 轮询 | 订单非终结且**页面可见**时 15 秒 `detail`；离开页面即停（无后台轮询） |
+
+**完成提醒（2026-10-01 体验补）**：订单**已支付**即排 `setAlarmClock` 精确闹钟
+（`ui/reminder/UjingDoneReminder`）——洗涤中按「快照时刻 + remainTime」（页面可见时的轮询
+不断校准落点），已支付未运行按「快照时刻 + 模式总时长」兜底（用户付完就走时 21→40 的转变
+没人看着，兜底常早于真实结束，到点 check 按最新剩余重排，早响比不响好）；到点查一次订单
+详情——已完成发「衣服洗好了」通知（渠道 `ujing_done`，点击落本页），还在跑按新剩余时间
+重排，取消 / 超时静默收摊。**不设 App 内开关**（提醒是下单的直接后果，不想收在系统通知
+渠道里关）；无开机补排（一单个把小时，重启后进页刷新会重新排上）。
+
+**排版口径（2026-10-01 体验补）**：已登录态自上而下按要紧程度递减——**在案订单 > 扫码下单 >
+洗衣房看板 > 账号**（账号行收底）；扫码区空态带一句引导文案。登录态任何 false→true 转变
+（本页登录 / 别的窗口重登）由 `loggedIn` 收集器统一补数据：在案订单对一次服务端 + 看板重拉。
+
+**口径**：看板数据来自 U净 云端、约 30 秒滞后，文案带「约」且小节副标题声明来源；单店失败
+只让该行显示「获取失败」，不打断整板；刷新只发生在进页 / 手动「刷新」（不轮询，红线见
+§4.37）。看板文字口径单一来源 `UjingState.BoardLine`（UI 不另拼）。首次进页弹「使用须知」
+（四条，锁 3 秒；确认后一周静默、过期再弹）。**下单/取消/启动都是写操作：零自动重试 +
+二次确认**；已有在案订单时不允许叠单。
+
+**P3（待做，按机型实测定）**：蓝牙机型（moduleType 1/5）BLE 透传启动（协议与三坑见
+`docs/ujing-plan.md`）；云端机型已可用「启动」按钮（P2 随订单卡交付，`control/start`
+受理判定 0 / 1703+0）。完成通知已随 2026-10-01 体验补交付（见上）。
+
+**明确不做**：不做批量 / 自动 / 抢单；不碰微信 · 支付宝小程序侧接口；不提供任何「免费洗衣」类能力。
+
+---
+
 ## 4. 技术架构
 
 ### 4.1 工程形态
@@ -2489,12 +2653,21 @@ M1：**ManualImporter** + **QiangzhiJsxdImporter**（按上表路径）。
 | 「500 error System Error.Please Wait…」 | `sso.jsp?ticket=` 票据校验失败（HTTP 500）。**票据一次性，重放必 500**；该 500 是自愈型：响应同时写下 `bzb_njw`，重走一遍即通过 | 没有重写 `onReceivedHttpError`，HTTP 层错误完全看不见 → 状态条显示「已登录教务…」（与事实相反） | `onReceivedHttpError`（仅主 frame，`>= 400`）→ 错误浮层；认证链上的 5xx 先**自动重试一次**（`shouldAutoRetry`） |
 | 「网页无法打开 / ERR_CONNECTION_TIMED_OUT」 | 传输层失败 | `onReceivedError` 置了错误态，但失败页随后仍回调 `onPageFinished` 无条件置 `Ready` 把浮层盖掉 | `lastFailedUrl` 记失败 URL，`onPageFinished` **按 URL 相等一次性消费**后返回 |
 | URL 不变、页面却是登录框 | 未登录时教务**不跳转**，把登录页就地渲染在 `xsMainV`/`xskb_list` 上（HTTP 200、`#loginDiv` + 密码框） | 按 URL 判定为「已登录主页」并自动跳课表 → 与课表页的登录页**互跳成环**（实测 18 次导航、约 1 秒一轮） | 会话探针先于所有自动导航执行，`looksLikeLoginPage` 命中即报会话失效 |
+| 卡在教务主页、状态条一直「加载中…」 | 自动落页挂在 `onPageFinished` 的会话探针回调里；该回调被挂住的子资源拖住（或延迟复核发现 URL 已不是 `xsMainV`）时，旧实现把状态留在 `Loading` 且**再无任何触发点**（2026-10-01 用户报障：点「进入选课中心」不跳，手动再点一次才走） | 「进入选课中心」等自动落页入口偶发卡死 | 触发点提前到 `onPageCommitVisible`（内容可见即算落地）；复核失败/看门狗不再留在 Loading（见下） |
 | 顶栏标题变「500错误」 | 服务端错误页的 `<title>` 被 `onReceivedTitle` 如实反映 | — | 保留（作为辅助线索） |
 
 **回调顺序是本块的关键坑**（实测）：`onReceivedHttpError` → `onPageStarted` → `onPageFinished`，
 即**错误先到、start 后到**。首版把清标记写在 `onPageStarted`，等于守卫被下一次回调拆掉，
 错误浮层被洗成「已登录教务…」。因此标记只能**按 URL 相等**在 `onPageFinished` 里消费
 （既顶住重复失败轮次，也不误伤成功重试），**不要**在 `onPageStarted` 里清。
+
+**自动落页的触发点用 `onPageCommitVisible`，不要只等 `onPageFinished`**（2026-10-01，上表第 4 行）：
+`onPageFinished` 会被挂住的子资源拖住，迟迟不来时旧实现（`postDelayed` 写在它的回调里）就永远
+停在 `onPageStarted` 写的「加载中…」，且**没有任何后续触发点**。现在两个触发点共用
+`JwImportScreen.startAutoNav`：`onPageCommitVisible` 首选、`onPageFinished` 的探针回调兜底；
+会话探针守卫与「只跳一次（`autoNavDone`）」纪律不变，顶栏刷新/错误浮层重试会把 `autoNavDone`
+放开重试一次；延迟复核失败与 10 秒看门狗（`AUTO_NAV_TIMEOUT_MS`）都把状态解锁成 `Ready` +
+可操作提示——**任何路径都不允许悬在 Loading 且无出口**。
 
 **重试目标是预热入口，不是 CAS 直链**：CAS ticket 一次性（重放恒定 500）。
 `JwImportDiagnosis.retryUrl()` 裁决——认证链上的失败一律回 `JwUrls.SSO_WARMUP`
@@ -5724,6 +5897,200 @@ requestCode = 1008 / `score_alert` / 3008，考试 = 1009 / `exam_alert` / 3009
 
 ---
 
+### 4.35 选课（选课日志与轮次，2026-09-30，P6；UI 见 §3.19）
+
+**数据源**（2026-09-30 实测，**都不带 .do**，layui JSON `{code,count,data}`）：
+
+| 链 | 请求 | 说明 |
+|----|------|------|
+| 选课日志壳页 | `GET /jsxsd/xkgl/loadXsxkjgList?lx=xkrz` | 学期下拉（`select#xnxqid`）在这里；选中项 = 教务当前学期 |
+| 选课日志数据 | `GET /jsxsd/xkgl/loadXsxkjgList?lx=xkrz&type=list&xnxqid=<学期>&pageNum=&pageSize=` | 字段：`kc_mc` 课程名 / `kch` 编号 / `xm` 教师 / `zxs` 总学时 / `xf` 学分 / `kclb_mc` 属性 / `kcxz_mc` 性质 / `ktmc` 教学班 / `yx_mc` 学院 / `sksj` 上课时间（`<br>` 多行）/ `skdd` 地点 / `shzt`·`yy` 审核 |
+| 选课轮次 | `GET /jsxsd/xsxk/xklc_list_data` | 字段名来自页面表格定义（非选课期无样本）：`xqmc` 学期 / `xklc_mc` 名称 / `xksj` 选课时间 / `jx0502zbid` 轮次 id / `yxzt=='1'` 可预览。**`code` 是字符串 `"0"`**（日志接口是数字） |
+
+实测：2026-2027-1 有 12 条、2025-2026-2 与 2024-2025-1 各 16 条；轮次与预选在非选课期
+`count=0` 属正常。另探测到「退课日志」（`lx=tkrz&cxsj=tkjg`）与「学生预选管理/查询」
+（`/jsxsd/xkgl/xsyxgl?type=list`、`/jsxsd/xkgl/loadYxxkList`）同构可用，本期不做
+（预选当前无数据、查询页学期下拉为空）。
+
+**落库与同步**：
+- Room **v17** 新表 `course_selections`（实体 `CourseSelectionEntity`，索引 `term`），
+  按学期整体替换（`SelectionRepository.replaceTerm`，同 `scores` 口径）。
+- `SelectionSync`（OkHttp + `CasSession`，不开窗口）：先 GET 壳页读选中学期（不猜学期），
+  抓「当前学期 + 紧邻下一学期」（选课多发生在学期末选下学期，光抓当前学期会漏掉
+  「已选下学期」）；**先全部抓到内存、再一次性落库**——中途失败不留半套；
+  成功才落 `selection_sync_millis`（失败不写、不重试，同成绩/考试纪律）。
+- 轮次落 `SelectionRoundsStore`（`filesDir/selection_rounds.json` 快照，`ExamSnapshotStore` 同款，
+  但**允许存空**——`count=0` 是权威状态，空快照才会让页面如实显示、让过期提醒被撤销）。
+
+**解析**（`data/jw/SelectionParser.kt`，fixture = 实抓样本）：`code` 用 `content` 读
+（数字/字符串两种形态都认）；`sksj`/`skdd` 的 `<br>` 转 `\n`；`shellTerm`/`shellTerms`
+按 `select#xnxqid` 收窄（该页有多个 select）。测试 `SelectionParserTest` 11 例。
+
+**提醒**（`ui/reminder/SelectionAlertReminder.kt`）：
+- 提醒点 = 轮次开始前 30 分钟（`START_LEAD_MS`）+ 截止前 6 小时（`END_LEAD_MS`）；
+  提前量已过但事件未结束的点**钳到当下**发；事件已结束的点不生成
+  （`SelectionRounds.reminderPoints`，纯 JVM，`SelectionRoundsTest` 12 例）。
+- 调度同上课/骑行提醒：`AlarmManager.setAlarmClock` 单点精确闹钟（到点落
+  `SelectionAlertReceiver` → 一次性 Work 核对）+ 冷启动重排 + 开机补排
+  （`ReminderBootReceiver` 顺带叫它）+ 周期核对搭 `ScoreAlertReminder` 的周期任务
+  （间隔共用 `alert_interval_hours`，**没有为它单开键**）。
+- 已发键（`轮次id|start` / `轮次id|end`）落 DataStore，闹钟与周期核对共用去重；
+  发不出去不落键（同作业提醒）。通知 channel `selection_alert`，id 1010 / requestCode 3010
+  （与既有通知互不覆盖）。
+- **时间解析不了就不排提醒**：`xksj` 的真实格式要等选课期才有样本，`parseTimeRange` 容错支持
+  「日期+时刻对 / 仅日期对 / 单个时刻」，解析失败回退原文展示。
+
+**进入选课**：`JwImportMode.Selection`（`JwImportScreen` 的第三个模式）——登录后自动落
+`/jsxsd/xsxk/xklc_list`，底部只有一个「选课中心」入口、**没有导入按钮**。2026-10-01 起该
+WebView 模式只是**备用入口**（选课页「教务网页」行 + 应用内中心接口未接入时的逃生门）；
+选课/退课主路径在应用内选课中心（§3.22），WebView 里仍由用户自己操作，App 不注入。
+
+**轮次直达**（2026-10-01；同日收口后语义变化）：选课页轮次行现在直达**应用内选课中心**
+（轮次 id 走二级页 `focusItemId` 通道，§3.22）；带轮次 id 开教务 WebView
+（`newXsxkzx?jx0502zbid=<id>&isallsc=`，轮次页 JS `jrxk` 的落点；`JwUrls.selectionRoundUrl`
+拼装，id 过 `ROUND_ID_PATTERN`（字母数字下划线短横 1–64 位）白名单，不合法退回列表；
+`JwImportActivity.start(..., selectionRoundId =)` → `JwImportScreen.autoNavTarget`）
+只剩应用内中心「打开教务页面（备用）」一处调用。
+未实测：教务从列表进选课时先 POST `mzlist.do`（免责声明检查）再跳，直接进可能与那一步有关，
+真进不去就退回列表（窗口底部的「选课中心」按钮）。预览页 `yxxsxk_index?jx0502zbid=` 同法可拼。
+
+**自动落页的触发点**（2026-10-01 修「进入选课中心卡加载中」）：见 §4.4.1——落页触发用
+`onPageCommitVisible` 优先、`onPageFinished` 兜底，配 10 秒看门狗，任何路径不悬在 Loading。
+
+**红线**：`/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，POST，`lx=tk`/`lx=ww`）与
+`/jsxsd/xsxk/mzlist.do`（免责声明查询，POST）**绝不触碰**；探测脚本与 App 全链路只读。
+
+**脚本**：`scripts/fetch_selections.py`（第 9 个正式脚本）——同一组接口的参考实现与
+fixture 来源，默认抓「当前学期 + 下一学期」并输出 `out/selections.json`（含轮次原文）。
+
+**已验证**：`SelectionParserTest` 11 例 + `SelectionRoundsTest` 12 例 +
+`fetch_selections.py` 实抓通过（2026-2027-1 12 条）+ 全量测试与 `assembleDebug` 通过；
+**轮次展示与提醒要等选课期才能真机复验**（`xksj` 格式、进选课页、提醒到点）——
+这是本功能唯一的未验证面。
+
+**明确不做**：学生预选（接口在、当前无数据）；退课日志展示；把选课记录写进课表；
+自动退课（写操作边界见 §4.36「只加课」）。
+
+---
+
+### 4.36 应用内选课与抢课（2026-10-01 规划，用户已拍板；窗口期联调）
+
+**背景**：用户要求把「WebView 只读浏览器」升级为应用内选课——自动发现轮次、抓课程列表、
+筛选、**预选清单**（§3.20 已实现）、窗口一开**自动抢课**。已拍板：写操作**只做加课**，
+退课仍走 WebView；下一次选课窗口在**下个学期**，课程列表与提交接口只能到时实测。
+
+**分阶段**：
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| A | 修自动落页卡死（§4.4.1）+ 轮次直达 + 预选清单（§3.20） | **已实现**（2026-10-01） |
+| B | 抢课引擎骨架：策略 + 引擎 + 面板 + 前台服务 + 通知 + 免责声明（见下） | **已实现（骨架）**（2026-10-01） |
+| C | 窗口期联调：一次性探针脚本定位列表/提交/退课接口 → `SelectionCenterParser` + 真实 `SelectionCenterClient`（OkHttp + `CasSession`）→ **字段按实测校正**（列表 UI 骨架已在 B 落地，§3.22）+ 冲突标记 + 手动选课/退课实测 → 抢课接通；补「到点自动开始」开关（`setAlarmClock`，默认关）与服务设备冒烟 | 下个学期 |
+| D | 文档与红线改写（含本文） | 随 C 收口 |
+
+**B 阶段实现（2026-10-01）**：
+
+| 件 | 说明 |
+|----|------|
+| `domain/SelectionCourse` | 候选课程的最小集（`id` 只当不透明主键、容量类字段一律可空——真实字段等窗口期实测） |
+| `domain/SelectionGrabPolicy` | 节流/退避/停止条件（纯 JVM）：默认间隔 10s（档位 5/10/20/30/60s）、失败线性退避封顶 60s、连续失败 5 次自动停、单场上限 2 小时；「全部命中」先于「轮次截止」判定 |
+| `data/repo/SelectionCenterClient` | 引擎唯一依赖的抽象（`fetchCourses` / `submit` + `SelectionSubmitResult` 三态）；`UnconfiguredSelectionCenterClient` 明说「接口未接入」，**替换点只有 `Graph.selectionCenterClient` 一处** |
+| `data/repo/SelectionGrabber` | 会话循环：拉列表 → 按清单匹配 → 逐个提交 → 等间隔；**两种失败口径**：拉取/传输失败计连续失败并退避，提交被拒（名额满/冲突）**不计**、只记日志继续轮询（名额满是抢课期的常态，兜底是轮次截止与时长上限） |
+| `data/repo/SelectionGrabStore` | 会话的进程级状态（StateFlow：运行态/进度/最近日志），服务写、面板读；只活内存（进程没了会话就结束了） |
+| `ui/selection/SelectionGrabService` + `SelectionGrabNotifier` | 前台服务（`specialUse`，照 `EbikeFreeRideService`）：常驻进度通知（LOW）+「停止」动作 + 收场通知（HIGH）；通知 id 1020/1021、落点 requestCode 3020/3021（与既有 1001–1010 / 3008–3010 / 4002–4004 错开）；一次只跑一场会话，取消路径与正常结束走同一个收尾出口 |
+| `ui/selection/SelectionGrabScreen` | 抢课面板（§3.21）：状态卡（轮次 / 目标 / 进度 / 开始-停止）+ 设置（检查间隔 · 须知）+ 日志；「开始」要求**接口已接入 + 有进行中的轮次 + 清单非空 + 未在跑**，任一不满足都给出具体原因 |
+| `ui/selection/SelectionCenterScreen` | **应用内选课中心（§3.22）**：状态卡（目标轮次 / 汇总 / 教务原话透传 / 备用入口）+ 搜索筛选（关键词·只看有余额·只看已选·属性·排序）+ 课程卡（余量标签 / 选课-退课逐次确认）；数据源 = `SelectionCenterClient`，未接入时整页说明 |
+
+**红线三条**（B 起生效）：① 写操作**只提交用户清单/点选的课程，只加课不自动退课**；
+② 不并发、固定间隔（用户可调）、会话有上限、连续失败自动停止；③ 遇验证码/异常页面
+立即停止并通知，**不绕过**教务的任何限制。
+
+**风险声明**（已写进 App 内「抢课须知」，首次进面板必须确认，3 秒阅读锁）：这是本 App 首次
+对教务做写操作；自动化选课是否合规由用户自行判断，被教务风控的后果自负；抢课不保证成功
+（余量与并发由教务决定），App 只保证按清单、有节制地提交并如实报告结果。
+
+**未验证面（窗口期一并验）**：课程列表与提交接口本身（C 阶段实测）；服务的设备冒烟——
+组件按规矩非导出（adb 起不了），而面板入口要求「有进行中的轮次」，非选课期无法从 UI 触发，
+故 B 阶段只到「编译 + 单测 + 合并 manifest 核对（服务声明与 `FOREGROUND_SERVICE_SPECIAL_USE`
+均在）」为止。
+
+---
+
+### 4.37 U净 洗衣房（美的校园洗衣，2026-10-01，P1+P2 交付；UI 见 §3.23）
+
+**背景**：宿舍洗衣机为美的「U净」平台（美的集团 / 无锡小净共享网络）。官方**无开放 API**，
+协议事实来自社区多份独立逆向成果交叉核对：`baijuqi/ujing-mini`（2026-09-22 实机端到端验证，
+含 BLE 启动）；`abcde2333/NcepuJw`（Kotlin/Compose，在用；**GPL-3.0——仅参考协议事实，
+未复制代码**）；`funcfang/U-Clean-Reserve`、`Huoyuuu/ujing-laundry`（登录 / 查询端点佐证）。
+时效（2026-09-30 核）：至少 4 个独立项目近期活跃，端点自 2024 年未变。
+
+**网关与指纹**：`https://phoenix.ujing.online/api/v1`，壳 `{code, message, data}`（`code == 0`
+成功；`401 / -99` = 会话过期）。取码 / 登录组 `x-app-code: ZI`（2.4.3）、业务组 `BI`（2.4.2）
++ `weex-version: 1.1.30`；**无客户端签名**（无需逆向任何加密函数）。服务端对 code 宽容
+（ZA/BA 亦被验证可用）。收紧校验时先动 `UjingApiConfig`（重新抓包对齐）。
+
+**模块落位**：
+
+```
+domain/UjingState.kt             纯逻辑：fen2yuan / scanBadge（空闲·使用中·故障·离线）/
+                                 moduleTypeLabel（P3 通道判据）/ 状态映射 · 启停取消窗口 ·
+                                 受理判定（0 / 1703+0）/ 倒计时文案 / boardLine——JVM 直测
+data/ujing/UjingApiConfig.kt     网关与两组指纹（版本号全在这里）
+data/ujing/UjingApi.kt           裸 OkHttp：send 剥壳、两组头按调用点显式切换；无日志拦截器
+data/ujing/UjingModels.kt        壳 / DTO / 宽容数值与布尔 / 会话失效判定（401·-99·文案兜底）
+data/ujing/UjingSessionStore.kt  secure_ujing（加密 + Keystore 自愈；两套备份规则已排除）
+data/ujing/UjingHouseStore.kt    收藏洗衣房（普通 prefs：storeId|名称）
+data/ujing/UjingOrderStore.kt    在案订单快照（普通 prefs + StateFlow 双写，QzxyWateringStore
+                                 模式；**订单号必须跨进程存活**——重启丢 orderId 服务端就
+                                 无从签发指令，社区实测教训。快照另带 createdAt（下单时刻，
+                                 支付窗口倒计时基准）与 durationSeconds（模式总时长，
+                                 洗涤进度条分母），两者只在下单时写、刷新原样保留）
+data/ujing/UjingAlipay.kt        官方支付宝 SDK 薄封装：PayTask.payV2 → 三态（9000/6001/其余）；
+                                 orderInfo 服务端签发，App 不经手资金
+data/ujing/UjingRepository.kt    编排：登录 / 看板 / 扫码 / 套餐 / 下单 / 支付参数 / 详情 /
+                                 取消 / 云端启动；loggedIn 流与 markExpired（清 token 留手机号）
+ui/ujing/UjingScreen|ViewModel   页面与状态：看板并发限 4（Semaphore）、60s 冷却双保险、
+                                 使用须知窗口（3 秒锁 + 一周静默）、订单卡（本地秒级倒计时 +
+                                 页面可见 15s 轮询）、下单确认与取消确认；
+                                 loggedIn 收集器统一接「登录成功补数据」（订单对表 + 看板重拉）
+ui/reminder/UjingDoneReminder    洗衣完成提醒：setAlarmClock 单点 + Worker 查单（50 → 发通知；
+                                 40 → 按新剩余重排；其余撤销），渠道 ujing_done，
+                                 Receiver/Worker 类名纪律与选课提醒同款
+```
+
+**端点（P1+P2 用到）**：`captcha` → `login`（→ JWT）→ `stores/near`（经度拼写是 **`lont`**）
+→ `devices/reserve?storeId=` → `devices/scanWasherCode`（**二维码原文直传**）→
+`app/washer/devices/program/info?deviceId=`（storeId / 套餐 / 下单开关由服务端动态下发，
+声明开关有 `isWashTemperatureEnable` / `isForceDetergent` / `isForceDisinfectant`）→
+`orders/create`（body：type / deviceTypeId / deviceId / deviceWashModelId / storeId 为基础
+五字段，**实测可过**；可选字段按「服务端声明需要才发」——`washTemperatureId`（机型开放水温
+且非烘干，枚举 1 常温 / 2=30℃ / 3=40℃ / 4=60℃）、`wp_detergentGearId` / `wp_disinfectantGearId`
+（强制投放机型补标准档 1 / 4）、`dryTime`（仅烘干机，协议口径 = 模式时长 / 10））→
+`payment/arguments?channel=alipay`（→ `payInfo.orderInfo` 给 SDK）→
+`orders/{id}/detail?additional=price`（status 为**字符串**；remainTime 秒；`additional=price`
+照抄官方抓包形态）→ `app/payment/{id}/lastPayStatus` → `orders/{id}/cancel` →
+`orders/{id}/control/start`。**实测（2026-10-01）**：匿名
+`scanWasherCode` 返回 `code=401 "JWT token is missing"`（三种头组合一致）——只读也必须
+登录，**不存在免登路径**。蓝牙机型的 BLE 协议（Nordic / Cypress 通道、三个坑）在
+`docs/ujing-plan.md`（本地），P3 实现时搬进本节。
+
+**红线**（与 `.agents/rules/ujing.md` 同口）：不绕过支付、只操作本人有使用权的设备；写操作
+零自动重试 + 二次确认；登录节制（高频登录会被服务端限制数十分钟，社区实测）；不后台轮询
+（订单轮询限"页面可见 + 15s"）；token 只进 `secure_ujing`、绝不进日志；**启动前必须先查订单
+状态**（服务端对已运行订单返回 `{}` 静默拒绝，status ∈ {40,50} 直接禁启动按钮）；已有在案
+订单不允许叠单；不复制 GPL/AGPL 参考项目的代码。
+
+**已验证（2026-10-01，P1+P2）**：`UjingStateTest` 13 例 + `UjingApiParseTest` 10 例 +
+`UjingOrderStateTest` 6 例 + `UjingOrderParseTest` 8 例；全量 **1262 例 0 失败**；
+`assembleDebug` 通过并装机（debug 包、无线调试真机）。**真机点验待用户执行**：
+P1——登录（短信）→ 添加洗衣房 → 看板出数 → 扫码识别（顺看「通信模块」行）；
+P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计时 →（云端机型）启动；
+体验补——开放水温的机器出温度 chips、洗涤中进度条、洗好通知（可锁屏等它到点）。
+遗留待实测：② JWT 有效期（登录后 base64 解 `exp`）；③ 学校机型 `moduleType`
+（1/5 = 纯蓝牙 → P3 走 BLE；0/2/3/4/7 → 云端启动已通）。
+
+---
+
 ## 5. 非功能
 
 | 项 | 要求 |
@@ -6080,6 +6447,49 @@ P6 追加（2026-09-30，成绩/考试变动提醒，§4.33）：出分提醒（
 本次变动在卡上标「新增/调整」（身份键与 `ExamChangeDetector.keyOf` 同源）。
 全量 1168 例 0 失败，`assembleDebug` 通过，考试页在模拟器上冒烟（空态 / 开关联动 /
 更新失败提示 / 合成基线验列表排版），真实教务那条链仍待真机点验。
+
+P6 追加（2026-09-30，选课，§3.19 / §4.35）：我的 → 学习 → 选课——选课记录（教务「选课日志」，
+Room v17 新表 `course_selections` 按学期替换，OkHttp 直取，默认抓当前学期 + 下一学期）、
+选课轮次卡（`SelectionRoundsStore` 文件快照 + 「进入选课中心」WebView，`JwImportMode.Selection`，
+App 不代选）、轮次提醒（开始前 30 分钟 / 截止前 6 小时，`setAlarmClock` 精确闹钟，
+周期核对搭成绩/考试那趟车，间隔共用）。同日探测确认红线：`Xsxkjg_tk.do`（申请退课，POST）
+全链路不碰；预选接口在但无数据，本期不做。本地单测新增 23 例（`SelectionParserTest` 11 +
+`SelectionRoundsTest` 12），全量 1194 例 0 失败，`assembleDebug` 通过；脚本
+`scripts/fetch_selections.py` 实抓通过（当前学期 12 条）。**轮次展示与提醒的时间解析
+要等选课期才有真实样本**（`xksj` 格式），这是本功能唯一的未验证面。
+
+P6 追加（2026-10-01，U净 洗衣房 P1，§3.23 / §4.37）：我的 → 校园服务 → U净——登录（手机号 +
+短信验证码，60 秒冷却）→ 洗衣房空闲看板（收藏店并发限 4 拉 `devices/reserve`；「添加」走
+附近弹层：定位 + `stores/near`）→ 扫码识别（骑行取景窗口新增**原文模式**复用）→ 设备卡 +
+套餐（服务端动态下发）。协议事实来自社区独立逆向成果交叉核对（ujing-mini 2026-09 实机
+端到端验证；NcepuJw 为 GPL-3.0，仅取协议未取代码）；**无客户端签名**，一次短信登录长期有效。
+新增单测 18 例（`UjingStateTest` 9 + `UjingApiParseTest` 9），`assembleDebug` 通过装真机。
+同日 P2（交易闭环）：点套餐行（仅空闲可点）→ 下单确认 → `orders/create` →
+`payment/arguments` → **官方支付宝 SDK**（`com.alipay.sdk:alipaysdk-android:15.8.42`，
+Maven Central；orderInfo 服务端签发）→ 回跳双查（`lastPayStatus` + `detail`）→ 订单卡
+（`UjingOrderStore` 落盘跨进程恢复 + 本地秒级倒计时 + 页面可见 15s 轮询 + 取消/云端启动）。
+云端启动受理判定 `0 / 1703+errorCode==0`；**启动前先查订单状态**（对已运行订单服务端回
+`{}` 静默拒绝）。实测定论：匿名 `scanWasherCode` 三种头组合均回 `401 "JWT token is
+missing"`——**只读也必须登录，无免登路径**。新增 `UjingOrderStateTest` 6 +
+`UjingOrderParseTest` 8，全量 **1258 例 0 失败**，`assembleDebug` 通过，debug 包已装真机
+（点验待用户执行；遗留实测：JWT 周期、学校机型 `moduleType` 定 P3 是否需要 BLE 通道）。
+
+P6 追加（2026-10-01，U净 体验补，§3.23 / §4.37）：四项——① **下单可选参数**按「服务端
+声明需要才发」落地：`program/info` 的三个开关（`isWashTemperatureEnable` / `isForceDetergent` /
+`isForceDisinfectant`）进 DTO，开放水温的洗衣机出温度 chips（常温/30/40/60℃，枚举 1–4）
+随 `washTemperatureId` 下单，强制投放机型自动补标准档（洗涤剂 1 / 消毒液 4）；
+② **烘干机 `dryTime`**（协议口径 = 模式时长 / 10）随烘干下单自动带，确认弹层注明「烘干档」；
+③ **登录态联动**：`loggedIn` 收集器统一接「登录成功 → 在案订单对表 + 看板重拉、退出 → 清看板」
+（init 里原来各自写的两处补拉合并进收集器，StateFlow collect 即发射当前值）；
+④ **洗衣完成提醒**（`ui/reminder/UjingDoneReminder`）：订单进洗涤中即排 `setAlarmClock`
+精确闹钟（页面轮询不断校准落点），到点 Worker 查一次详情——50 发「衣服洗好了」
+（渠道 `ujing_done`，点击落本页）、40 按新剩余重排、其余静默撤销；**不设 App 内开关**
+（系统渠道关）、无开机补排（进页刷新会重排）。排版同步收口：已登录态改「订单 > 扫码 >
+看板 > 账号」，订单卡加洗涤进度条（总量 = 下单模式时长）与 2 分钟支付窗口倒计时
+（快照新增 `createdAt` / `durationSeconds` 两列，旧快照缺省退回静态提示），扫码区空态加
+引导文案。`orders/{id}/detail` 补 `additional=price`（照抄官方抓包）。新增 4 例
+（`UjingStateTest` +3、`UjingApiParseTest` +1），全量 **1262 例 0 失败**，装机完成，
+真机点验待用户执行。
 
 ---
 
