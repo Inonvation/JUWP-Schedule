@@ -85,17 +85,24 @@ object ScoreAlertReminder {
     private const val MAX_LINES = 4
 
     /**
-     * 周期核对：两个开关都关时**撤销**任务而不是留着空跑（同 `BalanceAlertReminder`）。
+     * 周期核对：三个开关都关时**撤销**任务而不是留着空跑（同 [BalanceAlertReminder]）。
      * 幂等策略：**档位没变时 KEEP**，免得每次冷启动都把周期相位推后；档位变了用
      * REPLACE 换周期（2.7.1 没有 UPDATE 策略；REPLACE 取消旧任务重新排，只在用户
      * 改间隔那一刻发生）。已排周期记在 DataStore（`alert_periodic_interval`），
      * 进程重启后也能比对；0 = 当前没有在排的周期任务。
+     *
+     * 选课提醒（DESIGN §4.35）搭同一趟车：间隔共用 `alert_interval_hours`（三向共用，
+     * 不为它单开键——口径见 `.agents/rules/import-jw.md` 的提醒纪律），核对时它自己
+     * 顺带刷新轮次快照。
      */
     suspend fun ensurePeriodicWork(context: Context) {
         runCatching {
             val prefs = Graph.displayPrefs(context)
             val workManager = WorkManager.getInstance(context)
-            if (!prefs.scoreAlertEnabled.first() && !prefs.examAlertEnabled.first()) {
+            if (!prefs.scoreAlertEnabled.first() &&
+                !prefs.examAlertEnabled.first() &&
+                !prefs.selectionAlertEnabled.first()
+            ) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
                 prefs.setAlertPeriodicInterval(0)
                 return
@@ -137,7 +144,7 @@ object ScoreAlertReminder {
     }
 
     /**
-     * 核对一次：成绩与考试各查各的（开关各自独立），有变更才发通知。
+     * 核对一次：成绩、考试、选课各查各的（开关各自独立），有变更/到期才发通知。
      * 整体兜异常：后台任务里任何失败都不该让 Worker 报错重试（重试会再打一次教务）。
      */
     suspend fun check(context: Context) {
@@ -145,11 +152,14 @@ object ScoreAlertReminder {
             val prefs = Graph.displayPrefs(context)
             val scoreOn = prefs.scoreAlertEnabled.first()
             val examOn = prefs.examAlertEnabled.first()
-            if (!scoreOn && !examOn) return
+            val selectionOn = prefs.selectionAlertEnabled.first()
+            if (!scoreOn && !examOn && !selectionOn) return
             // 通知被系统/用户整体关闭时静默跳过：写不出去也不该白打一次教务
             if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
             if (scoreOn) checkScores(context)
             if (examOn) checkExams(context)
+            // 选课提醒自带落盘去重与闹钟重排（DESIGN §4.35），这里只负责按周期叫醒它
+            if (selectionOn) SelectionAlertReminder.check(context)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 

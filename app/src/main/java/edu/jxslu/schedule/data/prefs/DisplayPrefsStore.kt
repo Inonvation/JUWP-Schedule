@@ -22,6 +22,9 @@ import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
+import edu.jxslu.schedule.domain.SelectionGrabPolicy
+import edu.jxslu.schedule.domain.SelectionWish
+import edu.jxslu.schedule.domain.SelectionWishes
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.ShortcutItem
@@ -475,6 +478,100 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setExamAlertCheckMillis(millis: Long) {
         context.displayDataStore.edit { it[KEY_EXAM_CHECK_MILLIS] = millis }
+    }
+
+    // ---- 选课（DESIGN §4.35）----
+
+    /** 选课记录上次成功同步时刻（epoch millis）。0 = 从没成功过。失败不写（同成绩/考试纪律）。 */
+    suspend fun selectionSyncMillis(): Long =
+        context.displayDataStore.data.first()[KEY_SELECTION_SYNC_MILLIS] ?: 0L
+
+    suspend fun setSelectionSyncMillis(millis: Long) {
+        context.displayDataStore.edit { it[KEY_SELECTION_SYNC_MILLIS] = millis }
+    }
+
+    /**
+     * 教务选课日志页学期下拉的全量选项（选课页「更多学期」用；逗号分隔，空 = 还没抓到过）。
+     * 存下来是为了列个学期清单不用再打一次教务。
+     */
+    suspend fun selectionTerms(): List<String> =
+        context.displayDataStore.data.first()[KEY_SELECTION_TERMS].orEmpty()
+            .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    suspend fun setSelectionTerms(terms: List<String>) {
+        context.displayDataStore.edit { it[KEY_SELECTION_TERMS] = terms.joinToString(",") }
+    }
+
+    /** 选课轮次上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写。 */
+    suspend fun selectionRoundsCheckMillis(): Long =
+        context.displayDataStore.data.first()[KEY_SELECTION_ROUNDS_CHECK_MILLIS] ?: 0L
+
+    suspend fun setSelectionRoundsCheckMillis(millis: Long) {
+        context.displayDataStore.edit { it[KEY_SELECTION_ROUNDS_CHECK_MILLIS] = millis }
+    }
+
+    /** 选课轮次提醒开关。默认关（通知是打扰型能力，与成绩/考试提醒同一口径，用户显式开启）。 */
+    val selectionAlertEnabled: Flow<Boolean> =
+        context.displayDataStore.data.map { p -> p[KEY_SELECTION_ALERT_ENABLED] ?: false }
+
+    suspend fun setSelectionAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_SELECTION_ALERT_ENABLED] = value }
+    }
+
+    /**
+     * 选课提醒「已发键」集合（`轮次id|start` / `轮次id|end`），闹钟与周期核对共用去重。
+     * 键缺失/脏值回空集：最坏结果是重发一条通知，不该让核对链路抛异常。
+     * 不做裁剪：一个学期只有几轮，累计是个位数，没有淘汰的必要。
+     */
+    suspend fun selectionRemindedKeys(): Set<String> =
+        context.displayDataStore.data.first()[KEY_SELECTION_REMINDED_KEYS] ?: emptySet()
+
+    suspend fun addSelectionRemindedKey(key: String) {
+        context.displayDataStore.edit { p ->
+            p[KEY_SELECTION_REMINDED_KEYS] = (p[KEY_SELECTION_REMINDED_KEYS] ?: emptySet()) + key
+        }
+    }
+
+    // ---- 预选清单（DESIGN §3.20 / §4.36）----
+
+    /**
+     * 预选清单（选课开放后按它抢课）。JSON 存储，口径同快捷方式：
+     * 坏数据回空表，不崩在读路径上。
+     */
+    val selectionWishes: Flow<List<SelectionWish>> = context.displayDataStore.data.map { p ->
+        p[KEY_SELECTION_WISHES_JSON]?.let { SelectionWishes.decode(it) } ?: emptyList()
+    }
+
+    suspend fun setSelectionWishes(wishes: List<SelectionWish>) {
+        context.displayDataStore.edit { p ->
+            p[KEY_SELECTION_WISHES_JSON] = SelectionWishes.encode(wishes)
+        }
+    }
+
+    // ---- 抢课（DESIGN §4.36）----
+
+    /** 抢课检查间隔（毫秒）。档位表与夹取在 [SelectionGrabPolicy]，这里只管存取。 */
+    val selectionGrabIntervalFlow: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_SELECTION_GRAB_INTERVAL_MS] ?: SelectionGrabPolicy.INTERVAL_DEFAULT_MS
+    }
+
+    /** 服务侧读取（一次取值）。 */
+    suspend fun selectionGrabIntervalMs(): Long = selectionGrabIntervalFlow.first()
+
+    suspend fun setSelectionGrabIntervalMs(value: Long) {
+        context.displayDataStore.edit { p -> p[KEY_SELECTION_GRAB_INTERVAL_MS] = value }
+    }
+
+    /**
+     * 抢课免责声明的确认时刻（epoch millis）。0 = 没确认过（进抢课面板自动弹一次）。
+     * 抢课是写操作，首次必须显式确认（DESIGN §4.36 风险声明）。
+     */
+    val selectionGrabDisclaimerFlow: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_SELECTION_GRAB_DISCLAIMER_AT] ?: 0L
+    }
+
+    suspend fun setSelectionGrabDisclaimerAt(millis: Long) {
+        context.displayDataStore.edit { p -> p[KEY_SELECTION_GRAB_DISCLAIMER_AT] = millis }
     }
 
     /**
@@ -1451,6 +1548,16 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCORE_CHECK_MILLIS = longPreferencesKey("score_check_millis")
         val KEY_EXAM_CHECK_MILLIS = longPreferencesKey("exam_check_millis")
         val KEY_ALERT_PERIODIC_INTERVAL = intPreferencesKey("alert_periodic_interval")
+
+        // 选课（DESIGN §4.35）：上次同步时刻 + 学期下拉全量 + 轮次检查时刻 + 提醒开关与已发键
+        val KEY_SELECTION_SYNC_MILLIS = longPreferencesKey("selection_sync_millis")
+        val KEY_SELECTION_TERMS = stringPreferencesKey("selection_terms")
+        val KEY_SELECTION_ROUNDS_CHECK_MILLIS = longPreferencesKey("selection_rounds_check_millis")
+        val KEY_SELECTION_ALERT_ENABLED = booleanPreferencesKey("selection_alert_enabled")
+        val KEY_SELECTION_REMINDED_KEYS = stringSetPreferencesKey("selection_reminded_keys")
+        val KEY_SELECTION_WISHES_JSON = stringPreferencesKey("selection_wishes_json")
+        val KEY_SELECTION_GRAB_INTERVAL_MS = longPreferencesKey("selection_grab_interval_ms")
+        val KEY_SELECTION_GRAB_DISCLAIMER_AT = longPreferencesKey("selection_grab_disclaimer_at")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

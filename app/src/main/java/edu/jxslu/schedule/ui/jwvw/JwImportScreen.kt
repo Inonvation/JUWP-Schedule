@@ -102,6 +102,12 @@ enum class JwImportMode {
     Schedule,
     /** 成绩导入：抓全部学期成绩，按学期替换入库（DESIGN §4.15）。 */
     Scores,
+    /**
+     * 选课（DESIGN §4.35）：登录后落到学生选课中心 `/jsxsd/xsxk/xklc_list`，
+     * **只当浏览器用**——选课/退课操作由用户在教务页面上自己完成，App 不代选、
+     * 不注入、不写库。没有导入动作，底部只给「回到选课中心」一个入口。
+     */
+    Selection,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -113,6 +119,9 @@ fun JwImportScreen(
     // 课表模式下开在考试安排查询页（DESIGN §4.33）。只改「登录后的自动落页」，
     // 不动抽取/写库任何一环；成绩模式忽略它。
     startAtExam: Boolean = false,
+    // 选课模式下直达某个轮次（DESIGN §4.35）：轮次 id 过白名单后拼「进入选课」页；
+    // 空/不合法 = 落选课中心列表。其余模式忽略它。
+    selectionRoundId: String? = null,
 ) {
     val context = LocalContext.current
     val repo = remember { Graph.repository(context) }
@@ -166,6 +175,36 @@ fun JwImportScreen(
     var pageState by remember { mutableStateOf<PageState>(PageState.Loading) }
     var statusNote by remember { mutableStateOf("正在打开学校统一身份认证登录…") }
     var autoNavPending by remember { mutableStateOf(false) }
+    /**
+     * 自动落页已经跳过一次（成功或放弃）：之后再回到教务主页不再自动跳，
+     * 免得抢用户自己的导航（原来的语义藏在「autoNavPending 成功后不复位」里，显式写出来）。
+     */
+    var autoNavDone by remember { mutableStateOf(false) }
+    /**
+     * 登录落地（教务主页）后自动打开的目标页与提示文案，按模式固定。
+     * 触发在 [startAutoNavOnLanding]，`onPageCommitVisible` 与 `onPageFinished` 两个入口
+     * 共用这一份口径。
+     *
+     * 注意：两张课表的 URL 都含 "xskb"（理论 xskb_list、实验 toXskb），不能用子串判断。
+     */
+    val autoNavTarget: String = when (mode) {
+        JwImportMode.Scores -> JwUrls.SCORE_FRM
+        JwImportMode.Selection -> selectionRoundId
+            ?.let { JwUrls.selectionRoundUrl(it) }
+            ?: JwUrls.SELECTION_CENTER
+        // 从考试页进来的窗口（DESIGN §4.33）：落理论课表页会触发 autoImportOnTheoryReady，
+        // 一键导入理论+实验跑起来，跟入口写的「导入考试安排」不是一回事
+        JwImportMode.Schedule -> if (startAtExam) JwUrls.EXAM_QUERY else JwUrls.SCHEDULE_LIST
+    }
+    val autoNavNote: String = when (mode) {
+        JwImportMode.Scores -> "已登录教务主页，正在打开成绩查询页…"
+        JwImportMode.Selection -> "已登录教务主页，正在打开选课中心…"
+        JwImportMode.Schedule -> if (startAtExam) {
+            "已登录教务主页，正在打开考试安排查询…"
+        } else {
+            "已登录教务主页，正在打开学期理论课表…"
+        }
+    }
     /**
      * 一键导入是否已经跑过（自动触发只做第一次，见 [autoImportOnTheoryReady] /
      * [autoImportOnScoreReady]；两种模式各开一个窗口，共用这一个标记不会互相干扰）。
@@ -307,6 +346,63 @@ fun JwImportScreen(
             }
             onDone()
         }
+    }
+
+    /** 真正发起自动跳转（会话探针已过；两处入口共用）。 */
+    fun startAutoNav(wv: WebView) {
+        if (autoNavPending || autoNavDone) return
+        autoNavPending = true
+        pageState = PageState.Loading
+        statusNote = autoNavNote
+        // 复核放在延迟里：重定向链乱序时 currentUrl 可能已经不在主页，就不跳了；
+        // 但**不能**把状态留在 Loading——那是「卡在加载中」的另一半根因
+        wv.postDelayed({
+            // 期间用户自己发了新导航（手动按钮/刷新会把 autoNavPending 清掉）：这一跳作废
+            if (!autoNavPending) return@postDelayed
+            if (!autoNavDone && currentUrl.contains("xsMainV")) {
+                autoNavDone = true
+                wv.loadUrl(autoNavTarget)
+            } else {
+                autoNavPending = false
+                autoNavDone = true
+                if (pageState is PageState.Loading) pageState = PageState.Ready
+            }
+        }, AUTO_NAV_DELAY_MS)
+        // 看门狗：探针回调万一不来（页面卡死），到点把状态解锁成可操作，不让用户干等
+        wv.postDelayed({
+            if (autoNavPending && !autoNavDone) {
+                autoNavPending = false
+                autoNavDone = true
+                statusNote = "打开教务页面超时：可点右上角「刷新」重试"
+                if (pageState is PageState.Loading) pageState = PageState.Ready
+            }
+        }, AUTO_NAV_TIMEOUT_MS)
+    }
+
+    /**
+     * 落在教务主页（登录落点）→ 自动去目标页 [autoNavTarget]。
+     *
+     * **为什么不再只挂在 `onPageFinished` 上**（2026-10-01 用户报障「进入选课中心卡在
+     * 教务主页面显示加载中」的根因）：`onPageFinished` 会被挂住的子资源拖住，迟迟不来时
+     * 旧实现就一直停在 `onPageStarted` 写的「加载中…」，且没有任何后续触发点。
+     * 现在首选触发点是 `onPageCommitVisible`——**内容已可见就算到了**，不依赖「加载完成」。
+     *
+     * 两条纪律不变：
+     * 1. 先过会话探针：教务未登录时会把登录页**就地渲染**在 `xsMainV` 这个 URL 上
+     *    （HTTP 200、URL 不变），不看内容就跳会跳到登录页上；
+     * 2. 只跳一次（[autoNavDone]），用户之后自己回到主页不打扰。
+     *
+     * 另配 [AUTO_NAV_TIMEOUT_MS] 看门狗与「复核失败」分支：任何路径都不允许把页面
+     * 悬在「加载中…」且无出口（这是本 bug 的另一半）。
+     *
+     * 注意：两者是**局部函数，不能前向引用**（Kotlin 口径，见 `.agents/rules/import-jw.md`），
+     * [startAutoNav] 必须定义在本函数之前。
+     */
+    fun startAutoNavOnLanding(view: WebView?, url: String?) {
+        val wv = view ?: return
+        if (url == null || "xsMainV" !in url) return
+        if (autoNavPending || autoNavDone) return
+        checkSessionLost(wv, url) { startAutoNav(wv) }
     }
 
     /**
@@ -648,7 +744,11 @@ fun JwImportScreen(
                 title = {
                     Column {
                         Text(
-                            if (mode == JwImportMode.Scores) "成绩导入 · 统一认证" else "教务导入 · 统一认证",
+                            when (mode) {
+                                JwImportMode.Scores -> "成绩导入 · 统一认证"
+                                JwImportMode.Selection -> "选课 · 统一认证"
+                                JwImportMode.Schedule -> "教务导入 · 统一认证"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
@@ -675,6 +775,8 @@ fun JwImportScreen(
                             val retry = (pageState as? PageState.Error)?.retryUrl
                             pageState = PageState.Loading
                             autoNavPending = false
+                            // 刷新 = 新的一轮：落地页的自动跳转也放开重试一次（看门狗提示就是这么说的）
+                            autoNavDone = false
                             // 用户显式重试 = 新的一轮，自动重试闸门重新打开
                             autoRetryUsed = false
                             // 错误态下刷新不是无脑 reload：失败 URL 若是 CAS/SSO 页（含一次性 ticket），
@@ -744,6 +846,9 @@ fun JwImportScreen(
                                     override fun onPageCommitVisible(view: WebView?, url: String?) {
                                         Log.d(TAG, "onPageCommitVisible ${view?.width}x${view?.height} $url")
                                         applyPageFit(view, url)
+                                        // 内容已可见 = 这一页真的到了（不被挂住的子资源拖住）——
+                                        // 登录落地在教务主页就趁这里自动去目标页，见 [startAutoNavOnLanding]
+                                        startAutoNavOnLanding(view, url)
                                     }
 
                                     override fun onPageFinished(view: WebView?, url: String?) {
@@ -815,31 +920,13 @@ fun JwImportScreen(
                                             // 注意：两张课表的 URL 都含 "xskb"（理论 xskb_list、实验 toXskb），
                                             // 不能用子串判断，必须按页面类型区分，否则会互相误判
                                             val page = JwUrls.schedulePageKind(u)
-                                            // 成绩模式登录后直达成绩查询页；固定跳理论课表
-                                            // 会让成绩导入每次都落到课表页、再手动点一次入口
-                                            val autoNavTarget = when (mode) {
-                                                JwImportMode.Scores -> JwUrls.SCORE_FRM
-                                                JwImportMode.Schedule -> if (startAtExam) {
-                                                    // 从考试页进来的窗口（DESIGN §4.33）：落理论课表页会
-                                                    // 触发 autoImportOnTheoryReady，一键导入理论+实验跑起来，
-                                                    // 跟入口写的「导入考试安排」不是一回事
-                                                    JwUrls.EXAM_QUERY
-                                                } else {
-                                                    JwUrls.SCHEDULE_LIST
-                                                }
-                                            }
                                             statusNote = when {
                                                 "eapp2.juwp.edu.cn" in u ->
                                                     "请使用学校统一身份认证登录"
-                                                "xsMainV" in u ->
-                                                    when {
-                                                        mode == JwImportMode.Scores ->
-                                                            "已登录教务主页，正在打开成绩查询页…"
-                                                        startAtExam ->
-                                                            "已登录教务主页，正在打开考试安排查询…"
-                                                        else ->
-                                                            "已登录教务主页，正在打开学期理论课表…"
-                                                    }
+                                                // 落地主页的文案与自动跳转共用一份口径（见 autoNavNote）
+                                                "xsMainV" in u -> autoNavNote
+                                                JwUrls.isSelectionCenterUrl(u) ->
+                                                    "选课中心已打开。点「进入选课」在教务页面上完成选课，选好后返回即可。"
                                                 page == JwSchedulePage.Exam ->
                                                     // 首次落页由 autoImportOnExamReady 自动跑，
                                                     // 跑过之后再回来就只剩手动入口
@@ -860,18 +947,12 @@ fun JwImportScreen(
                                                 else -> "已登录教务，点下方「一键导入课表」可同步理论与实验课表"
                                             }
 
-                                            if ("xsMainV" in u && !autoNavPending) {
-                                                autoNavPending = true
-                                                pageState = PageState.Loading
-                                                // 500ms 只留一个「已登录」的可见过渡；跳转目标按模式固定，
-                                                // postDelayed 内仍会复核 currentUrl，重定向链乱序也不会跳错
-                                                view?.postDelayed({
-                                                    if (currentUrl.contains("xsMainV")) {
-                                                        view.loadUrl(autoNavTarget)
-                                                    } else {
-                                                        autoNavPending = false
-                                                    }
-                                                }, 500)
+                                            // 落地主页 → 自动去目标页。与 onPageCommitVisible 那条路
+                                            // 共用同一个闸门与实现（见 startAutoNavOnLanding）；这里是兜底，
+                                            // 也负责「内容可见那条路没触发」时的第二次机会。
+                                            // autoNavDone 之后不再拦：用户自己回到主页时按普通页处理（Ready）
+                                            if ("xsMainV" in u && !autoNavDone) {
+                                                view?.let { startAutoNav(it) }
                                                 return@checkSessionLost
                                             }
                                             if (page != JwSchedulePage.None) {
@@ -1058,6 +1139,8 @@ fun JwImportScreen(
                         onRetry = {
                             pageState = PageState.Loading
                             autoNavPending = false
+                            // 重试同样是新的一轮：落地页的自动跳转放开（同顶栏刷新的口径）
+                            autoNavDone = false
                             // 用户显式重试 = 新的一轮，自动重试闸门重新打开
                             autoRetryUsed = false
                             // err.retryUrl 为空 = 失败页可安全重放（如课表页自己 5xx）；
@@ -1089,8 +1172,8 @@ fun JwImportScreen(
                 ) {
                     // 底部只留「考试安排」一个入口：理论/实验两张表由一键导入自己依次打开，
                     // 不再需要「走哪个入口就用哪个解析器」那套按当前页选手的按钮
-                    if (mode == JwImportMode.Schedule) {
-                        ScheduleEntryButton(
+                    when (mode) {
+                        JwImportMode.Schedule -> ScheduleEntryButton(
                             label = "考试安排",
                             active = pageKind == JwSchedulePage.Exam,
                             enabled = !busy,
@@ -1103,8 +1186,22 @@ fun JwImportScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
-                    } else {
-                        ScheduleEntryButton(
+                        // 选课模式（DESIGN §4.35）：只提供「回到选课中心」一个入口，
+                        // 选课/退课都在教务页面上完成——App 不代选、不注入、不写库
+                        JwImportMode.Selection -> ScheduleEntryButton(
+                            label = "选课中心",
+                            active = JwUrls.isSelectionCenterUrl(currentUrl),
+                            enabled = !busy,
+                            onClick = {
+                                pageState = PageState.Loading
+                                statusNote = "打开选课中心…"
+                                autoNavPending = false
+                                autoRetryUsed = false
+                                webView?.loadUrl(JwUrls.SELECTION_CENTER)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        JwImportMode.Scores -> ScheduleEntryButton(
                             label = "打开成绩查询页",
                             active = JwUrls.isScoreQueryUrl(currentUrl),
                             enabled = !busy,
@@ -1118,39 +1215,42 @@ fun JwImportScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    Button(
-                        onClick = {
-                            when {
-                                mode == JwImportMode.Scores -> scope.launch { runScoreImport(webView) }
-                                pageKind == JwSchedulePage.Exam -> scope.launch { runExamImport(webView) }
-                                else -> scope.launch { runOneClickImport() }
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp),
-                        // 防误触：currentUrl 在 onPageFinished 才更新，页面没就绪就点会拿旧 URL
-                        // 判型。考试/成绩两条仍要求停在对应页；一键导入自己会翻页，只要求已登录。
-                        enabled = !busy && pageState == PageState.Ready &&
-                            when {
-                                mode == JwImportMode.Scores -> true
-                                pageKind == JwSchedulePage.Exam -> true
-                                else -> canOneClick
-                            },
-                    ) {
-                        Text(
-                            when {
-                                busy -> if (mode == JwImportMode.Scores || pageKind == JwSchedulePage.Exam) {
-                                    "解析中…"
-                                } else {
-                                    "识别中…"
+                    // 选课模式没有导入动作：这一条整块不出现
+                    if (mode != JwImportMode.Selection) {
+                        Button(
+                            onClick = {
+                                when {
+                                    mode == JwImportMode.Scores -> scope.launch { runScoreImport(webView) }
+                                    pageKind == JwSchedulePage.Exam -> scope.launch { runExamImport(webView) }
+                                    else -> scope.launch { runOneClickImport() }
                                 }
-                                mode == JwImportMode.Scores -> "导入成绩"
-                                pageKind == JwSchedulePage.Exam -> "导入考试安排"
-                                canOneClick -> "一键导入课表"
-                                else -> "登录教务后可一键导入"
                             },
-                        )
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            // 防误触：currentUrl 在 onPageFinished 才更新，页面没就绪就点会拿旧 URL
+                            // 判型。考试/成绩两条仍要求停在对应页；一键导入自己会翻页，只要求已登录。
+                            enabled = !busy && pageState == PageState.Ready &&
+                                when {
+                                    mode == JwImportMode.Scores -> true
+                                    pageKind == JwSchedulePage.Exam -> true
+                                    else -> canOneClick
+                                },
+                        ) {
+                            Text(
+                                when {
+                                    busy -> if (mode == JwImportMode.Scores || pageKind == JwSchedulePage.Exam) {
+                                        "解析中…"
+                                    } else {
+                                        "识别中…"
+                                    }
+                                    mode == JwImportMode.Scores -> "导入成绩"
+                                    pageKind == JwSchedulePage.Exam -> "导入考试安排"
+                                    canOneClick -> "一键导入课表"
+                                    else -> "登录教务后可一键导入"
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -1454,6 +1554,18 @@ private const val LAB_URL_PART = "syjx/toXskb"
  * 卡住多半是出口不通，早点报错比让用户对着「识别中…」发呆好。
  */
 private const val PAGE_LOAD_TIMEOUT_MS = 20_000L
+
+/**
+ * 登录落地（xsMainV）→ 目标页之间留的可见过渡（同旧实现的 500ms 口径，微调为 400ms）。
+ * 期间若用户已经离开主页（重定向链乱序）就不再跳。
+ */
+private const val AUTO_NAV_DELAY_MS = 400L
+
+/**
+ * 自动落页的看门狗：到点还没跳出去（会话探针回调没来 / 页面卡死）就把状态解锁成可操作。
+ * 取 10 秒——正常落地后目标页早该开始加载了。
+ */
+private const val AUTO_NAV_TIMEOUT_MS = 10_000L
 
 /**
  * 顶部提示条：只留一行状态文字。

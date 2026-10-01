@@ -275,11 +275,28 @@
             </intent-filter>
         </receiver>
 
+        <!-- 选课轮次提醒（DESIGN §4.35）：边界闹钟落点（显式 PendingIntent，无需
+             intent-filter）——只把核对排进 WorkManager，不阻塞主线程 -->
+        <receiver
+            android:name=".ui.reminder.SelectionAlertReceiver"
+            android:exported="false" />
+
         <!-- 洗衣完成提醒（DESIGN §4.37）：U净 订单洗涤中的精确闹钟落点——到点查一次
              订单详情，已完成发「衣服洗好了」，还在跑按新剩余时间重排 -->
         <receiver
             android:name=".ui.reminder.UjingDoneReceiver"
             android:exported="false" />
+
+        <!-- 抢课会话（DESIGN §4.36，2026-10-01 规划）：前台服务，只在用户显式开始后存在，
+             结束时自停。specialUse 的 use case 必须写在 <property> 里（系统按它审核用途）。 -->
+        <service
+            android:name=".ui.selection.SelectionGrabService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="选课抢课会话：按用户预设清单轮询选课并提交，期间在通知栏显示进度并可一键停止" />
+        </service>
 
         <!-- 免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务，只在「开关开 + 计时中」
              这 15 分钟里存在。倒计时数字由系统 chronometer 渲染，服务本身不周期干活。

@@ -41,6 +41,11 @@ import edu.jxslu.schedule.data.repo.ScholarProgressRepository
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.repo.ScoreSync
+import edu.jxslu.schedule.data.repo.SelectionRepository
+import edu.jxslu.schedule.data.repo.SelectionCenterClient
+import edu.jxslu.schedule.data.repo.SelectionRoundsStore
+import edu.jxslu.schedule.data.repo.SelectionSync
+import edu.jxslu.schedule.data.repo.UnconfiguredSelectionCenterClient
 import edu.jxslu.schedule.data.repo.TextbookSync
 import edu.jxslu.schedule.data.jw.TranscriptClient
 import edu.jxslu.schedule.data.jw.JwVpnDetector
@@ -116,6 +121,12 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var textbookSync: TextbookSync? = null
+
+    @Volatile
+    private var selectionRepository: SelectionRepository? = null
+
+    @Volatile
+    private var selectionSync: SelectionSync? = null
 
     @Volatile
     private var noteRepository: NoteRepository? = null
@@ -249,6 +260,33 @@ private var qzxyRepository: QzxyRepository? = null
                 prefs = displayPrefs(context),
             ).also { textbookSync = it }
         }
+
+    /** 选课记录仓库单例（DESIGN §4.35）：与课表共用数据库，按学期整体替换。 */
+    fun selectionRepository(context: Context): SelectionRepository =
+        selectionRepository ?: synchronized(this) {
+            selectionRepository ?: SelectionRepository(JuwDatabase.get(context))
+                .also { selectionRepository = it }
+        }
+
+    /** 选课同步单例（DESIGN §4.35）：OkHttp 直取（选课结果 + 轮次），不开窗口。 */
+    fun selectionSync(context: Context): SelectionSync =
+        selectionSync ?: synchronized(this) {
+            selectionSync ?: SelectionSync(
+                cas = casSession(context),
+                repo = selectionRepository(context),
+                prefs = displayPrefs(context),
+                roundsStore = SelectionRoundsStore(context),
+            ).also { selectionSync = it }
+        }
+
+    /**
+     * 选课接口单例（DESIGN §4.36）：抢课引擎唯一依赖的抽象。
+     *
+     * **窗口期联调后从这里换成真实实现**（`SelectionCenterClient` 的真身：OkHttp +
+     * `CasSession` + 列表/提交解析）——替换点只有这一处，引擎与界面不动。
+     */
+    fun selectionCenterClient(context: Context): SelectionCenterClient =
+        UnconfiguredSelectionCenterClient
 
     /** 笔记·课件仓库单例（DESIGN §4.20）：归属键是课程名，与课表无关。 */
     fun noteRepository(context: Context): NoteRepository =

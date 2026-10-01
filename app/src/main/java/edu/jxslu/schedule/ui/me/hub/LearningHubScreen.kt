@@ -16,17 +16,25 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.ScholarDimension
 import edu.jxslu.schedule.domain.ScholarProgressRules
+import edu.jxslu.schedule.domain.SelectionRound
+import edu.jxslu.schedule.domain.SelectionRoundPhase
+import edu.jxslu.schedule.domain.SelectionRounds
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.CheckList
 import me.rerere.hugeicons.stroke.ClipboardPen
 import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.Note01
@@ -36,7 +44,8 @@ import me.rerere.hugeicons.stroke.Target01
 /** 我的 → 学习（DESIGN §3.11 / §4.15）：笔记·课件、作业、成绩与考试，副标题实时计数。
  * 成绩查询 2026-09-24 自课表汇总挪入（用户要求：成绩属学习内容，不该藏在课表配置流里）。
  * 考试 2026-09-30 同理由课表 hub 挪入——考试安排与成绩同属「教务给的学习数据」，
- * 入口放在成绩旁边比放在课表配置流里更符合找它的路径。 */
+ * 入口放在成绩旁边比放在课表配置流里更符合找它的路径。
+ * 选课 2026-09-30 新增（DESIGN §3.19）：选课记录 + 选课轮次 + 进入选课，与成绩/考试同属教务数据；入口显示名「选课（beta）」。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LearningHubScreen(
@@ -46,6 +55,7 @@ fun LearningHubScreen(
     onOpenScores: () -> Unit,
     onOpenScholar: () -> Unit,
     onOpenExam: () -> Unit,
+    onOpenSelection: () -> Unit,
 ) {
     val context = LocalContext.current
     val noteGroups by remember { Graph.noteRepository(context) }.observeGroups()
@@ -68,6 +78,12 @@ fun LearningHubScreen(
                 scholarCourses.orEmpty().filter { it.dimension == ScholarDimension.System.id },
             )
         }
+    }
+    // 选课：记录数取 Room；轮次快照在文件里，IO 线程读一次（副标题要报「进行中」）
+    val selectionRows by remember { Graph.selectionRepository(context) }.observeAll()
+        .collectAsStateWithLifecycle(initialValue = null)
+    val rounds by produceState(initialValue = emptyList<SelectionRound>(), context) {
+        value = withContext(Dispatchers.IO) { Graph.selectionSync(context).cachedRounds() }
     }
 
     Scaffold(
@@ -130,7 +146,42 @@ fun LearningHubScreen(
                     onClick = onOpenScholar,
                 )
             }
+
+            SettingsSection(title = "选课") {
+                SettingItem(
+                    // 功能整体还在窗口期联调前（接口未接入），入口标 beta（2026-10-01）
+                    title = "选课（beta）",
+                    subtitle = selectionSubtitle(rounds, selectionRows),
+                    icon = HugeIcons.CheckList,
+                    onClick = onOpenSelection,
+                )
+            }
         }
+    }
+}
+
+/**
+ * 选课的副标题（DESIGN §3.19）：轮次进行中 > 即将开始 > 最新学期记录数 > 空态。
+ * 轮次时间解析不出来的（`Unknown`）不参与前两档——不编「进行中」。
+ */
+private fun selectionSubtitle(
+    rounds: List<SelectionRound>,
+    rows: List<CourseSelection>?,
+): String {
+    val now = System.currentTimeMillis()
+    val phased = rounds.map { it to SelectionRounds.phase(it, now) }
+    phased.firstOrNull { it.second == SelectionRoundPhase.Active }?.let {
+        return "轮次进行中：${it.first.name}"
+    }
+    phased.filter { it.second == SelectionRoundPhase.Upcoming }
+        .minByOrNull { it.first.startAt ?: Long.MAX_VALUE }
+        ?.let { return "即将开始：${it.first.name}" }
+    val latestTerm = rows?.groupBy { it.term }?.keys?.maxOrNull()
+    val count = if (latestTerm == null) 0 else rows.count { it.term == latestTerm }
+    return if (latestTerm != null && count > 0) {
+        "$latestTerm · $count 门 · 从教务同步"
+    } else {
+        "选课记录与轮次 · 从教务同步"
     }
 }
 

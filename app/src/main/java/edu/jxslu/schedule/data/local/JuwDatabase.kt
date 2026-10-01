@@ -24,8 +24,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         ScholarCourseEntity::class,
         TextbookEntity::class,
         RideRecordEntity::class,
+        CourseSelectionEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -42,6 +43,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun scholarProgressDao(): ScholarProgressDao
     abstract fun textbookDao(): TextbookDao
     abstract fun rideRecordDao(): RideRecordDao
+    abstract fun courseSelectionDao(): CourseSelectionDao
 
     companion object {
 
@@ -475,6 +477,42 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v16 → v17（2026-09-30）：新表 `course_selections`（选课记录，DESIGN §4.35）。
+         *
+         * 实体里没有 Kotlin 默认值的列（全部字段必填，只有主键 `id` 带 `= 0`，
+         * 与 `ride_records` 同款——主键默认值不进预期 schema），所以建表语句里
+         * **不要**加 NOT NULL/DEFAULT 以外的东西；索引与实体的 `@Index("term")`
+         * 一一对应（生成名 `index_course_selections_term`），漏一条迁移校验崩溃。
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS course_selections (" +
+                        "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, " +
+                        "term TEXT NOT NULL, " +
+                        "courseNo TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "teacher TEXT NOT NULL, " +
+                        "credit REAL NOT NULL, " +
+                        "hours REAL NOT NULL, " +
+                        "attribute TEXT NOT NULL, " +
+                        "category TEXT NOT NULL, " +
+                        "className TEXT NOT NULL, " +
+                        "college TEXT NOT NULL, " +
+                        "timeText TEXT NOT NULL, " +
+                        "placeText TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, " +
+                        "remark TEXT NOT NULL, " +
+                        "importedAt INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_course_selections_term " +
+                        "ON course_selections (term)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -501,6 +539,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_13_14,
                         MIGRATION_14_15,
                         MIGRATION_15_16,
+                        MIGRATION_16_17,
                     )
                     .build()
                     .also { instance = it }

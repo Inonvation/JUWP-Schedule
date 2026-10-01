@@ -9,6 +9,7 @@ import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
+import edu.jxslu.schedule.ui.reminder.SelectionAlertReminder
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
@@ -70,6 +71,9 @@ class JuwApplication : Application() {
             // 间隔闸门在 ScoreSync / ExamSync 内部（成功才落时刻），不会重复打教务。
             ScoreAlertReminder.ensurePeriodicWork(this@JuwApplication)
             ScoreAlertReminder.enqueueCheck(this@JuwApplication)
+            // 选课轮次提醒（DESIGN §4.35）：周期核对搭成绩/考试那一趟车（间隔共用），
+            // 冷启动只补一次本地重排——闹钟丢了/换代就补上，开关关着时是撤销闹钟的空跑。
+            SelectionAlertReminder.scheduleNext(this@JuwApplication)
         }
         // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
         // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链

@@ -20,6 +20,9 @@ import edu.jxslu.schedule.ui.jwvw.JwImportScreen
  * [EXTRA_MODE] 决定导入对象：课表（默认）或成绩（DESIGN §4.15）。
  * [EXTRA_START_EXAM] 只对课表模式有意义：**开在考试安排查询页**而不是理论课表页
  * （DESIGN §4.33 考试页的导入入口、考试变动通知的确认口）。
+ * [EXTRA_ROUND_ID] 只对选课模式有意义：登录后直达该轮次的「进入选课」页
+ * （DESIGN §4.35；轮次 id 过 [edu.jxslu.schedule.data.jw.JwUrls.ROUND_ID_PATTERN] 白名单，
+ * 不合法退回选课中心列表）。
  *
  * 动画与 [SubpageActivity] 同款：打开 = 新窗口从右缘推入覆盖主窗口（slide_in_right），
  * 关闭 = 向右滑出（slide_out_right），主窗口全程原地不动。此前该窗口没配转场，
@@ -35,9 +38,15 @@ class JwImportActivity : ComponentActivity() {
             ?.let { name -> JwImportMode.entries.firstOrNull { it.name == name } }
             ?: JwImportMode.Schedule
         val startAtExam = intent.getBooleanExtra(EXTRA_START_EXAM, false)
+        val selectionRoundId = intent.getStringExtra(EXTRA_ROUND_ID)
         setContent {
             JuwRoot {
-                JwImportScreen(onBack = { finish() }, mode = mode, startAtExam = startAtExam)
+                JwImportScreen(
+                    onBack = { finish() },
+                    mode = mode,
+                    startAtExam = startAtExam,
+                    selectionRoundId = selectionRoundId,
+                )
             }
         }
     }
@@ -50,19 +59,25 @@ class JwImportActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_MODE = "mode"
         private const val EXTRA_START_EXAM = "start_exam"
+        private const val EXTRA_ROUND_ID = "selection_round_id"
 
         /**
          * [startAtExam] = true：登录后直接落到 `xsksap_query`（考试安排查询页），
          * 一键导入不会顺带跑起来——从考试页进来的人要的是「导入考试安排」。
+         *
+         * [selectionRoundId]（选课模式）：登录后直达该轮次的「进入选课」页；
+         * 空 = 落选课中心列表（轮次页）。
          */
         fun start(
             context: Context,
             mode: JwImportMode = JwImportMode.Schedule,
             startAtExam: Boolean = false,
+            selectionRoundId: String? = null,
         ) {
             val intent = Intent(context, JwImportActivity::class.java)
                 .putExtra(EXTRA_MODE, mode.name)
                 .putExtra(EXTRA_START_EXAM, startAtExam)
+                .putExtra(EXTRA_ROUND_ID, selectionRoundId)
             context.startActivity(intent)
             applySubpageOpenTransition(context)
         }

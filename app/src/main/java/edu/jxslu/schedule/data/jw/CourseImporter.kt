@@ -192,6 +192,52 @@ object JwUrls {
     const val SCORE_LIST_API = "$XSD_BASE/jsxsd/kscj/cjcx_list"
 
     /**
+     * 选课结果查询（我的 → 学习 → 选课，DESIGN §4.35）。
+     *
+     * 菜单 data-id = `NEW_XSD_PYGL_XKGL_XSXKJGCX`，「选课日志」是壳页
+     * `/jsxsd/xkgl/loadXsxkjgList?lx=xkrz`（学期下拉在这里），数据接口加 `&type=list`。
+     * **不带 .do**；带 .do 的同名地址回 no-open 页。
+     */
+    const val SELECTION_LIST_SHELL = "$XSD_BASE/jsxsd/xkgl/loadXsxkjgList?lx=xkrz"
+
+    /** 选课结果数据接口（同上，加 `&type=list` 与分页参数后使用，见 `SelectionParser.listUrl`）。 */
+    const val SELECTION_LIST_API = "$XSD_BASE/jsxsd/xkgl/loadXsxkjgList"
+
+    /**
+     * 学生选课中心（菜单 data-id = `NEW_XSD_PYGL_XKGL_NXSXKZX`）。
+     * 页面上是轮次列表：`data-url` 指向 [SELECTION_ROUNDS_API]，
+     * 「进入选课」跳 `/jsxsd/xsxk/newXsxkzx?jx0502zbid=<轮次id>`。
+     */
+    const val SELECTION_CENTER = "$XSD_BASE/jsxsd/xsxk/xklc_list"
+
+    /** 选课轮次数据接口（学生选课中心表格的 `data-url`）。 */
+    const val SELECTION_ROUNDS_API = "$XSD_BASE/jsxsd/xsxk/xklc_list_data"
+
+    /**
+     * 轮次 id（教务 `jx0502zbid`）白名单：会被拼进 URL，非此格式一律拒绝——
+     * 与 [TERM_PATTERN] 同一把尺子（宁可退回列表页，也不拼一个可能出错的地址）。
+     * 真实格式未实测（非选课期无轮次样本），故放宽到「字母数字下划线短横，1–64 位」。
+     */
+    val ROUND_ID_PATTERN = Regex("""[A-Za-z0-9_-]{1,64}""")
+
+    /**
+     * 「进入选课」页（轮次页 JS `jrxk` 的落点）：
+     * `newXsxkzx?jx0502zbid=<轮次id>&isallsc=`；[preview] = true 走预览页 `yxxsxk_index`。
+     *
+     * 未实测：教务从轮次列表进选课时会先 POST `mzlist.do`（免责声明检查）再跳这里，
+     * 直接进可能与那一步有关。真进不去就退回选课中心列表（窗口底部的「选课中心」按钮）。
+     * 轮次 id 不合法返回 null，调用方回退到 [SELECTION_CENTER]。
+     */
+    fun selectionRoundUrl(roundId: String, preview: Boolean = false): String? {
+        if (!ROUND_ID_PATTERN.matches(roundId)) return null
+        return if (preview) {
+            "$XSD_BASE/jsxsd/xsxk/yxxsxk_index?jx0502zbid=$roundId"
+        } else {
+            "$XSD_BASE/jsxsd/xsxk/newXsxkzx?jx0502zbid=$roundId&isallsc="
+        }
+    }
+
+    /**
      * 学业完成情况壳页（学籍成绩 → 学籍管理 → 学业达成情况 → 学业完成情况，DESIGN §4.29）。
      *
      * 菜单 data-id = `NEW_XSD_XJCJ_XJGL_XXWCQKTX`。壳页只有四个 tab 的 tab 头，
@@ -251,6 +297,15 @@ object JwUrls {
      */
     fun isScoreQueryUrl(url: String?): Boolean =
         url != null && "kscj/cjcx_frm" in url
+
+    /**
+     * 是否学生选课中心（DESIGN §4.35，含带参数的壳页形态）。
+     *
+     * **不要**把 `/jsxsd/xsxk/` 当判据：轮次页、进选课页（`newXsxkzx`）、预览页
+     * （`yxxsxk_index`）都在这个前缀下，语义各不相同。
+     */
+    fun isSelectionCenterUrl(url: String?): Boolean =
+        url != null && "xsxk/xklc_list" in url
 
     /** 当前页属于哪张课表；导入时据此选择解析器。 */
     fun schedulePageKind(url: String?): JwSchedulePage = when {

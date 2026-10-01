@@ -396,11 +396,12 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
     }
 }
 
-/** 重启后闹钟全部丢失，开机补排一次。 */
+/** 重启后闹钟全部丢失，开机补排一次（上课/作业与选课提醒各自重排）。 */
 class ReminderBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             ClassReminder.enqueueCheck(context)
+            SelectionAlertReminder.enqueueCheck(context)
         }
     }
 }
