@@ -2,6 +2,7 @@ package edu.jxslu.schedule.data.qzxy
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import edu.jxslu.schedule.data.qiekj.QiekjJson
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.QzxyCredential
 import edu.jxslu.schedule.domain.QzxySign
 import kotlinx.coroutines.Dispatchers
@@ -61,12 +62,8 @@ class QzxyRepository(private val sessionStore: QzxySessionStore) {
     init {
         // BASIC 级日志只打请求行，不打 header 与 body：loginCode、signature 不进 Logcat
         val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
-        val client = OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
-            .addInterceptor(logging)
-            .build()
+        // 共享池派生：只叠自己的日志拦截器
+        val client = AppHttp.withInterceptors(logging).newBuilder().build()
         api = Retrofit.Builder()
             .baseUrl(QzxyApiConfig.BASE_URL)
             .client(client)

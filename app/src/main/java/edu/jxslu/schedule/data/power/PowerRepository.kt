@@ -24,6 +24,8 @@ class PowerRepository(
     private val readingStore: PowerReadingStore,
 ) {
 
+    /** access_token：读写都锁在 [loginMutex] 内；@Volatile 保证锁外读（快路径）的可见性。 */
+    @Volatile
     private var cachedToken: String? = null
 
     private val loginMutex = Mutex()

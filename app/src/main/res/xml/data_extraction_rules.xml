@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android 12+ 备份/迁移规则：与 backup_rules.xml 同语义，排除凭据/令牌
      （secure_token / jw_credentials / ykt_credentials / ykt_tokens /
-     secure_qzxy / secure_kqcx / secure_ujing，各自用途见 backup_rules.xml 注释）。 -->
+     secure_qzxy / secure_kqcx / secure_ujing，各自用途见 backup_rules.xml 注释）。
+     文件目录两项（2026-10-02 终审补）：crash/（崩溃留痕，堆栈不出本机）与
+     ujing_debug/（debug 包协议样本），同属「不上云」口径，见 backup_rules.xml 注释。 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secure_token.xml" />
@@ -11,6 +13,8 @@
         <exclude domain="sharedpref" path="ykt_tokens.xml" />
         <exclude domain="sharedpref" path="secure_kqcx.xml" />
         <exclude domain="sharedpref" path="secure_ujing.xml" />
+        <exclude domain="file" path="crash/" />
+        <exclude domain="file" path="ujing_debug/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="secure_token.xml" />
@@ -20,5 +24,7 @@
         <exclude domain="sharedpref" path="ykt_tokens.xml" />
         <exclude domain="sharedpref" path="secure_kqcx.xml" />
         <exclude domain="sharedpref" path="secure_ujing.xml" />
+        <exclude domain="file" path="crash/" />
+        <exclude domain="file" path="ujing_debug/" />
     </device-transfer>
 </data-extraction-rules>

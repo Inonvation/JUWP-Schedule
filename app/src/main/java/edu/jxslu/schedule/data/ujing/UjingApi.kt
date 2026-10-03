@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.ujing
 
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.data.qiekj.QiekjJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -32,10 +33,8 @@ class UjingApi private constructor(private val http: OkHttpClient) {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         fun create(): UjingApi = UjingApi(
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
-                .build(),
+            // 共享池派生；下单/支付参数给 callTimeout 总上限（洗衣机的 2 分钟窗口等不起挂死）
+            AppHttp.withCallTimeout(30).newBuilder().build(),
         )
     }
 

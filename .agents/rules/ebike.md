@@ -337,6 +337,13 @@
   留在 UI——所以 `EbikeQrTest` 能直接喂 `qrMatrix` 渲染出的像素做 round-trip。
   返回结果里的 `SourceData` 是 1×1 占位（`resultIntent` 只读 `Result` 的文本 / 格式 /
   字节），别把它当成"像素要回传"。
+- **今日页顶栏「+ → 扫一扫」是同一个窗口的第二个调用点**（2026-10-02，DESIGN §3.3）：
+  它走 **`MODE_RAW` 原文模式**（本地不解析），去处由 `domain/QuickScan.kt` 的
+  `quickScanTargetOf` 判——`EbikeQr.parseScannedCarNum` 过得去就带完整车号进
+  `SubpageScreen.RIDE`（`focusItemId` 复用，进页即定位）；过不去的先看是不是认得准的
+  别家码（就地提示），剩下的原文才交 U净。
+  骑行页自己那枚入口的三档判定（取消不提示 / 不是车号才报错）**不受影响**，
+  别把两条并成一条。
 
 ## 扫完即焚（2026-09-27 改口径）
 

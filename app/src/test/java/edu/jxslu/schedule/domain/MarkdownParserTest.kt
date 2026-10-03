@@ -257,4 +257,25 @@ class MarkdownParserTest {
         val parts = splitParagraph(paragraphOf("![](https://example.com/a.png)").content)
         assertEquals("https://example.com/a.png", (parts.single() as MdParagraphPart.BlockImage).ref)
     }
+
+    @Test
+    fun deepQuoteNestingDoesNotBlowTheStack() {
+        // 上千层引用 = 上千层 parseMarkdown 递归；闸门生效应降级为字面文本而不是 StackOverflowError
+        val deep = "> ".repeat(2_000) + "正文"
+        val blocks = parseMarkdown(deep)
+        assertTrue(blocks.isNotEmpty())
+    }
+
+    @Test
+    fun deepEmphasisNestingDoesNotBlowTheStackAndKeepsCharacters() {
+        // 行内同理：每个 `**` 一层 parseInlines，1000 个就是 500 层
+        val deep = "**".repeat(1_000) + "字"
+        val text = parseMarkdown(deep).joinToString("") { block ->
+            when (block) {
+                is MdBlock.Paragraph -> plainTextOf(block.content)
+                else -> ""
+            }
+        }
+        assertTrue("降级后字符不能丢", text.contains("字"))
+    }
 }

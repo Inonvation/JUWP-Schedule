@@ -28,6 +28,8 @@ import edu.jxslu.schedule.ui.common.readTextFromUri
 import edu.jxslu.schedule.ui.common.resolveImportTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -438,25 +440,43 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     fun setCourseFilter(value: CourseFilter) = viewModelScope.launch { repo.setCourseFilter(value) }
 
-    fun setGridFontDp(value: Float?) = viewModelScope.launch { repo.setGridFontDp(value) }
+    // ── 视图偏好的连续值写入（滑杆节流，2026-10-02）──
+    // 一根滑杆拖一次会发几十上百个 onValueChange，直写就是同次数的「读-改-写整份
+    // view_prefs JSON + 全量 DisplayPrefs 重发」。节流成 ≥[VIEW_PREFS_WRITE_MIN_INTERVAL_MS]
+    // 一次并保证末值必落：这些设置全是绝对值语义（copy 覆盖），丢中间帧只丢过程，
+    // 网格跟随的视觉延迟在一档之内；「重置」按钮走同一条路，150ms 延迟无感。
+    private var viewPrefsWriteJob: Job? = null
+    private var viewPrefsWriteEarliest = 0L
 
-    fun setGridRoomDp(value: Float?) = viewModelScope.launch { repo.setGridRoomDp(value) }
+    private fun throttledViewPrefsWrite(write: suspend () -> Unit) {
+        viewPrefsWriteJob?.cancel()
+        viewPrefsWriteJob = viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            if (now < viewPrefsWriteEarliest) delay(viewPrefsWriteEarliest - now)
+            viewPrefsWriteEarliest = System.currentTimeMillis() + VIEW_PREFS_WRITE_MIN_INTERVAL_MS
+            write()
+        }
+    }
 
-    fun setGridTeacherDp(value: Float?) = viewModelScope.launch { repo.setGridTeacherDp(value) }
+    fun setGridFontDp(value: Float?) = throttledViewPrefsWrite { repo.setGridFontDp(value) }
 
-    fun setGridRailDp(value: Float?) = viewModelScope.launch { repo.setGridRailDp(value) }
+    fun setGridRoomDp(value: Float?) = throttledViewPrefsWrite { repo.setGridRoomDp(value) }
 
-    fun setGridDateDp(value: Float?) = viewModelScope.launch { repo.setGridDateDp(value) }
+    fun setGridTeacherDp(value: Float?) = throttledViewPrefsWrite { repo.setGridTeacherDp(value) }
 
-    fun setRowHeightScale(value: Float) = viewModelScope.launch { repo.setRowHeightScale(value) }
+    fun setGridRailDp(value: Float?) = throttledViewPrefsWrite { repo.setGridRailDp(value) }
 
-    fun setRailWidthDp(value: Float) = viewModelScope.launch { repo.setRailWidthDp(value) }
+    fun setGridDateDp(value: Float?) = throttledViewPrefsWrite { repo.setGridDateDp(value) }
 
-    fun setDayHeaderHeightDp(value: Float) = viewModelScope.launch { repo.setDayHeaderHeightDp(value) }
+    fun setRowHeightScale(value: Float) = throttledViewPrefsWrite { repo.setRowHeightScale(value) }
 
-    fun setCellRadiusDp(value: Float) = viewModelScope.launch { repo.setCellRadiusDp(value) }
+    fun setRailWidthDp(value: Float) = throttledViewPrefsWrite { repo.setRailWidthDp(value) }
 
-    fun setCellOpacity(value: Float) = viewModelScope.launch { repo.setCellOpacity(value) }
+    fun setDayHeaderHeightDp(value: Float) = throttledViewPrefsWrite { repo.setDayHeaderHeightDp(value) }
+
+    fun setCellRadiusDp(value: Float) = throttledViewPrefsWrite { repo.setCellRadiusDp(value) }
+
+    fun setCellOpacity(value: Float) = throttledViewPrefsWrite { repo.setCellOpacity(value) }
 
     fun setCellCenterH(value: Boolean) = viewModelScope.launch { repo.setCellCenterH(value) }
 
@@ -472,17 +492,22 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     // ---- 课表页背景图的数值参数（DESIGN §4.21）。选图与移除见 importScheduleBackground ----
 
-    fun setBgImageOpacity(value: Float) = viewModelScope.launch { repo.setBgImageOpacity(value) }
+    fun setBgImageOpacity(value: Float) = throttledViewPrefsWrite { repo.setBgImageOpacity(value) }
 
-    fun setBgImageDim(value: Float) = viewModelScope.launch { repo.setBgImageDim(value) }
+    fun setBgImageDim(value: Float) = throttledViewPrefsWrite { repo.setBgImageDim(value) }
 
-    fun setBgImageBlur(value: Float) = viewModelScope.launch { repo.setBgImageBlur(value) }
+    fun setBgImageBlur(value: Float) = throttledViewPrefsWrite { repo.setBgImageBlur(value) }
 
-    fun setBgImageScale(value: BgScale) = viewModelScope.launch { repo.setBgImageScale(value) }
+    fun setBgImageScale(value: BgScale) = throttledViewPrefsWrite { repo.setBgImageScale(value) }
 
     class Factory(private val repo: ScheduleRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = MeViewModel(repo) as T
+    }
+
+    private companion object {
+        /** 滑杆连续写入的最小落盘间隔：网格跟随肉眼无感，磁盘写从每帧降到 ~7 次/秒。 */
+        const val VIEW_PREFS_WRITE_MIN_INTERVAL_MS = 150L
     }
 }
 

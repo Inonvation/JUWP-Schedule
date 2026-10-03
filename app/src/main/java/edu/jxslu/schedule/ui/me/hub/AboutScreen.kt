@@ -22,6 +22,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,11 +35,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.prefs.NoticeConsentRecord
 import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.FirstRunNotices
+import androidx.core.content.FileProvider
 import edu.jxslu.schedule.domain.NoticeConsent
 import edu.jxslu.schedule.domain.RechargeDisclaimer
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DisclaimerDialog
@@ -52,6 +56,7 @@ import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Agreement01
 import me.rerere.hugeicons.stroke.Alert02
+import me.rerere.hugeicons.stroke.Bug01
 import me.rerere.hugeicons.stroke.Github
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Megaphone01
@@ -62,7 +67,9 @@ import me.rerere.hugeicons.stroke.SoftwareLicense
 private const val REPO_URL = "https://github.com/Inonvation/JUWP-Schedule"
 
 private fun openUrl(context: Context, url: String): String? = try {
-    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    // 二级页窗口拉起外部应用统一走 startActivityOutsideApp：抑制右推入过渡，
+    // 不然从浏览器回来时本页会凭空重放一次入场动画（devlog 4.26 的「页面跳动」）
+    context.startActivityOutsideApp(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     null
 } catch (_: ActivityNotFoundException) {
     "没有可打开链接的应用"
@@ -99,6 +106,33 @@ fun AboutScreen(
         scope.launch {
             snackbar.showSnackbar(AppNoticeVisuals(message, tone = NoticeTone.Warning))
         }
+    }
+    // 崩溃留痕（CrashReporter）：列表驱动条目文案；分享走系统 ACTION_SEND（用户自己选
+    // 去哪儿——微信/邮件/文件管理，App 不经手网络，符合隐私口径）
+    val crashFiles = remember { CrashReporter.listFiles(context) }
+    val crashFileCount = crashFiles.size
+    var shareLatestCrash by remember { mutableStateOf(false) }
+    LaunchedEffect(shareLatestCrash) {
+        if (!shareLatestCrash) return@LaunchedEffect
+        shareLatestCrash = false
+        val files = CrashReporter.listFiles(context)
+        if (files.isEmpty()) return@LaunchedEffect
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                files.first(),
+            )
+            context.startActivityOutsideApp(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                    "崩溃记录",
+                ),
+            )
+        }.onFailure { showNotice("无法发起分享") }
     }
 
     Scaffold(
@@ -169,6 +203,14 @@ fun AboutScreen(
                     subtitle = "通知 · 日历 · 定位 · 电池优化 · 自启动",
                     icon = HugeIcons.Shield01,
                     onClick = onOpenPermissionSettings,
+                )
+                SettingItem(
+                    title = "导出诊断日志",
+                    subtitle = crashFileCount.takeIf { it > 0 }?.let { "$it 份崩溃记录 · 经系统分享发送" }
+                        ?: "没有崩溃记录",
+                    icon = HugeIcons.Bug01,
+                    showArrow = crashFileCount > 0,
+                    onClick = { shareLatestCrash = crashFileCount > 0 },
                 )
             }
         }

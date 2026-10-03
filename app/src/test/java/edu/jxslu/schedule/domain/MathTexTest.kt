@@ -60,6 +60,14 @@ class MathTexTest {
         assertEquals("上标里还能有上标", true, script.sup is MathNode.Script)
     }
 
+    @Test
+    fun parse_deepNestingFailsGracefullyInsteadOfBlowingTheStack() {
+        // 上千层花括号 = 上千层递归；深度闸门应让 parse 返回 null（回退源码展示），不能 StackOverflowError
+        assertNull(parseTex("{".repeat(2_000) + "x" + "}".repeat(2_000)))
+        // 嵌套组同理（\frac 链每层一层深度）
+        assertNull(parseTex("\\frac".repeat(2_000) + "{x}"))
+    }
+
     // ---- 排版几何 ----
 
     @Test

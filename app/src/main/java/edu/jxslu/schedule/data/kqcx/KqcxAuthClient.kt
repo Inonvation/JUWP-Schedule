@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.kqcx
 
 import android.util.Log
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.KqcxAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,7 +94,8 @@ class KqcxAuthClient private constructor(private val http: OkHttpClient) {
         private const val UA = "edu.jxslu.schedule"
 
         fun create(): KqcxAuthClient = KqcxAuthClient(
-            OkHttpClient.Builder()
+            // 共享池派生：只覆盖本链路更紧的超时
+            AppHttp.base.newBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .build(),

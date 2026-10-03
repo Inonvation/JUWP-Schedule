@@ -81,9 +81,18 @@ suspend fun loadAttachmentBitmap(
     bitmap.asImageBitmap()
 }
 
+/** 附件图的三态：解码是磁盘 IO，**加载中**与**文件真丢了**必须分开——把加载中报成丢失会误导用户删文改文。 */
+sealed interface AttachmentImageState {
+    data object Loading : AttachmentImageState
+    data class Loaded(val bitmap: ImageBitmap) : AttachmentImageState
+
+    /** 文件缺失（被清理 / 迁移丢文件）或解码失败——只有这态才配「图片已丢失」。 */
+    data object Missing : AttachmentImageState
+}
+
 /**
  * 满宽附件图：宽撑满、按原始比例给高（解码后才有比例，未解码前占位 16:9）。
- * 文件缺失（被清理 / 迁移丢文件）时给「图片已丢失」灰块——比什么都不显示更诚实。
+ * 文件缺失时给「图片已丢失」灰块——比什么都不显示更诚实；但加载中只是普通灰块，不喊丢失。
  */
 @Composable
 fun AttachmentImage(
@@ -92,52 +101,81 @@ fun AttachmentImage(
     onClick: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val image by produceState<ImageBitmap?>(initialValue = null, fileName) {
+    val image by produceState<AttachmentImageState>(
+        initialValue = AttachmentImageState.Loading,
+        fileName,
+    ) {
         value = loadAttachmentBitmap(context, fileName, targetWidthPx = 1080)
+            ?.let { AttachmentImageState.Loaded(it) }
+            ?: AttachmentImageState.Missing
     }
     val shape = RoundedCornerShape(12.dp)
-    val bitmap = image
-    if (bitmap == null) {
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+    when (val state = image) {
+        is AttachmentImageState.Loaded -> {
+            val bitmap = state.bitmap
+            val ratio = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+            Box(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .aspectRatio(ratio.coerceIn(0.4f, 3f))
+                    .clip(shape)
+                    .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
             ) {
-                Icon(
-                    imageVector = HugeIcons.Image01,
+                Image(
+                    bitmap = bitmap,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "图片已丢失",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    contentScale = ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
-        return
+
+        is AttachmentImageState.Loading -> AttachmentPlaceholder(
+            modifier = modifier,
+            shape = shape,
+            content = null,
+        )
+
+        is AttachmentImageState.Missing -> AttachmentPlaceholder(
+            modifier = modifier,
+            shape = shape,
+            content = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        imageVector = HugeIcons.Image01,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        "图片已丢失",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                }
+            },
+        )
     }
-    val ratio = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+}
+
+/** 满宽 16:9 灰块占位：[content] 为 null 是加载中的安静等待，非 null 是丢失说明。 */
+@Composable
+private fun AttachmentPlaceholder(
+    modifier: Modifier,
+    shape: RoundedCornerShape,
+    content: (@Composable () -> Unit)?,
+) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(ratio.coerceIn(0.4f, 3f))
+            .aspectRatio(16f / 9f)
             .clip(shape)
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        contentAlignment = Alignment.Center,
     ) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = null,
-            contentScale = ContentScale.FillWidth,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        content?.invoke()
     }
 }

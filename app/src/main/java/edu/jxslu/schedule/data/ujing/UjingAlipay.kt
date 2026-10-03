@@ -14,15 +14,18 @@ import com.alipay.sdk.app.PayTask
  */
 object UjingAlipay {
 
-    /** 支付结果三态。 */
+    /** 支付结果四态。 */
     enum class Outcome {
         /** resultStatus == 9000：支付成功。 */
         Success,
 
+        /** 8000：支付结果确认中——钱可能已经扣了，必须查订单状态定论，绝不能按失败报。 */
+        Pending,
+
         /** 6001：用户取消（含锁屏 / 进程被杀），订单仍在待支付，可重试或取消订单。 */
         Canceled,
 
-        /** 其余状态码（4000 等确定性失败 / 8000 等待确认）：按失败报，详情给原文码。 */
+        /** 其余状态码（4000 等确定性失败）：按失败报，详情给原文码。 */
         Failed,
     }
 
@@ -33,6 +36,7 @@ object UjingAlipay {
         val memo = result["memo"].orEmpty()
         val outcome = when (status) {
             "9000" -> Outcome.Success
+            "8000" -> Outcome.Pending
             "6001" -> Outcome.Canceled
             else -> Outcome.Failed
         }

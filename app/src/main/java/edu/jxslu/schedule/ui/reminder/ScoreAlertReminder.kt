@@ -132,13 +132,21 @@ object ScoreAlertReminder {
     }
 
     /**
-     * 设置变更（开关或间隔档位）后的统一入口：清掉对应链路的检查时刻再排即时评估。
+     * 设置变更（开关或间隔档位）后的统一入口：清掉三条链路的检查时刻再排即时评估。
      *
      * 清时刻的理由同 `BalanceAlertReminder.onSettingsChanged`：用户刚开的开关/刚改的间隔，
-     * 就是想按新规则立刻评估一次；沿用旧时刻的话开关当天不会生效。首次评估抓到的
-     * 全量会被 `ScoreSync` / `ExamSync` 当基线（firstImport / 空基线），不发通知。
+     * 就是想按新规则立刻评估一次；沿用旧时刻的话开关当天不会生效（`shouldAttemptAt`
+     * 会直接 Skipped）。选课那条原来靠 SelectionScreen 的开关自己清，考试页一直漏清，
+     * 现在统一收口到这里，调用方不用再各管一遍。首次评估抓到的全量会被 `ScoreSync` /
+     * `ExamSync` 当基线（firstImport / 空基线），不发通知。
      */
     suspend fun onSettingsChanged(context: Context) {
+        runCatching {
+            val prefs = Graph.displayPrefs(context)
+            prefs.setScoreAlertCheckMillis(0)
+            prefs.setExamAlertCheckMillis(0)
+            prefs.setSelectionRoundsCheckMillis(0)
+        }.onFailure { Log.w(TAG, "clear check millis failed", it) }
         ensurePeriodicWork(context)
         enqueueCheck(context)
     }

@@ -9,6 +9,43 @@
 **实测定论（2026-10-01）**：匿名 `scanWasherCode` 三种头组合均回 `401 "JWT token is missing"`
 ——只读也必须登录，**无免登路径**。
 
+## 页面结构与交接（2026-10-02 改版，动 U净 页面前重读）
+
+- 主页（UJING）排版：在案订单 > 扫码 > 看板 > **历史账单** > 账号。扫码区只管
+  「扫没扫成」（识别中 / 失败 / 「继续上次识别」/ 空态引导），**不再内联展示设备卡
+  与档位**——那是下单页的事。
+- 扫码成功 → `UjingDraftStore.open`（Graph 单例，**进程内**）→ `openOrder` 事件 →
+  `SubpageActivity.start(UJING_ORDER)`。下单页读草稿渲染：档位单选（AppCard 高亮即
+  选中）+ 水温 / 投放 chips + 贴底动作条 + 确认弹层；「去支付」= `submit` 交回选择 +
+  关窗（二级页标准右推入 / 滑出）。
+- **写操作的执行点永远在主页 ViewModel**（下单 → 支付宝拉起 → 支付确认）：二级页是
+  独立 Activity 窗口、下层窗口与它的 ViewModel 存活，这条才成立。别的入口要发起下单，
+  走同一条「草稿 `submit` → 主页 `confirmPreparedOrder`」通道，**别在第二个 ViewModel
+  里复制一份下单链**。
+- 草稿**故意不落盘**：几秒内的一次性交接，进程回收即丢、重扫一次即可；跨进程必须
+  存活的是订单号（`UjingOrderStore`），别把两者搞混。下单受理成功后 `close()`；
+  用户中途返回不清草稿（主页「继续上次识别」接回），重扫覆盖。
+- **第二个入口：今日页顶栏「+ → 扫一扫」**（2026-10-02，DESIGN §3.3 / §3.23）。扫到的
+  原文**不在今日页发起识别**——那会复制一份「识别 → 开草稿 → 推下单页」的链，而写操作的
+  执行点只有主页 ViewModel 一处。做法：原文走进程内一次性令牌 `UjingScanHandoff`
+  （`SubpageStack.kt`），打开 `UJING` 窗口，`UjingScreen(scanRaw = …)` 进页调
+  `onQrScanned(raw)`，后面与页内扫码完全同一条路。
+  - 令牌而不是 `SubpageRequest` 字段：窗口链恢复重放请求时**不得**再扫一次。
+  - `onQrScanned` 开头有**未登录拦截**（识别接口要 token，匿名回 401）：命中时只提示
+    「识别洗衣机需要先登录 U净」，不发那条注定失败的请求，并**把原文留 10 分钟**
+    （`UjingViewModel.pendingScan`）：`repo.loggedIn` 收集器在 false→true 时自动接着识别，
+    用户不用回今日页重扫；超时作废，免得用户在别处登录也被推进一次识别。页内扫码入口
+    本来只在登录后可见，这条拦截只作用于今日页进来的那一档。
+- **扫码那一跳也留协议样本**（`UjingRepository.dumpScanWasher`，debug 专用）：`scanWasherCode`
+  的**原文与响应**落 `filesDir/ujing_debug/scan_washer_<原文散列前 6 字节>.json`。
+  原文只写在文件内容里、不进文件名；token 在请求头不落盘；落盘失败静默。这是「机身码到底长
+  什么样」的唯一来源——样本到手后 `domain/QuickScan.kt` 的判据可以从「其余全给 U净」收敛成
+  白名单（现在那条偏宽的取舍写在它的 KDoc 里）。
+- 历史账单：**本 App 发起的订单留痕**（`UjingHistoryStore`，prefs JSON ≤50 笔，新的
+  在前；upsert 同 orderId 去重，刷新更新原条目，取消标注 60 也算一笔）。服务端账单
+  接口没有协议样本（端点表只有 `orders/running`），**别猜端点**，拿到官方抓包样本
+  再评估换数据源。
+
 ## 协议与指纹
 
 - 网关 `https://phoenix.ujing.online/api/v1`，壳 `{code, message, data}`，`code == 0` 成功；
@@ -24,8 +61,8 @@
    凭证、不做"免费洗衣"；不做批量 / 自动 / 抢单脚本（社区有，别学）；只操作使用者本人有
    使用权的设备。
 2. **写操作零自动重试 + 二次确认**：下单 / 取消 / 启动都是写操作；超时后先查在案订单
-   （`refreshOrder`），确认没有已创建的订单再让用户重试，绝不盲目重发；**已有在案订单不允许
-   叠单**（`requestOrder` 先拦）。
+   （`refreshOrder`），确认没有已创建的订单再让用户重试，绝不盲目重发；**已有在案订单
+   不允许叠单**（主页 `confirmPreparedOrder` 先拦，下单页确认弹层是二次确认）。
 3. **登录节制**：只在用户主动点「获取验证码」时发码（60 秒冷却，UI 与 ViewModel 双保险）；
    短时间高频登录会被服务端限制数十分钟（实测）。会话过期**绝不自动重登**——清 token 留手机号，
    由用户重新登录（`UjingRepository.markExpired`）。
@@ -50,12 +87,22 @@
 - `washTemperatureId`：仅洗衣机业务（type != 2）且 `isWashTemperatureEnable` 时发；
   枚举**固定** 1=常温 / 2=30℃ / 3=40℃ / 4=60℃（`UjingState.temperatureOptions` 单一来源），
   UI 默认常温。
-- `wp_detergentGearId` / `wp_disinfectantGearId`：`isForceDetergent` / `isForceDisinfectant`
-  为真时补**标准档**（1 / 4，社区档位枚举）。档位的价格语义没有实样，别在 UI 上造档位选择。
+- `wp_detergentGearId` / `wp_disinfectantGearId`：**投放加购**（2026-10-02 起开放给用户，
+  此前只有强制投放机型自动补）。非烘干机的扫码结果卡出「洗衣液 / 消毒液」chips，默认按
+  `isForceDetergent` / `isForceDisinfectant` 勾好（`UjingState.addonDefaults` 单一来源），
+  用户可改；勾了才发**标准档**（`UjingState.DETERGENT_STANDARD_GEAR` = 1 /
+  `DISINFECTANT_STANDARD_GEAR` = 4）。**档位本身不可选**——其余档位的价格语义没有实样，
+  造出来就是瞎报价；未声明投放的机型发档位可能被拒（下单报错，关掉再试）或被忽略，
+  金额一律以支付宝实付为准（确认弹层已注明）。
 - `dryTime`：仅烘干机（type == 2），协议口径 = 模式时长 / 10（`UjingState.dryTimeFor`）。
 - `orders/{id}/detail` 固定带 `additional=price`（照抄官方抓包形态，取 `payPrice`）。
 - 订单快照（`UjingOrderSnapshot`）的 `createdAt`（支付窗口基准）与 `durationSeconds`
   （进度条分母）**只在下单时写、刷新原样保留**；旧版本快照两列为 0，UI 各自退回静态提示。
+- **协议样本采集（debug 专用）**：`UjingRepository` 的 `debugDumpDir`（Graph 只在
+  `BuildConfig.DEBUG` 配 `filesDir/ujing_debug`）把 `program/info` 原始响应整包落盘，
+  一台设备一份。投放声明的完整字段形态（是否还有「可选投放」之类开关）就是靠它补样本；
+  `adb shell run-as edu.jxslu.schedule.debug cat files/ujing_debug/program_info_<id>.json`。
+  响应体不含凭证，落盘失败静默；release 恒不落盘。
 
 ## 命名与文案
 

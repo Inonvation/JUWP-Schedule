@@ -210,7 +210,8 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
 MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开，DESIGN §3.13）+ 路由 jw_import；
                SubpageActivity 承载二级页（含成绩查询 SCORES、选课 SELECTIONS·SELECTION_WISHES、
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
-               HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11）
+               HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
+               UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
                  + Textbook（§4.31：挂 courseName 带 term，教务教材确认）
@@ -249,7 +250,7 @@ data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIG
 data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
                  QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
                  QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|selection|timetable|common|theme|widget|ebike|notes|homework
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|selection|timetable|common|theme|widget|ebike|notes|homework|ujing
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -366,6 +367,52 @@ BLE 通道）。debug 包已装真机，点验待用户执行。
 `dryTime`）、洗衣完成提醒（`setAlarmClock` + 渠道 `ujing_done`，无 App 内开关）、页面排版
 收口（订单 > 扫码 > 看板 > 账号，进度条 + 2 分钟支付窗口倒计时）、登录态联动补数据。
 全量 1262 例 0 失败，装机完成。
+投放加购（2026-10-02，DESIGN §3.23 / §4.37）：非烘干机的扫码结果卡出「洗衣液 / 消毒液」
+投放 chips，默认按机型强制投放声明勾好、用户可改，勾选 = 下单带标准档 1 / 4
+（**档位不可选**——其余档位价格语义没实样；费用以支付宝实付为准）；debug 包另把
+`program/info` 原始响应落盘 `filesDir/ujing_debug/` 补协议样本。全量 1265 例 0 失败；
+改动碰下单请求体，真机点验待用户执行。
+U净 改版（2026-10-02，DESIGN §3.23 / §4.37；规则见 `.agents/rules/ujing.md`「页面结构
+与交接」）：扫码后进**独立下单页**（`UJING_ORDER`：档位单选 + 水温 / 投放 chips +
+贴底动作条 + 确认弹层），主页扫码区瘦身为「识别中 / 失败 / 继续上次识别」；选择经
+`UjingDraftStore`（进程内草稿，故意不落盘）交回主页执行——**下单与支付宝拉起的执行点
+仍在主页 ViewModel**。新增**历史账单**（`UJING_HISTORY`：本机发起的订单留痕 ≤50 笔，
+下单入账 / 刷新更新 / 取消也算一笔；服务端账单接口无样本，先落本地不猜端点）。
+新增 `UjingHistoryStoreTest` 6 例，全量 **1271 例 0 失败**；未碰网络路径 / 凭证 / Room
+（「够小」判据满足），模拟器冒烟通过（主页 / 账单页 / 下单页空态），**扫码 → 选档 →
+下单全链路要真机登录，交用户真机点验**。
+顶栏「+」扫一扫 / 付款码（2026-10-02，DESIGN §3.3；规则见 `.agents/rules/today-ui.md`
+「顶栏「+」快捷入口」）：今日页右上角一枚 `Add01` + 下拉两行（微信首页形态）。
+**扫一扫一个入口管三种去处**：取景走 `EbikeScanActivity` 原文模式 + 解码限定二维码，
+去处由 `domain/QuickScan.kt` 单点判——车身码带完整车号进「骑行」页（`focusItemId` 复用，
+进页即定位车辆）；认得出的别家码（微信支付 / 微信 / 支付宝 / QQ）就地提示不跳页（这类码送
+U净 必然回「未识别到设备信息」，白跳一趟）；其余原文经进程内一次性令牌 `UjingScanHandoff`
+交 U净 页识别（不复制那条「识别 → 开草稿 → 推下单页」的链；未登录只提示先登录，不发注定
+401 的请求，**原文留 10 分钟，登录完自动接着识别**）。
+**付款码** = 校园卡付款码页（§3.10）。同一轮另给 `scanWasherCode` 加了 debug 落盘
+（`filesDir/ujing_debug/scan_washer_*.json` 记二维码原文与响应），机身码格式到手后本地判据
+可以从「其余全给 U净」收敛成白名单。新增 `QuickScanTest` 6 例，全量 **1277 例 0 失败**；
+真机点验待用户执行。
+趣智校园开水面板手感（2026-10-02，DESIGN §3.18）：今日页点余额弹出的面板补齐动画与出口
+——关面板走退场动画（此前直接置 `showQzxyEntrySheet = false`，弹层瞬间抽掉）、状态区
+`AnimatedContent` + 高度下限（待机 ↔ 用水中不再硬切）、用水中加呼吸徽标与「开始于 HH:mm」、
+失败态补「清除设备记录」与「详情」（详情复用页面那份 `FailedDetailDialog`，改 `internal`）、
+开阀与结算成功给触感。今日页新增 `onOpenQzxyDebug` 参数接到 `QZXY_DEBUG`。
+全量 **1281 例 0 失败**；模拟器冒烟到未登录态（开、关、去登录跳页正常），
+**用水中 / 结算 / 失败三态与动效手感交用户真机点验**。
+体检优化三批（2026-10-02，跨模块；详单在本地 `docs/optimization-audit-2026-10-02.md`）：
+**第一批 正确性**（支付宝 8000 单列 Pending、下单/取参拆两段 try、抢课重叠愿望去重、
+提醒变更清检查时刻、TeX/Markdown 递归深度闸门 64 层、图片三态与降采样、保存 in-flight
+守卫、焦点卡竖条 IntrinsicSize）；**第二批 性能结构**（displayPrefs shareIn 共享热流、
+触感轻流、壳层 AppShellPrefs 切片、滑杆 150ms 节流、tick 统一 repeatOnLifecycle(RESUMED)
+——新增 `ui/common/ResumedTicker.kt`、附件清扫每日闸门、busy 反馈收口）；**第三批
+健壮性基建**（新增 `data/repo/CrashReporter.kt` 崩溃落盘 + 关于页导出、appScope 异常
+handler、CancellationException 穿透 10 处、**新增 `data/net/AppHttp.kt` OkHttp 十客户端
+合一** + callTimeout、覆盖安装闹钟补排 MY_PACKAGE_REPLACED、启动读合并）。
+三批经两路独立复查与终审（累计修复 4 P1 + 5 P1 + 2 P2），全量 **1281 例 0 失败**。
+**红线**：崩溃堆栈只落本机（crash/ 与 ujing_debug/ 已排除出两套备份规则）；AppHttp 派生
+只加不改共享件；`ScheduleRepository` / `MainActivity` / `ResumedTicker` / `RideScreen`
+四文件耦合必须同 commit。碰网络层与支付链路，真机点验待用户执行。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

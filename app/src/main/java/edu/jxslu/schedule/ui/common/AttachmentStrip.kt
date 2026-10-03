@@ -26,7 +26,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -53,8 +52,14 @@ fun AttachmentStrip(
         contentPadding = PaddingValues(vertical = 2.dp),
     ) {
         items(fileNames, key = { it }) { name ->
-            val bitmap by produceState<ImageBitmap?>(initialValue = null, name) {
+            // 三态：缩略图解码也要走磁盘，加载中不喊「已丢失」（同 AttachmentImage 口径）
+            val imageState by produceState<AttachmentImageState>(
+                initialValue = AttachmentImageState.Loading,
+                name,
+            ) {
                 value = loadAttachmentBitmap(context, name, targetWidthPx = 240)
+                    ?.let { AttachmentImageState.Loaded(it) }
+                    ?: AttachmentImageState.Missing
             }
             Box(
                 modifier = Modifier
@@ -63,16 +68,17 @@ fun AttachmentStrip(
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     .clickable { onOpen(name) },
             ) {
-                val image = bitmap
-                if (image != null) {
-                    Image(
-                        bitmap = image,
+                when (val state = imageState) {
+                    is AttachmentImageState.Loaded -> Image(
+                        bitmap = state.bitmap,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxWidth().height(64.dp).width(64.dp),
                     )
-                } else {
-                    Text(
+
+                    AttachmentImageState.Loading -> Unit
+
+                    AttachmentImageState.Missing -> Text(
                         text = "图片\n已丢失",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),

@@ -3,6 +3,7 @@ package edu.jxslu.schedule.data.power
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonObject
+import edu.jxslu.schedule.data.net.AppHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -62,9 +63,9 @@ class PowerClient private constructor(private val http: OkHttpClient) {
         private const val PAYMENT_URL = "https://yktwx.juwp.edu.cn/plat"
 
         fun create(): PowerClient = PowerClient(
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
+            // 共享池派生；下单链路给 callTimeout 总上限（慢响应体不再能挂死读超时）
+            AppHttp.withCallTimeout(30)
+                .newBuilder()
                 .build(),
         )
 

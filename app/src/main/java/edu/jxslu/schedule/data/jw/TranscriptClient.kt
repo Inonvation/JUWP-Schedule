@@ -1,8 +1,9 @@
 package edu.jxslu.schedule.data.jw
 
+import edu.jxslu.schedule.data.net.AppHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.Dns
+
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -123,24 +124,17 @@ class TranscriptClient(
 /**
  * OkHttp 实现。
  *
- * IPv4 优先的 DNS 复用 [JwHttpSession.ipv4First] 的排序规则：校园域名同时有 A 与 AAAA 记录，
+ * IPv4 优先的 DNS 由共享 base（[AppHttp.base]）自带：校园域名同时有 A 与 AAAA 记录，
  * 校园 IPv6 在移动网络下实测是黑洞，等 TCP 超时要多花十几到三十秒。
- * 只复用那条纯逻辑、不共用对方的 OkHttpClient：教务那边是「一次检测用完即弃」的短命实例，
- * 这里是随进程常驻的导出通道，两者的超时与重定向策略本来就不同。
+ * 从共享池派生（此前各建一套）；超时与重定向策略按本链路覆盖。
  */
 class OkHttpTranscriptTransport : TranscriptTransport {
 
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .dns(JwIpv4FirstDns)
+    private val client: OkHttpClient = AppHttp.base.newBuilder()
         .connectTimeout(20, TimeUnit.SECONDS)
         // 出单在服务端要跑一次 Excel → PDF 转换，PDF 约 350KB，给足读超时
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
-
-    private object JwIpv4FirstDns : Dns {
-        override fun lookup(hostname: String): List<java.net.InetAddress> =
-            JwHttpSession.ipv4First(Dns.SYSTEM.lookup(hostname))
-    }
 
     override suspend fun post(
         url: String,

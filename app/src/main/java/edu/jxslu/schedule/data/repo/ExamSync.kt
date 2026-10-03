@@ -8,6 +8,7 @@ import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.domain.ExamChangeDetector
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -93,6 +94,8 @@ class ExamSync(
                 ?: return Result.Failed("没取到考试数据（会话可能已失效）")
             val parsed = try {
                 ExamScheduleParser.parseFetchJson(body)
+            } catch (e: CancellationException) {
+                throw e // 协程被取消，不能吞成解析失败
             } catch (e: Exception) {
                 return Result.Failed(e.message ?: "考试解析失败")
             }

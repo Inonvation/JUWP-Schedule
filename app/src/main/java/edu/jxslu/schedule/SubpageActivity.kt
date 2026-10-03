@@ -49,6 +49,8 @@ import edu.jxslu.schedule.ui.selection.SelectionScreen
 import edu.jxslu.schedule.ui.selection.SelectionWishesScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
+import edu.jxslu.schedule.ui.ujing.UjingHistoryScreen
+import edu.jxslu.schedule.ui.ujing.UjingOrderScreen
 import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
 
@@ -142,6 +144,10 @@ enum class SubpageScreen {
     CAMPUS_CALENDAR,
     /** 我的 → 校园服务 → U净（美的校园洗衣：空闲看板 · 扫码识别，DESIGN §4.37） */
     UJING,
+    /** U净 扫码后 → 下单页（档位单选 · 水温 · 投放加购，数据走 UjingDraftStore，DESIGN §3.23） */
+    UJING_ORDER,
+    /** U净 → 历史账单（本 App 发起的订单留痕，DESIGN §3.23 / §4.37） */
+    UJING_HISTORY,
 }
 
 /**
@@ -176,6 +182,9 @@ class SubpageActivity : ComponentActivity() {
         // 小组件「去开水」直达令牌（WaterAutoStart）：进页前武装、本窗口首帧消费。
         // 在 composable 外消费一次——组合重组再读会拿到恒定值，消费语义就没了
         val autoStart = WaterAutoStart.consume(request.screen)
+        // 今日页「+ → 扫一扫」扫到洗衣机机身码（UjingScanHandoff）：同一条口径，
+        // 原文交给 U净 页自己识别，本窗口首帧消费一次
+        val ujingScanRaw = UjingScanHandoff.consume(request.screen)
         enableEdgeToEdge()
         // 预测性返回（DESIGN §3.1）：34+ 由本窗口声明过渡，系统才会把手势进度交给它
         enablePredictiveBackTransitions()
@@ -188,6 +197,7 @@ class SubpageActivity : ComponentActivity() {
                     courseName = request.courseName,
                     itemId = request.itemId,
                     autoStart = autoStart,
+                    ujingScanRaw = ujingScanRaw,
                 )
             }
         }
@@ -222,6 +232,8 @@ class SubpageActivity : ComponentActivity() {
         itemId: Long = 0L,
         /** 小组件「去开水」直达：仅 WATER / QZXY 两个页面响应，见 [WaterAutoStart]。 */
         autoStart: Boolean = false,
+        /** 今日页扫到的洗衣机机身码原文：仅 UJING 页响应，见 [UjingScanHandoff]。 */
+        ujingScanRaw: String? = null,
     ) {
         when (screen) {
             SubpageScreen.TIMETABLE_MANAGE -> TimetableManageScreen(onBack = onBack)
@@ -231,7 +243,16 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.WATER -> WaterScreen(onBack = onBack, autoStart = autoStart)
             SubpageScreen.KVCX -> KvcxScreen(onBack = onBack)
             SubpageScreen.CAMPUS_CALENDAR -> CampusCalendarScreen(onBack = onBack)
-            SubpageScreen.UJING -> UjingScreen(onBack = onBack)
+            // U净 三页链（DESIGN §3.23）：主页（看板 / 扫码）→ 下单页（档位 / 投放）→ 历史账单。
+            // 下单页与主页间的大对象交接不走 extra，走 Graph 的 UjingDraftStore（进程内草稿）
+            SubpageScreen.UJING -> UjingScreen(
+                onBack = onBack,
+                onOpenOrder = { SubpageActivity.start(this, SubpageScreen.UJING_ORDER) },
+                onOpenHistory = { SubpageActivity.start(this, SubpageScreen.UJING_HISTORY) },
+                scanRaw = ujingScanRaw,
+            )
+            SubpageScreen.UJING_ORDER -> UjingOrderScreen(onBack = onBack)
+            SubpageScreen.UJING_HISTORY -> UjingHistoryScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->

@@ -12,6 +12,28 @@
 - 今日页结构：**焦点卡（正在上/下一节）+ 单时间轴**；焦点课从列表里剔除（`TodayUiState.listCourses`），
   同一节课不得两处出现；节次号只在焦点卡出现一次。改版前先读 DESIGN §3.3。
 
+## 顶栏「+」快捷入口（2026-10-02）
+
+- 顶栏右上角一枚 `Add01` + 下拉两行：「扫一扫」「付款码」（DESIGN §3.3）。两条**只在
+  `TodayScreen` 的 `actions` 里组合**，不做常驻按钮——低频动作不跟底部固定区的卡片抢位置。
+- 扫一扫取景走 `EbikeScanActivity` 的 **`MODE_RAW`**（原文模式），**去处只有一个判据**：
+  `domain/QuickScan.kt` 的 `quickScanTargetOf`，三档按顺序判：车身码进 `RIDE`
+  （`focusItemId` = 完整车号）→ 表里认得出的**别家码**（微信支付 / 微信 / 支付宝 / QQ）
+  就地提示不跳页 → 其余原文进 U净。别在页面里另写 `if (车号) … else …`，也别让取景窗口
+  自己解析（解析归本地判据 + U净 服务端，见 `.agents/rules/ujing.md`）。
+- **别家码那张表只收认得准的**（`FOREIGN_CODES`）：多写一条错的，就是把真机身码判成别人的码，
+  比漏拦严重（漏拦只是回到旧行为：跳 U净 后回「未识别到设备信息」）。命中用 `contains`
+  而不是 `startsWith`，同一家的域名位置不止一处（`u.wechat.com` / `mp.weixin.qq.com`）。
+- **解码格式限定二维码**：显式 Intent 里写 `Intents.Scan.FORMATS` 的**逗号分隔字符串**
+  （`putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)`）。这条读取路径是
+  `DecoratedBarcodeView.initializeFromIntent` → `DecodeFormatManager.parseDecodeFormats`，
+  它只读 `StringExtra`；**别改成 `putStringArrayListExtra`**（那是老 `IntentIntegrator` 的形态，
+  传了等于没设，解码器回到全格式）。
+- 空结果 = 取消：静默处理，不弹提示（与骑行页同一口径，2026-09-30 的教训）。
+- 送给 U净 的原文走进程内一次性令牌 `UjingScanHandoff`（`SubpageStack.kt`，与
+  `WaterAutoStart` 同一纪律）：**不要**改用 `SubpageRequest` 的字段——窗口链恢复会把请求
+  重放，等于用户没点又被推进下单页。
+
 ## 可见星期序列
 
 - 可见星期序列以 `ScheduleCalculator.visibleDays` 为唯一来源、`columnOf` 取列下标；
@@ -19,6 +41,10 @@
 
 ## 今日页底部固定区 TodayBottomDock
 
+- 趣智校园卡右侧余额点开的是 `ui/qzxy/QzxyEntrySheet.kt`（§3.18）。**关它一律走
+  `rememberSheetDismisser` 的 `dismiss(after)`**（去登录 / 完成结算 / 打开页面三个出口），
+  别退回 `onDismiss()` 直接置 false：弹层会从组合里瞬间抽掉，"啪"地消失。
+  状态区那一层 `AnimatedContent` 与用水中徽标的口径见 DESIGN §3.18「面板的手感与出口」。
 - 今日页底部固定区（快捷方式网格 → **快趣出行码整行卡** → 开水卡）是 `TodayBottomDock`，
   **钉在滚动区下方**、不进 `LazyColumn`；三态（加载/空/有课）共用同一份，别只改一处。
   **水宝宝一卡通卡已于 2026-09-24 自今日页移除**（能力收进生活页，DESIGN §3.13）——

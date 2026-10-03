@@ -11,7 +11,9 @@ import kotlinx.coroutines.delay
  * 用水计时的每秒刷新（DESIGN §3.18）。
  *
  * 趣智校园页与今日页卡片都要显示「用水中 12:35」，两处各写一份 tick 迟早会不一致，
- * 收在这里。切走页面时 Composable 离开组合，循环跟着停，不会在后台空转。
+ * 收在这里。切走页面时 Composable 离开组合，循环跟着停，不会在后台空转；
+ * 用时超过过期线（[QzxyWatering.EXPIRE_MILLIS]，1 小时）也停——过期文案由
+ * [isQzxyWateringExpired] 接管，计时再跳没有意义，不能进页就永久每秒唤醒。
  */
 @Composable
 fun rememberQzxyWateringClock(startedAtMillis: Long): String {
@@ -19,10 +21,13 @@ fun rememberQzxyWateringClock(startedAtMillis: Long): String {
         initialValue = QzxyWateringFormat.duration(System.currentTimeMillis() - startedAtMillis),
         key1 = startedAtMillis,
     ) {
-        while (true) {
+        while (System.currentTimeMillis() - startedAtMillis < QzxyWatering.EXPIRE_MILLIS) {
             value = QzxyWateringFormat.duration(System.currentTimeMillis() - startedAtMillis)
             delay(1_000L)
         }
+        // 退出即定格真实经过时间（可能已超 1 小时）：硬截到 EXPIRE_MILLIS 会把
+        // 「离开几分钟后回来」的真实时长抹成整 1:00:00
+        value = QzxyWateringFormat.duration(System.currentTimeMillis() - startedAtMillis)
     }
     return text
 }

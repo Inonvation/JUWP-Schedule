@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.ui.today
 
+import android.app.Activity
+import android.content.Intent
 import androidx.compose.animation.AnimatedContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +43,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 // M3 1.3.0 的下拉刷新不在 material3 根包，而在 pulltorefresh 子包
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -74,16 +78,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.client.android.Intents
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
+import edu.jxslu.schedule.domain.QuickScanTarget
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
+import edu.jxslu.schedule.domain.quickScanTargetOf
+import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
 import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
 import edu.jxslu.schedule.ui.qzxy.QzxyUiState
@@ -95,6 +104,7 @@ import edu.jxslu.schedule.domain.sectionRange
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.calculateActualCost
+import edu.jxslu.schedule.ui.common.ResumedTickerEffect
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
@@ -121,6 +131,7 @@ import edu.jxslu.schedule.ui.water.WaterViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.CalendarOff
 import me.rerere.hugeicons.stroke.CheckmarkCircle02
 import me.rerere.hugeicons.stroke.ChevronDown
@@ -131,7 +142,9 @@ import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Link01
+import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
+import me.rerere.hugeicons.stroke.Wallet01
 import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
@@ -166,8 +179,16 @@ fun TodayScreen(
     onOpenWater: () -> Unit = {},
     /** 趣智校园开热水页（DESIGN §4.30）：与胖乖生活并排的半行卡，独立窗口 */
     onOpenQzxy: () -> Unit = {},
+    /** 趣智校园「诊断与调试」页：开水面板失败态「详情」的出口，带当前设备地址 */
+    onOpenQzxyDebug: (String?) -> Unit = {},
     /** 快趣出行 · 骑行页（DESIGN §3.9，SubpageActivity 独立窗口；地图 + 抽屉三态） */
     onOpenEbike: () -> Unit = {},
+    /** 顶栏「+ → 扫一扫」扫到车身码：带完整车号进骑行页（DESIGN §3.9 的 `focusItemId`） */
+    onOpenRideCar: (String) -> Unit = {},
+    /** 顶栏「+ → 扫一扫」扫到洗衣机机身码：原文交给 U净 页识别（DESIGN §3.23） */
+    onOpenUjingScan: (String) -> Unit = {},
+    /** 顶栏「+ → 付款码」：校园卡付款码展示页（DESIGN §3.10） */
+    onOpenPayCode: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
@@ -245,13 +266,8 @@ fun TodayScreen(
     // 教务导入成功的气泡（DESIGN §3.3）：今日页空态的「从教务导入」也是入口，落点就是这一页
     JwImportOutcomeEffect(snackbar)
 
-    // 「还剩 X 分钟」要跟着时间走
-    LaunchedEffect(Unit) {
-        while (true) {
-            viewModel.refreshTick()
-            delay(30_000)
-        }
-    }
+    // 「还剩 X 分钟」要跟着时间走；RESUMED 才 tick——退后台/灭屏不再每 30 秒唤醒重组
+    ResumedTickerEffect(intervalMillis = 30_000L) { viewModel.refreshTick() }
 
     // 余额面板/开水页发起解锁与查询的结果事件得有人收——此前只有开水页收，
     // 今日页侧的超时/失效提示会全部静默丢弃（Channel 无人消费即无处可去）。
@@ -271,6 +287,49 @@ fun TodayScreen(
     // 后到的消息自动排队，不会互相顶掉
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
         scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+    }
+
+    // ── 顶栏「+ → 扫一扫 / 付款码」（DESIGN §3.3，2026-10-02）──
+    // 扫一扫一枚入口管三种去处：车身码进骑行页、认得准的别家码就地提示、其余给 U净
+    // （三档判据都在 domain/QuickScan，页里不复述）。取景窗口走**原文模式**（MODE_RAW）：
+    // 车号的解析归本地判据、机身码原文归 U净 服务端，本地只负责「去哪一页」这一件事。
+    var quickMenuOpen by remember { mutableStateOf(false) }
+    val quickHaptics = rememberAppHaptics()
+    val quickScanLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val raw = result.data?.getStringExtra(Intents.Scan.RESULT)
+        when (val target = quickScanTargetOf(raw)) {
+            // 空内容 = 取消（没扫到就退出取景页），静默处理，别把放弃扫码报成失败
+            null -> Unit
+            is QuickScanTarget.Ebike -> {
+                quickHaptics.tap()
+                onOpenRideCar(target.carNum)
+            }
+            is QuickScanTarget.Washer -> {
+                quickHaptics.tap()
+                onOpenUjingScan(target.raw)
+            }
+            // 认得准的别家码：就地说明，不跳页（送到 U净 也只会回「未识别到设备信息」）
+            is QuickScanTarget.Foreign -> showNotice(
+                "这是${target.label}的码，不是快趣车身码或洗衣机机身码",
+                NoticeTone.Warning,
+            )
+        }
+    }
+    val startQuickScan: () -> Unit = {
+        quickHaptics.tap()
+        quickScanLauncher.launch(
+            Intent(context, EbikeScanActivity::class.java).apply {
+                putExtra(Intents.Scan.PROMPT_MESSAGE, "对准车身或洗衣机机身上的二维码")
+                putExtra(EbikeScanActivity.EXTRA_RESULT_MODE, EbikeScanActivity.MODE_RAW)
+                // 车身码与机身码都是二维码：限定格式，省得商品一维码也当码送出去。
+                // 键走 Intents.Scan.FORMATS 的**逗号分隔字符串**（DecodeFormatManager 只读
+                // StringExtra 这一种形态，别改传 ArrayList，那样等于没设）
+                putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)
+            },
+        )
     }
 
     // 趣智校园开阀要连蓝牙，权限在今日页也要能就地补——缺权限时面板里点开始用水
@@ -403,6 +462,45 @@ fun TodayScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         )
+                    }
+                },
+                // 「+」快捷入口（2026-10-02）：扫一扫（车码 / 机身码自动分流）+ 付款码。
+                // 与微信首页右上角同一形态：一枚图标 + 下拉两行，不做页内常驻按钮——
+                // 这两件事都是低频动作，摆常驻会跟底部固定区的卡片抢位置
+                actions = {
+                    Box {
+                        IconButton(
+                            onClick = {
+                                quickHaptics.tap()
+                                quickMenuOpen = true
+                            },
+                        ) {
+                            Icon(HugeIcons.Add01, contentDescription = "扫一扫与付款码")
+                        }
+                        DropdownMenu(
+                            expanded = quickMenuOpen,
+                            onDismissRequest = { quickMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("扫一扫") },
+                                leadingIcon = {
+                                    Icon(HugeIcons.QrCodeScan, contentDescription = null)
+                                },
+                                onClick = {
+                                    quickMenuOpen = false
+                                    startQuickScan()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("付款码") },
+                                leadingIcon = { Icon(HugeIcons.Wallet01, contentDescription = null) },
+                                onClick = {
+                                    quickMenuOpen = false
+                                    quickHaptics.tap()
+                                    onOpenPayCode()
+                                },
+                            )
+                        }
                     }
                 },
                 // 一键开水入口不挂顶栏：底部固定区已有开水卡，顶栏图标重复
@@ -575,7 +673,9 @@ fun TodayScreen(
             onStart = startQzxyValve,
             onStop = { qzxyViewModel.stopWater() },
             onAbandon = { qzxyViewModel.abandonWatering() },
+            onClearDeviceRecord = { qzxyViewModel.clearDeviceRecord() },
             onDismissSettlement = { qzxyViewModel.dismissSettlement() },
+            onOpenDiagnostics = onOpenQzxyDebug,
             onOpenPage = onOpenQzxy,
             onDismiss = { showQzxyEntrySheet = false },
         )
@@ -855,6 +955,8 @@ private fun FocusCard(
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .clip(AppCardDefaults.Shape)
             .background(primary.copy(alpha = 0.08f))
+            // 无界高度约束下 fillMaxHeight 是 no-op，竖条会缩成 0 高——必须先定等高基准
+            .height(IntrinsicSize.Min)
             .clickable(onClickLabel = "查看课程") {
                 haptics.tap()
                 onOpenCourse(focus)

@@ -170,4 +170,22 @@ class SelectionGrabberTest {
         assertEquals(GrabStop.AllMatched, (events.last() as SelectionGrabber.Event.Stopped).stop)
         assertEquals(0, client.fetchCalls)
     }
+
+    @Test
+    fun overlappingWishesNeverSubmitSameCourseTwice() {
+        // 服务端列表对「刚提交成功」可能滞后（selected 未翻过来），且两个愿望的关键词
+        // 可命中同一门课——重叠愿望必须只对同一 courseId 提交一次
+        val client = FakeClient(listOf(course("c1", "高等数学(一)")))
+        val clock = VirtualClock()
+        val events = run(
+            client,
+            clock,
+            listOf(wish("高等数学", id = "w1"), wish("高数", id = "w2")),
+            roundEndAt = clock.now + 15_000,
+        )
+
+        assertEquals(listOf("c1"), client.submitted)
+        assertEquals(1, events.count { it is SelectionGrabber.Event.Grabbed })
+        assertEquals(GrabStop.RoundEnded, (events.last() as SelectionGrabber.Event.Stopped).stop)
+    }
 }

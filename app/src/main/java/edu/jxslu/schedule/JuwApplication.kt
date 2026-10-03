@@ -3,10 +3,12 @@ package edu.jxslu.schedule
 import android.app.Application
 import android.app.NotificationManager
 import android.content.Context
+import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
+import edu.jxslu.schedule.ui.reminder.UjingDoneReminder
 import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.reminder.SelectionAlertReminder
@@ -29,10 +31,17 @@ class JuwApplication : Application() {
         super.onCreate()
         // 进程级 context 注入（Graph.appContext）：后台协程落盘等场景免持 Activity 引用
         Graph.contextProvider = { this }
+        // 崩溃留痕（2026-10-02，体检第三批）：JVM 级未捕获异常 + appScope 协程异常都落
+        // filesDir/crash/（只写本机不上传）。「我的 → 关于」有导出入口；没有它，用户报
+        // 「闪退了」时手上什么都没有。必须在任何 appScope.launch 之前装。
+        CrashReporter.installUncaughtHandler(this)
         val repo = Graph.repository(this)
         appScope.launch {
-            // 仅保证节次与学期默认值；课表默认空，由教务导入
-            repo.ensureDefaults()
+            // 仅保证节次与学期默认值；课表默认空，由教务导入。
+            // runCatching 兜底：DataStore 损坏 / Room 异常不兜住就是每次冷启动必崩
+            // 且无任何留痕（appScope 有 handler 只留痕不阻止 launch 的失败继续往下）。
+            runCatching { repo.ensureDefaults() }
+                .onFailure { CrashReporter.logCoroutine(this@JuwApplication, "ensureDefaults", it) }
             // 桌面小组件（DESIGN §3.6）：冷启动主动刷一次 + 排 15 分钟周期兜底。
             // refreshNow 内部无 widget 绑定时是廉价的空跑（getGlanceIds 为空），
             // 不会白做 RemoteViews 组装。
@@ -74,6 +83,11 @@ class JuwApplication : Application() {
             // 选课轮次提醒（DESIGN §4.35）：周期核对搭成绩/考试那一趟车（间隔共用），
             // 冷启动只补一次本地重排——闹钟丢了/换代就补上，开关关着时是撤销闹钟的空跑。
             SelectionAlertReminder.scheduleNext(this@JuwApplication)
+            // U净洗衣完成提醒（DESIGN §4.37，2026-10-02 补冷启动核对）：它的精确闹钟
+            // 与其他提醒一样不跨安装/重启存活，但此前只有订单卡刷新时排——覆盖安装后
+            // 「洗涤中」的完成提醒会静默消失。check 内部：无在案订单撤销闹钟（空跑）；
+            // 有订单先查一次状态再按剩余/总时长补排，失败静默。
+            UjingDoneReminder.check(this@JuwApplication)
         }
         // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
         // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链
@@ -122,10 +136,18 @@ class JuwApplication : Application() {
             }
         }
         // 附件孤儿清扫（DESIGN §4.20）：正文里已无引用的图片文件删掉。
-        // 保存路径已做增量清理，这里兜住「直接改正文删掉引用」「异常中断」这类残留；
-        // 条目量小（全量正文一次读），IO 协程里跑，冷启动不阻塞界面。
+        // 保存路径已做增量清理，这里兜住「直接改正文删掉引用」「异常中断」这类残留。
+        // **每日一次闸门**（2026-10-02，同校历 7 天闸门的型）：referencedNames 要把全部
+        // 笔记正文 + 作业详情读进内存做正则，条目一多就是冷启动一次全表扫；一天扫一次
+        // 足够——增量清理已覆盖绝大多数场景，这里只是兜底。
         appScope.launch {
             runCatching {
+                val prefs = getSharedPreferences(ATTACHMENT_SWEEP_PREFS, Context.MODE_PRIVATE)
+                val now = System.currentTimeMillis()
+                if (now - prefs.getLong(KEY_LAST_ATTACHMENT_SWEEP, 0L) < ATTACHMENT_SWEEP_INTERVAL_MILLIS) {
+                    return@launch
+                }
+                prefs.edit().putLong(KEY_LAST_ATTACHMENT_SWEEP, now).apply()
                 val noteRepo = Graph.noteRepository(this@JuwApplication)
                 val homeworkRepo = Graph.homeworkRepository(this@JuwApplication)
                 val store = Graph.attachmentStore(this@JuwApplication)
@@ -167,3 +189,8 @@ class JuwApplication : Application() {
         }
     }
 }
+
+/** 附件孤儿清扫的每日闸门（JuwApplication）：时刻与间隔单独一份 prefs，别混进业务文件。 */
+private const val ATTACHMENT_SWEEP_PREFS = "maintenance_gates"
+private const val KEY_LAST_ATTACHMENT_SWEEP = "last_attachment_sweep"
+private const val ATTACHMENT_SWEEP_INTERVAL_MILLIS = 24L * 60 * 60 * 1000

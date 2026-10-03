@@ -1,11 +1,18 @@
 package edu.jxslu.schedule.data.ujing
 
+import edu.jxslu.schedule.data.qiekj.QiekjJson
 import edu.jxslu.schedule.domain.UjingState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import java.io.File
+import java.security.MessageDigest
 
 /**
  * U净 仓库（DESIGN §4.37）：登录态、只读链路（附近洗衣房 / 空闲看板 / 扫码识别 / 套餐）
@@ -21,6 +28,13 @@ import kotlinx.coroutines.withContext
 class UjingRepository(
     private val sessionStore: UjingSessionStore,
     private val orderStore: UjingOrderStore,
+    /** 历史账单（本 App 发起的每一笔都留痕，见 [UjingHistoryStore]）。 */
+    private val historyStore: UjingHistoryStore,
+    /**
+     * debug 专用：`program/info` 原始响应的落盘目录（release 恒 null）。
+     * 每台设备覆盖一份，供补「投放加购声明字段」等协议样本，见 [dumpProgramInfo]。
+     */
+    private val debugDumpDir: File? = null,
 ) {
     private val api = UjingApi.create()
 
@@ -68,9 +82,22 @@ class UjingRepository(
 
     // ── 只读链路 ──
 
-    /** 扫码识别设备（`qrCode` = 二维码原文，直接透传）。 */
+    /**
+     * 扫码识别设备（`qrCode` = 二维码原文，直接透传）。
+     * debug 包把原文与响应都落盘（[dumpScanWasher]）：成功的是机身码样本，失败的是
+     * 「这个码 U净 认不认」的样本，两样都是收紧本地判据的依据。
+     */
     suspend fun scanWasher(qrCode: String): UjingScanResult = withContext(Dispatchers.IO) {
-        val envelope = api.scanWasher(requireSession().token, qrCode.trim())
+        val content = qrCode.trim()
+        val envelope = try {
+            api.scanWasher(requireSession().token, content)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            dumpScanWasher(content, envelope = null, error = e.message)
+            throw e
+        }
+        dumpScanWasher(content, envelope, error = null)
         envelope.requireSuccess()
         envelope.decodeData<UjingScanData>()?.result
             ?: throw UjingApiException("未识别到设备信息")
@@ -80,8 +107,54 @@ class UjingRepository(
     suspend fun programInfo(deviceId: String): UjingProgramData = withContext(Dispatchers.IO) {
         val envelope = api.programInfo(requireSession().token, deviceId)
         envelope.requireSuccess()
+        dumpProgramInfo(deviceId, envelope)
         envelope.decodeData<UjingProgramData>()
             ?: throw UjingApiException("套餐信息为空")
+    }
+
+    /**
+     * debug 专用：把 `program/info` 的原始响应整包落盘（含 `code` / `message` / `data`），
+     * 一台设备覆盖一份。响应体不含凭证（token 在请求头），可放心留档；
+     * 落盘失败只吞掉，绝不打断扫码主流程。release 不配目录，什么都不写。
+     */
+    private fun dumpProgramInfo(deviceId: String, envelope: UjingEnvelope) {
+        val dir = debugDumpDir ?: return
+        runCatching {
+            dir.mkdirs()
+            val safe = deviceId.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+            File(dir, "program_info_$safe.json").writeText(QiekjJson.json.encodeToString(envelope))
+        }
+    }
+
+    /**
+     * debug 专用：把 `devices/scanWasherCode` 的**二维码原文与响应**整包落盘，一个码型一份。
+     *
+     * 补的样本有两处用处：
+     * 1. 机身码的真实格式 —— `domain/QuickScan.kt` 现在只能本地认出车身码与几个别家码型，
+     *    剩下的一律交给本接口（服务端才认机身码）；拿到样本后本地判据就能反过来做成白名单；
+     * 2. 服务端对陌生码的应答 —— 顺手记下失败时的 `code` / `message`。
+     *
+     * 响应体不含凭证（token 在请求头，不落盘）。文件名用原文的 SHA-256 前 6 字节，
+     * **原文只写在文件内容里**，不进文件名（文件名要能安全落在任何文件系统上）。
+     * 失败（磁盘满 / 无权限）静默：留档是副业，不该影响扫码这条路。release 恒不落盘。
+     */
+    private fun dumpScanWasher(qrCode: String, envelope: UjingEnvelope?, error: String?) {
+        val dir = debugDumpDir ?: return
+        runCatching {
+            dir.mkdirs()
+            val hash = MessageDigest.getInstance("SHA-256")
+                .digest(qrCode.toByteArray())
+                .take(6)
+                .joinToString("") { byte -> "%02x".format(byte) }
+            val payload = buildJsonObject {
+                put("qrCode", qrCode)
+                put("code", envelope?.code)
+                put("message", envelope?.message)
+                envelope?.data?.let { data -> put("data", data) }
+                put("error", error)
+            }
+            File(dir, "scan_washer_$hash.json").writeText(payload.toString())
+        }
     }
 
     /** 附近洗衣房（一次拉全，配置收藏用）。 */
@@ -127,13 +200,16 @@ class UjingRepository(
      *
      * 可选参数的发送条件在 [UjingApi.createOrder]：[washTemperatureId] 只在
      * 机型开放水温（`isWashTemperatureEnable`）且非烘干时由调用方传入；
-     * 强制投放档位与烘干 `dryTime` 由本类按套餐声明自动补。
+     * 投放加购按用户勾选带标准档（[addDetergent] / [addDisinfectant]，默认值
+     * 由机型强制投放声明给出）；烘干 `dryTime` 仍由本类按模式时长自动补。
      */
     suspend fun createOrder(
         scan: UjingScanResult,
         program: UjingProgramData,
         model: UjingWashModel,
         washTemperatureId: Int? = null,
+        addDetergent: Boolean = false,
+        addDisinfectant: Boolean = false,
     ): UjingOrderSnapshot = withContext(Dispatchers.IO) {
         val storeId = program.storeId?.takeIf { it.isNotBlank() }
             ?: throw UjingApiException("设备未绑定门店，无法下单")
@@ -145,9 +221,9 @@ class UjingRepository(
             washModelId = model.workModelId,
             type = program.type,
             washTemperatureId = washTemperatureId,
-            // 强制投放机型补标准档位（枚举：1 = 洗涤剂标准、4 = 消毒液标准）
-            detergentGearId = if (program.isForceDetergent) 1 else null,
-            disinfectantGearId = if (program.isForceDisinfectant) 4 else null,
+            // 投放加购：用户勾选才带标准档（枚举单一来源在 UjingState，UI 不选档位）
+            detergentGearId = if (addDetergent) UjingState.DETERGENT_STANDARD_GEAR else null,
+            disinfectantGearId = if (addDisinfectant) UjingState.DISINFECTANT_STANDARD_GEAR else null,
             // 烘干机协议事实：dryTime = 模式时长 / 10
             dryTime = if (program.type == 2) model.time / 10 else null,
         )
@@ -173,6 +249,8 @@ class UjingRepository(
             durationSeconds = model.time * 60,
         )
         orderStore.save(snapshot)
+        // 账单留痕：下单即入账（状态随刷新更新，取消标注见 cancelOrder）
+        historyStore.upsert(UjingHistoryEntry.fromSnapshot(snapshot))
         snapshot
     }
 
@@ -205,7 +283,8 @@ class UjingRepository(
             modelId = current?.modelId ?: 0,
             modelName = current?.modelName.orEmpty(),
             priceFen = current?.priceFen
-                ?: data.payPrice?.toDoubleOrNull()?.let { (it * 100).toInt() }
+                // round 而非截断：4.35 元是 435 分，截断会显示成 434
+                ?: data.payPrice?.toDoubleOrNull()?.let { Math.round(it * 100).toInt() }
                 ?: 0,
             status = data.status.orEmpty(),
             remainSeconds = data.remainTime,
@@ -216,6 +295,8 @@ class UjingRepository(
             durationSeconds = current?.durationSeconds ?: 0,
         )
         orderStore.save(snapshot)
+        // 同一笔订单状态变化更新原条目（同 orderId 去重），历史页看到的就是最新状态
+        historyStore.upsert(UjingHistoryEntry.fromSnapshot(snapshot))
         snapshot
     }
 
@@ -225,10 +306,13 @@ class UjingRepository(
         refreshOrder(orderId)
     }
 
-    /** 取消订单（未支付 / 支付中才可调）并清在案快照。 */
+    /** 取消订单（未支付 / 支付中才可调）并清在案快照。取消也算一笔账，留痕后清场。 */
     suspend fun cancelOrder(orderId: String) = withContext(Dispatchers.IO) {
         val envelope = api.cancelOrder(requireSession().token, orderId)
         envelope.requireSuccess()
+        orderStore.current()?.let {
+            historyStore.upsert(UjingHistoryEntry.fromSnapshot(it, statusOverride = "60"))
+        }
         orderStore.clear()
     }
 

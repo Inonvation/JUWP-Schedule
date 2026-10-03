@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.repo
 
+import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
@@ -54,6 +55,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -551,12 +554,42 @@ class ScheduleRepository(
     /**
      * 内置主题配色并入基础偏好（DESIGN §3.3）：外层 combine 五参已满员，
      * 单独并一层，copy 改动只在配色真的变了时透传（data class equals 去重）。
+     *
+     * **共享热流**（shareIn）：上游是 17 条 DataStore 订阅合成的冷流，此前每个收集者
+     * （rememberAppHaptics 全应用 60+ 个调用点）都各自重建并订阅整条链；收成共享后
+     * 上游只有一份。`replay = 1` 让后到的订阅者立即拿到最近值；首个订阅者仍等
+     * DataStore 首发射，与冷流语义一致（首帧由各调用点的 initialValue 兜底）。
+     * `WhileSubscribed(5s)`：无人收集 5 秒后释放上游，不常驻。
      */
     val displayPrefs: Flow<DisplayPrefs> = combine(
         baseDisplayPrefs,
         prefs.themePalette,
     ) { base, palette -> base.copy(themePalette = palette) }
         .distinctUntilChanged()
+        .shareIn(scope = Graph.appScope, started = SharingStarted.WhileSubscribed(5_000), replay = 1)
+
+    /**
+     * 触感开关的轻流：[edu.jxslu.schedule.ui.common.rememberAppHaptics] 的 60+ 调用点
+     * 只关心这一个布尔，不该为它拖整份 [DisplayPrefs]（收共享热流后再收一层轻流，
+     * 其他偏好变化完全不经过触感收集器）。
+     */
+    val hapticsEnabled: Flow<Boolean> = prefs.hapticsEnabled
+
+    /**
+     * 壳层切片（[edu.jxslu.schedule.MainActivity] 的 JuwApp）：底栏生活页开关 + 课表
+     * 背景图五参数，是壳层唯一消费的字段。壳收切片而不是整份 [DisplayPrefs]——
+     * NavHost 挂在壳里，此前拖一根字号滑杆都会重组整个壳。
+     */
+    val appShellPrefs: Flow<AppShellPrefs> = displayPrefs.map { p ->
+        AppShellPrefs(
+            lifeTabEnabled = p.lifeTabEnabled,
+            bgImageName = p.bgImageName,
+            bgImageOpacity = p.bgImageOpacity,
+            bgImageDim = p.bgImageDim,
+            bgImageBlur = p.bgImageBlur,
+            bgImageScale = p.bgImageScale,
+        )
+    }.distinctUntilChanged()
 
     /**
      * 今日页快捷方式（DESIGN §3.8/§4.16）。全局 DataStore 项，与当前课表无关，直接透传 store。
@@ -1530,3 +1563,17 @@ sealed interface ImportPreview {
     ) : ImportPreview
     data class Error(val message: String) : ImportPreview
 }
+
+/**
+ * [ScheduleRepository.appShellPrefs] 的载荷：壳层（底栏生活页开关 + 课表背景图）消费
+ * 的字段切片。壳收切片不收整份 [DisplayPrefs]——NavHost 挂在壳里，其他偏好变化
+ * （拖滑杆、改触感）不该重组整个壳。
+ */
+data class AppShellPrefs(
+    val lifeTabEnabled: Boolean = true,
+    val bgImageName: String? = null,
+    val bgImageOpacity: Float = 1f,
+    val bgImageDim: Float = 0f,
+    val bgImageBlur: Float = 0f,
+    val bgImageScale: BgScale = BgScale.Fill,
+)

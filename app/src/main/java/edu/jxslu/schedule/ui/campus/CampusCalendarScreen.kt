@@ -1,6 +1,5 @@
 package edu.jxslu.schedule.ui.campus
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +39,7 @@ import edu.jxslu.schedule.R
 import edu.jxslu.schedule.data.repo.CampusCalendarStore
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.ImageSource
+import edu.jxslu.schedule.ui.common.decodeFileSampled
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeTone
@@ -110,14 +110,16 @@ fun CampusCalendarScreen(onBack: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 图源：已下载镜像图优先，没有走内置兜底；两者都是本地解码，进页不卡网络
+            // 图源：已下载镜像图优先，没有走内置兜底；两者都是本地解码，进页不卡网络。
+            // 镜像图是外部来源、尺寸不可控，降采样到页内展示够用的长边（点图看大图时
+            // ImageViewerDialog 会按 viewer 的目标宽重新解码一份）
             val localBitmap by produceState<ImageBitmap?>(
                 initialValue = null,
                 key1 = state.localFile,
             ) {
                 value = withContext(Dispatchers.IO) {
                     store.fileFor(state.localFile)
-                        ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                        ?.let { decodeFileSampled(it, targetLongSidePx = 1600) }
                         ?.asImageBitmap()
                 }
             }

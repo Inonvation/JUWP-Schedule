@@ -124,8 +124,12 @@ fun NoteDetailScreen(
 
     val dirty = title.text != (original?.title ?: "") || body.text != (original?.body ?: "")
 
+    /** 保存/删除进行中：不挡的话双击「保存」会对新建笔记插两条（original 还没回写，两次 base.id 都是 0）。 */
+    var busy by remember { mutableStateOf(false) }
+
     /** 保存：正文归库，随后清理「本次移除且已无任何引用」的附件文件（DESIGN §4.20）。 */
     fun save(onSaved: () -> Unit = {}) {
+        if (busy) return
         if (title.text.isBlank() && body.text.isBlank()) {
             showNotice("还没有内容，先写点什么", NoticeTone.Warning)
             return
@@ -141,33 +145,44 @@ fun NoteDetailScreen(
         val newBody = body.text
         val newTitle = title.text.trim()
         val now = System.currentTimeMillis()
+        busy = true
         scope.launch {
-            val id = noteRepo.save(base.copy(title = newTitle, body = newBody))
-            val removed = imageRefs(base.body) - imageRefs(newBody)
-            if (removed.isNotEmpty()) {
-                val referenced = store.referencedNames(noteRepo.allBodies() + homeworkRepo.allDetails())
-                store.deleteIfUnreferenced(removed, referenced)
+            try {
+                val id = noteRepo.save(base.copy(title = newTitle, body = newBody))
+                val removed = imageRefs(base.body) - imageRefs(newBody)
+                if (removed.isNotEmpty()) {
+                    val referenced = store.referencedNames(noteRepo.allBodies() + homeworkRepo.allDetails())
+                    store.deleteIfUnreferenced(removed, referenced)
+                }
+                val refreshed = base.copy(id = if (base.id > 0) base.id else id, title = newTitle, body = newBody)
+                // 新笔记的首存时间由仓库盖；展示与后续保存都以「现在」为准（重建后也不会变回 0）
+                original = if (base.id > 0) refreshed else refreshed.copy(createdAt = now)
+                savedId = original!!.id
+                createdAt = original!!.createdAt
+                showNotice("已保存", NoticeTone.Success)
+                onSaved()
+            } finally {
+                busy = false
             }
-            val refreshed = base.copy(id = if (base.id > 0) base.id else id, title = newTitle, body = newBody)
-            // 新笔记的首存时间由仓库盖；展示与后续保存都以「现在」为准（重建后也不会变回 0）
-            original = if (base.id > 0) refreshed else refreshed.copy(createdAt = now)
-            savedId = original!!.id
-            createdAt = original!!.createdAt
-            showNotice("已保存", NoticeTone.Success)
-            onSaved()
         }
     }
 
     fun deleteNote() {
+        if (busy) return
         val note = original ?: return
+        busy = true
         scope.launch {
-            noteRepo.delete(note.id)
-            val removed = imageRefs(note.body)
-            if (removed.isNotEmpty()) {
-                val referenced = store.referencedNames(noteRepo.allBodies() + homeworkRepo.allDetails())
-                store.deleteIfUnreferenced(removed, referenced)
+            try {
+                noteRepo.delete(note.id)
+                val removed = imageRefs(note.body)
+                if (removed.isNotEmpty()) {
+                    val referenced = store.referencedNames(noteRepo.allBodies() + homeworkRepo.allDetails())
+                    store.deleteIfUnreferenced(removed, referenced)
+                }
+                onBack()
+            } finally {
+                busy = false
             }
-            onBack()
         }
     }
 
@@ -206,7 +221,7 @@ fun NoteDetailScreen(
                                 haptics.tap()
                                 save()
                             },
-                            enabled = dirty || original == null,
+                            enabled = (dirty || original == null) && !busy,
                         ) {
                             Text("保存")
                         }

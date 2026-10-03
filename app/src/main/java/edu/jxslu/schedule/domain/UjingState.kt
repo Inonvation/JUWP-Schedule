@@ -124,6 +124,27 @@ object UjingState {
     val temperatureOptions: List<Pair<Int, String>> =
         listOf(1, 2, 3, 4).map { it to temperatureLabel(it) }
 
+    // ── 投放加购 ──
+
+    /**
+     * 投放加购的标准档位（社区档位枚举：1 = 洗衣液标准、4 = 消毒液标准）。
+     * UI 只做「加不加」的开关，档位本身不可选——其余档位的价格语义没有实样，
+     * 造出来就是瞎报价。
+     */
+    const val DETERGENT_STANDARD_GEAR = 1
+    const val DISINFECTANT_STANDARD_GEAR = 4
+
+    /**
+     * 扫码后的投放加购默认勾选：仅洗衣机业务（type != 2，与下单 body 的发送
+     * 条件同口径）有投放概念，机型声明强制投放的默认勾上，用户仍可在结果卡里改。
+     */
+    fun addonDefaults(
+        type: Int,
+        forceDetergent: Boolean,
+        forceDisinfectant: Boolean,
+    ): Pair<Boolean, Boolean> =
+        if (type == 2) false to false else forceDetergent to forceDisinfectant
+
     /** 未支付订单的机器独占期（秒）：下单后 2 分钟内要完成支付，超时自动取消。 */
     const val PAY_WINDOW_SECONDS = 120L
 

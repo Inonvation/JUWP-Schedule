@@ -9,6 +9,7 @@ import edu.jxslu.schedule.domain.ScoreChangeDetector
 import edu.jxslu.schedule.domain.ScoreRecord
 import java.time.LocalDate
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -99,6 +100,8 @@ class ScoreSync(
                 ?: return Result.Failed("没取到成绩数据（会话可能已失效）")
             val parsed = try {
                 ScoreParser.parseFetchJson(body)
+            } catch (e: CancellationException) {
+                throw e // 协程被取消（页面离开/作用域撤销），不能吞成解析失败
             } catch (e: Exception) {
                 return Result.Failed(e.message ?: "成绩解析失败")
             }

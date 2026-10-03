@@ -272,6 +272,9 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- 覆盖安装也补排（2026-10-02）：精确闹钟不跨安装存活，升级后不补
+                     的话所有提醒静默失效到下一次冷启动 -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

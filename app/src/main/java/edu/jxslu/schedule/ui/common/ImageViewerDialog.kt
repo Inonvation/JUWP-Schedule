@@ -74,10 +74,11 @@ fun ImageViewerDialog(
             ImageSource.ScheduleBackground ->
                 loadScheduleBackground(context, fileName, targetLongSidePx = 1920, cache = false)
             // 校历（DESIGN §4.34）：镜像图没下载到（内置兜底状态）时回退打包资源图——
-            // 校历页点图放大永远可用，不能因为「还没联网刷下来」就点了没反应
+            // 校历页点图放大永远可用，不能因为「还没联网刷下来」就点了没反应。
+            // 镜像图是外部来源、尺寸不可控，降采样解码（内置资源图尺寸可控，不采样）
             ImageSource.CampusCalendar -> withContext(Dispatchers.IO) {
                 val file = Graph.campusCalendar(context).fileFor(fileName)
-                val bitmap = file?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                val bitmap = file?.let { decodeFileSampled(it, targetLongSidePx = 2048) }
                     ?: BitmapFactory.decodeResource(context.resources, R.drawable.ic_campus_calendar)
                 bitmap?.asImageBitmap()
             }

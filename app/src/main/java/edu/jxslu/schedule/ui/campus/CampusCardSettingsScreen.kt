@@ -32,6 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -580,6 +581,18 @@ fun CampusCardSettingsScreen(
                 showRechargeSheet = false
                 busy = true
                 scope.launch {
+                    // 下单到回执最长 [RECHARGE_TIMEOUT_MS]（农行收银台那跳更久），
+                    // 弹层已关、页面无任何变化——先给一条常驻的进行中提示（Indefinite），
+                    // 结束回调里 busy=false 后由结果 Snackbar 顶掉它
+                    val progressJob = scope.launch {
+                        snackbar.showSnackbar(
+                            AppNoticeVisuals(
+                                "正在发起充值…请稍候",
+                                tone = NoticeTone.Info,
+                                duration = SnackbarDuration.Indefinite,
+                            ),
+                        )
+                    }
                     val target = if (toElectric) viewModel.electricAccountType() else null
                     viewModel.recharge(
                         yuan,
@@ -592,6 +605,7 @@ fun CampusCardSettingsScreen(
                         },
                     ) { notice ->
                         busy = false
+                        progressJob.cancel()
                         scope.launch {
                             snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
                         }

@@ -396,12 +396,20 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
     }
 }
 
-/** 重启后闹钟全部丢失，开机补排一次（上课/作业与选课提醒各自重排）。 */
+/**
+ * 重启与**应用更新**后闹钟全部丢失，各补排一次（上课/作业与选课提醒各自重排）。
+ * `MY_PACKAGE_REPLACED`（2026-10-02，体检第三批）：覆盖安装不走 BOOT_COMPLETED，
+ * 而精确闹钟不跨安装存活——不加这条，用户每次升级后所有提醒静默失效到下一次冷启动。
+ */
 class ReminderBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            ClassReminder.enqueueCheck(context)
-            SelectionAlertReminder.enqueueCheck(context)
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            -> {
+                ClassReminder.enqueueCheck(context)
+                SelectionAlertReminder.enqueueCheck(context)
+            }
         }
     }
 }

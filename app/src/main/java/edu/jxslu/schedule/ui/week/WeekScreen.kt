@@ -85,6 +85,7 @@ import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TimetablePrefs
 import edu.jxslu.schedule.ui.common.CourseDetailSheet
 import edu.jxslu.schedule.ui.common.CourseEditSheet
+import edu.jxslu.schedule.ui.common.ResumedTickerEffect
 import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
 import edu.jxslu.schedule.ui.common.GhostCourseCard
 import edu.jxslu.schedule.ui.common.GridCellStyle
@@ -336,13 +337,8 @@ fun WeekScreen(
             }
     }
 
-    // 当前时刻线要跟着时间走
-    LaunchedEffect(Unit) {
-        while (true) {
-            viewModel.refreshNow()
-            delay(30_000)
-        }
-    }
+    // 当前时刻线要跟着时间走；RESUMED 才 tick——退后台/灭屏不再每 30 秒重建整页 UiState
+    ResumedTickerEffect(intervalMillis = 30_000L) { viewModel.refreshNow() }
 
     // 背景图文件不在磁盘上（清过数据、恢复备份不完整、目录被系统清过）：
     // 偏好里还挂着名字的话，渲染每次都会解一遍空气。校验一次就清掉名字，降级成无背景。

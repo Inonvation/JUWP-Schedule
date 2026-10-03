@@ -128,14 +128,30 @@ private val BLACKBOARD = mapOf(
     'R' to "ℝ", 'N' to "ℕ", 'Z' to "ℤ", 'Q' to "ℚ", 'C' to "ℂ", 'P' to "ℙ", 'E' to "𝔼",
 )
 
-private class TexParser(private val src: String) {
+private class TexParser(private val src: String, startDepth: Int = 0) {
     private var pos = 0
+    /** 当前嵌套深度：真公式极少超过 10 层，超过 [MAX_PARSE_DEPTH] 一律按不支持处理（回退源码），挡深嵌套爆栈。 */
+    private var depth = startDepth
     /** 出现任何不认识的结构就置位，最终返回 null（调用方回退源码展示）。 */
     var failed = false
         private set
 
+    /** 进一层解析前包一圈：超限 fail 返回 null，不再递归。 */
+    private inline fun <T> nested(block: () -> T): T? {
+        if (depth >= MAX_PARSE_DEPTH) {
+            fail()
+            return null
+        }
+        depth++
+        try {
+            return block()
+        } finally {
+            depth--
+        }
+    }
+
     fun parse(): MathNode? {
-        val node = parseSequence(stopAtBrace = false)
+        val node = nested { parseSequence(stopAtBrace = false) }
         if (failed || pos < src.length) return null
         return node
     }
@@ -166,7 +182,7 @@ private class TexParser(private val src: String) {
         return when {
             c == '{' -> {
                 pos++
-                val inner = parseSequence(stopAtBrace = true)
+                val inner = nested { parseSequence(stopAtBrace = true) } ?: return null
                 expect('}')
                 inner
             }
@@ -257,7 +273,7 @@ private class TexParser(private val src: String) {
     /** `\left(x…\right)` 定界符族。 */
     private fun parseDelimited(): MathNode? {
         val left = parseDelimiterChar() ?: return null
-        val body = parseSequence(stopAtBrace = false)
+        val body = nested { parseSequence(stopAtBrace = false) } ?: return null
         if (!consume("\\right")) {
             fail(); return null
         }
@@ -306,11 +322,12 @@ private class TexParser(private val src: String) {
     private fun parseRequiredGroup(): MathNode? {
         skipSpaces()
         if (peek() != '{') {
-            // 允许 `\frac12` 形态：单字符即一组
-            return parseAtom()?.let { attachScripts(it) }
+            // 允许 `\frac12` 形态：单字符即一组——同样要过深度闸门（`\frac\frac\frac…`
+            // 的链全程走这条分支，不计数就是绕闸）
+            return nested { parseAtom()?.let { attachScripts(it) } }
         }
         pos++
-        val inner = parseSequence(stopAtBrace = true)
+        val inner = nested { parseSequence(stopAtBrace = true) } ?: return null
         expect('}')
         return inner
     }
@@ -319,12 +336,12 @@ private class TexParser(private val src: String) {
     private fun parseOptionalBracket(): MathNode? {
         expect('[')
         val start = pos
-        var depth = 0
+        var bracketDepth = 0
         while (pos < src.length) {
             when (src[pos]) {
-                '{' -> depth++
-                '}' -> depth--
-                ']' -> if (depth == 0) break
+                '{' -> bracketDepth++
+                '}' -> bracketDepth--
+                ']' -> if (bracketDepth == 0) break
             }
             pos++
         }
@@ -334,7 +351,8 @@ private class TexParser(private val src: String) {
         }
         val raw = src.substring(start, pos)
         pos++ // 跳过 ']'
-        val inner = parseTex(raw)
+        // 子解析器继承当前深度：否则每层括号重开计数，深嵌套闸门就被绕过了
+        val inner = parseTex(raw, startDepth = depth)
         if (inner == null) fail()
         return inner
     }
@@ -420,13 +438,17 @@ private class TexParser(private val src: String) {
     }
 }
 
+/** 嵌套深度上限：真公式极少超过 10 层，64 已远超合理输入；超限回退源码展示。 */
+private const val MAX_PARSE_DEPTH = 64
+
 /**
  * 解析 TeX 子集；**失败返回 null**（调用方展示等宽源码）。
+ * [startDepth] 供嵌套解析（`[…]` 可选组开子解析器）继承外层深度，防深嵌套绕过闸门。
  */
-fun parseTex(src: String): MathNode? {
+fun parseTex(src: String, startDepth: Int = 0): MathNode? {
     val trimmed = src.trim()
     if (trimmed.isEmpty()) return null
-    return TexParser(trimmed).parse()
+    return TexParser(trimmed, startDepth).parse()
 }
 
 // ---------------------------------------------------------------------------

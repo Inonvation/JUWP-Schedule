@@ -5,6 +5,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import java.time.LocalDate
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -68,6 +69,8 @@ class TextbookSync(
             ?: return Result.Failed("没取到教材数据（会话可能已失效）")
         val parsed = try {
             TextbookParser.parseFetchJson(body, term)
+        } catch (e: CancellationException) {
+            throw e // 协程被取消，不能吞成解析失败
         } catch (e: Exception) {
             return Result.Failed(e.message ?: "教材解析失败")
         }

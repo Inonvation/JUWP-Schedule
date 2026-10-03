@@ -1,6 +1,7 @@
 package edu.jxslu.schedule
 
 import android.content.Context
+import java.io.File
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.kqcx.KqcxAuthClient
 import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
@@ -26,8 +27,11 @@ import edu.jxslu.schedule.data.ujing.UjingHouseStore
 import edu.jxslu.schedule.data.ujing.UjingOrderStore
 import edu.jxslu.schedule.data.ujing.UjingRepository
 import edu.jxslu.schedule.data.ujing.UjingSessionStore
+import edu.jxslu.schedule.data.ujing.UjingDraftStore
+import edu.jxslu.schedule.data.ujing.UjingHistoryStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.CampusCalendarStore
+import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
 import edu.jxslu.schedule.data.repo.ExamSync
 import edu.jxslu.schedule.data.repo.HomeworkRepository
@@ -57,6 +61,7 @@ import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.SupervisorJob
 
 object Graph {
@@ -67,8 +72,23 @@ object Graph {
      * 学业完成情况，不能挂在引导页的 `rememberCoroutineScope` 上——用户点「下一步」
      * 跳进 MainActivity，那个 scope 就被取消了，抓取会半路夭折（写一半或干脆不写）。
      * [JuwApplication] 也用它，全进程一份，不新开池。
+     *
+     * CoroutineExceptionHandler（2026-10-02，体检第三批）：SupervisorJob 只隔离子协程的
+     * 失败传播，不接住「launch 里没人 catch 的异常」——没有 handler 时这类异常走
+     * 默认传播把进程干掉（DataStore 损坏 = 每次冷启动必崩且无留痕）。挂上后异常交给
+     * [CrashReporter.logCoroutine] 落盘，进程照常活着；**行为变化只有一条**：原来会崩
+     * 进程的 bug 现在变成「后台任务静默失败 + 本机留痕」。调用点该自己 runCatching 的
+     * 还是要 runCatching——handler 是兜底不是豁免。
      */
-    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val appScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, error ->
+            android.util.Log.e("Graph.appScope", "uncaught coroutine failure", error)
+            // contextProvider 是 lateinit（Application.onCreate 注入），handler 触发时
+            // 可能还没注入过——lateinit 未初始化会抛 UninitializedPropertyAccessException，
+            // 兜一层；Logcat 里已有完整堆栈，落盘只是加分项
+            runCatching { CrashReporter.logCoroutine(contextProvider(), "appScope", error) }
+        },
+    )
 
     @Volatile
     private var repository: ScheduleRepository? = null
@@ -77,16 +97,23 @@ object Graph {
     private var prefsStore: DisplayPrefsStore? = null
 
     @Volatile
-private var qiekjRepository: QiekjRepository? = null
-private var qzxyRepository: QzxyRepository? = null
+    private var qiekjRepository: QiekjRepository? = null
+
+    @Volatile
+    private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var kqcxSession: KqcxSessionRepository? = null
 
     @Volatile
     private var zoneCacheStore: ZoneCacheStore? = null
+    @Volatile
     private var qzxyDeviceStore: QzxyDeviceStore? = null
+
+    @Volatile
     private var qzxyDebugStore: QzxyDebugStore? = null
+
+    @Volatile
     private var qzxyClearStore: QzxyClearStore? = null
 
     @Volatile
@@ -133,6 +160,7 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var rideRecordStore: RideRecordStore? = null
+    @Volatile
     private var homeworkRepository: HomeworkRepository? = null
 
     @Volatile
@@ -167,6 +195,12 @@ private var qzxyRepository: QzxyRepository? = null
 
     @Volatile
     private var ujingHouseStore: UjingHouseStore? = null
+
+    @Volatile
+    private var ujingDraftStore: UjingDraftStore? = null
+
+    @Volatile
+    private var ujingHistoryStore: UjingHistoryStore? = null
 
     @Volatile
     private var powerRepository: PowerRepository? = null
@@ -364,6 +398,10 @@ private var qzxyRepository: QzxyRepository? = null
             ujingRepository ?: UjingRepository(
                 UjingSessionStore(context.applicationContext),
                 UjingOrderStore(context.applicationContext),
+                ujingHistory(context.applicationContext),
+                // debug 专用：扫码后把 program/info 原始响应落盘，供补投放加购的协议样本
+                debugDumpDir = File(context.applicationContext.filesDir, "ujing_debug")
+                    .takeIf { BuildConfig.DEBUG },
             ).also { ujingRepository = it }
         }
 
@@ -372,6 +410,22 @@ private var qzxyRepository: QzxyRepository? = null
         ujingHouseStore ?: synchronized(this) {
             ujingHouseStore ?: UjingHouseStore(context.applicationContext)
                 .also { ujingHouseStore = it }
+        }
+
+    /**
+     * U净 扫码下单草稿（DESIGN §4.37）：主页与下单页两个独立窗口间的进程内中转
+     * （扫码结果 / 所选档位）。故意不落盘，见 [UjingDraftStore] 类 KDoc。
+     */
+    fun ujingDraft(context: Context): UjingDraftStore =
+        ujingDraftStore ?: synchronized(this) {
+            ujingDraftStore ?: UjingDraftStore().also { ujingDraftStore = it }
+        }
+
+    /** U净 历史账单（DESIGN §4.37）：本 App 发起的订单留痕，主页入口行与账单页共用。 */
+    fun ujingHistory(context: Context): UjingHistoryStore =
+        ujingHistoryStore ?: synchronized(this) {
+            ujingHistoryStore ?: UjingHistoryStore(context.applicationContext)
+                .also { ujingHistoryStore = it }
         }
 
     /**

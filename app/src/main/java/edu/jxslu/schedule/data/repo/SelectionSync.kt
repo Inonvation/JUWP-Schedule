@@ -7,6 +7,7 @@ import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.SelectionRound
 import edu.jxslu.schedule.domain.SelectionRounds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -104,6 +105,8 @@ class SelectionSync(
             fetched.forEach { (term, rows) -> repo.replaceTerm(term, rows) }
             prefs.setSelectionSyncMillis(nowMillis())
             return Result.Updated(terms = fetched.keys.toList(), rowCount = fetched.values.sumOf { it.size })
+        } catch (e: CancellationException) {
+            throw e // 协程被取消（mutex 持有者在撤销），不能吞成失败
         } catch (e: Exception) {
             return Result.Failed(e.message ?: "选课结果同步失败")
         } finally {
@@ -131,6 +134,8 @@ class SelectionSync(
             )
             prefs.setSelectionRoundsCheckMillis(fetchedAt)
             return RoundsResult.Updated(rounds = rounds, fetchedAt = fetchedAt)
+        } catch (e: CancellationException) {
+            throw e // 协程被取消，不能吞成失败
         } catch (e: Exception) {
             return RoundsResult.Failed(e.message ?: "选课轮次同步失败")
         } finally {

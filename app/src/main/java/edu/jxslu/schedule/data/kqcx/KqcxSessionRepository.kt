@@ -6,6 +6,7 @@ import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.domain.KvcProtocolException
 import edu.jxslu.schedule.domain.KvcxZones
 import edu.jxslu.schedule.domain.NearbyBike
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -222,6 +223,8 @@ class KqcxSessionRepository(
         if (carNum.isNullOrBlank()) return null
         return try {
             KvcxZones.parse(client.zonesJson(token.orEmpty(), lat, lng, carNum))
+        } catch (e: CancellationException) {
+            throw e // 取消必须穿透：吞掉会破坏调用方的结构化并发
         } catch (_: Throwable) {
             null
         }
@@ -255,14 +258,19 @@ class KqcxSessionRepository(
      * 「按车号定位」。解析不出（车号不存在 / 坐标无效）返回 null，**不抛错**：调用方
      * 把"查不到"当正常结果提示。
      */
-    suspend fun queryCarDetail(carNum: String, centerLat: Double, centerLng: Double): NearbyBike? =
-        runCatching {
-            BikeNearby.parseSingle(
+    suspend fun queryCarDetail(carNum: String, centerLat: Double, centerLng: Double): NearbyBike? {
+        try {
+            return BikeNearby.parseSingle(
                 client.oneCarJson(token.orEmpty(), carNum, centerLat, centerLng),
                 centerLat,
                 centerLng,
             )
-        }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e // 取消必须穿透：吞掉会破坏调用方的结构化并发
+        } catch (_: Exception) {
+            return null // 解析不出（车号不存在 / 坐标无效）=「查不到」，当正常结果
+        }
+    }
 
     /**
      * 账户资产（快趣账号页「快趣资产」区，只读）：余额 / 卡券 / 会员卡，三个接口**并行**拉。

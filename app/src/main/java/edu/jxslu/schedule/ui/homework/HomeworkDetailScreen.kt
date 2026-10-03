@@ -150,7 +150,11 @@ fun HomeworkDetailScreen(
             done != base.done
     } ?: (detail.text.isNotBlank() || dueDate != null || done)
 
+    /** 保存/删除进行中：不挡的话双击「保存」会对新建作业插两条（original 还没回写，两次 base.id 都是 0）。 */
+    var busy by remember { mutableStateOf(false) }
+
     fun save(onSaved: () -> Unit = {}) {
+        if (busy) return
         if (detail.text.isBlank()) {
             showNotice("先写点什么", NoticeTone.Warning)
             return
@@ -164,36 +168,47 @@ fun HomeworkDetailScreen(
         )
         val newDetail = detail.text
         val due = dueDate
+        busy = true
         scope.launch {
-            repo.save(
-                base.copy(
-                    detail = newDetail,
-                    dueDate = due,
-                    done = done,
-                ),
-            )
-            val removed = imageRefs(base.detail) - imageRefs(newDetail)
-            if (removed.isNotEmpty()) {
-                val referenced = store.referencedNames(noteRepo.allBodies() + repo.allDetails())
-                store.deleteIfUnreferenced(removed, referenced)
+            try {
+                repo.save(
+                    base.copy(
+                        detail = newDetail,
+                        dueDate = due,
+                        done = done,
+                    ),
+                )
+                val removed = imageRefs(base.detail) - imageRefs(newDetail)
+                if (removed.isNotEmpty()) {
+                    val referenced = store.referencedNames(noteRepo.allBodies() + repo.allDetails())
+                    store.deleteIfUnreferenced(removed, referenced)
+                }
+                // 作业落库会改变"下一个提醒点"：立即重排（与设置变更同口径）
+                ClassReminder.enqueueCheck(context)
+                onSaved()
+            } finally {
+                busy = false
             }
-            // 作业落库会改变"下一个提醒点"：立即重排（与设置变更同口径）
-            ClassReminder.enqueueCheck(context)
-            onSaved()
         }
     }
 
     fun deleteHomework() {
+        if (busy) return
         val item = original ?: return
+        busy = true
         scope.launch {
-            repo.delete(item.id)
-            val removed = imageRefs(item.detail)
-            if (removed.isNotEmpty()) {
-                val referenced = store.referencedNames(noteRepo.allBodies() + repo.allDetails())
-                store.deleteIfUnreferenced(removed, referenced)
+            try {
+                repo.delete(item.id)
+                val removed = imageRefs(item.detail)
+                if (removed.isNotEmpty()) {
+                    val referenced = store.referencedNames(noteRepo.allBodies() + repo.allDetails())
+                    store.deleteIfUnreferenced(removed, referenced)
+                }
+                ClassReminder.enqueueCheck(context)
+                onBack()
+            } finally {
+                busy = false
             }
-            ClassReminder.enqueueCheck(context)
-            onBack()
         }
     }
 
@@ -237,6 +252,7 @@ fun HomeworkDetailScreen(
                             haptics.tap()
                             save { onBack() }
                         },
+                        enabled = !busy,
                     ) {
                         Text("保存")
                     }

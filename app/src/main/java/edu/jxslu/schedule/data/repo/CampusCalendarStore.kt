@@ -3,6 +3,7 @@ package edu.jxslu.schedule.data.repo
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Log
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.CampusCalendarIndex
 import edu.jxslu.schedule.domain.CampusCalendarRules
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +38,8 @@ class CampusCalendarStore(context: Context) {
         .getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
     private val dir = File(context.applicationContext.filesDir, DIR_NAME)
 
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
+    // 共享池派生：镜像图下载给加长的读超时（1.2MB 图慢网更久）
+    private val http: OkHttpClient = AppHttp.base.newBuilder()
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 

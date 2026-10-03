@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.kqcx
 
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.BikeFailure
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -41,11 +42,11 @@ class KqcxBikeClient private constructor(private val http: OkHttpClient) {
             "application/x-www-form-urlencoded; charset=UTF-8".toMediaType()
 
         fun create(): KqcxBikeClient = KqcxBikeClient(
-            OkHttpClient.Builder()
+            // 共享池派生；撒点一次性发完：请求都很小，分两批只是白多一个往返
+            AppHttp.withMaxRequestsPerHost(MAX_REQUESTS_PER_HOST)
+                .newBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
-                // 撒点一次性发完：请求都很小，分两批只是白多一个往返
-                .dispatcher(okhttp3.Dispatcher().apply { maxRequestsPerHost = MAX_REQUESTS_PER_HOST })
                 .build(),
         )
 

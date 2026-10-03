@@ -226,3 +226,30 @@ internal object WaterAutoStart {
         hit
     }
 }
+
+/**
+ * 今日页顶栏「+ → 扫一扫」扫到洗衣机机身码时的**一次性交接**（2026-10-02，DESIGN §3.3）：
+ * 「扫码 → 识别设备 → 开草稿 → 跳下单页」这条链只有 U净 主页的 ViewModel 一处实现
+ * （写操作的执行点，`.agents/rules/ujing.md`），所以今日页不自己发起识别，只把**原文**
+ * 交给 [SubpageScreen.UJING] 窗口，由它照常走 `onQrScanned`。
+ *
+ * 为什么是进程内令牌而不是 [SubpageRequest] 的字段（与 [WaterAutoStart] 同一条纪律）：
+ * 窗口链恢复（`pendingRestore`）会把请求原样重放，字段里的原文会被**再扫一次**，
+ * 于是用户什么都没点就又被推进下单页。令牌只在新窗口 onCreate 时消费一次，
+ * 恢复路径拿不到它。
+ */
+internal object UjingScanHandoff {
+    private var pending: String? = null
+
+    /** 今日页扫到机身码：存原文，随后 [openSubpage] 拉起 U净 窗口。 */
+    fun arm(raw: String) {
+        pending = raw.takeIf { it.isNotBlank() }
+    }
+
+    /** 该不该把待识别原文交给 [screen]；无论命中与否都清槽（一次性，防滞后误触发）。 */
+    fun consume(screen: SubpageScreen): String? = synchronized(this) {
+        val hit = if (screen == SubpageScreen.UJING) pending else null
+        pending = null
+        hit
+    }
+}

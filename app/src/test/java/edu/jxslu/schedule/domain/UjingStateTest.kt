@@ -93,6 +93,31 @@ class UjingStateTest {
         assertEquals(9, UjingState.dryTimeFor(90))
     }
 
+    // ---- 投放加购 ----
+
+    @Test
+    fun addonGearsMatchCommunityEnum() {
+        // 社区档位枚举：1 = 洗衣液标准、4 = 消毒液标准；这两个值进下单 body，改前重抓样本
+        assertEquals(1, UjingState.DETERGENT_STANDARD_GEAR)
+        assertEquals(4, UjingState.DISINFECTANT_STANDARD_GEAR)
+    }
+
+    @Test
+    fun addonDefaultsFollowForcedDeclarationForWashers() {
+        // 洗衣机业务：机型声明强制投放的默认勾上，用户可在结果卡里改
+        assertEquals(true to true, UjingState.addonDefaults(1, true, true))
+        assertEquals(true to false, UjingState.addonDefaults(1, true, false))
+        assertEquals(false to true, UjingState.addonDefaults(1, false, true))
+        assertEquals(false to false, UjingState.addonDefaults(1, false, false))
+    }
+
+    @Test
+    fun addonDefaultsAlwaysOffForDryers() {
+        // 烘干机没有投放概念（下单 body 也不发档位字段）——即使声明了强制也恒 false
+        assertEquals(false to false, UjingState.addonDefaults(2, true, true))
+        assertEquals(false to false, UjingState.addonDefaults(2, false, false))
+    }
+
     // ---- 看板聚合 ----
 
     @Test

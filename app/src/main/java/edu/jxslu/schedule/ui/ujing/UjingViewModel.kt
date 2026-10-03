@@ -8,12 +8,12 @@ import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.ujing.UjingAlipay
 import edu.jxslu.schedule.data.ujing.UjingApiException
+import edu.jxslu.schedule.data.ujing.UjingDraftStore
+import edu.jxslu.schedule.data.ujing.UjingHistoryStore
 import edu.jxslu.schedule.data.ujing.UjingHouse
 import edu.jxslu.schedule.data.ujing.UjingHouseStore
 import edu.jxslu.schedule.data.ujing.UjingOrderSnapshot
-import edu.jxslu.schedule.data.ujing.UjingProgramData
 import edu.jxslu.schedule.data.ujing.UjingRepository
-import edu.jxslu.schedule.data.ujing.UjingScanResult
 import edu.jxslu.schedule.data.ujing.UjingSessionExpiredException
 import edu.jxslu.schedule.data.ujing.UjingStore
 import edu.jxslu.schedule.data.ujing.UjingWashModel
@@ -44,20 +44,17 @@ data class UjingBoardRow(
     val failed: Boolean,
 )
 
-/** 扫码识别状态：空闲 → 识别中 → 结果（设备 + 套餐）或失败。 */
+/**
+ * 扫码识别状态（主页只管「扫没扫成」）：空闲 → 识别中 → 失败。
+ * 成功不留主页——开 [UjingDraftStore] 草稿并跳独立下单页（UJING_ORDER）。
+ */
 sealed interface UjingScanState {
     data object Idle : UjingScanState
     data object Parsing : UjingScanState
-    data class Ready(
-        val scan: UjingScanResult,
-        val program: UjingProgramData,
-        val badge: UjingState.ScanBadge,
-    ) : UjingScanState
-
     data class Failed(val message: String) : UjingScanState
 }
 
-/** U净 页状态（DESIGN §3.23 / §4.37）。P2：登录 / 看板 / 扫码识别 / 下单支付与订单卡。 */
+/** U净 页状态（DESIGN §3.23 / §4.37）。主页：登录 / 看板 / 扫码入口 / 订单卡 / 历史账单入口。 */
 data class UjingUiState(
     // ── 登录 ──
     val loggedIn: Boolean = false,
@@ -72,18 +69,19 @@ data class UjingUiState(
     val board: List<UjingBoardRow> = emptyList(),
     val boardRefreshing: Boolean = false,
     // ── 扫码 ──
+    /** 主页只展示识别中 / 失败 / 「继续上次识别」；档位与投放选择在独立下单页。 */
     val scan: UjingScanState = UjingScanState.Idle,
-    /**
-     * 已选水温档（协议枚举 1/2/3/4，见 [UjingState.temperatureLabel]）。
-     * null = 当前设备没有水温选项（机型未开放或烘干机）。
-     */
-    val selectedTemperatureId: Int? = null,
+    /** 历史账单笔数（入口行角标；0 = 还没有账单）。 */
+    val historyCount: Int = 0,
     // ── 订单（P2） ──
     /** 在案订单（下单后出现；跨进程恢复）。null = 没有在案订单。 */
     val order: UjingOrderSnapshot? = null,
     val orderBusy: Boolean = false,
-    // ── 下单确认弹层 ──
-    val confirmingModel: UjingWashModel? = null,
+    /**
+     * 支付宝 SDK 拉起期间为 true：收银台在那边、SDK 调用阻塞，这段时间订单卡动作
+     * （取消/启动/重试支付）不该照常可点。与 [orderBusy] 分开——轮询静默刷新不碰它。
+     */
+    val paying: Boolean = false,
     // ── 附近洗衣房弹层 ──
     val pickerOpen: Boolean = false,
     val pickerLoading: Boolean = false,
@@ -95,8 +93,11 @@ data class UjingUiState(
 /**
  * U净 页状态（DESIGN §4.37）。
  *
- * P2：在 P1 只读之上加订单链——选模式 → 二次确认 → 下单 → 支付宝 SDK 拉起 →
- * 支付确认 → 订单卡（本地倒计时 + 页面可见时 15 秒轮询）→ 取消 / 云端启动。
+ * 主页只管：登录、看板、扫码入口（识别成功即开草稿并跳独立下单页）、在案订单卡与
+ * 历史账单入口。档位 / 水温 / 投放的选择与确认在 UJING_ORDER 页，选择结果经
+ * [UjingDraftStore.submit] 交回这里执行——**写操作仍由主页单点发起**（下单 → 支付宝
+ * SDK 拉起 → 支付确认），不因窗口切换换执行者。
+ *
  * 会话过期的统一处理在 [handleFailure]：清 token、让登录态流把 UI 带回登录卡，
  * **不做任何自动重登**。写操作（下单 / 取消 / 启动）零自动重试——失败后先查
  * 在案订单，不盲目重发。
@@ -104,6 +105,8 @@ data class UjingUiState(
 class UjingViewModel(
     private val repo: UjingRepository,
     private val houseStore: UjingHouseStore,
+    private val historyStore: UjingHistoryStore,
+    private val draftStore: UjingDraftStore,
     private val prefs: DisplayPrefsStore,
     /** 应用上下文：排 / 撤洗衣完成提醒的闹钟用（提醒不依赖任何窗口存活）。 */
     private val appContext: Context,
@@ -117,6 +120,17 @@ class UjingViewModel(
     /** 一次性提示（Snackbar）。 */
     private val _events = Channel<String>(Channel.BUFFERED)
     val events: Flow<String> = _events.receiveAsFlow()
+
+    /** 一次性导航：扫码识别成功 → 跳独立下单页。 */
+    private val _openOrder = Channel<Unit>(Channel.BUFFERED)
+    val openOrder: Flow<Unit> = _openOrder.receiveAsFlow()
+
+    /**
+     * 「今日页扫到机身码，但当时还没登录」留下的原文：登录成功后自动接着识别
+     * （见 `repo.loggedIn` 收集器）。只放内存、只留一次，超 [PENDING_SCAN_TTL_MILLIS] 作废
+     * —— 与草稿（[UjingDraftStore]）同一条口径：几秒到几分钟内的一次性交接，不落盘。
+     */
+    private var pendingScan: Pair<String, Long>? = null
 
     init {
         _uiState.update {
@@ -142,6 +156,13 @@ class UjingViewModel(
                     repo.currentOrder()?.takeIf { order -> !order.isTerminal }
                         ?.let { order -> refreshOrder(order.orderId) }
                     refreshBoard()
+                    // 扫到机身码时还没登录：登录成功后接着把那次识别跑完，用户不用重扫
+                    pendingScan?.let { (raw, at) ->
+                        pendingScan = null
+                        if (System.currentTimeMillis() - at <= PENDING_SCAN_TTL_MILLIS) {
+                            onQrScanned(raw)
+                        }
+                    }
                 } else {
                     UjingDoneReminder.cancel(appContext)
                 }
@@ -150,6 +171,21 @@ class UjingViewModel(
         // 在案订单跨窗口实时反映（快照存 Graph 单例的 OrderStore）
         viewModelScope.launch {
             repo.orderState.collect { order -> _uiState.update { it.copy(order = order) } }
+        }
+        // 历史账单笔数（入口行角标）
+        viewModelScope.launch {
+            historyStore.state.collect { list ->
+                _uiState.update { it.copy(historyCount = list.size) }
+            }
+        }
+        // 下单页交回的选择 → 立即执行下单链（确认动作已在下单页的弹层里完成）
+        viewModelScope.launch {
+            draftStore.submitted.collect { selection ->
+                if (selection != null) {
+                    draftStore.consumeSubmitted()
+                    confirmPreparedOrder(selection)
+                }
+            }
         }
         // 恢复在案订单 / 进页拉看板不再单独写：上面的 loggedIn 收集器订阅 StateFlow
         // 会立即发射当前值，已登录时的订单对表与看板首拉都从那里走（单一来源）。
@@ -311,9 +347,22 @@ class UjingViewModel(
 
     // ── 扫码识别 ──
 
-    /** 二维码原文（相机或相册）→ 设备信息 + 套餐。 */
+    /**
+     * 二维码原文（相机或相册）→ 设备信息 + 套餐。成功即开草稿并请 UI 跳独立下单页
+     * （档位 / 水温 / 投放的选择都在那一页，主页不内联展示）。
+     */
     fun onQrScanned(raw: String) {
         if (raw.isBlank() || _uiState.value.scan is UjingScanState.Parsing) return
+        // 未登录先拦一道：机身码的识别接口要 token（匿名回 401），直接发出去只会得到
+        // 「登录已过期」这种驴唇不对马嘴的提示——今日页的扫一扫把它带进来时用户
+        // 可能压根没用过 U净，让人回页面上登录才是出路
+        if (!repo.loggedIn.value) {
+            // 留着原文：登录成功后自动接着识别（见 init 里的 loggedIn 收集器）
+            pendingScan = raw to System.currentTimeMillis()
+            notify("识别洗衣机需要先登录 U净（手机号 + 短信验证码）")
+            return
+        }
+        pendingScan = null
         _uiState.update { it.copy(scan = UjingScanState.Parsing) }
         viewModelScope.launch {
             runCatching {
@@ -321,25 +370,12 @@ class UjingViewModel(
                 val deviceId = scan.deviceId?.takeIf { it.isNotBlank() }
                     ?: throw UjingApiException("未识别到设备信息，请确认扫的是洗衣机机身码")
                 val program = repo.programInfo(deviceId)
-                Triple(
-                    scan,
-                    program,
-                    UjingState.scanBadge(scan.createOrderEnabled, scan.status, scan.reason),
-                )
+                scan to program
             }
-                .onSuccess { (scan, program, badge) ->
-                    _uiState.update {
-                        it.copy(
-                            scan = UjingScanState.Ready(scan, program, badge),
-                            // 水温默认常温（机型开放水温且非烘干机才给选项）
-                            selectedTemperatureId =
-                                if (program.isWashTemperatureEnable && program.type != 2) {
-                                    TEMPERATURE_DEFAULT_ID
-                                } else {
-                                    null
-                                },
-                        )
-                    }
+                .onSuccess { (scan, program) ->
+                    draftStore.open(UjingDraftStore.Draft(scan, program))
+                    _uiState.update { it.copy(scan = UjingScanState.Idle) }
+                    _openOrder.trySend(Unit)
                 }
                 .onFailure { error ->
                     handleFailure(error)
@@ -350,64 +386,81 @@ class UjingViewModel(
         }
     }
 
-    fun clearScan() {
-        _uiState.update { it.copy(scan = UjingScanState.Idle, selectedTemperatureId = null) }
-    }
-
-    /** 选水温档（仅机型开放水温的洗衣机展示这组 chips）。 */
-    fun selectTemperature(id: Int) {
-        _uiState.update { it.copy(selectedTemperatureId = id) }
-    }
-
     // ── 订单链（P2） ──
 
-    /** 点模式行 → 弹下单确认（内容在弹层里核对，确认才真正下单）。 */
-    fun requestOrder(model: UjingWashModel) {
-        val ready = _uiState.value.scan as? UjingScanState.Ready ?: return
-        // 已有在案订单：先处理那单，不允许叠单（写操作红线：不批量）
+    /**
+     * 订单链的统一忙态：请求在跑（[UjingUiState.orderBusy]）**或支付宝 SDK 阻塞中**
+     * （[UjingUiState.paying]）。所有写入口的守卫都看它——paying 只禁了 UI 按钮、
+     * 守卫不认的话，草稿收集器这类非按钮调用点会在支付窗口内绕过禁用发起写操作。
+     */
+    private val orderChainBusy: Boolean
+        get() = _uiState.value.orderBusy || _uiState.value.paying
+
+    /**
+     * 下单页交回选择后的执行入口（二次确认弹层在下单页里，用户点「去支付」才走到这）。
+     * 守卫与旧主页弹层路径一致：在案订单不允许叠单（写操作红线）、忙态拒发。
+     */
+    fun confirmPreparedOrder(selection: UjingDraftStore.OrderSelection) {
+        if (orderChainBusy) return
         if (_uiState.value.order != null) {
             notify("已有进行中的订单，请先完成或取消")
             return
         }
-        if (!ready.scan.createOrderEnabled) {
-            notify("设备当前不可下单")
-            return
-        }
-        _uiState.update { it.copy(confirmingModel = model) }
+        createAndPay(
+            model = selection.model,
+            washTemperatureId = selection.temperatureId,
+            addDetergent = selection.addDetergent,
+            addDisinfectant = selection.addDisinfectant,
+        )
     }
 
-    fun dismissConfirm() {
-        _uiState.update { it.copy(confirmingModel = null) }
-    }
-
-    /** 确认下单：orders/create → 立即请求支付参数并拉起支付宝。 */
-    fun confirmOrder() {
-        val model = _uiState.value.confirmingModel ?: return
-        val ready = _uiState.value.scan as? UjingScanState.Ready ?: return
-        if (_uiState.value.orderBusy) return
-        _uiState.update { it.copy(orderBusy = true, confirmingModel = null) }
+    /** orders/create → 立即请求支付参数并拉起支付宝。 */
+    private fun createAndPay(
+        model: UjingWashModel,
+        washTemperatureId: Int?,
+        addDetergent: Boolean,
+        addDisinfectant: Boolean,
+    ) {
+        val draft = draftStore.draft.value ?: return
+        _uiState.update { it.copy(orderBusy = true) }
         viewModelScope.launch {
-            runCatching {
-                val snapshot = repo.createOrder(
-                    ready.scan,
-                    ready.program,
+            // 下单与取支付参数分两段 try：createOrder 受理成功后订单已建、机器已锁
+            // 2 分钟、快照与账单已落（repo.createOrder 内部），此时取参数再失败绝不能
+            // 报「下单失败」诱导重发——把订单交给订单卡，让用户从「重试支付」续上。
+            val created = runCatching {
+                repo.createOrder(
+                    draft.scan,
+                    draft.program,
                     model,
-                    _uiState.value.selectedTemperatureId,
+                    washTemperatureId,
+                    addDetergent,
+                    addDisinfectant,
                 )
-                // 下单即拉支付参数（2 分钟独占期宝贵，少一次用户等待）
-                val orderInfo = repo.paymentOrderInfo(snapshot.orderId)
-                snapshot to orderInfo
             }
-                .onSuccess { (snapshot, orderInfo) ->
+            val snapshot = created.getOrElse { error ->
+                handleFailure(error)
+                _uiState.update { it.copy(orderBusy = false) }
+                notify(error.message ?: "下单失败，请稍后重试")
+                return@launch
+            }
+            val paid = runCatching {
+                // 下单即拉支付参数（2 分钟独占期宝贵，少一次用户等待）
+                repo.paymentOrderInfo(snapshot.orderId)
+            }
+            paid.fold(
+                onSuccess = { orderInfo ->
                     _uiState.update { it.copy(orderBusy = false, order = snapshot) }
+                    draftStore.close()
                     notify("下单成功，请在 2 分钟内完成支付")
                     launchPay(snapshot.orderId, orderInfo)
-                }
-                .onFailure { error ->
+                },
+                onFailure = { error ->
                     handleFailure(error)
-                    _uiState.update { it.copy(orderBusy = false) }
-                    notify(error.message ?: "下单失败，请稍后重试")
-                }
+                    _uiState.update { it.copy(orderBusy = false, order = snapshot) }
+                    draftStore.close()
+                    notify(error.message ?: "下单成功，但支付参数获取失败，可在订单卡重试支付")
+                },
+            )
         }
     }
 
@@ -418,13 +471,35 @@ class UjingViewModel(
             notify("无法拉起支付宝，请在订单卡上重试支付")
             return
         }
+        // paying 态：SDK 阻塞在支付宝界面/收银台的整个窗口里，订单卡动作不该照常可点
+        // （此前 busy 在拉起前就复位，支付窗口内「取消/启动」全程可点，点取消会和支付结果赛跑）
+        _uiState.update { it.copy(paying = true) }
         viewModelScope.launch(Dispatchers.IO) {
             val (outcome, memo) = UjingAlipay.pay(activity, orderInfo)
+            _uiState.update { it.copy(paying = false) }
             when (outcome) {
                 UjingAlipay.Outcome.Success -> {
                     notify("支付成功")
                     runCatching { repo.confirmPayment(orderId) }
                         .onFailure { handleFailure(it) }
+                }
+                UjingAlipay.Outcome.Pending -> {
+                    // 8000 = 结果确认中：钱可能已扣，按失败报会诱导用户重付造成重复扣款。
+                    // 先双查订单状态（confirmPayment = lastPayStatus + detail），以服务端为准。
+                    val settled = runCatching { repo.confirmPayment(orderId) }
+                    settled.fold(
+                        onSuccess = { snapshot ->
+                            if (snapshot.paid) notify("支付成功")
+                            else notify("支付确认中，请稍后在订单卡刷新查看")
+                        },
+                        onFailure = { error ->
+                            handleFailure(error)
+                            // 双查也失败：快照停在 paid=false，订单卡停在「去支付」且没有
+                            // 自动恢复（轮询只在页面可见时跑）——补一次对表兜底
+                            runCatching { repo.refreshOrder(orderId) }.onFailure { handleFailure(it) }
+                            notify("支付确认中，请稍后在订单卡刷新查看")
+                        },
+                    )
                 }
                 UjingAlipay.Outcome.Canceled -> {
                     notify("已取消支付，订单保留 2 分钟，可在订单卡重试")
@@ -441,7 +516,7 @@ class UjingViewModel(
     /** 订单卡「重试支付」：重新取支付参数并拉起。 */
     fun retryPay() {
         val order = _uiState.value.order ?: return
-        if (_uiState.value.orderBusy) return
+        if (orderChainBusy) return
         _uiState.update { it.copy(orderBusy = true) }
         viewModelScope.launch {
             runCatching { repo.paymentOrderInfo(order.orderId) }
@@ -457,11 +532,14 @@ class UjingViewModel(
         }
     }
 
-    /** 刷新在案订单（订单卡「刷新」；轮询也走这里）。 */
-    fun refreshOrder(orderId: String? = null) {
+    /**
+     * 刷新在案订单（订单卡「刷新」= [silent] = false 置 busy；**15 秒轮询走 silent**，
+     * 不置 busy——不然后台轮询每 15 秒把「去支付/启动」闪一次加载圈、周期性禁用）。
+     */
+    fun refreshOrder(orderId: String? = null, silent: Boolean = false) {
         val id = orderId ?: _uiState.value.order?.orderId ?: return
-        if (_uiState.value.orderBusy) return
-        _uiState.update { it.copy(orderBusy = true) }
+        if (orderChainBusy) return
+        if (!silent) _uiState.update { it.copy(orderBusy = true) }
         viewModelScope.launch {
             runCatching { repo.refreshOrder(id) }
                 .onSuccess { snapshot ->
@@ -491,7 +569,8 @@ class UjingViewModel(
                 .onFailure { error ->
                     handleFailure(error)
                     _uiState.update { it.copy(orderBusy = false) }
-                    notify(error.message ?: "订单状态获取失败")
+                    // 轮询失败静默（单次失败不值得打扰，下一轮 15 秒就重试）；手动刷新才报错
+                    if (!silent) notify(error.message ?: "订单状态获取失败")
                 }
         }
     }
@@ -499,7 +578,7 @@ class UjingViewModel(
     /** 取消订单（二次确认在 UI；这里只拦忙态）。 */
     fun cancelOrder() {
         val order = _uiState.value.order ?: return
-        if (_uiState.value.orderBusy) return
+        if (orderChainBusy) return
         if (!UjingState.canCancel(order.status)) {
             notify("当前状态不可取消（机器已锁定，等它跑完即可）")
             return
@@ -523,7 +602,7 @@ class UjingViewModel(
     /** 云端启动（订单窗口内可点；蓝牙机型由 UI 提示靠近机器后再按）。 */
     fun startOrder() {
         val order = _uiState.value.order ?: return
-        if (_uiState.value.orderBusy) return
+        if (orderChainBusy) return
         if (!UjingState.canStart(order.status)) {
             notify("当前状态不可启动")
             return
@@ -574,26 +653,39 @@ class UjingViewModel(
     class Factory(
         private val repo: UjingRepository,
         private val houseStore: UjingHouseStore,
+        private val historyStore: UjingHistoryStore,
+        private val draftStore: UjingDraftStore,
         private val prefs: DisplayPrefsStore,
         private val appContext: Context,
         private val payActivityProvider: () -> Activity?,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            UjingViewModel(repo, houseStore, prefs, appContext, payActivityProvider) as T
+            UjingViewModel(
+                repo,
+                houseStore,
+                historyStore,
+                draftStore,
+                prefs,
+                appContext,
+                payActivityProvider,
+            ) as T
     }
 
     private companion object {
         val MOBILE_PATTERN = Regex("^1\\d{10}$")
-
-        /** 水温默认档：常温（协议枚举 1，与 [UjingState.temperatureOptions] 同源）。 */
-        const val TEMPERATURE_DEFAULT_ID = 1
 
         /** 发码冷却（服务端同样有 60 秒限制，两边口径一致）。 */
         const val CODE_COOLDOWN_MILLIS = 60_000L
 
         /** 使用须知静默期：确认后一周内不再弹。 */
         const val NOTICE_RESHOW_INTERVAL_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+        /**
+         * 「扫到机身码时还没登录」留住的原文有效期：超过就作废。
+         * 登录流程正常在几分钟内走完；留太久的话，用户在别处登录也会被推进一次识别。
+         */
+        const val PENDING_SCAN_TTL_MILLIS = 10L * 60 * 1000
 
         /** 看板并发上限。 */
         const val BOARD_CONCURRENCY = 4

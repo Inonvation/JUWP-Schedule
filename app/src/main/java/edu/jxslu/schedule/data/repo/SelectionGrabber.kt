@@ -65,6 +65,10 @@ class SelectionGrabber(
     fun run(request: GrabRequest): Flow<Event> = flow {
         val pending = request.wishes.associateBy { it.id }.toMutableMap()
         val grabbed = mutableListOf<SelectionCourse>()
+        // 已抢到课程的 id 集合：服务端列表对「刚提交成功」可能有滞后（selected 未翻过来），
+        // 且两个愿望的关键词可能命中同一门课（如「高等数学」与「高数」）——不剔除就会
+        // 对同一 courseId 重复提交。同一轮内 Success 后立即入集，后面的愿望同样跳过。
+        val grabbedCourseIds = mutableSetOf<String>()
         val startedAt = clock()
         var failures = 0
         var attempt = 0
@@ -109,12 +113,15 @@ class SelectionGrabber(
             var fatal: GrabStop.Fatal? = null
             for ((wishId, wish) in pending.toList()) {
                 val candidate = courses.firstOrNull { course ->
-                    !course.selected && SelectionWishes.matches(wish, course.name, course.teacher)
+                    course.id !in grabbedCourseIds &&
+                        !course.selected &&
+                        SelectionWishes.matches(wish, course.name, course.teacher)
                 } ?: continue
                 when (val result = submitSafely(request.roundId, candidate.id)) {
                     is SelectionSubmitResult.Success -> {
                         pending.remove(wishId)
                         grabbed += candidate
+                        grabbedCourseIds += candidate.id
                         emit(Event.Grabbed(candidate, wishId))
                     }
                     is SelectionSubmitResult.Rejected -> emit(

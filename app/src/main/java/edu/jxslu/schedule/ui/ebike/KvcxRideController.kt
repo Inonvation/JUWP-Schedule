@@ -15,7 +15,9 @@ import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.domain.KvcProtocolException
 import edu.jxslu.schedule.domain.RideRecord
+import edu.jxslu.schedule.ui.common.rememberResumedNow
 import edu.jxslu.schedule.ui.common.NoticeTone
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +61,12 @@ data class KvcxRideState(
     val fetchedAt: Long = 0L,
     /** 正在跑的用车动作（按钮禁用 + 进度显示）；null = 无。 */
     val busy: KvcxAction? = null,
+    /**
+     * [busy] 的起始时刻（2026-10-02）：开锁/还车链路最坏可挂一两分钟（定位 + 多次查询
+     * 各自超时），按钮只写「开锁中…」用户不知道是卡死还是在等。UI 按「已等 N 秒」走秒，
+     * 超 [BUSY_LONG_WAIT_SECONDS] 补「仍未确认，可刷新状态或去小程序核对」。
+     */
+    val busyAt: Long = 0L,
     /** 开锁指令已发但未确认；确认开锁/还车/刷新到已开时清掉。 */
     val unlockPending: Boolean = false,
     /**
@@ -386,6 +394,8 @@ class KvcxRideController internal constructor(
                     },
                     NoticeTone.Info,
                 )
+            } catch (error: CancellationException) {
+                throw error // 取消穿透：不能把页面/作用域撤销报成「操作异常」
             } catch (error: Throwable) {
                 onNotice(kvcxErrorText(error), NoticeTone.Error)
             } finally {
@@ -403,13 +413,15 @@ class KvcxRideController internal constructor(
         }
         if (_state.value.busy != null) return
         scope.launch {
-            _state.update { it.copy(busy = action) }
+            _state.update { it.copy(busy = action, busyAt = System.currentTimeMillis()) }
             try {
                 block(session)
+            } catch (error: CancellationException) {
+                throw error // 取消穿透：不能把页面/作用域撤销报成「操作异常」
             } catch (error: Throwable) {
                 onNotice(kvcxErrorText(error), NoticeTone.Error)
             } finally {
-                _state.update { it.copy(busy = null) }
+                _state.update { it.copy(busy = null, busyAt = 0L) }
             }
         }
     }
@@ -534,16 +546,7 @@ internal fun rideElapsedSeconds(
 @Composable
 internal fun rememberRideElapsed(ride: KqcxAuth.Ride?, fetchedAt: Long): String? {
     if (ride == null) return null
-    val now by produceState(
-        initialValue = System.currentTimeMillis(),
-        key1 = ride.carNum,
-        key2 = fetchedAt,
-    ) {
-        while (true) {
-            value = System.currentTimeMillis()
-            delay(1_000L)
-        }
-    }
+    val now by rememberResumedNow(1_000L, key = ride.carNum to fetchedAt)
     return rideElapsedSeconds(ride, fetchedAt, now)?.let(KqcxAuth::formatRideDuration)
 }
 
@@ -586,6 +589,8 @@ internal suspend fun startFreeRideNotice(): Pair<String, NoticeTone> {
 internal fun openWechatForSettle(context: android.content.Context, onHint: (String) -> Unit) {
     val launch = try {
         context.packageManager.getLaunchIntentForPackage("com.tencent.mm")
+    } catch (e: CancellationException) {
+        throw e // 取消穿透
     } catch (_: Exception) {
         null
     }
@@ -599,6 +604,8 @@ internal fun openWechatForSettle(context: android.content.Context, onHint: (Stri
             "微信已打开：进快趣小程序后，主页会出现「待支付」横幅（之前关过要等 5 分钟），" +
                 "或在「历史订单」里点那笔待支付订单直接付",
         )
+    } catch (e: CancellationException) {
+        throw e // 取消穿透
     } catch (_: Exception) {
         onHint("无法打开微信；请手动进快趣小程序，主页「待支付」横幅或历史订单可直达付款页")
     }

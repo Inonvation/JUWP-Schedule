@@ -61,16 +61,17 @@ class AppHaptics(private val view: View, private val enabled: () -> Boolean) {
 }
 
 /**
- * 组装 [AppHaptics]：开关状态来自全局显示偏好（默认开）。
- * prefs 初始为 null（流尚未发射）时按「开」处理——宁可多振一下，不要开关失效。
+ * 组装 [AppHaptics]：开关状态来自全局显示偏好的**触感轻流**（默认开）。
+ * 全应用 60+ 个调用点只关心一个布尔——收 `hapticsEnabled` 单独一条流，其他偏好变化
+ * （拖滑块、换主题）完全不经过这些收集器；显示偏好本体在仓库层收成共享热流。
  */
 @Composable
 fun rememberAppHaptics(): AppHaptics {
     val view = LocalView.current
     val context = LocalContext.current
-    val prefs by remember { Graph.repository(context).displayPrefs }
-        .collectAsStateWithLifecycle(initialValue = null)
+    val enabled by remember { Graph.repository(context).hapticsEnabled }
+        .collectAsStateWithLifecycle(initialValue = true)
     // remember 只缓存 AppHaptics 实例；enabled lambda 闭包读的是委托属性，
-    // 每次调用都取最新开关值，不需要因 prefs 变化而重建
-    return remember(view) { AppHaptics(view) { prefs?.hapticsEnabled != false } }
+    // 每次调用都取最新开关值，不需要因开关变化而重建
+    return remember(view) { AppHaptics(view) { enabled } }
 }

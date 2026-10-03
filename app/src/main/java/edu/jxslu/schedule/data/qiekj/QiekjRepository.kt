@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.qiekj
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.DiagnosisResult
 import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
@@ -35,13 +36,11 @@ class QiekjRepository(
     init {
         // BASIC 级日志只打请求行不打 header，token/sign 不会进 Logcat（DESIGN 5 隐私要求）
         val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
-        val client = OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
-            .addInterceptor(QiekjHeaderInterceptor { tokenStore.readToken() })
-            .addInterceptor(logging)
-            .build()
+        // 共享池派生：只叠自己的头部注入与日志拦截器
+        val client = AppHttp.withInterceptors(
+            QiekjHeaderInterceptor { tokenStore.readToken() },
+            logging,
+        ).newBuilder().build()
         api = Retrofit.Builder()
             .baseUrl(QiekjApiConfig.BASE_URL)
             .client(client)

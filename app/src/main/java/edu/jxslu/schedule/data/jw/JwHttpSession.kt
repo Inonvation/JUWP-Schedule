@@ -3,6 +3,7 @@ package edu.jxslu.schedule.data.jw
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.data.session.CasLoginClassifier
 import edu.jxslu.schedule.data.session.CasLoginResult
 import edu.jxslu.schedule.data.session.CasTransport
@@ -114,12 +115,10 @@ class JwHttpSession private constructor(
             // 都要从它取快照，不能再让 client 独占。
             val jar = MemoryCookieJar()
             return JwHttpSession(
-                OkHttpClient.Builder()
+                // 共享 base（AppHttp）派生：连接池/线程池/DNS 全进程一份；这里只覆盖
+                // 会话件（cookieJar）与教务链路的 302 手动跟随、加长的读超时
+                AppHttp.base.newBuilder()
                     .cookieJar(jar)
-                    // 优先 IPv4：校园域名同时有 A 与 AAAA 记录，而校园 IPv6 在移动网络下
-                    // 实测是黑（连接要等到 TCP 超时才落回 v4，单步就多等十几到三十秒，
-                    // 表现为「开了检测一直转圈」）。IPv4 稳定可达，故显式把 v4 排前面。
-                    .dns(Ipv4FirstDns)
                     // 教务链路大量 302，统一手动跟随以便诊断落点
                     .followRedirects(false)
                     .followSslRedirects(false)
@@ -339,9 +338,16 @@ class JwHttpSession private constructor(
             if (r.code in 300..399) r.header("Location") else null
         }
 
-    /** 检测是一次性短任务，用完即弃：释放连接池与线程池，不留常驻资源。 */
+    /**
+     * 释放本会话占用的连接（2026-10-02 终审修正：**不再 shutdown 线程池**）。
+     *
+     * client 已改为共享池（[AppHttp.base]）派生——dispatcher 的 executorService 是
+     * 全进程网络共享的，shutdown 掉会波及教务之外的所有链路（Qiekj/Qzxy/一卡通…；
+     * OkHttp 对 shutdown 后到达的请求会重建 executor，所以是静默劣化不是崩溃）。
+     * 当前此方法无人调用（会话单例进程存活期内复用），但留着就是定时炸弹。
+     * 只清连接池：evictAll 的代价是各链路下次请求重连，可接受。
+     */
     override fun shutdown() {
-        runCatching { client.dispatcher.executorService.shutdown() }
         runCatching { client.connectionPool.evictAll() }
     }
 }

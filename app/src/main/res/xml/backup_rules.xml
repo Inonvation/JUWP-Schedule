@@ -20,4 +20,6 @@
     <exclude domain="sharedpref" path="ykt_tokens.xml" />
     <exclude domain="sharedpref" path="secure_kqcx.xml" />
     <exclude domain="sharedpref" path="secure_ujing.xml" />
+    <exclude domain="file" path="crash/" />
+    <exclude domain="file" path="ujing_debug/" />
 </full-backup-content>

@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
+import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import kotlinx.coroutines.runBlocking
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -246,9 +247,24 @@ private data class ThemeSnapshot(
 
 private var themeSnapshot: ThemeSnapshot? = null
 
-private fun readThemeSnapshotBlocking(): ThemeSnapshot = runBlocking {
-    val prefs = Graph.repository(Graph.appContext).displayPrefs.first()
-    ThemeSnapshot(prefs.themeMode, prefs.dynamicColor, prefs.themePalette)
+/**
+ * 启动期一次性预载的显示偏好（2026-10-02，体检第三批；终审修正）。
+ *
+ * 主线程上同步读 DataStore 的点位原本有三个（主题快照 / 悬浮栏 / 启动路由），各自
+ * `runBlocking { ... .first() }`——**首次**读盘是真磁盘 IO，三份就是主线程上的三次串行。
+ * 合并成「第一次需要时读一整份 [DisplayPrefs]」后，**只有悬浮栏**继续吃这份缓存
+ * （它本来就是「重启生效」的冻结语义）；**主题**由 [themeSnapshot] 的每窗口回写垫首帧；
+ * **启动页**改回每次真读（[resolveStartRouteBlocking]）——它的 KDoc 承诺「重开窗口就
+ * 取当时的偏好」，进程级缓存会把这语义退化成重启生效，收益差异只剩一次内存读。
+ */
+private var startupPrefs: DisplayPrefs? = null
+
+private fun startupPrefsBlocking(): DisplayPrefs = startupPrefs ?: runCatching {
+    runBlocking { Graph.repository(Graph.appContext).displayPrefs.first() }
+}.getOrDefault(DisplayPrefs()).also { startupPrefs = it }
+
+private fun readThemeSnapshotBlocking(): ThemeSnapshot = startupPrefsBlocking().let {
+    ThemeSnapshot(it.themeMode, it.dynamicColor, it.themePalette)
 }
 
 /**
@@ -294,9 +310,7 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
  */
 private var floatingNavBarEffective: Boolean? = null
 
-private fun resolveFloatingNavBarBlocking(): Boolean = runBlocking {
-    Graph.displayPrefs(Graph.appContext).floatingNavBar.first()
-}
+private fun resolveFloatingNavBarBlocking(): Boolean = startupPrefsBlocking().floatingNavBar
 
 /**
  * 解析启动页（通用设置 → 启动页，DESIGN §3.3）。
@@ -308,14 +322,16 @@ private fun resolveFloatingNavBarBlocking(): Boolean = runBlocking {
  * （退回桌面再来、从最近任务划掉重进）也能立刻生效——比悬浮导航栏那个进程级
  * [floatingNavBarEffective] 更贴合「启动页」的语义。
  *
+ * 终审修正（2026-10-02）：保持**每次真读**、不走 [startupPrefsBlocking] 进程缓存——
+ * 缓存会让「重开窗口生效」退化成「重启生效」。DataStore 首读后全走内存缓存，
+ * 这里的成本只剩内存读。
+ *
  * 生活页关掉时落回今日页：那一项在设置里已经不显示（§3.13），再落在没有入口的
  * Tab 上用户连怎么返回都找不到。判据与设置页选中态共用 [StartPage.effectivePage]。
  */
 private fun resolveStartRouteBlocking(): String = runBlocking {
-    val store = Graph.displayPrefs(Graph.appContext)
-    val stored = store.startPage.first()
-    val lifeTabEnabled = store.lifeTabEnabled.first()
-    StartPage.effectivePage(stored, lifeTabEnabled).route()
+    val prefs = Graph.repository(Graph.appContext).displayPrefs.first()
+    StartPage.effectivePage(prefs.startPage, prefs.lifeTabEnabled).route()
 }
 
 /**
@@ -323,6 +339,9 @@ private fun resolveStartRouteBlocking(): String = runBlocking {
  *
  * 只认 `onboarding_seen` 这一个键，不认「有没有课表」——导入过课表又清空过的用户
  * 不该被重新引导一遍。
+ *
+ * `onboarding_seen` 不在 [DisplayPrefs] 数据类里（它是 store 的独立键），单独走一次
+ * DataStore 读——此时主题快照已把 DataStore 热进内存缓存，这次读只碰内存，无磁盘 IO。
  */
 private fun onboardingSeenBlocking(): Boolean = runBlocking {
     Graph.displayPrefs(Graph.appContext).onboardingSeen.first()
@@ -638,12 +657,13 @@ internal fun JuwApp(
 
     // 悬浮导航栏（DESIGN §4.22）：底栏形态是全局项，这里单独订阅一次。
     // 不复用 JuwRoot 那份：它是为了定主题色，作用域在 setContent 最外层，拿不到这里。
-    // 同一个 DataStore 流多一个订阅者只是多一次 map，不产生额外磁盘读。
-    val displayPrefs by remember { Graph.repository(context).displayPrefs }
+    // 壳层只收 [AppShellPrefs] 切片（底栏开关 + 背景图五参数）：NavHost 挂在壳里，
+    // 收整份 DisplayPrefs 的话，拖一根字号滑杆都会重组整个壳。
+    val shellPrefs by remember { Graph.repository(context).appShellPrefs }
         .collectAsStateWithLifecycle(initialValue = null)
 
     // 悬浮导航栏：只用启动期冻结的那份（见 floatingNavBarEffective 的 KDoc）。
-    // displayPrefs 流仍订阅着背景图/生活页开关等运行时可变项，别顺手把这里改回它。
+    // shellPrefs 流仍订阅着背景图/生活页开关等运行时可变项，别顺手把这里改回它。
     val floatingNavBar = floatingNavBarEffective ?: resolveFloatingNavBarBlocking()
         .also { floatingNavBarEffective = it }
 
@@ -653,7 +673,7 @@ internal fun JuwApp(
 
     // 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。
     // 未读出（首帧 null）按开处理——宁可先显示再收起，也别让底栏先少一项再补上。
-    val lifeTabEnabled = displayPrefs?.lifeTabEnabled ?: true
+    val lifeTabEnabled = shellPrefs?.lifeTabEnabled ?: true
 
     // 底栏四项：今日 · 课表 · 生活 · 我的（生活页在课表右侧）
     val tabs = buildList {
@@ -745,11 +765,11 @@ internal fun JuwApp(
                 modifier = Modifier.matchParentSize(),
             ) {
                 ScheduleBackgroundLayer(
-                    fileName = displayPrefs?.bgImageName,
-                    opacity = displayPrefs?.bgImageOpacity ?: 1f,
-                    dim = displayPrefs?.bgImageDim ?: 0f,
-                    blur = displayPrefs?.bgImageBlur ?: 0f,
-                    scale = displayPrefs?.bgImageScale ?: BgScale.Fill,
+                    fileName = shellPrefs?.bgImageName,
+                    opacity = shellPrefs?.bgImageOpacity ?: 1f,
+                    dim = shellPrefs?.bgImageDim ?: 0f,
+                    blur = shellPrefs?.bgImageBlur ?: 0f,
+                    scale = shellPrefs?.bgImageScale ?: BgScale.Fill,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -788,6 +808,25 @@ internal fun JuwApp(
                             // 2026-09-29 结构重构后两档共用同一个页面（地图 + 抽屉三态），
                             // 不再按使用方式路由到两个页面，也不再需要「选车回传」那条通道
                             onOpenEbike = { SubpageActivity.start(context, SubpageScreen.RIDE) },
+                            // 顶栏「+ → 扫一扫」扫到车身码：带完整车号进骑行页（进页即定位，
+                            // DESIGN §3.9 的 focusItemId 复用）
+                            onOpenRideCar = { carNum ->
+                                SubpageActivity.start(
+                                    context,
+                                    SubpageScreen.RIDE,
+                                    focusItemId = carNum,
+                                )
+                            },
+                            // 扫到洗衣机机身码：原文走一次性令牌（UjingScanHandoff）交给
+                            // U净 页自己识别——「扫码 → 开草稿 → 跳下单页」只有那一条实现
+                            onOpenUjingScan = { raw ->
+                                UjingScanHandoff.arm(raw)
+                                SubpageActivity.start(context, SubpageScreen.UJING)
+                            },
+                            // 付款码（DESIGN §3.10）：校园卡付款码展示页，独立窗口
+                            onOpenPayCode = {
+                                SubpageActivity.start(context, SubpageScreen.PAY_CODE)
+                            },
                             // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
                             // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
                             onOpenShortcuts = { focusItemId ->
@@ -806,6 +845,15 @@ internal fun JuwApp(
                             waterViewModel = waterViewModel,
                             // 趣智校园卡（DESIGN §4.30）：与胖乖生活并排，默认开、可关
                             onOpenQzxy = { SubpageActivity.start(context, SubpageScreen.QZXY) },
+                            // 开水面板失败态「详情」的出口（DESIGN §3.18）：
+                            // 带当前设备地址过去，诊断页据此选中同一台
+                            onOpenQzxyDebug = { address ->
+                                SubpageActivity.start(
+                                    context,
+                                    SubpageScreen.QZXY_DEBUG,
+                                    focusItemId = address,
+                                )
+                            },
                             qzxyViewModel = qzxyViewModel,
                         )
                     }

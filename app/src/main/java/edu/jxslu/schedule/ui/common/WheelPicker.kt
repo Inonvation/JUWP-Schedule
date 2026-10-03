@@ -148,6 +148,10 @@ fun WheelPicker(
     }
 }
 
+/** 「时：分」滚轮的常量表：每次重组新建 60 个格式化字符串纯属浪费，提到文件级。 */
+private val HOURS = (0..23).map { "%02d".format(it) }
+private val MINUTES = (0..59).map { "%02d".format(it) }
+
 /**
  * 「时：分」双滚轮弹窗。initial 形如 "HH:mm"（解析失败回退 08:00），
  * 确认时以 "%02d:%02d" 回调。由作息表每行的起止时间触发。
@@ -162,8 +166,8 @@ fun TimeWheelDialog(
     val parts = initial.split(":")
     var hour by remember { mutableIntStateOf(parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 8) }
     var minute by remember { mutableIntStateOf(parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0) }
-    val hours = (0..23).map { "%02d".format(it) }
-    val minutes = (0..59).map { "%02d".format(it) }
+    val hours = HOURS
+    val minutes = MINUTES
 
     AlertDialog(
         onDismissRequest = onDismiss,

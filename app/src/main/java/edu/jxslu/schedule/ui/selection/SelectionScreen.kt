@@ -250,11 +250,7 @@ fun SelectionScreen(onBack: () -> Unit) {
                     onToggle = { value ->
                         scope.launch {
                             prefs.setSelectionAlertEnabled(value)
-                            if (value) {
-                                // 立刻评估一次：清掉检查时刻，让核对真正去抓一轮轮次再排闹钟
-                                prefs.setSelectionRoundsCheckMillis(0)
-                            }
-                            // 周期任务的存废 + 即时核对（共用成绩/考试那条链）
+                            // 清检查时刻 + 周期任务存废 + 即时核对都收在 onSettingsChanged
                             ScoreAlertReminder.onSettingsChanged(context)
                             SelectionAlertReminder.scheduleNext(context)
                             snackbar.showSnackbar(if (value) "已开启选课提醒" else "已关闭选课提醒")

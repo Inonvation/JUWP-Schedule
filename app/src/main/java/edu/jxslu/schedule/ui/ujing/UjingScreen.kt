@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -25,7 +25,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -33,7 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -56,8 +54,6 @@ import com.google.zxing.client.android.Intents
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.ujing.UjingHouse
 import edu.jxslu.schedule.data.ujing.UjingOrderSnapshot
-import edu.jxslu.schedule.data.ujing.UjingProgramData
-import edu.jxslu.schedule.data.ujing.UjingWashModel
 import edu.jxslu.schedule.domain.QzxyPhoneMask
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.common.AppPermissions
@@ -93,17 +89,27 @@ private val NoticeItems = listOf(
 )
 
 /**
- * U净 洗衣房页（DESIGN §3.23 / §4.37）。
+ * U净 洗衣房主页（DESIGN §3.23 / §4.37）。
  *
  * 登录（手机号 + 短信验证码）→ 订单卡（下单 / 支付宝支付 / 倒计时 / 取消 / 云端启动）→
- * 扫码选模式下单 → 收藏洗衣房空闲看板。排版自上而下按「要紧程度」递减：
- * 在案订单 > 扫码 > 看板 > 账号。洗涤中订单由 [edu.jxslu.schedule.ui.reminder.UjingDoneReminder]
- * 在到点时发系统通知（渠道：洗衣完成提醒）。
+ * 扫码入口（识别成功即开草稿并跳 [UjingOrderScreen]，选档 / 投放都在那一页）→
+ * 收藏洗衣房空闲看板 → 历史账单入口（[UjingHistoryScreen]）。排版自上而下按「要紧程度」
+ * 递减：在案订单 > 扫码 > 看板 > 账单 > 账号。洗涤中订单由
+ * [edu.jxslu.schedule.ui.reminder.UjingDoneReminder] 在到点时发系统通知（渠道：洗衣完成提醒）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UjingScreen(
     onBack: () -> Unit = {},
+    /** 扫码识别成功 → 跳独立下单页（导航由窗口层接，页里只发事件）。 */
+    onOpenOrder: () -> Unit = {},
+    /** 历史账单入口。 */
+    onOpenHistory: () -> Unit = {},
+    /**
+     * 今日页「+ → 扫一扫」扫到机身码时带进来的二维码原文（`UjingScanHandoff` 一次性令牌）：
+     * 进页即按普通扫码处理，识别成功照常跳下单页。普通入口传 null。
+     */
+    scanRaw: String? = null,
     // payActivityProvider 的 lambda 会在支付时（非组合上下文）被调，这里在组合期把
     // Activity 捕获进闭包（LocalContext.current 不能在普通 lambda 里再取）
     viewModel: UjingViewModel = LocalContext.current.let { entryContext ->
@@ -111,6 +117,8 @@ fun UjingScreen(
             factory = UjingViewModel.Factory(
                 Graph.ujing(entryContext),
                 Graph.ujingHouses(entryContext),
+                Graph.ujingHistory(entryContext),
+                Graph.ujingDraft(entryContext),
                 Graph.displayPrefs(entryContext),
                 appContext = entryContext.applicationContext,
                 payActivityProvider = { entryContext as? Activity },
@@ -126,18 +134,31 @@ fun UjingScreen(
     var houseToRemove by remember { mutableStateOf<UjingHouse?>(null) }
     var confirmLogout by remember { mutableStateOf(false) }
     var confirmCancelOrder by remember { mutableStateOf(false) }
+    // 扫码草稿（「继续上次识别」行用）；下单页关掉后仍留着，直到下单受理或重扫覆盖
+    val draftStore = remember { Graph.ujingDraft(context) }
+    val hasDraft by draftStore.draft.collectAsStateWithLifecycle()
 
     // 一次性提示（登录成功、会话过期、看板错误等）
     LaunchedEffect(Unit) {
         viewModel.events.collect { message -> showNotice(scope, snackbar, message, NoticeTone.Info) }
     }
+    // 一次性导航：识别成功 → 独立下单页
+    LaunchedEffect(Unit) {
+        viewModel.openOrder.collect { onOpenOrder() }
+    }
+    // 今日页扫到的原文：进页识别一次。键是 scanRaw 本身——重组不会重跑，
+    // 配置变更后 Activity 重建时令牌早已消费（拿到 null），也不会重扫
+    LaunchedEffect(scanRaw) {
+        if (!scanRaw.isNullOrBlank()) viewModel.onQrScanned(scanRaw)
+    }
 
-    // 订单进行中且页面可见时的 15 秒轮询（离开页面即随组合取消；无后台轮询，红线见 §4.37）
+    // 订单进行中且页面可见时的 15 秒轮询（离开页面即随组合取消；无后台轮询，红线见 §4.37）。
+    // 走 silent 刷新：不置 busy、不弹错误——后台轮询不该每 15 秒把按钮闪成加载圈。
     LaunchedEffect(state.order?.orderId, state.order?.isTerminal) {
         val order = state.order ?: return@LaunchedEffect
         while (isActive && !order.isTerminal) {
             delay(ORDER_POLL_INTERVAL_MILLIS)
-            viewModel.refreshOrder()
+            viewModel.refreshOrder(silent = true)
         }
     }
 
@@ -221,7 +242,9 @@ fun UjingScreen(
                 state.order?.let { order ->
                     OrderSection(
                         order = order,
-                        busy = state.orderBusy,
+                        // 支付 SDK 阻塞期间（paying）同样禁动作：收银台在那边，这里点取消
+                        // 会和支付结果赛跑（busy 只覆盖请求本身，支付窗口是另一段）
+                        busy = state.orderBusy || state.paying,
                         onRefresh = { viewModel.refreshOrder() },
                         onRetryPay = viewModel::retryPay,
                         onCancel = { confirmCancelOrder = true },
@@ -231,9 +254,9 @@ fun UjingScreen(
                 }
                 ScanSection(
                     state = state,
+                    hasDraft = hasDraft != null,
                     onScan = startScan,
-                    onRequestOrder = viewModel::requestOrder,
-                    onSelectTemperature = viewModel::selectTemperature,
+                    onOpenOrder = onOpenOrder,
                 )
                 BoardSection(
                     state = state,
@@ -244,6 +267,7 @@ fun UjingScreen(
                     },
                     onRemove = { houseToRemove = it },
                 )
+                HistorySection(count = state.historyCount, onOpen = onOpenHistory)
                 AccountSection(state = state, onLogout = { confirmLogout = true })
             }
         }
@@ -251,20 +275,6 @@ fun UjingScreen(
         // ── 弹层与对话框 ──
         if (state.pickerOpen) {
             HousePickerSheet(state = state, viewModel = viewModel)
-        }
-        // 下单确认（写操作二次确认；正文核对设备 / 模式 / 水温 / 价格 / 2 分钟独占）
-        state.confirmingModel?.let { model ->
-            val ready = state.scan as? UjingScanState.Ready
-            if (ready != null) {
-                OrderConfirmDialog(
-                    program = ready.program,
-                    model = model,
-                    selectedTemperatureId = state.selectedTemperatureId,
-                    busy = state.orderBusy,
-                    onConfirm = viewModel::confirmOrder,
-                    onDismiss = viewModel::dismissConfirm,
-                )
-            }
         }
         state.order?.let { order ->
             if (confirmCancelOrder) {
@@ -332,12 +342,15 @@ fun UjingScreen(
 
 @Composable
 private fun LoginSection(state: UjingUiState, viewModel: UjingViewModel) {
-    // 60 秒冷却倒计时：只按发码时刻算，页面在就 tick、页面走就停
+    // 60 秒冷却倒计时：只按发码时刻算，页面在就 tick、页面走就停；
+    // 冷却归零（或压根没发过码）就停循环——不然进页即永久每秒唤醒重组
     val now by produceState(initialValue = System.currentTimeMillis(), key1 = state.codeSentAt) {
-        while (true) {
+        val deadline = state.codeSentAt + 60_000L
+        while (state.codeSentAt > 0L && System.currentTimeMillis() < deadline) {
             value = System.currentTimeMillis()
             delay(1_000)
         }
+        value = System.currentTimeMillis()
     }
     val cooldownSeconds = if (state.codeSentAt > 0L) {
         ((state.codeSentAt + 60_000L - now).coerceAtLeast(0L) + 999L) / 1000L
@@ -505,42 +518,54 @@ private fun BoardHouseRow(row: UjingBoardRow, onRemove: () -> Unit) {
 
 // ── 扫码识别 ──
 
+/**
+ * 扫码入口。主页只管「扫没扫成」：识别成功即跳独立下单页（[UjingOrderScreen]），
+ * 档位 / 水温 / 投放的选择都不在这页；识别过但没下完单的，草稿还在，
+ * 给一行「继续上次识别」就近接回。
+ */
 @Composable
 private fun ScanSection(
     state: UjingUiState,
+    hasDraft: Boolean,
     onScan: () -> Unit,
-    onRequestOrder: (UjingWashModel) -> Unit,
-    onSelectTemperature: (Int) -> Unit,
+    onOpenOrder: () -> Unit,
 ) {
     SettingsSection(
         title = "扫码下单",
         subtitle = "对准洗衣机机身上的二维码（与官方 App 扫的是同一个码）",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            when (val scan = state.scan) {
-                // 空态给一句引导，别让首屏只剩一枚孤零零的按钮
-                UjingScanState.Idle -> Text(
-                    "扫机身码识别设备，选好模式确认后直接下单，支付那一步会拉起支付宝。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
-                UjingScanState.Parsing -> Row(
+            // 状态行常驻组合、按状态淡入淡出，切换不跳变
+            AnimatedVisibility(visible = state.scan is UjingScanState.Parsing) {
+                Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text("正在识别设备…", style = MaterialTheme.typography.bodyMedium)
                 }
-                is UjingScanState.Failed -> Text(
-                    scan.message,
+            }
+            val failed = state.scan as? UjingScanState.Failed
+            AnimatedVisibility(visible = failed != null) {
+                Text(
+                    failed?.message.orEmpty(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
-                is UjingScanState.Ready -> ScanResult(
-                    scan = scan,
-                    selectedTemperatureId = state.selectedTemperatureId,
-                    onSelectTemperature = onSelectTemperature,
-                    onRequestOrder = onRequestOrder,
+            }
+            AnimatedVisibility(visible = state.scan is UjingScanState.Idle && hasDraft) {
+                SettingItem(
+                    title = "继续上次识别的设备",
+                    subtitle = "档位与投放还没定，点这里接着选",
+                    onClick = onOpenOrder,
+                )
+            }
+            AnimatedVisibility(visible = state.scan is UjingScanState.Idle && !hasDraft) {
+                // 空态给一句引导，别让首屏只剩一枚孤零零的按钮
+                Text(
+                    "扫机身码识别设备，选好档位确认后直接下单，支付那一步会拉起支付宝。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
             Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) {
@@ -552,107 +577,15 @@ private fun ScanSection(
     }
 }
 
-@Composable
-private fun ScanResult(
-    scan: UjingScanState.Ready,
-    selectedTemperatureId: Int?,
-    onSelectTemperature: (Int) -> Unit,
-    onRequestOrder: (UjingWashModel) -> Unit,
-) {
-    val program = scan.program
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                program.deviceTypeName.ifBlank { "洗衣机" },
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            ScanBadgePill(scan.badge)
-        }
-        program.deviceNo?.takeIf { it.isNotBlank() }?.let { deviceNo ->
-            Text(
-                "机号 $deviceNo",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        }
-        // 通信模块（诊断口径）：1/5 = 蓝牙机型——决定启动走 BLE 还是云端，点验时看这里
-        Text(
-            "通信模块：${UjingState.moduleTypeLabel(scan.scan.moduleType)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        )
-        // 水温选择（机型开放且非烘干机才出现；档位是协议固定枚举，随确认弹层一起下单）
-        if (selectedTemperatureId != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "水温",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                )
-                UjingState.temperatureOptions.forEach { (id, label) ->
-                    FilterChip(
-                        selected = selectedTemperatureId == id,
-                        onClick = { onSelectTemperature(id) },
-                        label = { Text(label) },
-                    )
-                }
-            }
-        }
-        // 可选模式：服务端动态下发（价格单位分、时长单位分钟），hide 的不展示；
-        // 点行 = 发起下单（空闲才可点）
-        val models = program.deviceWashModel.filterNot { it.hide }
-        if (models.isEmpty()) {
-            Text(
-                "该设备暂未返回可用模式",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        } else {
-            val orderable = scan.badge == UjingState.ScanBadge.Free && scan.scan.createOrderEnabled
-            if (!orderable) {
-                Text(
-                    "设备使用中 / 不可下单，仅展示模式与价格",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
-            }
-            models.forEach { model ->
-                SettingItem(
-                    title = model.workModelName.ifBlank { "模式 ${model.workModelId}" },
-                    subtitle = buildString {
-                        append("¥").append(UjingState.fen2yuan(model.basePrice))
-                        if (model.time > 0) append(" · ").append(model.time).append(" 分钟")
-                    },
-                    // 右侧落点写明动作，模式行不是「点着玩的」
-                    value = if (orderable) "下单" else null,
-                    enabled = orderable,
-                    onClick = { onRequestOrder(model) },
-                )
-            }
-        }
-    }
-}
+// ── 历史账单入口 ──
 
 @Composable
-private fun ScanBadgePill(badge: UjingState.ScanBadge) {
-    val color = when (badge) {
-        UjingState.ScanBadge.Free -> MaterialTheme.colorScheme.primary
-        UjingState.ScanBadge.InUse -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-        UjingState.ScanBadge.Fault, UjingState.ScanBadge.Offline -> MaterialTheme.colorScheme.error
-    }
-    Surface(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
-        Text(
-            badge.label,
-            style = MaterialTheme.typography.labelMedium,
-            color = color,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+private fun HistorySection(count: Int, onOpen: () -> Unit) {
+    SettingsSection(title = "历史账单", subtitle = "本机发起的洗衣订单留痕") {
+        SettingItem(
+            title = if (count > 0) "共 $count 笔" else "还没有账单",
+            subtitle = "点看明细",
+            onClick = onOpen,
         )
     }
 }
@@ -677,23 +610,25 @@ private fun OrderSection(
     onStart: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // 本地每秒 tick：剩余 = 快照 remainSeconds −（现在 − 快照时刻），只对运行中订单有意义
+    // 本地每秒 tick：剩余 = 快照 remainSeconds −（现在 − 快照时刻），只对运行中订单有意义；
+    // 终态订单倒计时没有意义，不再每秒唤醒（刷新必写新 snapshotAt，状态翻转时本 tick 会重启）
+    val terminal = order.isTerminal
     val now by produceState(
         initialValue = System.currentTimeMillis(),
         key1 = order.snapshotAt,
+        key2 = terminal,
     ) {
-        while (true) {
+        while (!terminal) {
             value = System.currentTimeMillis()
             delay(1_000)
         }
     }
-    val running = order.status == "40" && !order.isTerminal
+    val running = order.status == "40" && !terminal
     val remainSeconds = if (running) {
         order.remainSeconds - ((now - order.snapshotAt) / 1000).toInt()
     } else {
         order.remainSeconds
     }
-    val terminal = order.isTerminal
     val payWindowRemain = if (!order.paid && !terminal) {
         UjingState.payWindowRemainSeconds(order.createdAt, now)
     } else {
@@ -805,64 +740,6 @@ private fun OrderSection(
 /** 订单状态文案：服务端 statusRemark 优先，本地表兜底。 */
 private val UjingOrderSnapshot.statusRemarkFallback: String
     get() = UjingState.statusText(status)
-
-/** 下单确认弹层（写操作二次确认；对齐快趣开锁 / 电费充值的确认口径）。 */
-@Composable
-private fun OrderConfirmDialog(
-    program: UjingProgramData,
-    model: UjingWashModel,
-    selectedTemperatureId: Int?,
-    busy: Boolean,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("确认下单") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    buildString {
-                        append(program.deviceTypeName.ifBlank { "洗衣机" })
-                        program.deviceNo?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    buildString {
-                        append(model.workModelName.ifBlank { "洗衣模式" })
-                        append(" · ¥").append(UjingState.fen2yuan(model.basePrice))
-                        if (model.time > 0) append(" · ").append(model.time).append(" 分钟")
-                        // 烘干机下单会自动带 dryTime（协议口径 = 时长/10），给用户交代一句
-                        if (program.type == 2 && model.time > 0) {
-                            append(" · 烘干档 ${UjingState.dryTimeFor(model.time)}")
-                        }
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                selectedTemperatureId?.let { id ->
-                    Text(
-                        "水温：${UjingState.temperatureLabel(id)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                Text(
-                    "下单后机器将为你保留 2 分钟，请在 2 分钟内完成支付；超时订单将自动取消。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm, enabled = !busy) {
-                Text(if (busy) "下单中…" else "去支付")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text("再想想") }
-        },
-    )
-}
 
 // ── 附近洗衣房弹层 ──
 

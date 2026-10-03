@@ -77,7 +77,13 @@ private fun indentOf(line: String): Int {
     return width
 }
 
-fun parseMarkdown(text: String): List<MdBlock> {
+/**
+ * 嵌套深度上限：引用/列表/强调每层只消耗 2 个左右字符，超长单行可以造出上千层递归，
+ * 不设闸就是 StackOverflowError。超限后该层按普通文本处理（纪律 1：不识别按字面，不丢字符）。
+ */
+private const val MAX_PARSE_DEPTH = 64
+
+fun parseMarkdown(text: String, depth: Int = 0): List<MdBlock> {
     val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
     val blocks = mutableListOf<MdBlock>()
     var i = 0
@@ -151,8 +157,8 @@ fun parseMarkdown(text: String): List<MdBlock> {
             continue
         }
 
-        // 引用：剥掉 `> ` 后按块递归（可嵌套）
-        if (line.trimStart().startsWith(">")) {
+        // 引用：剥掉 `> ` 后按块递归（可嵌套）；深度超限的引用行落进段落按字面渲染
+        if (line.trimStart().startsWith(">") && depth < MAX_PARSE_DEPTH) {
             val inner = mutableListOf<String>()
             while (i < lines.size && (lines[i].trimStart().startsWith(">") || lines[i].isBlank())) {
                 if (lines[i].isBlank()) {
@@ -163,12 +169,12 @@ fun parseMarkdown(text: String): List<MdBlock> {
                 }
                 i++
             }
-            blocks += MdBlock.Quote(parseMarkdown(inner.joinToString("\n")))
+            blocks += MdBlock.Quote(parseMarkdown(inner.joinToString("\n"), depth + 1))
             continue
         }
 
         if (BULLET.containsMatchIn(line) || ORDERED.containsMatchIn(line)) {
-            val (block, next) = parseList(lines, i)
+            val (block, next) = parseList(lines, i, depth)
             blocks += block
             i = next
             continue
@@ -212,7 +218,7 @@ private fun isFenceClose(line: String, marker: String): Boolean {
  * 返回（块, 下一个待处理行号）；同一父级下有序/无序混排按「首个标记」定块类型，
  * 混排中途换标记视为新列表（简单、可预期，够用）。
  */
-private fun parseList(lines: List<String>, start: Int): Pair<MdBlock.ListBlock, Int> {
+private fun parseList(lines: List<String>, start: Int, depth: Int): Pair<MdBlock.ListBlock, Int> {
     val firstBullet = BULLET.find(lines[start])
     val firstOrdered = ORDERED.find(lines[start])
     val ordered = firstBullet == null || (firstOrdered != null && firstOrdered.range.first < firstBullet.range.first)
@@ -273,8 +279,17 @@ private fun parseList(lines: List<String>, start: Int): Pair<MdBlock.ListBlock, 
                 break
             }
         }
-        val sub = if (subLines.isEmpty()) emptyList() else parseMarkdown(subLines.joinToString("\n"))
-        items += MdItem(parseInlines(contentText), task, sub)
+        val sub = when {
+            subLines.isEmpty() -> emptyList()
+            // 子块深度超限：内容以字面文本并入本项（不丢字符），不再递归。
+            // 与引用分支同口径：depth 已到限，本层就降级（差一层会让闸门形同虚设一层）
+            depth >= MAX_PARSE_DEPTH ->
+                emptyList<MdBlock>().also {
+                    contentText += "\n" + subLines.joinToString("\n")
+                }
+            else -> parseMarkdown(subLines.joinToString("\n"), depth + 1)
+        }
+        items += MdItem(parseInlines(contentText, depth), task, sub)
     }
     return MdBlock.ListBlock(ordered, startNumber, items) to i
 }
@@ -295,7 +310,7 @@ private fun isWordBoundary(text: String, index: Int): Boolean =
 /** 转义字符集：ASCII 标点（CommonMark 口径的实用子集）。 */
 private fun isEscapable(c: Char): Boolean = c in "\\`*_{}[]()#+-.!>~$|"
 
-fun parseInlines(text: String): List<MdInline> {
+fun parseInlines(text: String, depth: Int = 0): List<MdInline> {
     val out = mutableListOf<MdInline>()
     val plain = StringBuilder()
     var i = 0
@@ -347,9 +362,9 @@ fun parseInlines(text: String): List<MdInline> {
 
             c == '[' -> {
                 val parsed = parseBracket(text, i)
-                if (parsed != null) {
+                if (parsed != null && depth < MAX_PARSE_DEPTH) {
                     flush()
-                    out += MdInline.Link(parseInlines(parsed.first), parsed.second)
+                    out += MdInline.Link(parseInlines(parsed.first, depth + 1), parsed.second)
                     i = parsed.third
                 } else {
                     plain.append(c); i++
@@ -361,9 +376,9 @@ fun parseInlines(text: String): List<MdInline> {
                 // 下划线强调要求在词边界（`snake_case` 不是斜体）
                 val boundaryOk = marker == "**" || isWordBoundary(text, i)
                 val end = if (boundaryOk) findClose(text, i + 2, marker) else -1
-                if (end > 0) {
+                if (end > 0 && depth < MAX_PARSE_DEPTH) {
                     flush()
-                    out += MdInline.Styled(MdStyle.Bold, parseInlines(text.substring(i + 2, end)))
+                    out += MdInline.Styled(MdStyle.Bold, parseInlines(text.substring(i + 2, end), depth + 1))
                     i = end + 2
                 } else {
                     plain.append(marker); i += 2
@@ -372,9 +387,9 @@ fun parseInlines(text: String): List<MdInline> {
 
             text.startsWith("~~", i) -> {
                 val end = findClose(text, i + 2, "~~")
-                if (end > 0) {
+                if (end > 0 && depth < MAX_PARSE_DEPTH) {
                     flush()
-                    out += MdInline.Styled(MdStyle.Strike, parseInlines(text.substring(i + 2, end)))
+                    out += MdInline.Styled(MdStyle.Strike, parseInlines(text.substring(i + 2, end), depth + 1))
                     i = end + 2
                 } else {
                     plain.append("~~"); i += 2
@@ -384,9 +399,9 @@ fun parseInlines(text: String): List<MdInline> {
             c == '*' || c == '_' -> {
                 val boundaryOk = c == '*' || isWordBoundary(text, i)
                 val end = if (boundaryOk) findClose(text, i + 1, c.toString()) else -1
-                if (end > i + 1) {
+                if (end > i + 1 && depth < MAX_PARSE_DEPTH) {
                     flush()
-                    out += MdInline.Styled(MdStyle.Italic, parseInlines(text.substring(i + 1, end)))
+                    out += MdInline.Styled(MdStyle.Italic, parseInlines(text.substring(i + 1, end), depth + 1))
                     i = end + 1
                 } else {
                     plain.append(c); i++

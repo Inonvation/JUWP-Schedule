@@ -1002,9 +1002,14 @@ private fun FailureBlock(
     }
 }
 
-/** 失败详情：原始数据不铺在页面上，要看的自己点开，或者进诊断页看全。 */
+/**
+ * 失败详情：原始数据不铺在页面上，要看的自己点开，或者进诊断页看全。
+ *
+ * 今日页的开水面板复用这一份（同包，2026-10-02）：面板与页面的失败态各写一个
+ * 详情弹窗迟早会分叉，而两边要展示的字段完全一样。
+ */
 @Composable
-private fun FailedDetailDialog(
+internal fun FailedDetailDialog(
     failure: QzxyFlowState.Failed,
     onOpenDiagnostics: () -> Unit,
     onDismiss: () -> Unit,

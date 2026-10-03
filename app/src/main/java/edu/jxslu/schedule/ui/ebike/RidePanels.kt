@@ -104,6 +104,7 @@ import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.rememberResumedNow
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberSheetDismisser
@@ -212,6 +213,8 @@ internal fun RideActionArea(
     ride: KqcxAuth.Ride?,
     rideFetchedAt: Long,
     busy: KvcxAction?,
+    /** [busy] 的起始时刻（按钮「已等 N 秒」走秒的基准；0 = 无 busy）。 */
+    busyAt: Long,
     unlockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
@@ -331,6 +334,7 @@ internal fun RideActionArea(
                 caps = caps,
                 ride = ride,
                 busy = busy,
+                busyAt = busyAt,
                 unlockPending = unlockPending,
                 timerCanEnd = timerCanEnd,
                 summary = summary,
@@ -374,6 +378,9 @@ private const val BAR_FINDING_SCAN = "finding-scan"
 private const val BAR_CAR = "car"
 private const val BAR_RIDING = "riding"
 private const val BAR_SETTLED = "settled"
+
+/** 开锁/还车等写动作的「长时间等待」阈值（秒）：超过在按钮上补一句出路。 */
+private const val BUSY_LONG_WAIT_SECONDS = 20
 
 /**
  * 退场动画期间要用的那一份数据（快照在 [RideActionArea] 里按 key 记）。
@@ -469,6 +476,8 @@ private fun RideActionButtons(
     caps: EbikeCapabilities,
     ride: KqcxAuth.Ride?,
     busy: KvcxAction?,
+    /** [busy] 起始时刻（「已等 N 秒」走秒基准；0 = 无）。 */
+    busyAt: Long,
     unlockPending: Boolean,
     timerCanEnd: Boolean,
     summary: KvcxReturnSummary?,
@@ -487,6 +496,21 @@ private fun RideActionButtons(
     onContinue: () -> Unit,
 ) {
     val carNum = carNumOf(key)
+    // busy 动作的「已等 N 秒」走秒（RESUMED 才走）：开锁/还车链路最坏可挂一两分钟，
+    // 只写「开锁中…」用户分不清是卡死还是在等；超 [BUSY_LONG_WAIT_SECONDS] 补出路。
+    // 无条件调用（组合期条件调用 Composable 会产生插槽结构变化）；busyAt=0 时循环停在
+    // 初始值上不 tick，无副作用。
+    val busyNow = rememberResumedNow(1_000L, key = busyAt).value
+    val waitedText = if (busy != null && busyAt > 0L && busyNow > busyAt) {
+        val seconds = ((busyNow - busyAt) / 1000).toInt().coerceAtLeast(0)
+        when {
+            seconds >= BUSY_LONG_WAIT_SECONDS -> "（已等 ${seconds}s，可刷新骑行状态或去小程序核对）"
+            seconds > 0 -> "（已等 ${seconds}s）"
+            else -> ""
+        }
+    } else {
+        ""
+    }
     when {
         key == BAR_FINDING_PLAIN ->
             RideActionButton("按车号生成乘车码", onOpenCarNumber, icon = HugeIcons.QrCode01)
@@ -520,7 +544,7 @@ private fun RideActionButtons(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
                     unlockPending -> RideActionButton(
-                        text = if (busy == KvcxAction.RETRY_UNLOCK) "重试中…" else "重试开锁",
+                        text = (if (busy == KvcxAction.RETRY_UNLOCK) "重试中…" else "重试开锁") + waitedText,
                         onClick = onRetryUnlock,
                         enabled = busy == null,
                         modifier = Modifier.weight(1f),
@@ -528,7 +552,7 @@ private fun RideActionButtons(
                     )
 
                     ride.locked == true -> RideActionButton(
-                        text = if (busy == KvcxAction.RESUME) "解锁中…" else "解锁",
+                        text = (if (busy == KvcxAction.RESUME) "解锁中…" else "解锁") + waitedText,
                         onClick = onResume,
                         enabled = busy == null,
                         modifier = Modifier.weight(1f),
@@ -536,7 +560,7 @@ private fun RideActionButtons(
                     )
 
                     else -> RideActionButton(
-                        text = if (busy == KvcxAction.LOCK) "锁车中…" else "锁车",
+                        text = (if (busy == KvcxAction.LOCK) "锁车中…" else "锁车") + waitedText,
                         onClick = onTempLock,
                         enabled = busy == null,
                         modifier = Modifier.weight(1f),
@@ -544,7 +568,7 @@ private fun RideActionButtons(
                     )
                 }
                 RideActionButton(
-                    text = if (busy == KvcxAction.RETURN) "还车中…" else "还车",
+                    text = (if (busy == KvcxAction.RETURN) "还车中…" else "还车") + waitedText,
                     onClick = onReturn,
                     enabled = busy == null,
                     modifier = Modifier.weight(1f),
@@ -2261,13 +2285,8 @@ private fun subtitleText(
     completing: Boolean,
     updatedAtMillis: Long,
 ): String {
-    // 每 15 秒重算一次"现在"，把更新时间从新鲜翻成可能过期
-    val now by produceState(initialValue = System.currentTimeMillis()) {
-        while (true) {
-            delay(CLOCK_TICK_MS)
-            value = System.currentTimeMillis()
-        }
-    }
+    // 每 15 秒重算一次"现在"，把更新时间从新鲜翻成可能过期（RESUMED 才走，后台停）
+    val now by rememberResumedNow(CLOCK_TICK_MS)
     val base = when {
         loading && queried -> "刷新中…"
         completing && updatedAtMillis > 0 -> "更新于 ${clockText(updatedAtMillis)} · 正在补全周围…"

@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.ykt
 
+import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.YktKeyboard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,11 +31,11 @@ class YktClient private constructor(private val http: OkHttpClient) {
                 "Chrome/120.0.0.0 Mobile Safari/537.36"
 
         fun create(): YktClient = YktClient(
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
-                // 充值下单（thirdOrder）靠 **302 Location** 下发收银台 URL——必须拿到原始
-                // 302 而不是跟随后的落地页；其余端点全部 200 JSON，不依赖自动跟随。
+            // 共享池派生；充值下单给 callTimeout 总上限
+            // 充值下单（thirdOrder）靠 **302 Location** 下发收银台 URL——必须拿到原始
+            // 302 而不是跟随后的落地页；其余端点全部 200 JSON，不依赖自动跟随。
+            AppHttp.withCallTimeout(30)
+                .newBuilder()
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build(),
