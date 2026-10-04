@@ -64,9 +64,10 @@
 `scripts/README.md` 同时覆盖 App 行为——脚本里趟过的坑，App 端实现已经一并规避。
 
 2026-09-19 起，链路 A 的登录与抓取又多了**第二份实现**：`data/jw/JwHttpSession.kt`
-用 OkHttp 把 `scripts/jw_session.py` 的 CAS → SSO 链路原样复刻进 App，服务「调课自动检测」
-（DESIGN §4.17，默认关闭；凭证 EncryptedSharedPreferences 加密存储、排除云备份）。
-同一套页面规则自此有 Python 与 Kotlin 两份独立实现，**换校时两边要同步改**（见 §5.6）。
+用 OkHttp 把 `scripts/jw_session.py` 的 CAS → SSO 链路原样复刻进 App，最初服务「调课自动检测」。
+该功能 2026-09-24 下线、2026-10-04 以 OkHttp 直取 + 统一会话层的新形态重立（DESIGN §4.17），
+OkHttp 直取链现已服务成绩/考试/选课/调课四条同步。同一套页面规则自此有 Python 与 Kotlin
+两份独立实现，**换校时两边要同步改**（见 §5.6）。
 
 除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、趣智校园开热水、一卡通付款码与账单、
 寝室电费、快趣出行出码与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、
@@ -570,7 +571,7 @@ UI、存储、小组件等全部可以原样复用。建议顺序：
 | `data/jw/CourseImporter.kt` 的 `JwUrls` | CAS/SSO/课表/考试/成绩全部 URL 与 `schedulePageKind` 的判型规则 |
 | `QiangzhiScheduleParser.EXTRACT_JS` 等注入脚本 | 换成你学校页面的 DOM 选择器与字段抽取 |
 | `ExamScheduleParser` / `ScoreParser` | JSON 接口地址、参数名、字段名 |
-| `data/jw/JwHttpSession.kt` | 只有要做「调课自动检测」才需要：同一条登录链路的 OkHttp 复刻（§5.6），与上面几行同步改 |
+| `data/jw/JwHttpSession.kt` | 同一条登录链路的 OkHttp 复刻（§5.6）：教务 WebView 与成绩/考试/选课/调课四条直取同步链共用，与上面几行同步改 |
 | `data/DefaultData.kt` | 作息表（从教务页行标签逐节核对，不要拍脑袋）与默认开学日 |
 
 解析器契约保持不变：注入 JS 返回 `{ok, items, term}`，Kotlin 侧把每条数据转成

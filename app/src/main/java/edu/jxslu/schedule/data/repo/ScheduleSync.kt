@@ -1,0 +1,274 @@
+package edu.jxslu.schedule.data.repo
+
+import edu.jxslu.schedule.data.jw.JwUrls
+import edu.jxslu.schedule.data.jw.OneClickImport
+import edu.jxslu.schedule.data.jw.OneClickResult
+import edu.jxslu.schedule.data.jw.ImportSource
+import edu.jxslu.schedule.data.jw.ImportParseResult
+import edu.jxslu.schedule.data.jw.QiangzhiScheduleParser
+import edu.jxslu.schedule.data.jw.SyjxScheduleParser
+import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.session.AutoSyncRules
+import edu.jxslu.schedule.data.session.CasEnsureResult
+import edu.jxslu.schedule.data.session.CasSession
+import edu.jxslu.schedule.domain.ScheduleChangeRow
+import edu.jxslu.schedule.domain.ScheduleDiff
+import edu.jxslu.schedule.domain.SchedulePendingChanges
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+
+/**
+ * 课表直取与调课检查（DESIGN §4.17，2026-10-04 重立）。
+ *
+ * 走 [CasSession.fetchHtml]（已存凭证 + OkHttp）依次抓学期理论课表与实验课表两页，
+ * 解析用 [QiangzhiScheduleParser.parseFromHtml] / [SyjxScheduleParser.parseFromHtml]——
+ * 与教务 WebView 导入**同一套判定算法**（当年为单测写的备用路径），只是传输层换成
+ * OkHttp（同 `ScoreSync` 与成绩页的关系）。合成口径直接复用 [OneClickImport.combine]，
+ * 产物与 WebView 一键导入同型（`OneClickResult`）。
+ *
+ * 三个入口、两种用途：
+ * - [fetch]：纯读。理论页学期以页面学期下拉为准；请求带了学期时校验
+ *   「请求学期 = 返回学期」，不一致直接报错（同 `scripts/fetch_courses.py` 纪律——
+ *   拿错学期的数据当基线会刷一屏假差异）；
+ * - [importIfEmpty]：**只服务首启**（DESIGN §4.29 同型：登录成功后后台直接导入）。
+ *   目标课表非空一律跳过——绝不周期性覆盖用户已编辑的课表；写库走
+ *   `ScheduleRepository.importParsedCourses`，基线与教材抓取由既有收口带出；
+ * - [check]：调课检查。抓最新教务课表与基线比对，差异落「待处置缓存」并交给
+ *   提醒层发通知。基线**不在检查后更新**（这点与 `ExamSync` 相反）：调课基线的
+ *   语义是「上次与用户达成一致的状态」，只有合并成功 / 重新导入才推进；
+ *   重复打扰由「已阅指纹 + 待处置指纹」双闸挡住。
+ *
+ * 闸门纪律同成绩/考试：开关关着不发请求、间隔内不抓、失败静默且不落检查时刻、
+ * 失败不重试（防撞风控）；两页之间 [AutoSyncRules.interRequestDelayMs] 随机间隔。
+ */
+class ScheduleSync(
+    private val cas: CasSession,
+    private val repo: ScheduleRepository,
+    private val prefs: DisplayPrefsStore,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+) {
+
+    sealed interface FetchResult {
+        /**
+         * [result] 与 WebView 一键导入同型；[theoryReliable] / [labReliable] 是两页的
+         * 结构可信度（页面骨架在不在）。导入只要求理论页可靠（实验 0 条不是失败），
+         * 调课检查要求两页都可靠——实验页结构变了却当「没课」，会把整批实验课报成
+         * 「教务删除」。
+         */
+        data class Ok(
+            val result: OneClickResult,
+            val term: String,
+            val theoryReliable: Boolean,
+            val labReliable: Boolean,
+        ) : FetchResult
+
+        data class Failed(val reason: String) : FetchResult
+    }
+
+    sealed interface AutoImportResult {
+        /** [count] 是写库条数，[term] 是数据学期（空 = 页面没给）。 */
+        data class Imported(val count: Int, val term: String) : AutoImportResult
+
+        /** 目标课表非空。首启之外的情形一律让位，绝不静默覆盖。 */
+        data object Skipped : AutoImportResult
+
+        data class Failed(val reason: String) : AutoImportResult
+    }
+
+    sealed interface CheckResult {
+        /**
+         * [changes] 是需要用户处置的差异（已滤掉「已阅」与「已提醒过未处置」的重复），
+         * 为空 = 没动静或只是重复检查。[repeated] = 差异与上次提醒的相同（未处置/已忽略），
+         * 提醒层据此不再发通知。
+         */
+        data class Ok(
+            val term: String,
+            val changes: List<ScheduleDiff.Change>,
+            val repeated: Boolean,
+        ) : CheckResult
+
+        data object Skipped : CheckResult
+
+        data class Failed(val reason: String) : CheckResult
+    }
+
+    /**
+     * 直取两张课表页并解析。[term] 非空时带 `xnxq01id` 请求并校验返回学期；
+     * 空 = 教务默认学期（返回页面学期下拉的选中项）。
+     */
+    suspend fun fetch(term: String? = null): FetchResult {
+        when (val ensured = cas.ensureValid()) {
+            is CasEnsureResult.Ready -> Unit
+            else -> return FetchResult.Failed(ScholarProgressSync.describe(ensured))
+        }
+
+        val safeTerm = term?.takeIf { JwUrls.TERM_PATTERN.matches(it) }
+        val theoryUrl = if (safeTerm != null) "${JwUrls.SCHEDULE_LIST}&xnxq01id=$safeTerm" else JwUrls.SCHEDULE_LIST
+        val theoryHtml = cas.fetchHtml(theoryUrl)
+            ?: return FetchResult.Failed("没取到理论课表页（会话可能已失效）")
+        val pageTerm = termFromHtml(theoryHtml)
+            ?: return FetchResult.Failed("课表页没有学期下拉（教务结构可能变了）")
+        if (safeTerm != null && pageTerm != safeTerm) {
+            return FetchResult.Failed("教务返回学期（$pageTerm）与请求学期（$safeTerm）不一致")
+        }
+
+        val theoryParsed = try {
+            QiangzhiScheduleParser.parseFromHtml(theoryHtml)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return FetchResult.Failed("理论课表解析失败：${e.message}")
+        }
+        val theoryReliable = theoryParsed is ImportParseResult.Success || "kbDataTd" in theoryHtml
+        if (!theoryReliable) {
+            return FetchResult.Failed("理论课表页未识别到课表网格（页面结构可能已变化）")
+        }
+
+        delay(AutoSyncRules.interRequestDelayMs())
+
+        val labHtml = cas.fetchHtml(JwUrls.labScheduleUrl(pageTerm))
+            ?: return FetchResult.Failed("没取到实验课表页（会话可能已失效）")
+        val labParsed = try {
+            SyjxScheduleParser.parseFromHtml(labHtml)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return FetchResult.Failed("实验课表解析失败：${e.message}")
+        }
+        val labReliable = labParsed is ImportParseResult.Success || LAB_TABLE_MARK in labHtml
+
+        val combined = OneClickImport.combine(
+            ImportSource(
+                label = OneClickImport.THEORY_LABEL,
+                courses = (theoryParsed as? ImportParseResult.Success)?.courses.orEmpty(),
+                term = pageTerm,
+                recognized = true,
+            ),
+            ImportSource(
+                label = OneClickImport.LAB_LABEL,
+                courses = (labParsed as? ImportParseResult.Success)?.courses.orEmpty(),
+                term = pageTerm,
+                recognized = labReliable,
+            ),
+        )
+        return FetchResult.Ok(result = combined, term = pageTerm, theoryReliable = true, labReliable = labReliable)
+    }
+
+    /**
+     * 首启自动导入：目标课表**为空**才抓并覆盖写库（空表上覆盖与合并等价，
+     * 覆盖保证「基线 = 导入内容」）。课表非空一律 [AutoImportResult.Skipped]。
+     * 教材抓取由调用方在成功后启动（同手动导入的触发点唯一纪律）。
+     */
+    suspend fun importIfEmpty(timetableId: Long? = null): AutoImportResult {
+        val ttId = timetableId ?: repo.currentTimetableId.first()
+        if (repo.timetableCourseCount(ttId) > 0) return AutoImportResult.Skipped
+
+        val fetchResult = fetch()
+        val ok = fetchResult as? FetchResult.Ok ?: return AutoImportResult.Failed((fetchResult as FetchResult.Failed).reason)
+        // blocked = 两张表都没解析到课程（识别失败或教务真没课）。学期中途不该发生，
+        // 首启导入按失败报告，让用户手动导一遍核对
+        if (ok.result.blocked != null) return AutoImportResult.Failed(ok.result.blocked)
+
+        val count = repo.importParsedCourses(
+            courses = ok.result.courses,
+            merge = false,
+            timetableId = ttId,
+            term = ok.term,
+        )
+        return AutoImportResult.Imported(count = count, term = ok.term)
+    }
+
+    /**
+     * 调课检查：抓最新教务课表与基线比对。差异非空时落「待处置缓存」并随
+     * [CheckResult.Ok] 交提醒层；指纹与已阅记录或待处置缓存相同的差异不重复上报。
+     */
+    suspend fun check(force: Boolean = false): CheckResult {
+        if (!force) {
+            if (!prefs.scheduleAlertEnabled.first()) return CheckResult.Skipped
+            if (!AutoSyncRules.shouldAttemptAt(
+                    prefs.scheduleCheckMillis(),
+                    prefs.alertIntervalHours.first(),
+                    nowMillis(),
+                )
+            ) {
+                return CheckResult.Skipped
+            }
+        }
+
+        val ttId = repo.currentTimetableId.first()
+        val timetable = repo.timetables.first().firstOrNull { it.id == ttId }
+            ?: return CheckResult.Skipped
+        // 学期是唯一钥匙（抓取 URL 与基线对齐都靠它）：旧课表没有学期号就不检查，不猜
+        val term = timetable.term?.takeIf { JwUrls.TERM_PATTERN.matches(it) }
+            ?: return CheckResult.Skipped
+
+        val fetchResult = fetch(term)
+        val ok = fetchResult as? FetchResult.Ok ?: return CheckResult.Failed((fetchResult as FetchResult.Failed).reason)
+        if (!ok.labReliable) {
+            // 实验页结构不可信：硬着头皮比对会把整批实验课报成「教务删除」
+            return CheckResult.Failed("实验课表页未识别到课表（页面结构可能已变化）")
+        }
+        if (ok.result.blocked != null) {
+            // 理论页识别成功但 0 条 + 实验 0 条：可能真没课（假期），也可能数据异常。
+            // 不动基线也不报差异，等下个周期再看
+            return CheckResult.Ok(term = term, changes = emptyList(), repeated = false)
+        }
+
+        val baseline = repo.loadScheduleBaseline()
+        val changes = if (baseline.timetableId == ttId && baseline.term == term) {
+            ScheduleDiff.detect(baseline.courses.map { it.toCourse() }, ok.result.courses)
+        } else {
+            // 首跑 / 换课表 / 换学期：只建基线不通知，防整表刷屏（同 ExamSync 闸门）
+            repo.saveScheduleBaseline(ttId, term, ok.result.courses)
+            prefs.setScheduleCheckMillis(nowMillis())
+            return CheckResult.Ok(term = term, changes = emptyList(), repeated = false)
+        }
+        prefs.setScheduleCheckMillis(nowMillis())
+
+        if (changes.isEmpty()) return CheckResult.Ok(term = term, changes = emptyList(), repeated = false)
+        val fingerprint = ScheduleDiff.fingerprintOf(changes)
+        if (fingerprint == prefs.scheduleIgnoredFingerprint() ||
+            fingerprint == prefs.schedulePendingChanges()?.fingerprint
+        ) {
+            // 已忽略 / 已提醒过还没处置：不再重复打扰，待处置缓存原样保留
+            return CheckResult.Ok(term = term, changes = emptyList(), repeated = true)
+        }
+        prefs.setSchedulePendingChanges(
+            SchedulePendingChanges(
+                timetableId = ttId,
+                term = term,
+                changes = changes.map { ScheduleChangeRow.of(it) },
+                fingerprint = fingerprint,
+                savedAt = nowMillis(),
+            ),
+        )
+        return CheckResult.Ok(term = term, changes = changes, repeated = false)
+    }
+
+    companion object {
+        /**
+         * 实验课表页的骨架标记（与 `SyjxScheduleParser.EXTRACT_JS` 的 container 判据同源）：
+         * 页面渲染了周次表骨架 = 「这张表在」，只是本学期没有课块。
+         */
+        private const val LAB_TABLE_MARK = "qz-weeklyTable"
+
+        /**
+         * 从理论课表页 HTML 抽 `select#xnxq01id` 的当前选中项。
+         * 先定位到该 select 块再找 selected option——页面可能有多个下拉，
+         * 整页搜 `<option selected>` 会串（同 [ExamSync.termFromShell] 的教训）。
+         * value 与文本兜底各一次，抽不到返回 null（调用方报失败，不猜学期）。
+         */
+        internal fun termFromHtml(html: String): String? {
+            val block = Regex("(?is)<select[^>]*\\bid\\s*=\\s*[\"']xnxq01id[\"'][^>]*>[\\s\\S]*?</select>")
+                .find(html)?.value
+                ?: return null
+            val selectedTag = Regex("(?is)<option[^>]*selected[^>]*>").find(block) ?: return null
+            val value = Regex("""value\s*=\s*["']([^"']+)["']""")
+                .find(selectedTag.value)?.groupValues?.get(1)?.trim()
+            if (!value.isNullOrBlank() && JwUrls.TERM_PATTERN.matches(value)) return value
+            val after = block.substringAfter(selectedTag.value, "").substringBefore("</option>").trim()
+            return after.takeIf { it.isNotEmpty() && JwUrls.TERM_PATTERN.matches(it) }
+        }
+    }
+}

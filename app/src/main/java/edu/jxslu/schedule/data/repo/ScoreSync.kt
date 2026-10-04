@@ -8,6 +8,7 @@ import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.domain.ScoreChangeDetector
 import edu.jxslu.schedule.domain.ScoreRecord
 import java.time.LocalDate
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -95,6 +96,7 @@ class ScoreSync(
         var count = 0
         var page = 1
         do {
+            if (page > 1) delay(AutoSyncRules.interRequestDelayMs())
             // 学期传空 = 全部学期，与成绩页导入同一个口径
             val body = cas.fetchHtml(ScoreParser.listUrl(term = "", page = page))
                 ?: return Result.Failed("没取到成绩数据（会话可能已失效）")

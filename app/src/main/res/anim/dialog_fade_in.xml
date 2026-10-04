@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 弹窗窗口入场（windowEnterAnimation）：淡入 + 轻微放大（0.86 → 1，以窗口中心为轴）。
+     时长 240ms 与骑行页动作区的升起（BAR_RISE_MS）同一档，decelerate_cubic 逼近
+     FastOutSlowIn 的手感。由 ui/common/DialogWindowFade.kt 挂到弹窗窗口上，见那处注释。 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <alpha
+        android:fromAlpha="0.0"
+        android:toAlpha="1.0"
+        android:duration="240"
+        android:interpolator="@android:interpolator/decelerate_cubic" />
+    <scale
+        android:fromXScale="0.86"
+        android:toXScale="1.0"
+        android:fromYScale="0.86"
+        android:toYScale="1.0"
+        android:pivotX="50%"
+        android:pivotY="50%"
+        android:duration="240"
+        android:interpolator="@android:interpolator/decelerate_cubic" />
+</set>

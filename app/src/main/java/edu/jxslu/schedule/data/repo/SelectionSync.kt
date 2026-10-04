@@ -2,27 +2,31 @@ package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.data.jw.SelectionParser
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.SelectionRound
 import edu.jxslu.schedule.domain.SelectionRounds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 
 /**
  * 选课同步（DESIGN §4.35）：走 [CasSession]（已存凭证 + OkHttp），不开窗口。
  *
  * 两条链：
- * 1. **选课结果**：先 GET 壳页读学期下拉的选中项（缺省学期以教务为准，不猜），
- *    再 GET 数据接口翻页抓全；**先全部抓到内存、再一次性写库**——多学期同步中途失败
- *    宁可一行不写，也不留「本学期替换了、下学期还是旧的」的半套。
+ * 1. **选课结果**：缺省学期以教务壳页为准（不猜，带 [AutoSyncRules.shellTermCacheUsable]
+ *    的 TTL 缓存，省一次壳页 GET），再 GET 数据接口翻页抓全；**先全部抓到内存、
+ *    再一次性写库**——多学期同步中途失败宁可一行不写，也不留「本学期替换了、
+ *    下学期还是旧的」的半套。
  * 2. **选课轮次**：GET `/jsxsd/xsxk/xklc_list_data`，落 [SelectionRoundsStore] 快照。
  *    非选课期 `count=0` 是正常空态（不是失败），照样落盘——空快照才会让页面如实显示、
  *    让过期提醒被撤销。
  *
  * 闸门（同成绩/考试纪律）：`MIN_REFRESH_MS` 内成功过就 Skipped（除非 force），
  * **成功才落时刻**（失败不写，下个周期自动补查）；不加重试（防撞风控）。
+ * 同一次同步内的相邻请求（翻页 / 多学期）带随机小间隔（[AutoSyncRules.interRequestDelayMs]）。
  *
  * 轮次更新后**提醒的闹钟重排由调用方负责**（页面/周期核对各自调
  * `SelectionAlertReminder.scheduleNext`）：本类不持 Context，不直接碰 AlarmManager。
@@ -97,9 +101,10 @@ class SelectionSync(
 
             val reason = ensureSession()
             if (reason != null) return Result.Failed(reason)
-            val targetTerms = if (terms.isEmpty()) resolveDefaultTerms() else terms
+            val targetTerms = if (terms.isEmpty()) resolveDefaultTerms(allowCache = !force) else terms
             val fetched = mutableMapOf<String, List<CourseSelection>>()
-            for (term in targetTerms) {
+            for ((index, term) in targetTerms.withIndex()) {
+                if (index > 0) delay(AutoSyncRules.interRequestDelayMs())
                 fetched[term] = fetchResults(term)
             }
             fetched.forEach { (term, rows) -> repo.replaceTerm(term, rows) }
@@ -163,14 +168,27 @@ class SelectionSync(
      * 缺省要抓的学期：教务当前学期 + 紧邻下一学期（选课常发生在学期末选下学期，
      * 光抓当前学期会漏掉「已选下学期」）。下一学期只在下拉里存在时才抓——
      * 教务没这个学期就别浪费一次请求。顺带把下拉全量存进偏好（「更多学期」用）。
+     *
+     * [allowCache] = 非手动刷新时吃壳页学期缓存（[AutoSyncRules.shellTermCacheUsable]）：
+     * 学期下拉一学期才变一次，TTL 内不再打壳页。
      */
-    private suspend fun resolveDefaultTerms(): List<String> {
+    private suspend fun resolveDefaultTerms(allowCache: Boolean): List<String> {
+        val now = nowMillis()
+        val cachedTerm = prefs.selectionShellTerm()
+        if (allowCache && cachedTerm != null &&
+            AutoSyncRules.shellTermCacheUsable(cachedTerm, prefs.selectionShellTermAtMillis(), false, now)
+        ) {
+            val next = SelectionRounds.nextTerm(cachedTerm)
+            val options = prefs.selectionTerms()
+            return listOfNotNull(cachedTerm, next?.takeIf { term -> options.isEmpty() || term in options })
+        }
         val shell = cas.fetchHtml(SelectionParser.SHELL_URL)
             ?: throw IllegalStateException("没取到选课结果页面（会话可能已失效）")
         val current = SelectionParser.shellTerm(shell)
             ?: throw IllegalStateException("选课结果页没有学期下拉（教务结构可能变了）")
         val options = SelectionParser.shellTerms(shell)
         if (options.isNotEmpty()) prefs.setSelectionTerms(options)
+        prefs.setSelectionShellTerm(current, now)
         val next = SelectionRounds.nextTerm(current)
         return listOfNotNull(current, next?.takeIf { term -> options.isEmpty() || term in options })
     }
@@ -180,6 +198,7 @@ class SelectionSync(
         var count = 0
         var page = 1
         do {
+            if (page > 1) delay(AutoSyncRules.interRequestDelayMs())
             val url = SelectionParser.listUrl(term, page)
                 ?: throw IllegalStateException("学期号不合法：$term")
             val body = cas.fetchHtml(url)

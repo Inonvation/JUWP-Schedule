@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 弹窗窗口退场（windowExitAnimation）：只淡出不缩放（M3 弹窗退场口径）。
+     时长 190ms 与骑行页动作区的沉下（BAR_FALL_MS）同一档。退场期间窗口表面停在
+     最后一帧直到动画播完，确认后动作区的「开锁中…」在这段淡出里自然露出来。 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.0"
+        android:duration="190"
+        android:interpolator="@android:interpolator/accelerate_cubic" />
+</set>

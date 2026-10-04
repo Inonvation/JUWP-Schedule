@@ -95,6 +95,18 @@
      后者跟着系统时间走，用户把时间往前调就能把锁瞬间走完；
   2. 计时起点是**组合第一次进入时**，不是宿主算锁的那一刻 —— 弹窗还没上屏就把秒数走掉，
      锁就白设了。
+- **弹窗的进出场动画统一走 `ui/common/DialogWindowFade.kt` 的 `DialogWindowFadeEffect`**
+  （2026-10-03）：material3 1.3.0 的 `AlertDialog` 内部没有 compose 侧动画、compose 的
+  `DialogWindowTheme` 也没配 `windowAnimationStyle`——弹窗开与关都是瞬间出现 / 抽掉
+  （用户在快趣开锁 / 还车弹窗上报过「突变跳动」）。`DialogWindowFadeEffect()` 放在弹窗
+  内容组合里调一次（`AlertDialog { }` 同级、通常函数体第一行），它把 `DialogWindowFade`
+  样式（`res/values/dialog_motion.xml`：淡入 + 0.86→1 放大 240ms / 淡出 190ms）挂到
+  dialog window 上由 WindowManager 播，内容与背后的压暗一起过渡；退场时窗口表面停在
+  最后一帧直到播完，不会"内容先没了、窗再抽掉"。**进、出两段都能播的原因**：副作用落在
+  首帧 traversal 里（`SideEffect`），而 enter 动画取样式发生在首帧 HAS_DRAWN 之后；
+  content 里的 `LocalView` 就是 `DialogLayout`（实现 `DialogWindowProvider`），
+  `parent` 一层是兼容写法。material3 升到 1.4.0（弹窗自带进出场动画）后，调用点可整体
+  删掉。已接：快趣开锁 / 还车确认弹窗、同页结束计时弹窗。
 - **锁时长由宿主算好传入，弹窗不做「是否首次」的判断**：
   - 首启的两份声明（用户须知 / 免责声明）：队列只装「没同意过」的那几份
     （`domain/NoticeConsent.pendingNotices`），所以进队列的必然锁满，锁时长直接取

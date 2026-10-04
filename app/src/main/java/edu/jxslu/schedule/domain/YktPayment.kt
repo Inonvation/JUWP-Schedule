@@ -76,4 +76,19 @@ class YktPayWatch {
             orderId = hit.orderId,
         )
     }
+
+    companion object {
+        /**
+         * 扫码消费检测的渐进轮询间隔（按检测已持续时长取档）。
+         *
+         * 固定 5 秒一轮 × 15 分钟 = 180 条流水请求，是全 App 最高频的均匀节奏，最像机器。
+         * 扫码支付通常在 10 秒内完成，因此前 30 秒保持 5 秒精度（到账反馈不变慢），
+         * 之后拉长到 10 秒、20 秒：15 分钟窗口内约 54 条，且间隔不再均匀。
+         */
+        fun pollIntervalMs(elapsedMs: Long): Long = when {
+            elapsedMs < 30_000L -> 5_000L
+            elapsedMs < 120_000L -> 10_000L
+            else -> 20_000L
+        }
+    }
 }

@@ -99,7 +99,11 @@ def _json(resp, what: str) -> dict[str, Any]:
 
 
 def login(sess, user: str, password: str) -> str:
-    """学号 + 查询密码换 access_token（有效期 3599 秒，脚本内一次性使用，不落盘）。"""
+    """学号 + 查询密码换 access_token（有效期 3599 秒）。
+
+    token 经 jw_session.save_power_token 落到会话状态文件，3000 秒内重跑免登录；
+    到期后重新调本函数覆盖。
+    """
     r = sess.post(
         TOKEN_URL,
         data={
@@ -187,7 +191,11 @@ def select_level(
 def resolve_room(
     sess, token: str, feeitemid: int, room_name: str, building_hint: str | None
 ) -> list[dict[str, str]]:
-    """按名字找房间：逐级 select，命中就停。返回有序场景键（campus/building/room）。"""
+    """按名字找房间：逐级 select，命中就停。返回有序场景键（campus/building/room）。
+
+    不给 building_hint 时会逐个楼栋枚举（每次一层 POST），枚举间隔 polite_pause——
+    最好还是带上 --building 把范围钉死。
+    """
     want_room = room_name.strip().upper()
     want_building = (building_hint or "").strip().upper()
     level0 = select_level(sess, token, feeitemid, 0, {})
@@ -198,11 +206,13 @@ def resolve_room(
 
     for campus in level0.get("data") or []:
         chosen = {campus_key: campus["value"]}
+        jw_session.polite_pause(0.3, 0.8)
         buildings = select_level(sess, token, feeitemid, 1, chosen).get("data") or []
         for building in buildings:
             if want_building and building["name"].strip().upper() != want_building:
                 continue
             chosen_b = {**chosen, building_key: building["value"]}
+            jw_session.polite_pause(0.3, 0.8)
             rooms = select_level(sess, token, feeitemid, 2, chosen_b).get("data") or []
             for room in rooms:
                 if room["name"].strip().upper() == want_room:
@@ -332,15 +342,21 @@ def to_payload(
 def main() -> int:
     parser = argparse.ArgumentParser(description="抓取寝室电费（剩余电量 / 充值流水）")
     parser.add_argument("--room", help="按名字查别的房间（默认本人绑定房间），形如 1A101")
-    parser.add_argument("--building", help="配合 --room 限定楼栋，形如 1A（可省，省了逐个楼栋找）")
+    parser.add_argument("--building", help="配合 --room 限定楼栋，形如 1A（强烈建议带上；省了会逐个楼栋连发查询）")
     parser.add_argument("--history", action="store_true", help="附带电费充值流水与月度汇总")
     args = parser.parse_args()
 
     cred = load_credentials()
     sess = jw_session.new_session()
 
-    token = login(sess, cred["username"], cred["password"])
-    print(f"[1] 登录 OK（学号 {cred['username']}，token 有效期 3599 秒）")
+    # token 3599 秒，本地缓存 3000 秒内复用：短期内重跑脚本不再重复登录 POST
+    token = jw_session.load_power_token()
+    if token:
+        print("[1] 复用本地缓存的缴费平台 token（有效期内，免登录）")
+    else:
+        token = login(sess, cred["username"], cred["password"])
+        jw_session.save_power_token(token)
+        print(f"[1] 登录 OK（学号 {cred['username']}，token 有效期 3599 秒）")
 
     feeitem = find_feeitem(sess, token)
     feeitemid = int(feeitem["feeitemid"])

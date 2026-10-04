@@ -4,6 +4,12 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -76,6 +82,7 @@ import edu.jxslu.schedule.ui.common.AppHaptics
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -908,6 +915,7 @@ fun RideScreen(
 
     // 结束计时（本地计时专用，与「还车」是两个动作）
     if (showEndTimerConfirm) {
+        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { showEndTimerConfirm = false },
             title = { Text("结束计时？") },
@@ -1026,6 +1034,9 @@ private fun KvcxConfirmDialog(
     onDismiss: () -> Unit,
     danger: Boolean,
 ) {
+    // 开锁 / 还车的弹窗开关不能瞬间抽动（2026-10-03 用户口径）：窗口层的
+    // 淡入放大 / 淡出收在这里，确认后动作区的 busy 态在这 190ms 淡出里露出来
+    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(dialog.title) },
@@ -1060,7 +1071,16 @@ private fun KvcxConfirmDialog(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    AnimatedVisibility(visible = skipNextTime) {
+                    // 说明行的显隐走显式 tween（页面动作区同族 FastOutSlowInEasing）：
+                    // AnimatedVisibility 的默认是 spring 参数，与同页动作区的曲线家族
+                    // 脱节；高度逐帧变化时弹窗窗口跟着走，节奏必须收得住
+                    AnimatedVisibility(
+                        visible = skipNextTime,
+                        enter = fadeIn(tween(200, easing = FastOutSlowInEasing)) +
+                            expandVertically(tween(200, easing = FastOutSlowInEasing)),
+                        exit = fadeOut(tween(150, easing = FastOutSlowInEasing)) +
+                            shrinkVertically(tween(150, easing = FastOutSlowInEasing)),
+                    ) {
                         Text(
                             text = "关掉后点「开锁」就直接发指令并开始计费；" +
                                 "要恢复去「快趣出行设置 → 开锁与还车」打开「开锁前确认」。",

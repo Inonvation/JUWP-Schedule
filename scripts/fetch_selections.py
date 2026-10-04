@@ -35,8 +35,6 @@ import json
 from datetime import datetime
 from typing import Any
 
-from bs4 import BeautifulSoup
-
 import jw_session
 from jw_session import JW8080, OUT
 
@@ -45,18 +43,6 @@ LIST = f"{JW8080}/jsxsd/xkgl/loadXsxkjgList"
 ROUNDS = f"{JW8080}/jsxsd/xsxk/xklc_list_data"
 
 _PAGE_SIZE = 200  # 一学期选课几十条封顶，一页拿全；仍按 count 兜底翻页
-
-
-def shell_terms(jw) -> tuple[str | None, list[str]]:
-    """选课日志壳页：返回 (默认选中学期, 下拉全量学期)。"""
-    r = jw.get(SHELL, timeout=30)
-    soup = BeautifulSoup(r.text, "html.parser")
-    sel = soup.select_one("select#xnxqid")
-    if sel is None:
-        return None, []
-    terms = [o.get_text(strip=True) for o in sel.find_all("option") if o.get_text(strip=True)]
-    opt = sel.find("option", selected=True)
-    return (opt.get_text(strip=True) if opt else None), terms
 
 
 def next_term(term: str) -> str | None:
@@ -85,13 +71,7 @@ def fetch_result_page(jw, term: str, page: int) -> dict[str, Any]:
 
 def fetch_term(jw, term: str) -> list[dict[str, Any]]:
     first = fetch_result_page(jw, term, 1)
-    rows: list[dict[str, Any]] = list(first.get("data") or [])
-    total = int(first.get("count") or 0)
-    page = 1
-    while len(rows) < total:
-        page += 1
-        rows += fetch_result_page(jw, term, page).get("data") or []
-    return rows
+    return jw_session.fetch_layui_pages(first, lambda p: fetch_result_page(jw, term, p))
 
 
 def fetch_rounds(jw) -> list[dict[str, Any]]:
@@ -141,9 +121,9 @@ def main() -> int:
     args = parser.parse_args()
 
     cred = jw_session.load_credentials()
-    jw = jw_session.login(cred)
+    jw = jw_session.load_or_login(cred)
 
-    default_term, all_terms = shell_terms(jw)
+    default_term, all_terms = jw_session.shell_terms(jw, SHELL)
     terms = [t.strip() for t in (args.term or []) if t and t.strip()]
     if not terms and not args.rounds_only:
         if not default_term:
@@ -156,7 +136,9 @@ def main() -> int:
     selections: list[dict[str, Any]] = []
     raw: dict[str, Any] = {}
     if not args.rounds_only:
-        for term in terms:
+        for i, term in enumerate(terms):
+            if i:
+                jw_session.polite_pause()  # 多学期逐个查，不连发
             rows = fetch_term(jw, term)
             raw[term] = rows
             selections += [to_selection(r, term) for r in rows if str(r.get("kc_mc") or "").strip()]

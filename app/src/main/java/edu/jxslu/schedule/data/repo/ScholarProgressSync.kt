@@ -11,6 +11,7 @@ import edu.jxslu.schedule.domain.ScholarDimension
 import edu.jxslu.schedule.domain.ScholarGroup
 import edu.jxslu.schedule.domain.ScholarProgressRules
 import java.time.LocalDate
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 
@@ -101,6 +102,7 @@ class ScholarProgressSync(
             // 报「正在抓第几个」而不是「抓完几个」：抓一个 190KB 的页面要几秒，
             // 进度条停在 0/4 上不动比没有进度条更让人怀疑是不是卡了
             onProgress(index + 1, dimensions.size)
+            if (index > 0) delay(AutoSyncRules.interRequestDelayMs())
             val html = cas.fetchHtml(JwUrls.scholarUrl(dimension))
                 ?: return Result.Failed("${dimension.label}：没取到页面（会话可能已失效）")
             val parsed = ScholarProgressParser.parse(dimension, html)

@@ -67,8 +67,6 @@ class JwHttpSession private constructor(
         private const val JW_SSO_SERVICE = "http://jiaowu.juwp.edu.cn/sso.jsp"
         private const val JW_WARMUP = "https://jiaowu.juwp.edu.cn:81/"
         private const val STUDENT_HOME = JwUrls.STUDENT_HOME
-        private const val THEORY_SCHEDULE = JwUrls.SCHEDULE_LIST
-        private const val LAB_SCHEDULE = JwUrls.LAB_SCHEDULE
 
         /** 正常主页 ~150KB；退回登录提示页时只有 860 字节。 */
         private const val HOME_MIN_BYTES = 20_000
@@ -263,16 +261,6 @@ class JwHttpSession private constructor(
         }
     }
 
-    /** 学期理论课表页（无参数 = 教务当前学期）。中途会话失效按 [JwHttpException.Protocol]。 */
-    suspend fun fetchTheoryScheduleHtml(): String = fetchPage(THEORY_SCHEDULE, "个人课表")
-
-    /** 实验课表页；[term] 为 null 时取教务默认学期。 */
-    suspend fun fetchLabScheduleHtml(term: String? = null): String =
-        fetchPage(
-            if (term == null) LAB_SCHEDULE else "$LAB_SCHEDULE?xnxq01id=${urlEncode(term)}",
-            "实验课表",
-        )
-
     /**
      * 带会话取任意教务页面（DESIGN §3.3）。
      *
@@ -284,21 +272,6 @@ class JwHttpSession private constructor(
             val html = getFollowRedirects(url)
             if (looksLikeLoginPage(html)) {
                 throw JwHttpException.Protocol("教务会话已失效（页面退回登录页）")
-            }
-            html
-        } catch (e: IOException) {
-            throw JwHttpException.Network(e)
-        }
-    }
-
-    private suspend fun fetchPage(url: String, mustContain: String): String = withContext(Dispatchers.IO) {
-        try {
-            val html = getFollowRedirects(url)
-            if (looksLikeLoginPage(html)) {
-                throw JwHttpException.Protocol("教务会话已失效（页面退回登录页）")
-            }
-            if (mustContain !in html) {
-                throw JwHttpException.Protocol("页面未包含标记「$mustContain」，页面结构可能已变")
             }
             html
         } catch (e: IOException) {

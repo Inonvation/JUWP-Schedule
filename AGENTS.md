@@ -211,8 +211,10 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                SubpageActivity 承载二级页（含成绩查询 SCORES、选课 SELECTIONS·SELECTION_WISHES、
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
-               UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37）
+               UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37；
+               调课处置页 SCHEDULE_CHANGES，§4.17）
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
+                 + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
                  + Textbook（§4.31：挂 courseName 带 term，教务教材确认）
                  + EbikeQr·EbikeFreeRide·BikeNearby·EbikeUseMode（§3.9：出码车号口径、免费时长、
@@ -230,6 +232,8 @@ data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成�
                  TextbookSync（导入课表后抓教材，§4.31）
                  SelectionRepository / SelectionSync / SelectionRoundsStore（选课记录与轮次，§4.35）
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
+                 ScheduleSync（课表直取 + 首启自动导入 + 调课检查）/ ScheduleBaselineStore
+                 （调课基线 filesDir JSON，§4.17）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
@@ -413,6 +417,47 @@ handler、CancellationException 穿透 10 处、**新增 `data/net/AppHttp.kt` O
 **红线**：崩溃堆栈只落本机（crash/ 与 ujing_debug/ 已排除出两套备份规则）；AppHttp 派生
 只加不改共享件；`ScheduleRepository` / `MainActivity` / `ResumedTicker` / `RideScreen`
 四文件耦合必须同 commit。碰网络层与支付链路，真机点验待用户执行。
+快趣确认弹窗动画打磨（2026-10-03，DESIGN §4.32；规则见 `.agents/rules/ebike.md`、
+`.agents/rules/ui-common.md`）：用户报「开车还车的弹窗有突变跳动」——定位为 material3 1.3.0
+的 `AlertDialog` 没有 compose 侧动画、compose Dialog 窗口也没配 `windowAnimationStyle`，
+开与关都是硬切。新增 `ui/common/DialogWindowFade.kt`（`DialogWindowFadeEffect` 把
+`DialogWindowFade` 窗口动画样式挂到 dialog window：淡入 + 0.86→1 放大 240ms / 淡出 190ms，
+与动作区 `BAR_RISE_MS`/`BAR_FALL_MS` 同档；退场时窗口表面停在最后一帧直到播完），
+`KvcxConfirmDialog` 与同页「结束计时」确认弹窗已接；勾选说明行从默认 spring 换成与动作区
+同族的显式 tween（`FastOutSlowInEasing`）。模拟器录屏逐帧验证进出场都是渐进过渡；
+全量 1281 例 0 失败。真机点验待用户执行。
+请求链路降频与拟人化（2026-10-04，DESIGN §3.10 / §4.19 / §4.33 / §4.35；规则见
+`.agents/rules/import-jw.md`）：目标是不影响体验地降低教务/一卡通风控面。四块——
+① 付款码扫码检测（`YktPayWatch.pollIntervalMs`：前 30 秒 5 秒、之后 10 秒、20 秒，
+15 分钟 180→约 54 条）与充值到账检测（`YktArrival.arrivalPollIntervalMs`：前 2 分钟 5 秒、
+之后 15 秒、60 秒，30 分钟 480→约 100 条）两条 5 秒轮询改渐进；判定口径与窗口不变；
+付款码页进页余额改吃 60 秒缓存。② 考试/选课同步的壳页学期缓存（`AutoSyncRules.shellTermCacheUsable`
+12 小时 TTL、考试/选课共用判据），非 force 省一次壳页 GET；考试 URL 常量收口回 `JwUrls`。
+③ 新增 `AutoSyncRules.interRequestDelayMs()`（200–600ms 随机），冷启动三条 sync、各翻页
+循环、学业四维页、选课多学期循环接上——是放慢不是重试，失败不重试纪律不变。
+④ 爬虫脚本会话持久化（`scripts/README.md` §3.1）：`jw_session.load_or_login` 三级降级
+（教务会话探针 → CAS TGC 换票 → 完整登录），cookie 存 `scripts/out/jw_session_state.json`
+（已 gitignore、与凭证同级敏感）；`fetch_power` token 同文件缓存 3000 秒；循环统一
+`polite_pause`；新增 `fetch_all.py` 一条命令顺序抓全套。另删 `JwHttpSession` 两个无调用者的
+课表直取方法。全量 **1287 例 0 失败**。碰网络请求路径，真机点验待用户执行
+（付款码扫码反馈、充值到账节奏、考试/选课学期显示、提醒照常）。
+调课检测重立与首启自动导课表（2026-10-04，DESIGN §4.17；规则见 `.agents/rules/import-jw.md`
+「调课检测」节）：本功能旧版 2026-09-19 上线、09-24 因「独立凭证配置 + 后台自动登录」的成本
+被下线；重立的前提是这两个成本项已随统一会话层与 OkHttp 直取链消失。两块——
+① **首启自动导课表**：引导登录成功后 `startBgSync` 第三路 `ScheduleSync.importIfEmpty`
+只在**课表为空**时 OkHttp 直取理论+实验两页覆盖写库（教材钩子照挂），课表非空一律让位，
+**绝不周期性静默覆盖**；三项 settle 后结果落盘，主界面在引导结束后弹一次「同步完成」
+结果弹窗（成功带查看入口 / 失败给手动导入出路 / 消费即清；startAtJw 重进不写不弹）。
+② **调课检测**（开关默认关，入口课表 hub「调课检测」行 → 处置页 `SCHEDULE_CHANGES`）：
+基线 = 「上次与教务达成一致时的课表状态」（filesDir JSON，**不动 DB 版本**；导入/合并成功
+收口推进、检查首跑用教务现状建立、**检查成功不推进**——与 `ExamSync` 相反），`ScheduleDiff`
+指纹只含教务字段（本机配色/备注/自定义时间不参与），同名同 kind 一删一增配成「调整」，
+冲突条目（用户改过的课）默认不勾；周期检查搭 `ScoreAlertReminder` **第四路**（不新开
+WorkManager 任务）；重复打扰靠「已阅指纹 + 待处置缓存指纹」双闸；合并 = 处置页逐条勾选
+后 `applyScheduleChanges` 事务内删/改/增（指纹匹配不上就跳过），**后台静默改课表仍是红线**。
+新增 `ScheduleDiffTest` / `ScheduleSyncTermFromHtmlTest`，全量 **1302 例 0 失败**；
+模拟器本次未能拉起（5183/5960 都不注册 adb），**全部真机点验交用户**：首启登录后的
+静默导入与结果弹窗、处置页空态与开关、调课通知与合并/忽略往返。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

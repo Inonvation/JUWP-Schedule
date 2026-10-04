@@ -28,8 +28,6 @@ import re
 from datetime import datetime
 from typing import Any
 
-from bs4 import BeautifulSoup
-
 import jw_session
 from jw_session import JW8080, OUT
 
@@ -41,15 +39,6 @@ _PAGE_SIZE = 200  # 单学期考试远小于 200，一页拿全；仍按 count �
 _TIME_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s*[~～\-—]\s*(\d{2}:\d{2})"
 )
-
-
-def current_term(jw) -> str | None:
-    """取考试安排查询页学期下拉的默认选中项（即教务眼中的当前学期）。"""
-    r = jw.get(KSAP_QUERY, timeout=30)
-    soup = BeautifulSoup(r.text, "html.parser")
-    sel = soup.select_one("select#xnxqid")
-    opt = sel.find("option", selected=True) if sel else None
-    return opt.get_text(strip=True) if opt else None
 
 
 def fetch_page(jw, term: str, page: int) -> dict[str, Any]:
@@ -101,19 +90,17 @@ def main() -> int:
     args = parser.parse_args()
 
     cred = jw_session.load_credentials()
-    jw = jw_session.login(cred)
+    jw = jw_session.load_or_login(cred)
 
-    term = (args.term or "").strip() or current_term(jw) or ""
+    term = (args.term or "").strip() or jw_session.shell_terms(jw, KSAP_QUERY)[0] or ""
     if not term:
         raise RuntimeError("取不到学期：请用 --term 显式指定，如 --term 2026-2027-1")
 
     data = fetch_page(jw, term, 1)
-    rows: list[dict[str, Any]] = list(data.get("data") or [])
+    rows: list[dict[str, Any]] = jw_session.fetch_layui_pages(
+        data, lambda p: fetch_page(jw, term, p)
+    )
     total = int(data.get("count") or 0)
-    page = 1
-    while len(rows) < total:
-        page += 1
-        rows += fetch_page(jw, term, page).get("data") or []
 
     exams = to_payload(rows)
     payload = {

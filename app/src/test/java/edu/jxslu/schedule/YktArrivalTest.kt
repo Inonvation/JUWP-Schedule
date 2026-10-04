@@ -113,4 +113,16 @@ class YktArrivalTest {
     fun `钱包当前余额缺失不判定`() {
         assertNull(YktArrival.walletArrival(balanceBeforeFen = 1_400L, orderFen = 100L, currentFen = null))
     }
+
+    @Test
+    fun `到账轮询间隔按检测时长渐进放慢`() {
+        // 前 2 分钟保持 5 秒（快速到账的反馈不变慢）
+        assertEquals(5_000L, YktArrival.arrivalPollIntervalMs(0L))
+        assertEquals(5_000L, YktArrival.arrivalPollIntervalMs(119_999L))
+        // 2 分钟～10 分钟每 15 秒，再往后每 60 秒（30 分钟窗口封顶）
+        assertEquals(15_000L, YktArrival.arrivalPollIntervalMs(120_000L))
+        assertEquals(15_000L, YktArrival.arrivalPollIntervalMs(599_999L))
+        assertEquals(60_000L, YktArrival.arrivalPollIntervalMs(600_000L))
+        assertEquals(60_000L, YktArrival.arrivalPollIntervalMs(30 * 60_000L))
+    }
 }

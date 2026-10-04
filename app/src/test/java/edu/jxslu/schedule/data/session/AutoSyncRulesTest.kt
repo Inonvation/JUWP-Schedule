@@ -133,4 +133,50 @@ class AutoSyncRulesTest {
             AutoSyncRules.shouldAttemptAt(now - 2 * 60 * 60 * 1000L, intervalHours = -3, nowMillis = now),
         )
     }
+
+    // ---- 壳页学期缓存（考试/选课共用，2026-10-04 风控优化）----
+
+    @Test
+    fun `壳页缓存_TTL内且非force可用`() {
+        val savedAt = now - 11 * 60 * 60 * 1000L
+        assertTrue(
+            AutoSyncRules.shellTermCacheUsable("2026-2027-1", savedAt, force = false, nowMillis = now),
+        )
+    }
+
+    @Test
+    fun `壳页缓存_过期或force不可用`() {
+        // 刚好过 TTL：学期翻年最多滞后 12 小时，之后必然回真值
+        assertFalse(
+            AutoSyncRules.shellTermCacheUsable(
+                "2026-2027-1",
+                now - AutoSyncRules.SHELL_CACHE_TTL_MS,
+                force = false,
+                nowMillis = now,
+            ),
+        )
+        // 手动刷新永远真抓壳页
+        assertTrue(
+            AutoSyncRules.shellTermCacheUsable("2026-2027-1", now - 1_000L, force = true, nowMillis = now).not(),
+        )
+    }
+
+    @Test
+    fun `壳页缓存_从未抓到或空学期不可用`() {
+        assertFalse(AutoSyncRules.shellTermCacheUsable(null, now, force = false, nowMillis = now))
+        assertFalse(AutoSyncRules.shellTermCacheUsable("", now, force = false, nowMillis = now))
+        // 时刻缺失（0）= 没有可信的抓取时刻，不能用
+        assertFalse(
+            AutoSyncRules.shellTermCacheUsable("2026-2027-1", 0L, force = false, nowMillis = now),
+        )
+    }
+
+    @Test
+    fun `请求间隔在随机区间内`() {
+        // 间隔的作用是打散节奏，不是引入可预期值：多次采样必须全部落在区间里
+        repeat(200) {
+            val delay = AutoSyncRules.interRequestDelayMs()
+            assertTrue(delay in 200L until 600L)
+        }
+    }
 }

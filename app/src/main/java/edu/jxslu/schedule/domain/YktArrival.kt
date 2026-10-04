@@ -47,4 +47,19 @@ object YktArrival {
         if (balanceBeforeFen == null || orderFen <= 0L || currentFen == null) return null
         return if (currentFen >= balanceBeforeFen + orderFen) currentFen else null
     }
+
+    /**
+     * 到账检测的渐进轮询间隔（按检测已持续时长取档，2026-10-04 风控优化）。
+     *
+     * 固定 5 秒余额（force 绕缓存）+ 每 3 轮一次流水 × 30 分钟 = 最多约 480 条均匀请求，
+     * 是全 App 最重的一条轮询。饭卡充值常见延迟数分钟至数十分钟：前 2 分钟保持 5 秒
+     * （快速到账的反馈不变慢），之后 15 秒、10 分钟后 60 秒——30 分钟窗口约 100 条
+     * （余额 + 流水），且间隔不再均匀。流水的「每 3 轮」比例保持不变，间隔拉长后
+     * 流水频率自动等比下降。
+     */
+    fun arrivalPollIntervalMs(elapsedMs: Long): Long = when {
+        elapsedMs < 120_000L -> 5_000L
+        elapsedMs < 600_000L -> 15_000L
+        else -> 60_000L
+    }
 }

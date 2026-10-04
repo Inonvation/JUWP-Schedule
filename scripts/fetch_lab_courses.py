@@ -160,7 +160,7 @@ def main() -> int:
     args = parser.parse_args()
 
     cred = jw_session.load_credentials()
-    jw = jw_session.login(cred)
+    jw = jw_session.load_or_login(cred)
 
     url = LAB_SCHEDULE if not args.term else f"{LAB_SCHEDULE}?xnxq01id={args.term}"
     html = jw_session.get_html(jw, url, must_contain="实验课表", save=OUT / "syxkb.html")

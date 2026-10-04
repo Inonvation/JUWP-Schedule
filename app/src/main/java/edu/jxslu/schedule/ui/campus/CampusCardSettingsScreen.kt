@@ -359,7 +359,10 @@ fun CampusCardSettingsScreen(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    "正在等待充值到账（¥%.2f）· 每 5 秒自动检测".format(watching.orderFen / 100.0),
+                                    ("正在等待充值到账（¥%.2f）· 约 %d 秒检测一次".format(
+                                        watching.orderFen / 100.0,
+                                        YktArrival.arrivalPollIntervalMs(System.currentTimeMillis() - watching.startedAt) / 1000,
+                                    )),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
@@ -1181,7 +1184,12 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             val deadline = startedAt + ARRIVAL_WATCH_MS
             var round = 0
             while (isActive && System.currentTimeMillis() < deadline) {
-                kotlinx.coroutines.delay(ARRIVAL_POLL_MS)
+                // 渐进间隔（YktArrival.arrivalPollIntervalMs）：前 2 分钟 5 秒，之后 15 秒、
+                // 60 秒——30 分钟窗口约 100 条 vs 固定 5 秒的约 480 条；流水「每 3 轮」
+                // 的比例不变，间隔拉长后流水频率自动等比下降
+                kotlinx.coroutines.delay(
+                    YktArrival.arrivalPollIntervalMs(System.currentTimeMillis() - startedAt),
+                )
                 round++
                 if (checkArrivalOnce(username, password, orderFen)) return@launch
                 // 流水同步降频：每 3 轮（15s）一次，减轻服务端压力
@@ -1416,9 +1424,6 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
 
         /** 到账轮询总时长（30 分钟：饭卡充值常见延迟数分钟至数十分钟）。 */
         private const val ARRIVAL_WATCH_MS = 30 * 60_000L
-
-        /** 轮询间隔。 */
-        private const val ARRIVAL_POLL_MS = 5_000L
 
         /** 返回前台后「确认中」弹窗的延迟（ms）：避开返回动画期的窗口/insets 重排。 */
         private const val PENDING_CONFIRM_DELAY_MS = 800L

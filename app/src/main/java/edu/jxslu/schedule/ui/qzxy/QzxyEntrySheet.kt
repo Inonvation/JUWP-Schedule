@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,18 +53,24 @@ import edu.jxslu.schedule.ui.common.rememberSheetDismisser
 /**
  * 今日页点余额弹出的趣智校园开水面板（DESIGN §3.18）。
  *
- * 与胖乖的开水面板同构：余额在顶、状态在中、按钮在下，跟页面共享同一个
+ * 与胖乖的开水面板同构：余额在顶、状态与主动作在中，跟页面共享同一个
  * [QzxyViewModel]（今日页那份挂在 MainActivity 上），面板里发起的开阀与结算
  * 在页面上状态一致。关闭面板不取消流程——卡片副行会继续显示「用水中 12:35」。
  *
  * 为什么入口是余额而不是卡片右侧另一个按钮：半行宽度放不下第二个动作，
- * 而余额本来就是这张卡最想被点的地方（与胖乖生活卡同口径）。
+ * 而余额本来就是这张卡最想被点的地方（与胖乖生活卡同口径）。整卡本体
+ * 点开的是趣智校园页，所以面板里不再放「打开趣智校园页」入口。
  *
  * 2026-10-02 手感收口（DESIGN §3.18）：关面板走退场动画（此前直接置
  * `showQzxyEntrySheet = false`，弹层从组合里被瞬间抽掉，"啪"地消失）；状态区换成
  * [AnimatedContent]，待机一个按钮到用水中六行的高度差跟着动画走；「用水中」加一枚
  * 呼吸的圆点徽标；开阀与结算成功各给一次触感；失败态补齐「清除设备记录」与「详情」，
  * 与趣智校园页的失败卡同一口径。
+ *
+ * 2026-10-04 收口（用户报「弹窗下方空白过多」）：状态区取消 `heightIn(min = 112.dp)`
+ * 下限——待机态内容约 72dp，垫到 112 会在主动作下方留出一截空白；高度过渡只靠
+ * [AnimatedContent] 自带的尺寸动画（趣智页的状态卡保留下限，那边垫的是整页内容）。
+ * 同时删掉底部「打开趣智校园页」整行按钮（用户拍板：多余）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,8 +92,8 @@ fun QzxyEntrySheet(
     val onSurface = MaterialTheme.colorScheme.onSurface
     val haptics = rememberAppHaptics()
     // 关弹层一律「先播退场动画、再落状态」（ui-common.md）：面板里没有输入框，
-    // 走 rememberSheetDismisser。把它交给 dismiss(after)，三种出口
-    // （去登录 / 完成结算 / 打开页面）在动画播完之前都不改 show 状态
+    // 走 rememberSheetDismisser。把它交给 dismiss(after)，各出口
+    // （去登录 / 完成结算 / 失败详情里的去诊断页）在动画播完之前都不改 show 状态
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val dismiss = rememberSheetDismisser(sheetState, onDismiss)
     var failureDetail by remember { mutableStateOf<QzxyFlowState.Failed?>(null) }
@@ -160,14 +165,10 @@ fun QzxyEntrySheet(
                 )
             }
 
-            // 待机态一行、用水中六行，高度差一百多 dp。给个下限兜住最短的几个形态，
-            // 再让内容淡入淡出、高度平滑过渡（AnimatedContent 自带尺寸动画）——
-            // 之前是 when 硬切，点「开始用水」弹窗会往上/下顶一截
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 112.dp),
-            ) {
+            // 不设 heightIn 下限：待机态内容约 72dp，垫到 112dp 会在按钮下方留出一截
+            // 空白（弹窗下方空白过多的根因）。高度过渡交给 AnimatedContent 自带的
+            // 尺寸动画——之前是 when 硬切，点「开始用水」弹窗会往上/下顶一截
+            Column(modifier = Modifier.fillMaxWidth()) {
                 AnimatedContent(
                     targetState = sheetContentOf(state, loggedIn),
                     transitionSpec = {
@@ -246,16 +247,6 @@ fun QzxyEntrySheet(
                         }
                     }
                 }
-            }
-
-            TextButton(
-                onClick = {
-                    haptics.tap()
-                    dismiss { onOpenPage() }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("打开趣智校园页")
             }
         }
     }

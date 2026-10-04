@@ -496,6 +496,12 @@
      - **弹窗的状态读取收在 `KvcxConfirmHost` 里**（2026-10-01）：`pendingAction` 用裸 state
        对象传递、在宿主组件里才 `by` 读——读在 `RideScreen` 函数体里的话，开关弹窗会重组整页，
        连带地图走一遍 `AndroidView` update。**别再把它改回页面函数体里的 `by` 读**。
+     - **弹窗开关要带过渡，不瞬间抽动**（2026-10-03 用户口径「不要有突变跳动」）：
+       `KvcxConfirmDialog` 函数体第一行调 `DialogWindowFadeEffect`（口径见 `ui-common.md`
+       「确认型弹窗」节）——M3 1.3.0 弹窗无自带动画，开与关都是硬切；勾「以后开锁不再确认」
+       的说明行显隐也换成了与动作区同族的显式 tween（`FastOutSlowInEasing`，200/150ms），
+       别换回 `AnimatedVisibility` 的默认 spring 参数。同页「结束计时」确认弹窗一并接了
+       同一个效果，两枚弹窗手感一致。
   4. **调度费/出围栏不代确认**——`dispatchMoney>0`、50011 一律抛错降级官方渠道，
      **别**改成发 `dispatchFlag:1` 替用户接受费用。
   5. **支付/免押授权不做**（微信内流程）：`needPay` 只提示 + `confirmUnpaidSettled` 短轮询

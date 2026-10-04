@@ -20,6 +20,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 #    该文件已 gitignore，禁止提交
 
 # 3) 抓取（--term 均可省略；所有脚本顶层 term = 实际爬到的学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_all.py           # 一条命令顺序抓全套（共享会话，只登录一次）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py       # 理论课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py   # 实验课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py         # 考试安排（缺省当前学期）
@@ -31,7 +32,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py    # 教务处盖章成绩单 PDF（非强智教务，见 §5.6）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py --list   # 只列有成绩的学期与门数
 # 指定学期：加 --term 2025-2026-2（脚本会校验请求学期 = 教务返回学期，不一致即报错）
-# 电费查别的房间：--room 1A101（可加 --building 1A 提速）
+# 电费查别的房间：--room 1A101（务必加 --building 1A，省了会逐个楼栋连发查询）
 # 成绩单按学期：--term 2025-2026-2（可多个，合并成一张）
 ```
 
@@ -56,7 +57,8 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 
 | 文件 | 职责 | 备注 |
 |------|------|------|
-| `jw_session.py` | 共享登录：CAS → 教务 SSO → 会话校验 | 其余抓取脚本都依赖它 |
+| `jw_session.py` | 共享登录：CAS → 教务 SSO → 会话校验；**会话持久化**（见 §3.1） | 其余抓取脚本都依赖它 |
+| `fetch_all.py` | 一条命令顺序抓全套教务数据 | 逐个调用下面六个脚本，会话经 §3.1 复用，只有全灭时才真登录一次 |
 | `fetch_courses.py` | 学期理论课表 → JSON | 纯解析，不做登录 |
 | `fetch_lab_courses.py` | 实验课表 → JSON（含周次聚合） | 纯解析，不做登录 |
 | `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
@@ -101,6 +103,24 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | 课程成绩查询 | 表单页 `/jsxsd/kscj/cjcx_frm`；数据 `/jsxsd/kscj/cjcx_list`（学期参数 `kksj`，空 = 全部） |
 
 > `:81` 与 `:8080` 是**两套部署**，行为不一致（`:81/jsxsd/` 返回 404，`:8080/jsxsd/` 返回登录页）。不要混用。
+
+### 3.1 会话持久化（2026-10-04）
+
+以前每个脚本各自 `login()`，连跑几个脚本就是连环完整账密登录（每次 ≈11 个请求），
+CAS 已知会因此触发验证码。现在统一入口 `jw_session.load_or_login(cred)`，按三级降级：
+
+1. **教务会话仍活** → 探针 1 个请求（`verify`，拉 xsMainV 判字节数 + 登录页特征）直接复用；
+2. **教务会话失效但 CAS TGC 还活** → 免账密，向 CAS 换新教务票（≈5 个请求）；
+3. **都失效** → 完整账密登录并覆盖保存。
+
+- 会话 cookie（CAS / 教务 / ptwork 各自独立 jar）存 `scripts/out/jw_session_state.json`
+  （已 gitignore；**含会话 cookie，与凭证同级敏感，勿外传勿提交**）。
+- `fetch_transcript` 用 `load_or_login_ptwork`：复用 CAS TGC 直接换 ptwork 票，跳过教务。
+- `fetch_power` 的 OAuth token（服务端 3599 秒）也存这份文件，3000 秒内重跑免登录。
+- 翻页 / 多学期 / 枚举循环统一走 `polite_pause()`（0.4–1.2s 随机）：0 间隔连发是最像
+  机器的请求节奏。失败仍是一律停、**不自动重试**——只是把必然要发的请求彼此错开。
+- layui 翻页与壳页学期解析抽成了公共件（`fetch_layui_pages` / `shell_terms`），
+  各脚本不再各写一份。
 
 ---
 
@@ -311,7 +331,8 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
 1. **参数少一个就回 500**：`getThirdData` 缺 `feeitemid`，或只给场景三键却不给 `type=IEC`/`level`，
    一律返回 `{"code":500,"msg":"未知异常，请联系管理员"}`。别把它当成平台故障。
 2. **登录端点不在 `/charge` 下**，是根域的 `/blade-auth/oauth/token`；业务接口才在 `charge.juwp.edu.cn/charge/…`。
-   token 3599 秒过期，脚本一次登录一次用完，不落盘。
+   token 服务端 3599 秒过期；2026-10-04 起落盘缓存到 `jw_session_state.json`，3000 秒内重跑免登录
+   （到期后自动重新登录覆盖）。
 3. **读数在 `map.showData` 的中文键里**（`{"当前剩余电量":"55.57"}`），`map.data.remark` 是同一份
    JSON 字符串。平台加功能会加键，所以 `power.json` 除 typed 字段外还留了 `meter.fields` 原文。
 4. **`sceneinfo` 里的校区名是学校旧名**（南昌工程学院），房间名以 IEC 返回的 `map.data` 为准。

@@ -28,7 +28,9 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -37,6 +39,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -44,6 +47,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -59,7 +64,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
+import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -71,6 +79,7 @@ import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
 import edu.jxslu.schedule.ui.me.SettingsScreen
 import edu.jxslu.schedule.ui.life.LifeScreen
 import edu.jxslu.schedule.ui.theme.JuwTheme
+import edu.jxslu.schedule.ui.theme.semanticColors
 import edu.jxslu.schedule.ui.today.TodayScreen
 import edu.jxslu.schedule.ui.water.WaterViewModel
 import edu.jxslu.schedule.data.qzxy.QzxyBluetoothScanner
@@ -563,6 +572,103 @@ private fun tabEnter(): EnterTransition = fadeIn(tween(TabFadeMillis))
 
 private fun tabExit(): ExitTransition = fadeOut(tween(TabFadeMillis))
 
+/**
+ * 首启引导后台同步的结果弹窗（DESIGN §4.17 / §4.29，2026-10-04）：登录后课表、成绩、
+ * 学业三项在后台静默同步，引导走完回到主界面时在这里一次性汇报。
+ *
+ * 每行 = 一个数据项：成功给「查看」入口（成绩 → 成绩页，学业 → 学业页，课表本身就是
+ * 主界面不另给入口）；失败不渲染成错误堆栈，直接给下一步出路（手动导一遍 / 下次进页补抓）。
+ * 确认或查看都会把 outcome 置 consumed——弹窗只在首启结束后出现这一次。
+ */
+@Composable
+private fun OnboardingSyncResultDialog(
+    outcome: OnboardingSyncOutcome,
+    onConsume: () -> Unit,
+    onOpenSubpage: (SubpageScreen) -> Unit,
+) {
+    DialogWindowFadeEffect()
+    AlertDialog(
+        onDismissRequest = onConsume,
+        title = { Text("同步完成") },
+        text = {
+            Column {
+                OnboardingSyncLine(
+                    ok = outcome.scheduleOk,
+                    shown = outcome.scheduleTried,
+                    okText = "课表已导入" + (if (outcome.scheduleCount > 0) "（${outcome.scheduleCount} 门）" else ""),
+                    failText = "课表未能自动导入",
+                    failHint = "在课表页点「导入课表」手动导一遍即可",
+                )
+                OnboardingSyncLine(
+                    ok = outcome.scoreOk,
+                    shown = outcome.scoreTried,
+                    okText = "成绩已导入" + (if (outcome.scoreCount > 0) "（${outcome.scoreCount} 条）" else ""),
+                    failText = "成绩未能自动导入",
+                    failHint = "到「我的 → 学习 → 成绩查询」手动导入即可",
+                    onView = { onOpenSubpage(SubpageScreen.SCORES) },
+                )
+                OnboardingSyncLine(
+                    ok = outcome.scholarOk,
+                    shown = outcome.scholarTried,
+                    okText = "学业完成情况已更新",
+                    failText = "学业完成情况暂未同步",
+                    failHint = "下次进「学业完成情况」页会自动补抓",
+                    onView = { onOpenSubpage(SubpageScreen.SCHOLAR) },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConsume) { Text("知道了") }
+        },
+    )
+}
+
+/** 结果弹窗的一行：状态点 + 主文案（+ 失败出路），成功时行尾可带「查看」。 */
+@Composable
+private fun OnboardingSyncLine(
+    ok: Boolean,
+    shown: Boolean,
+    okText: String,
+    failText: String,
+    failHint: String,
+    onView: (() -> Unit)? = null,
+) {
+    if (!shown) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(
+                    if (ok) MaterialTheme.semanticColors.success
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                ),
+        )
+        Spacer(Modifier.size(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = if (ok) okText else failText,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!ok) {
+                Text(
+                    text = failHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+        }
+        if (ok && onView != null) {
+            TextButton(onClick = onView) { Text("查看") }
+        }
+    }
+}
+
 @Composable
 internal fun JuwApp(
     pendingRoute: MutableState<String?>? = null,
@@ -623,6 +729,38 @@ internal fun JuwApp(
         pendingSubpages.value = emptyList()
         // 顺序即层次：先启动的在下面，最后一个在最上层
         subpageQueue.forEach { openSubpage(context, it) }
+    }
+
+    // 首启引导的后台同步结果（DESIGN §4.17 / §4.29）：引导结束后在主界面弹一次结果弹窗，
+    // 成功的项带「查看」入口，失败的给手动导入的出路；看过即消费，绝不弹第二次。
+    // 写入端（OnboardingScreen.startBgSync）在三项全部 settle 后一次性落盘，
+    // 这里读到非空即终态；onboardingSeen 同时为 true 才弹——防「结果先落、引导还在走」。
+    val outcomePrefs = remember { Graph.displayPrefs(context) }
+    val syncOutcome by outcomePrefs.onboardingSyncOutcome.collectAsStateWithLifecycle(initialValue = null)
+    val onboardingSeen by outcomePrefs.onboardingSeen.collectAsStateWithLifecycle(initialValue = false)
+    val outcomeScope = rememberCoroutineScope()
+    // 局部量接一次再判空：委托属性不吃智能转换
+    val outcome = syncOutcome
+    val showSyncOutcome = outcome != null && !outcome.consumed && onboardingSeen
+    // 查看动作 = 消费 + 跳子页；本地 flag 防连点期间 flow 未落地时重复 startActivity
+    var outcomeHandled by remember { mutableStateOf(false) }
+    if (showSyncOutcome && outcome != null && !outcomeHandled) {
+        OnboardingSyncResultDialog(
+            outcome = outcome,
+            onConsume = {
+                if (!outcomeHandled) {
+                    outcomeHandled = true
+                    outcomeScope.launch { outcomePrefs.setOnboardingSyncOutcome(outcome.copy(consumed = true)) }
+                }
+            },
+            onOpenSubpage = { screen ->
+                if (!outcomeHandled) {
+                    outcomeHandled = true
+                    outcomeScope.launch { outcomePrefs.setOnboardingSyncOutcome(outcome.copy(consumed = true)) }
+                    openSubpage(context, SubpageRequest(screen = screen))
+                }
+            },
+        )
     }
 
     // 「我的 → 显示设置」跨 Tab 触发已于 2026-09-20 删除（DESIGN §3.1）：

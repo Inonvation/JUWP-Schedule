@@ -80,16 +80,14 @@ def main() -> int:
     args = parser.parse_args()
 
     cred = jw_session.load_credentials()
-    jw = jw_session.login(cred)
+    jw = jw_session.load_or_login(cred)
 
     term = (args.term or "").strip()
     data = fetch_page(jw, term, 1)
-    rows: list[dict[str, Any]] = list(data.get("data") or [])
+    rows: list[dict[str, Any]] = jw_session.fetch_layui_pages(
+        data, lambda p: fetch_page(jw, term, p)
+    )
     total = int(data.get("count") or 0)
-    page = 1
-    while len(rows) < total:
-        page += 1
-        rows += fetch_page(jw, term, page).get("data") or []
 
     scores = to_payload(rows)
     terms = sorted({s["term"] for s in scores if s["term"]})

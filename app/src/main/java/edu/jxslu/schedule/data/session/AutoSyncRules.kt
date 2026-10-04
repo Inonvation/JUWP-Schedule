@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.session
 
+import kotlin.random.Random
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -59,5 +60,31 @@ object AutoSyncRules {
         return nowMillis - last >= hours * MILLIS_PER_HOUR
     }
 
+    /**
+     * 壳页学期缓存是否可用（考试/选课同步共用，2026-10-04 风控优化）。
+     *
+     * 考试与选课的同步每次都先 GET 壳页读「教务当前学期」，而学期下拉一学期才变一次。
+     * TTL 内直接复用上次抓到的学期，省一个壳页 GET；force（用户手动刷新）与
+     * 缓存缺失/过期都不算可用。学期翻年最多滞后半个窗口，而翻年发生在假期，
+     * 旧学期查出来是空的正巧无害；手动刷新随时可以拿到真值。
+     */
+    fun shellTermCacheUsable(cached: String?, savedAt: Long, force: Boolean, nowMillis: Long): Boolean =
+        !force && !cached.isNullOrBlank() && savedAt > 0 && nowMillis - savedAt < SHELL_CACHE_TTL_MS
+
+    /**
+     * 同一次同步内相邻两个教务请求之间的随机间隔（毫秒）。
+     *
+     * 0 间隔连发（翻页 / 多学期 / 四个学业维度连着打）是最像机器的请求节奏；
+     * 几百毫秒的随机间隔用户无感，却让请求流不再等间隔。这是「放慢」不是「重试」——
+     * 失败不重试的纪律不变（§4.33）。
+     */
+    fun interRequestDelayMs(): Long = Random.nextLong(INTER_REQUEST_DELAY_MIN_MS, INTER_REQUEST_DELAY_MAX_MS)
+
     private const val MILLIS_PER_HOUR = 60L * 60L * 1000L
+
+    /** 壳页学期缓存 TTL（12 小时），见 [shellTermCacheUsable]。 */
+    const val SHELL_CACHE_TTL_MS: Long = 12L * 60L * 60L * 1000L
+
+    private const val INTER_REQUEST_DELAY_MIN_MS = 200L
+    private const val INTER_REQUEST_DELAY_MAX_MS = 600L
 }

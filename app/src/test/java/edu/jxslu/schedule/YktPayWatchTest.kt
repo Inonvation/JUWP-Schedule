@@ -89,4 +89,16 @@ class YktPayWatchTest {
         watch.establish(null)
         assertEquals("PO-1", watch.inspect(listOf(expense("PO-1", 1_000L, 1_250L)))?.orderId)
     }
+
+    @Test
+    fun `轮询间隔按检测时长渐进放慢`() {
+        // 前 30 秒保持 5 秒精度（扫码支付通常 10 秒内完成，到账反馈不变慢）
+        assertEquals(5_000L, YktPayWatch.pollIntervalMs(0L))
+        assertEquals(5_000L, YktPayWatch.pollIntervalMs(29_999L))
+        // 之后拉长：30 秒～2 分钟每 10 秒，再往后每 20 秒
+        assertEquals(10_000L, YktPayWatch.pollIntervalMs(30_000L))
+        assertEquals(10_000L, YktPayWatch.pollIntervalMs(119_999L))
+        assertEquals(20_000L, YktPayWatch.pollIntervalMs(120_000L))
+        assertEquals(20_000L, YktPayWatch.pollIntervalMs(15 * 60_000L))
+    }
 }

@@ -103,6 +103,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
+import edu.jxslu.schedule.data.repo.ScheduleSync
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.data.session.CasEnsureResult
@@ -148,10 +150,11 @@ private enum class Step(val index: Int, val title: String, val desc: String) {
 }
 
 /**
- * 完成页后台补抓状态行（DESIGN §3.16）。教务配置成功后成绩 / 学业完成情况在
- * appScope 里补抓，本状态供完成页把「正在同步」收敛成结果。
- * [Idle] = 教务没配置或还没跑到；[DoneOk] = 至少一项拿到 Updated / Skipped / InProgress
- * （数据在库或另一次抓取在跑，都算有结果）；[DoneFailed] = 两项都 Failed。
+ * 完成页后台同步状态行（DESIGN §3.16 / §4.17）。教务配置成功后课表 / 成绩 / 学业完成
+ * 情况在 appScope 里同步，本状态供完成页把「正在同步」收敛成结果。
+ * [Idle] = 教务没配置或还没跑到；[DoneOk] = 成绩或学业至少一项成功，或课表成功导入
+ * （成绩/学业的 Skipped——数据在库——也算有结果；课表的 Skipped = 课表本就非空让位，
+ * 只有三项全 Failed 才显示失败行）；[DoneFailed] = 三项都 Failed。
  */
 private enum class BgSyncPhase { Idle, Running, DoneOk, DoneFailed }
 
@@ -251,27 +254,60 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     }
 
     /**
-     * 成绩 / 学业完成情况后台补抓（DESIGN §4.29），统一认证配置成功后由 JwStep 调。
+     * 课表 / 成绩 / 学业完成情况后台同步（DESIGN §4.29 / §4.17），统一认证配置成功后由 JwStep 调。
      *
-     * 两条纪律（原 JwStep 内联注释，随实现上移到这）：
-     * 1. **不等它**：学业完成情况要连抓四个页面，校园网下可能十几秒；
-     *    引导页不能为它卡住「下一步」。用户走到「我的 → 学习」时大概率已落库。
+     * 三条纪律（原 JwStep 内联注释，随实现上移到这）：
+     * 1. **不等它**：学业完成情况要连抓四个页面，校园网下可能十几秒；课表要抓两张页。
+     *    引导页不能为它卡住「下一步」。用户走到「我的」时大概率已落库。
      * 2. **不用本页的 scope**：这里用进程级 appScope。本页的
      *    rememberCoroutineScope 在跳进 MainActivity 时就被取消，
      *    挂上去会让抓取半路夭折（可能只写了一半维度）。
      *    结果写进 [bgSyncPhase]：组合销毁后再写孤儿状态无害，完成页活着就能看到收敛。
+     * 3. **课表只在为空时导**（DESIGN §4.17 重立，2026-10-04）：`importIfEmpty` 对
+     *    非空课表一律让位——静默导入是一次性的首启便利，绝不周期性覆盖用户已编辑的课表。
+     *
+     * 三项全部 settle 后把结果落盘（[OnboardingSyncOutcome]）：主界面在引导结束后弹
+     * 「已导入」结果弹窗（查看入口 / 失败给手动导入的出路）。startAtJw（改密码重进）
+     * 不是首启，不写结果——用户已经会用 App，完成页状态行足够。
      */
     fun startBgSync() {
         // 上一次还在跑就让位：sync 内部有 mutex，重复 force 只会白打一轮
         if (bgSyncPhase == BgSyncPhase.Running) return
         bgSyncPhase = BgSyncPhase.Running
         val appContext = context.applicationContext
+        val isRepeatEntry = startAtJw
         Graph.appScope.launch {
             val score = runCatching { Graph.scoreSync(appContext).sync(force = true) }
             val scholar = runCatching { Graph.scholarProgressSync(appContext).sync(force = true) }
+            val schedule = runCatching { Graph.scheduleSync(appContext).importIfEmpty() }
+            // 教材钩子同手动导入（import-jw.md「触发点只有一个」）：写库成功后抓导入学期教材，静默失败
+            (schedule.getOrNull() as? ScheduleSync.AutoImportResult.Imported)?.let { imported ->
+                Graph.appScope.launch {
+                    runCatching { Graph.textbookSync(appContext).syncForTerm(imported.term) }
+                }
+            }
             val okScore = score.getOrNull()?.let { it !is ScoreSync.Result.Failed } == true
             val okScholar = scholar.getOrNull()?.let { it !is ScholarProgressSync.Result.Failed } == true
-            bgSyncPhase = if (okScore || okScholar) BgSyncPhase.DoneOk else BgSyncPhase.DoneFailed
+            val scheduleResult = schedule.getOrNull()
+            val okSchedule = scheduleResult is ScheduleSync.AutoImportResult.Imported
+            bgSyncPhase = if (okScore || okScholar || okSchedule) BgSyncPhase.DoneOk else BgSyncPhase.DoneFailed
+            if (!isRepeatEntry) {
+                runCatching {
+                    Graph.displayPrefs(appContext).setOnboardingSyncOutcome(
+                        OnboardingSyncOutcome(
+                            finishedAt = System.currentTimeMillis(),
+                            scheduleTried = scheduleResult !is ScheduleSync.AutoImportResult.Skipped,
+                            scheduleOk = okSchedule,
+                            scheduleCount = (scheduleResult as? ScheduleSync.AutoImportResult.Imported)?.count ?: 0,
+                            scoreTried = true,
+                            scoreOk = okScore,
+                            scoreCount = (score.getOrNull() as? ScoreSync.Result.Updated)?.records ?: 0,
+                            scholarTried = true,
+                            scholarOk = okScholar,
+                        ),
+                    )
+                }
+            }
         }
     }
 
@@ -1153,7 +1189,7 @@ private fun JwStep(
                     // 成功反馈：对勾描边停留一拍再进下一步，别让「成了」一闪而过
                     successHaptic()
                     notice = null
-                    successMessage = "统一认证已保存，学籍卡与成绩正在后台补抓"
+                    successMessage = "统一认证已保存，课表、成绩与学籍正在后台同步"
                     delay(SUCCESS_HOLD_MS)
                     onDone()
                 }
@@ -2010,7 +2046,7 @@ private fun BgSyncLine(phase: BgSyncPhase) {
                 strokeWidth = 2.dp,
                 color = MaterialTheme.colorScheme.primary,
             )
-            NoteText("成绩与学业完成情况正在后台自动同步，不用等")
+            NoteText("课表、成绩与学业完成情况正在后台自动同步，不用等")
         }
         BgSyncPhase.DoneOk -> CenteredNote {
             Icon(
@@ -2019,7 +2055,7 @@ private fun BgSyncLine(phase: BgSyncPhase) {
                 tint = MaterialTheme.semanticColors.success,
                 modifier = Modifier.size(14.dp),
             )
-            NoteText("成绩与学业完成情况已同步到「我的 → 学习」")
+            NoteText("同步结果稍后在主界面弹出，也可在「我的 → 学习」查看")
         }
         BgSyncPhase.DoneFailed -> CenteredNote {
             Icon(
@@ -2028,7 +2064,7 @@ private fun BgSyncLine(phase: BgSyncPhase) {
                 tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
                 modifier = Modifier.size(14.dp),
             )
-            NoteText("后台同步没成功（可能是网络），之后进「我的 → 学习」会自动补抓")
+            NoteText("后台同步没成功（可能是网络），进主界面后会弹窗提醒，也可以手动导入")
         }
     }
 }

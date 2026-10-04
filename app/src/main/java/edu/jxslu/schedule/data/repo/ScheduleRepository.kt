@@ -23,6 +23,7 @@ import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
+import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.BgScale
@@ -385,6 +386,8 @@ data class ImportStats(val existing: Int, val newCount: Int)
 class ScheduleRepository(
     private val db: JuwDatabase,
     private val prefs: DisplayPrefsStore,
+    /** 调课检测的基线快照（DESIGN §4.17）：导入/合并成功时推进，检查时与教务比对。 */
+    private val baselineStore: ScheduleBaselineStore? = null,
 ) {
 
     private val json = CourseJsonFormat
@@ -900,6 +903,7 @@ class ScheduleRepository(
         db.timeSlotDao().clearForTimetable(id)
         db.semesterConfigDao().deleteForTimetable(id)
         db.timetableDao().delete(id)
+        clearScheduleBaseline(id)
         if (prefs.defaultConfigSourceId.first() == id) {
             prefs.setDefaultConfigSource(null)
         }
@@ -1037,7 +1041,10 @@ class ScheduleRepository(
     }
 
     suspend fun clearCourses() {
-        db.courseDao().clearForTimetable(currentTimetableId.first())
+        val ttId = currentTimetableId.first()
+        db.courseDao().clearForTimetable(ttId)
+        // 用户主动清空 = 与教务的一致状态也被清掉：基线一并清，检查链下次按首跑重建
+        clearScheduleBaseline(ttId)
     }
 
     suspend fun replaceAllCourses(courses: List<Course>, timetableId: Long? = null) {
@@ -1096,6 +1103,10 @@ class ScheduleRepository(
      * 教务解析结果入库；merge=false 全量覆盖目标课表。
      * [term] 是本次数据的学年学期，写进目标课表（[Timetable.term]）——它是课程详情查
      * 教材（[textbooksFor]）的钥匙；null 表示这次导入不带学期口径（旧调用路径），不动课表的 term。
+     *
+     * 写库成功 = 与教务达成了一次一致：收口推进调课检测基线（[refreshBaselineFromDb]），
+     * 之后 `ScheduleSync.check` 以它为底与教务比对。所有导入调用点都经过这里，
+     * 新入口不需要（也不应该）自己记得写基线。
      */
     suspend fun importParsedCourses(
         courses: List<Course>,
@@ -1109,10 +1120,12 @@ class ScheduleRepository(
                 db.timetableDao().upsert(it.copy(term = term))
             }
         }
-        return if (merge) mergeCourses(courses, ttId) else {
+        val result = if (merge) mergeCourses(courses, ttId) else {
             replaceAllCourses(courses, ttId)
             courses.size
         }
+        refreshBaselineFromDb(ttId)
+        return result
     }
 
     // ------------------------------------------------------------------
@@ -1145,8 +1158,115 @@ class ScheduleRepository(
             }
         }
 
-    // 调课自动检测（DESIGN §4.17）的基线/报告读写与应用已随功能移除（2026-09-24，
-    // 见 JuwDatabase.MIGRATION_9_10）；detect_baselines / detect_reports 两表一并 DROP。
+    // ------------------------------------------------------------------
+    // 调课检测基线（DESIGN §4.17，2026-10-04 重立；旧 detect_baselines/detect_reports
+    // 两 Room 表已随 2026-09-24 的下线 DROP，基线现走 filesDir JSON，不动 DB 版本）
+    // ------------------------------------------------------------------
+
+    /** 当前基线快照（`ScheduleSync.check` 读）。未配置基线存储（构造缺省）时返回空快照。 */
+    suspend fun loadScheduleBaseline(): ScheduleBaselineStore.Snapshot =
+        baselineStore?.load() ?: ScheduleBaselineStore.Snapshot()
+
+    /**
+     * 用「写库后的实际课表」推进基线（过滤考试条目——教务课表页抓不到考试，
+     * 留在基线里会把每一场考试报成「教务删除」）。同时清已阅指纹：
+     * 基线推进后旧差异整体作废，与旧指纹的比对不再有意义。
+     */
+    suspend fun refreshBaselineFromDb(timetableId: Long) {
+        val store = baselineStore ?: return
+        val term = db.timetableDao().getById(timetableId)?.term.orEmpty()
+        val courses = getTimetableCourses(timetableId).filter { it.kind != CourseKind.Exam }
+        store.save(ScheduleBaselineStore.snapshotOf(timetableId, term, courses, System.currentTimeMillis()))
+        prefs.setScheduleIgnoredFingerprint("")
+    }
+
+    /** 用教务抓取结果直接建基线（检查首跑 / 换学期：此刻课表未动，教务现状即「一致状态」）。 */
+    suspend fun saveScheduleBaseline(timetableId: Long, term: String, courses: List<Course>) {
+        val store = baselineStore ?: return
+        store.save(ScheduleBaselineStore.snapshotOf(timetableId, term, courses, System.currentTimeMillis()))
+        prefs.setScheduleIgnoredFingerprint("")
+    }
+
+    /** 删除课表 / 清空课程时把基线一并清掉（timetableId 归属已失效，留着只会误比对）；待处置差异同清。 */
+    suspend fun clearScheduleBaseline(timetableId: Long) {
+        val store = baselineStore ?: return
+        if (store.load().timetableId == timetableId) {
+            store.save(ScheduleBaselineStore.Snapshot())
+            prefs.setSchedulePendingChanges(null)
+        }
+    }
+
+    /** [applyScheduleChanges] 的结果：applied 实际应用条数；skipped 匹配不上而跳过（防重复导入）。 */
+    data class ApplyReport(val applied: Int, val skipped: Int)
+
+    /**
+     * 把用户勾选的调课差异应用到**当前课表**（事务内逐条删/改/增），成功后把基线推进为
+     * 应用完的实际全量（含未勾的本地内容——那部分差异下次检查仍会如实报出）。
+     *
+     * 逐条匹配用 [edu.jxslu.schedule.domain.ScheduleDiff.fingerprint]：当前课表里找不到
+     * 指纹一致的条目（用户又改过）就跳过而不是硬套，`skipped` 计数交给 UI 汇报。
+     * 新增课程带 `id=0` 走 Room 自增并取下一个未用配色；修改课程保留原行 id、配色与备注。
+     */
+    suspend fun applyScheduleChanges(
+        changes: List<edu.jxslu.schedule.domain.ScheduleDiff.Change>,
+        acceptedIndexes: Set<Int>,
+    ): ApplyReport = db.withTransaction {
+        val ttId = currentTimetableId.first()
+        var current = getTimetableCourses(ttId)
+        var applied = 0
+        var skipped = 0
+        acceptedIndexes.sorted().forEach { index ->
+            val change = changes.getOrNull(index) ?: run { skipped++; return@forEach }
+            when (change.kind) {
+                edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.REMOVED -> {
+                    val old = change.old ?: run { skipped++; return@forEach }
+                    val target = current.firstOrNull {
+                        ScheduleDiff.fingerprint(it) == ScheduleDiff.fingerprint(old)
+                    } ?: run { skipped++; return@forEach }
+                    db.courseDao().deleteByIds(listOf(target.id))
+                    current = current.filterNot { it.id == target.id }
+                    applied++
+                }
+
+                edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.MODIFIED -> {
+                    val old = change.old ?: run { skipped++; return@forEach }
+                    val new = change.new ?: run { skipped++; return@forEach }
+                    val target = current.firstOrNull {
+                        ScheduleDiff.fingerprint(it) == ScheduleDiff.fingerprint(old)
+                    } ?: run { skipped++; return@forEach }
+                    val merged = new.copy(
+                        id = target.id,
+                        colorIndex = target.colorIndex,
+                        remark = target.remark,
+                        isCustomTime = false,
+                        customStartTime = null,
+                        customEndTime = null,
+                    )
+                    db.courseDao().upsert(CourseEntity.fromDomain(merged).copy(timetableId = ttId))
+                    current = current.map { if (it.id == target.id) merged else it }
+                    applied++
+                }
+
+                edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.ADDED -> {
+                    val course = change.new ?: run { skipped++; return@forEach }
+                    // 防重复：用户已经手动加过同门课（mergeKey 一致）就不再插一份
+                    if (current.any { it.mergeKey() == course.mergeKey() }) {
+                        skipped++
+                    } else {
+                        val colored = course.copy(
+                            id = 0,
+                            colorIndex = ScheduleCalculator.nextColorIndex(current.map { it.colorIndex }),
+                        )
+                        val id = db.courseDao().upsert(CourseEntity.fromDomain(colored).copy(timetableId = ttId))
+                        current = current + colored.copy(id = id)
+                        applied++
+                    }
+                }
+            }
+        }
+        refreshBaselineFromDb(ttId)
+        ApplyReport(applied = applied, skipped = skipped)
+    }
 
     /**
      * 调课（DESIGN §4.11）：把 [fromWeek] 周 [fromDay] 的课按 [mode] 调整到 [toWeek] 周 [toDay]。
@@ -1437,6 +1557,9 @@ class ScheduleRepository(
                 db.timetableDao().upsert(it.copy(term = export.term))
             }
         }
+        // 备份恢复也是一次「写库成功」：基线推进为恢复后的实际内容，
+        // 之后教务调课检测以它为底（旧基线与已阅指纹整体作废）
+        refreshBaselineFromDb(ttId)
         return if (merge) {
             val added = mergeCourses(domain, timetableId)
             ImportResult.Success(

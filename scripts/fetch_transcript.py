@@ -94,6 +94,8 @@ def collect_terms(pt) -> list[tuple[str, int]]:
                 counts[term] = counts.get(term, 0) + 1
         pages = int(payload.get("pages") or 1)
         page += 1
+        if page <= min(pages, MAX_PAGES):
+            jw_session.polite_pause()  # 服务端固定 15 行/页，翻页别连发
     return sorted(counts.items(), reverse=True)
 
 
@@ -133,9 +135,7 @@ def main() -> int:
     args = parser.parse_args()
 
     cred = jw_session.load_credentials()
-    cas = jw_session.new_session()
-    jw_session.portal_cas_login(cas, cred["username"], cred["password"])
-    pt = jw_session.sso_ptwork(cas)
+    pt = jw_session.load_or_login_ptwork(cred)
 
     if args.list:
         terms = collect_terms(pt)

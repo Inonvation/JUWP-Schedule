@@ -98,11 +98,15 @@
 
 - **考试自动检查链（`ExamSync`）与手动导入共用同一份 `ExamScheduleParser.parseFetchJson`**，
   只是传输层换成 `CasSession.fetchHtml`（OkHttp）。改解析字段或接口参数时两处一起看；
-  接口地址常量在 `ExamSync` 伴生对象（壳页 `xsksap_query` / 数据 `xsksap_list`，
-  **不带 .do**——带 .do 的同名地址回 no-open 页，别把「功能被校方关闭」当「没数据」）。
-- **缺省学期以教务为准**：先 GET 壳页正则抽 `select#xnxqid` 选中项（`ExamSync.termFromShell`，
+  接口地址常量在 `JwUrls`（壳页 `EXAM_QUERY` / 数据 `EXAM_LIST_API`，2026-10-04 从
+  `ExamSync` 伴生对象收口过去，URL 只此一份），**不带 .do**——带 .do 的同名地址回
+  no-open 页，别把「功能被校方关闭」当「没数据」。
+- **缺省学期以教务为准**：GET 壳页正则抽 `select#xnxqid` 选中项（`ExamSync.termFromShell`，
   单测钉住 value 属性 / 纯文本 / data-selected 三种形态），抽不到直接 Failed，**不猜学期**
   （猜错的学期会拿空基线当「首跑」吞掉真变动，或拿错学期基线刷一屏假通知）。
+  2026-10-04 起壳页带 **12 小时 TTL 缓存**（`AutoSyncRules.shellTermCacheUsable`，考试/选课共用判据）：
+  学期下拉一学期才变一次，TTL 内不再打壳页；force（手动更新）永远真抓。学期翻年最多滞后半个
+  窗口，而翻年发生在假期，旧学期查出来是空的正巧无害。
 - **考试绝不写课程表**：`ExamSync` 只读 + 与 `ExamSnapshotStore`（filesDir 基线）比对 +
   发通知；点通知落**考试页**（`SubpageScreen.EXAMS`，2026-09-30 由直达 `JwImportActivity`
   改过来），导入入口在该页页尾。给这条链加「顺手写库」等于把静默写课表做进后台，禁止。
@@ -149,6 +153,39 @@
 - **通知 requestCode 与 id 解耦**（3008/3009 vs 1008/1009），两落点 intent 只差 extra、
   都无 action——requestCode 撞了会互相改写落点（§3.13 3005/3006 同坑）。
 
+## 调课检测与首启自动导课表（2026-10-04 重立，DESIGN §4.17）
+
+- 旧版 2026-09-24 下线的理由是「独立凭证 + 后台自动登录」的成本；重立版没有这两项
+  （统一会话层 + 搭既有周期任务）。改这条链前先想清楚：**不要再造出需要单独配置或
+  后台自动登录的形态**。
+- **课表直取只有一个入口**：`ScheduleSync.fetch`（OkHttp + `CasSession.fetchHtml`），
+  解析用 `QiangzhiScheduleParser.parseFromHtml` / `SyjxScheduleParser.parseFromHtml`
+  （与 WebView 注入同一套算法的备用路径），合成复用 `OneClickImport.combine`。
+  **不要**在这里再写一套解析；学期以理论页 `select#xnxq01id` 选中项为准，带学期请求时
+  校验「请求学期 = 返回学期」（同脚本纪律）；实验页结构不可信（无 `qz-weeklyTable`）时
+  检查整体放弃——硬比对会把整批实验课报成「教务删除」。
+- **首启自动导入只此一次**：`importIfEmpty` 对非空课表一律 Skipped。把它的调用点挪到
+  周期任务、或放宽成「覆盖合并用户课表」，等于让 App 静默改用户的课表——禁止。
+  结果弹窗（`OnboardingSyncOutcome`）消费即清，startAtJw（改密码重进）不写不弹。
+- **基线语义**：`ScheduleBaselineStore`（filesDir JSON）=「上次与教务达成一致时的课表
+  状态」。推进点只有三个：导入写库成功（`importParsedCourses` / `importJson` **收口在
+  repo 内**，新导入入口不许绕过）、合并差异成功、检查首跑（不通知）。**检查成功不推进
+  基线**——这点与 `ExamSync` 相反（考试基线是「上次抓到什么」，调课基线是「用户认可了
+  什么」），照抄考试链会让差异永远消失。基线只存 Theory+Lab（教务抓不到考试）。
+- **diff 纪律**（`domain/ScheduleDiff`）：指纹只含教务字段——把 colorIndex/remark/
+  自定义时间加进指纹，本机数据一动就报假差异；同名同 kind 恰好一删一增才配「调整」，
+  多删多增宁拆开不错配；冲突（用户改过的课）默认不勾。改任何一条都要同步
+  `ScheduleDiffTest` 的契约用例。
+- **重复打扰双闸**：差异指纹 = 已阅指纹（忽略过）或 = 待处置缓存指纹（提醒过未处置）
+  → 不再发通知。合并/忽略后「已阅指纹 = 本次展示的完整差异」——未勾的条目下次检查
+  会以剩余差异的新指纹重新报出，这是有意行为。
+- **合并是唯一的写路径**：`applyScheduleChanges` 事务内逐条、指纹匹配不上就跳过不硬套、
+  新增防 mergeKey 重复、修改保留原行 id/配色/备注。**后台静默改课表是红线**——
+  `ScheduleAlertReminder` 只发通知，点通知落处置页（`SCHEDULE_CHANGES`，requestCode 3010
+  与 3008/3009 错开），差异的每一条都要用户勾选。
+- 周期检查搭 `ScoreAlertReminder` **第四路**：`ensurePeriodicWork` 的全关判定、`check` 的
+  开关列表、`onSettingsChanged` 的清时刻，三处改任何一处都要四个开关一起想。
+
 ## 选课（2026-10-01，DESIGN §3.19 / §3.20 / §3.21 / §4.35 / §4.36）
 
 - 选课结果 = 教务「选课日志」`loadXsxkjgList?lx=xkrz&type=list&xnxqid=<学期>`（**不带 .do**，
@@ -166,7 +203,8 @@
   真实实现等窗口期实测后接入——**现在这个位置是 `UnconfiguredSelectionCenterClient`**。
 - **默认抓「当前学期 + 紧邻下一学期」**：选课常发生在学期末选下学期，光抓当前学期会漏掉
   「已选下学期」这件最要紧的事（`SelectionSync.resolveDefaultTerms`，学期从壳页选中项来、
-  不猜）。先全部抓到内存、再一次性落库——中途失败不留半套。
+  不猜；2026-10-04 起同样吃 12 小时壳页缓存，非 force 复用上次抓到的学期）。先全部抓到内存、
+  再一次性落库——中途失败不留半套。
 - **轮次快照允许存空**（`SelectionRoundsStore` 与 `ExamSnapshotStore` 的「宁旧勿空」相反）：
   `count=0`（非选课期）是教务的权威状态，存空才会让页面如实显示、让过期提醒被撤销。
 - **提醒的时间解析容错到「解析不了就不排」**：`xksj` 的真实格式要等选课期才有样本

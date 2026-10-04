@@ -101,7 +101,8 @@ object ScoreAlertReminder {
             val workManager = WorkManager.getInstance(context)
             if (!prefs.scoreAlertEnabled.first() &&
                 !prefs.examAlertEnabled.first() &&
-                !prefs.selectionAlertEnabled.first()
+                !prefs.selectionAlertEnabled.first() &&
+                !prefs.scheduleAlertEnabled.first()
             ) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
                 prefs.setAlertPeriodicInterval(0)
@@ -146,6 +147,7 @@ object ScoreAlertReminder {
             prefs.setScoreAlertCheckMillis(0)
             prefs.setExamAlertCheckMillis(0)
             prefs.setSelectionRoundsCheckMillis(0)
+            prefs.setScheduleCheckMillis(0)
         }.onFailure { Log.w(TAG, "clear check millis failed", it) }
         ensurePeriodicWork(context)
         enqueueCheck(context)
@@ -161,13 +163,16 @@ object ScoreAlertReminder {
             val scoreOn = prefs.scoreAlertEnabled.first()
             val examOn = prefs.examAlertEnabled.first()
             val selectionOn = prefs.selectionAlertEnabled.first()
-            if (!scoreOn && !examOn && !selectionOn) return
+            val scheduleOn = prefs.scheduleAlertEnabled.first()
+            if (!scoreOn && !examOn && !selectionOn && !scheduleOn) return
             // 通知被系统/用户整体关闭时静默跳过：写不出去也不该白打一次教务
             if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
             if (scoreOn) checkScores(context)
             if (examOn) checkExams(context)
             // 选课提醒自带落盘去重与闹钟重排（DESIGN §4.35），这里只负责按周期叫醒它
             if (selectionOn) SelectionAlertReminder.check(context)
+            // 调课检测（DESIGN §4.17 重立）：第四路搭同一趟车，闸门与静默纪律在 ScheduleSync.check
+            if (scheduleOn) ScheduleAlertReminder.check(context)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 

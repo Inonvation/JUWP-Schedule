@@ -47,6 +47,7 @@ import edu.jxslu.schedule.ui.common.SettingsTag
 import edu.jxslu.schedule.ui.me.MeViewModel
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Alert02
 import me.rerere.hugeicons.stroke.CalendarSync
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Database
@@ -75,12 +76,20 @@ fun TimetableHubScreen(
     onOpenTimetableSettings: () -> Unit,
     onOpenDataSettings: () -> Unit,
     onOpenCourseTweak: () -> Unit,
+    onOpenScheduleChanges: () -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
 ) {
+    val context = LocalContext.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+
+    // 调课检测（DESIGN §4.17 重立）：入口行脚注显示待处置差异数——
+    // 通知错过的话，这里是唯一常驻入口
+    val pendingChanges by remember { Graph.displayPrefs(context) }.schedulePendingChanges
+        .collectAsStateWithLifecycle(initialValue = null)
+    val pendingCount = pendingChanges?.changes?.size ?: 0
 
     // 本页有「教务导入」入口，导入窗口 finish 后落回的就是这一页
     JwImportOutcomeEffect(snackbar)
@@ -130,6 +139,13 @@ fun TimetableHubScreen(
                     subtitle = "把某天的课调到另一天 · 仅本机生效",
                     icon = HugeIcons.CalendarSync,
                     onClick = onOpenCourseTweak,
+                )
+                SettingItem(
+                    title = "调课检测",
+                    titleTag = if (pendingCount > 0) "${pendingCount}处差异" else null,
+                    subtitle = "与教务最新课表比对，发现变动提醒并可选合并",
+                    icon = HugeIcons.Alert02,
+                    onClick = onOpenScheduleChanges,
                 )
             }
 

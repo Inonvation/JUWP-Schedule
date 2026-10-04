@@ -47,6 +47,7 @@ import edu.jxslu.schedule.ui.selection.SelectionGrabScreen
 import edu.jxslu.schedule.ui.selection.SelectionRecordsScreen
 import edu.jxslu.schedule.ui.selection.SelectionScreen
 import edu.jxslu.schedule.ui.selection.SelectionWishesScreen
+import edu.jxslu.schedule.ui.timetable.ScheduleChangesScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
 import edu.jxslu.schedule.ui.ujing.UjingHistoryScreen
@@ -148,6 +149,8 @@ enum class SubpageScreen {
     UJING_ORDER,
     /** U净 → 历史账单（本 App 发起的订单留痕，DESIGN §3.23 / §4.37） */
     UJING_HISTORY,
+    /** 调课检测处置页（差异列表 · 勾选合并 · 忽略，DESIGN §4.17，2026-10-04 重立） */
+    SCHEDULE_CHANGES,
 }
 
 /**
@@ -311,7 +314,11 @@ class SubpageActivity : ComponentActivity() {
                 },
                 onOpenDataSettings = { SubpageActivity.start(this, SubpageScreen.DATA_SETTINGS) },
                 onOpenCourseTweak = { SubpageActivity.start(this, SubpageScreen.COURSE_TWEAK) },
+                onOpenScheduleChanges = {
+                    SubpageActivity.start(this, SubpageScreen.SCHEDULE_CHANGES)
+                },
             )
+            SubpageScreen.SCHEDULE_CHANGES -> ScheduleChangesScreen(onBack = onBack)
             SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(
                 onBack = onBack,
                 // 功能开关节 → 快捷方式编辑页（2026-09-28 自扩展服务迁入）

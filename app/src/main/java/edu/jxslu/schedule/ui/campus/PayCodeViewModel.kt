@@ -197,11 +197,17 @@ class PayCodeViewModel(
         }
     }
 
-    /** 余额快照（静默）：失败不提示——出码是主流程，余额只是锦上添花。 */
-    private fun loadBalance(username: String, password: String) {
+    /**
+     * 余额快照（静默）：失败不提示——出码是主流程，余额只是锦上添花。
+     *
+     * 进页路径默认 `force = false` 吃 60 秒缓存（2026-10-04 风控优化）：付款码页的
+     * 余额是锦上添花，用户多半刚从生活页过来，缓存里的值足够新——省 2 条 queryCard；
+     * 手动刷新才强拉。
+     */
+    private fun loadBalance(username: String, password: String, force: Boolean = false) {
         viewModelScope.launch {
             try {
-                val cards = repo.cards(username, password)
+                val cards = repo.cards(username, password, force = force)
                 if (cards.isNotEmpty()) {
                 loadBalanceSnapshot(cards)
                 }
@@ -213,10 +219,10 @@ class PayCodeViewModel(
         }
     }
 
-    /** 下拉/手动刷新余额。 */
+    /** 下拉/手动刷新余额（强拉，不吃缓存）。 */
     fun refreshBalance() {
         val credentials = credentialStore.read() ?: return
-        loadBalance(credentials.username, credentials.password)
+        loadBalance(credentials.username, credentials.password, force = true)
     }
 
     /**
@@ -269,13 +275,16 @@ class PayCodeViewModel(
     private var payWatchJob: kotlinx.coroutines.Job? = null
 
     /**
-     * 扫码消费检测：取码成功后启动，每 5 秒同步一页流水，出现晚于「进页水位」的**扣款**
+     * 扫码消费检测：取码成功后启动，同步一页流水，出现晚于「进页水位」的**扣款**
      * 即判定为一笔消费，页面据此自动退出并提示（DESIGN §3.10）。
      *
      * 判定口径在 [YktPayWatch]：水位取服务端交易时间，不掺设备时钟。
      *
-     * 窗口 15 分钟封顶：码本身有效数小时，但没人会在付款码页停留那么久，无上限轮询只是
-     * 白耗电与白打服务端。命中即停（一次停留只认第一笔），超窗也停。
+     * 轮询节奏渐进（[YktPayWatch.pollIntervalMs]）：前 30 秒每 5 秒（扫码支付通常
+     * 10 秒内完成，到账反馈不变慢），之后拉长到 10 秒、20 秒——固定 5 秒 × 15 分钟
+     * 是 180 条均匀请求，最像机器。窗口 15 分钟封顶：码本身有效数小时，但没人会在
+     * 付款码页停留那么久，无上限轮询只是白耗电与白打服务端。命中即停（一次停留只认
+     * 第一笔），超窗也停。
      *
      * 轮询挂在 ViewModel 上，不跟页面可见性开关：扫码那一秒正好锁屏（ON_PAUSE）是常有的事，
      * 挂生命周期会把这笔漏掉。
@@ -285,7 +294,8 @@ class PayCodeViewModel(
         payWatchJob = viewModelScope.launch {
             val dao = db.yktTurnoverDao()
             val watch = YktPayWatch()
-            val deadline = System.currentTimeMillis() + PAY_WATCH_MS
+            val startedAt = System.currentTimeMillis()
+            val deadline = startedAt + PAY_WATCH_MS
             while (isActive && System.currentTimeMillis() < deadline) {
                 if (syncTurnovers(username, password)) {
                     if (!watch.established) {
@@ -301,7 +311,7 @@ class PayCodeViewModel(
                         }
                     }
                 }
-                delay(PAY_POLL_MS)
+                delay(YktPayWatch.pollIntervalMs(System.currentTimeMillis() - startedAt))
             }
         }
     }
@@ -395,9 +405,6 @@ class PayCodeViewModel(
     companion object {
         /** 取码整链总超时（键盘+登录+账户+取码 4 跳；口径同 §4.17 的总超时兜底）。 */
         private const val LOGIN_TOTAL_TIMEOUT_MS = 30_000L
-
-        /** 扫码消费检测的轮询间隔。 */
-        private const val PAY_POLL_MS = 5_000L
 
         /** 扫码消费检测的窗口上限（15 分钟；付款码页不会停留更久）。 */
         private const val PAY_WATCH_MS = 15 * 60_000L

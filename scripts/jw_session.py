@@ -21,25 +21,45 @@
   表现为"同一请求时而 200 时而 404"，极易误判成教务故障。
   故本模块所有 Session 显式 trust_env = False。
 
+会话复用（2026-10-04）:
+  每个脚本各自 login() 意味着连跑几个脚本就是连环完整登录（每次 ≈11 个请求），
+  CAS 已知会因此触发验证码。load_or_login 把 CAS / 教务的会话 cookie 持久化到
+  scripts/out/jw_session_state.json（已 gitignore，含会话 cookie，与凭证同级敏感），
+  按三级降级取会话，让账密 POST 只在会话真正全灭时发生：
+    [a] 教务会话仍活                → 探针 1 个请求直接复用
+    [b] 教务会话失效但 CAS TGC 还活 → 免账密，向 CAS 换新教务票（≈5 个请求）
+    [c] 都失效                      → 完整账密登录并覆盖保存
+  fetch_transcript 用 load_or_login_ptwork（复用 CAS TGC 换签章票，跳过教务）；
+  fetch_power 的 OAuth token（3599 秒）经 load_power_token / save_power_token 存同一文件。
+  循环类请求（翻页 / 多学期 / 枚举）之间调 polite_pause 留随机间隔——0 间隔连发
+  是最像机器的请求节奏。
+
 用法:
   import jw_session
   cred = jw_session.load_credentials()
-  jw = jw_session.login(cred)
+  jw = jw_session.load_or_login(cred)
   html = jw_session.get_html(jw, url, must_contain="个人课表")
 """
 
 from __future__ import annotations
 
 import json
+import random
 import re
+import time
+from datetime import datetime
+from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
+from typing import Any, Callable
 from urllib.parse import quote, urljoin
 
 import requests
+from bs4 import BeautifulSoup
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "scripts" / "out"
 CRED = ROOT / "scripts" / "credentials.local.json"
+STATE_FILE = OUT / "jw_session_state.json"
 
 CAS = "https://eapp2.juwp.edu.cn:9443"
 PORTAL = "http://portal.juwp.edu.cn"
@@ -63,6 +83,9 @@ _REDIRECTS = (301, 302, 303, 307, 308)
 _NOT_LOGGED = "用户没有登录"
 _HOME_MIN_BYTES = 20000  # 正常主页 ~150KB；退回登录提示时仅 860B
 
+# 缴费平台 token 服务端 3599 秒，本地按 3000 秒回收，避免拿临期 token 撞 401
+_POWER_TOKEN_REUSE_S = 3000
+
 
 class JwLoginError(RuntimeError):
     """登录 / SSO / 会话校验任一环节失败。"""
@@ -84,11 +107,84 @@ def load_credentials() -> dict[str, str]:
         )
     cred = json.loads(CRED.read_text(encoding="utf-8"))
     user = (cred.get("username") or "").strip()
-    pwd = cred.get("password") or ""
+    pwd = (cred.get("password") or "")
     if not user or not pwd or user.startswith("你的"):
         raise JwLoginError("credentials.local.json 里的 username / password 还没填。")
     return {"username": user, "password": pwd}
 
+
+# ---------------------------------------------------------------------------
+# 会话持久化：cookie（含 domain/path/secure）以 JSON 存 scripts/out/，跨进程复用
+# ---------------------------------------------------------------------------
+
+def _jar_items(jar) -> list[dict[str, Any]]:
+    return [
+        {"name": c.name, "value": c.value, "domain": c.domain,
+         "path": c.path, "secure": c.secure}
+        for c in jar
+    ]
+
+
+def _jar_from_items(items: list[dict[str, Any]] | None) -> CookieJar:
+    jar = CookieJar()
+    for it in items or []:
+        domain = it.get("domain") or ""
+        jar.set_cookie(Cookie(
+            0, it.get("name") or "", it.get("value") or "",
+            None, False,
+            domain, bool(domain), domain.startswith("."),
+            it.get("path") or "/", True,
+            bool(it.get("secure")), None, True, None, None, {},
+        ))
+    return jar
+
+
+def _session_from(items: list[dict[str, Any]] | None) -> requests.Session:
+    s = new_session()
+    s.cookies.update(_jar_from_items(items))
+    return s
+
+
+def _load_state() -> dict[str, Any]:
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(**patch: Any) -> None:
+    """合并写回：cas/jw/power 各字段独立更新，互不覆盖。"""
+    state = _load_state()
+    state.update(patch)
+    state["savedAt"] = datetime.now().isoformat(timespec="seconds")
+    OUT.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_power_token() -> str | None:
+    """缴费平台 OAuth token：本地缓存且未到保守期限才复用。"""
+    cached = _load_state().get("power") or {}
+    token, ts = cached.get("token"), cached.get("ts") or 0
+    if token and (time.time() - float(ts)) < _POWER_TOKEN_REUSE_S:
+        return str(token)
+    return None
+
+
+def save_power_token(token: str) -> None:
+    _save_state(power={"token": token, "ts": int(time.time())})
+
+
+def polite_pause(lo: float = 0.4, hi: float = 1.2) -> None:
+    """翻页 / 多学期 / 枚举循环之间的随机小间隔。失败不重试的纪律不变，
+    这里只是把「必然要发的请求」彼此错开。"""
+    time.sleep(random.uniform(lo, hi))
+
+
+# ---------------------------------------------------------------------------
+# 登录链（不变）
+# ---------------------------------------------------------------------------
 
 def _follow(s: requests.Session, url: str, limit: int = 15) -> str:
     """手动跟随重定向并返回最终 URL（allow_redirects=True 会丢掉中间落点，不便诊断）。"""
@@ -184,7 +280,10 @@ def sso_ptwork(cas: requests.Session) -> requests.Session:
 
 
 def login(cred: dict[str, str] | None = None) -> requests.Session:
-    """一步登录：CAS → 教务 SSO → 校验。返回可用 session。"""
+    """一步登录：CAS → 教务 SSO → 校验。返回可用 session。
+
+    不落盘；常规入口用 load_or_login（跨进程复用会话，少打 CAS）。
+    """
     cred = cred or load_credentials()
     cas = new_session()
     portal_cas_login(cas, cred["username"], cred["password"])
@@ -194,16 +293,111 @@ def login(cred: dict[str, str] | None = None) -> requests.Session:
     return jw
 
 
+# ---------------------------------------------------------------------------
+# 复用入口
+# ---------------------------------------------------------------------------
+
+def load_or_login(cred: dict[str, str] | None = None) -> requests.Session:
+    """优先复用持久化会话，按 [复用教务 → CAS 换票 → 完整登录] 三级降级。"""
+    state = _load_state()
+    if state.get("jw"):
+        jw = _session_from(state["jw"])
+        try:
+            verify(jw)
+            print(f"[0] 复用本地教务会话（{state.get('savedAt')} 保存）")
+            return jw
+        except JwLoginError:
+            print("[0] 本地教务会话已失效")
+    if state.get("cas"):
+        cas = _session_from(state["cas"])
+        try:
+            jw = sso_jiaowu(cas)
+            verify(jw)
+            _save_state(cas=_jar_items(cas.cookies), jw=_jar_items(jw.cookies))
+            print("[0] CAS 会话仍有效，已免账密换新教务票")
+            return jw
+        except JwLoginError:
+            print("[0] CAS 会话也已失效，走完整登录")
+    cred = cred or load_credentials()
+    cas = new_session()
+    portal_cas_login(cas, cred["username"], cred["password"])
+    jw = sso_jiaowu(cas)
+    verify(jw)
+    _save_state(cas=_jar_items(cas.cookies), jw=_jar_items(jw.cookies))
+    print("[0] 登录成功，会话已缓存到", STATE_FILE.name)
+    return jw
+
+
+def load_or_login_ptwork(cred: dict[str, str] | None = None) -> requests.Session:
+    """签章系统会话：优先复用 CAS TGC 直接换 ptwork 票，TGC 失效才重新账密登录。"""
+    state = _load_state()
+    if state.get("cas"):
+        cas = _session_from(state["cas"])
+        try:
+            pt = sso_ptwork(cas)
+            print("[0] 复用本地 CAS 会话换签章票")
+            return pt
+        except JwLoginError:
+            print("[0] 本地 CAS 会话已失效，重新登录")
+    cred = cred or load_credentials()
+    cas = new_session()
+    portal_cas_login(cas, cred["username"], cred["password"])
+    pt = sso_ptwork(cas)
+    _save_state(cas=_jar_items(cas.cookies))
+    return pt
+
+
+# ---------------------------------------------------------------------------
+# 公共取数件：壳页学期下拉、layui 翻页、页面 GET
+# ---------------------------------------------------------------------------
+
+def shell_terms(jw: requests.Session, url: str) -> tuple[str | None, list[str]]:
+    """教务壳页的学期下拉（select#xnxqid）：返回 (默认选中项, 全量选项)。
+
+    考试 / 教材 / 选课三个壳页同构；课表页的下拉 id 是 xnxq01id，不适用。
+    """
+    r = jw.get(url, timeout=30)
+    soup = BeautifulSoup(r.text, "html.parser")
+    sel = soup.select_one("select#xnxqid")
+    if sel is None:
+        return None, []
+    terms = [o.get_text(strip=True) for o in sel.find_all("option") if o.get_text(strip=True)]
+    opt = sel.find("option", selected=True)
+    return (opt.get_text(strip=True) if opt else None), terms
+
+
+def fetch_layui_pages(
+    first: dict[str, Any], next_page: Callable[[int], dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """layui JSON 接口的通用翻页：以第一页为起点，按 count 兜底翻满，页间 polite_pause。
+
+    next_page(page) 由调用方拼参数（各接口的查询键不同），返回该页完整 JSON dict。
+    """
+    rows: list[dict[str, Any]] = list(first.get("data") or [])
+    total = int(first.get("count") or 0)
+    page = 1
+    while len(rows) < total:
+        page += 1
+        polite_pause()
+        rows += list(next_page(page).get("data") or [])
+    return rows
+
+
 def get_html(
     jw: requests.Session,
     url: str,
     must_contain: str | None = None,
     save: Path | None = None,
 ) -> str:
-    """取页面；可选断言标记文本、可选落盘快照。"""
+    """取页面；先判登录页再判标记文本（否则会话失效会被误报成「结构变了」）。"""
     r = jw.get(url, timeout=30)
     if r.status_code != 200:
         raise JwLoginError(f"{url} 返回 HTTP {r.status_code}")
+    if _NOT_LOGGED in r.text:
+        raise JwLoginError(
+            "教务会话已失效（页面退回登录提示）。重跑脚本即可——"
+            "load_or_login 的探针会识别失效并自动重新登录。"
+        )
     if must_contain and must_contain not in r.text:
         raise JwLoginError(
             f"{url} 未包含标记 {must_contain!r}（len={len(r.content)}），页面结构可能已变"

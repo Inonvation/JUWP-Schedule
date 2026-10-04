@@ -39,7 +39,9 @@ import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
 import edu.jxslu.schedule.data.repo.RideRecordStore
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
+import edu.jxslu.schedule.data.repo.ScheduleBaselineStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.data.repo.ScheduleSync
 import kotlinx.coroutines.sync.Mutex
 import edu.jxslu.schedule.data.repo.ScholarProgressRepository
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
@@ -92,6 +94,9 @@ object Graph {
 
     @Volatile
     private var repository: ScheduleRepository? = null
+
+    @Volatile
+    private var scheduleSync: ScheduleSync? = null
 
     @Volatile
     private var prefsStore: DisplayPrefsStore? = null
@@ -234,7 +239,21 @@ object Graph {
             repository ?: ScheduleRepository(
                 JuwDatabase.get(context),
                 displayPrefs(context),
+                ScheduleBaselineStore(context.applicationContext),
             ).also { repository = it }
+        }
+
+    /**
+     * 课表直取与调课检查单例（DESIGN §4.17，2026-10-04 重立）：首启自动导课表 +
+     * 周期调课检查共用这一条直取链（OkHttp + 同一套解析算法）。
+     */
+    fun scheduleSync(context: Context): ScheduleSync =
+        scheduleSync ?: synchronized(this) {
+            scheduleSync ?: ScheduleSync(
+                cas = casSession(context),
+                repo = repository(context),
+                prefs = displayPrefs(context),
+            ).also { scheduleSync = it }
         }
 
     /** 成绩仓库单例（DESIGN §4.15）：与课表共用数据库，按学期整体替换。 */

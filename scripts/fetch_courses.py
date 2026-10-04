@@ -188,7 +188,7 @@ def main() -> int:
     args = parser.parse_args()
 
     cred = jw_session.load_credentials()
-    jw = jw_session.login(cred)
+    jw = jw_session.load_or_login(cred)
 
     url = SCHEDULE_URL + (f"&xnxq01id={args.term}" if args.term else "")
     html = jw_session.get_html(

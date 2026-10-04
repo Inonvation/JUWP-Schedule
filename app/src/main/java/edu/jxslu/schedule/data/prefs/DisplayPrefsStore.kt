@@ -27,6 +27,7 @@ import edu.jxslu.schedule.domain.SelectionWish
 import edu.jxslu.schedule.domain.SelectionWishes
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
+import edu.jxslu.schedule.domain.SchedulePendingChanges
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.Shortcuts
@@ -266,6 +267,39 @@ data class NoticeConsentRecord(
 )
 
 /**
+ * 首启引导的后台同步结果（DESIGN §4.29 / §4.17）：课表、成绩、学业三项各自
+ * 「试没试过 + 成没成功」。[tried] 与 [ok] 分开是因为课表只有「目标为空」才会试——
+ * 试都没试就不该在弹窗里报失败。全部 settle 后由引导页 `startBgSync` 一次性写入；
+ * 主界面弹结果弹窗后置 [consumed]（消费即清，不重复打扰）。
+ */
+@kotlinx.serialization.Serializable
+data class OnboardingSyncOutcome(
+    val finishedAt: Long = 0,
+    /** 首启自动导课表：tried = 课表为空触发了抓取，ok = 写库成功。 */
+    val scheduleTried: Boolean = false,
+    val scheduleOk: Boolean = false,
+    /** 写库条数（scheduleOk 时有意义）；教务本学期没课的情况不会走到这里（按失败报）。 */
+    val scheduleCount: Int = 0,
+    val scoreTried: Boolean = false,
+    val scoreOk: Boolean = false,
+    val scoreCount: Int = 0,
+    val scholarTried: Boolean = false,
+    val scholarOk: Boolean = false,
+    /** 引导完成页点完、主界面弹过结果弹窗后置 true。 */
+    val consumed: Boolean = false,
+) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+        fun decode(text: String): OnboardingSyncOutcome? =
+            runCatching { json.decodeFromString<OnboardingSyncOutcome>(text) }.getOrNull()
+
+        fun encode(value: OnboardingSyncOutcome): String =
+            json.encodeToString(OnboardingSyncOutcome.serializer(), value)
+    }
+}
+
+/**
  * 全局偏好存储（DESIGN §4.9）。
  *
  * 2026-09-19 起显示偏好（原课表级视图偏好）也在这里：整体以 [TimetablePrefs] 的 JSON
@@ -480,6 +514,25 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EXAM_CHECK_MILLIS] = millis }
     }
 
+    /**
+     * 考试壳页上次抓到的学期 + 时刻（2026-10-04 风控优化，判据见
+     * `AutoSyncRules.shellTermCacheUsable`）：TTL 内复用，省一次壳页 GET。
+     * 只在真的抓到壳页之后写盘。
+     */
+    suspend fun examShellTerm(): String? =
+        context.displayDataStore.data.first()[KEY_EXAM_SHELL_TERM]?.takeIf { it.isNotBlank() }
+
+    /** 考试壳页学期抓到时刻。0 = 从没抓到过。 */
+    suspend fun examShellTermAtMillis(): Long =
+        context.displayDataStore.data.first()[KEY_EXAM_SHELL_AT_MILLIS] ?: 0L
+
+    suspend fun setExamShellTerm(term: String, millis: Long) {
+        context.displayDataStore.edit {
+            it[KEY_EXAM_SHELL_TERM] = term
+            it[KEY_EXAM_SHELL_AT_MILLIS] = millis
+        }
+    }
+
     // ---- 选课（DESIGN §4.35）----
 
     /** 选课记录上次成功同步时刻（epoch millis）。0 = 从没成功过。失败不写（同成绩/考试纪律）。 */
@@ -500,6 +553,24 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setSelectionTerms(terms: List<String>) {
         context.displayDataStore.edit { it[KEY_SELECTION_TERMS] = terms.joinToString(",") }
+    }
+
+    /**
+     * 选课壳页上次抓到的「教务当前学期」+ 时刻（2026-10-04 风控优化，判据同考试壳页）：
+     * TTL 内复用，省一次壳页 GET。学期翻年滞后半个窗口内选课记录本就不变，无实际影响。
+     */
+    suspend fun selectionShellTerm(): String? =
+        context.displayDataStore.data.first()[KEY_SELECTION_SHELL_TERM]?.takeIf { it.isNotBlank() }
+
+    /** 选课壳页学期抓到时刻。0 = 从没抓到过。 */
+    suspend fun selectionShellTermAtMillis(): Long =
+        context.displayDataStore.data.first()[KEY_SELECTION_SHELL_AT_MILLIS] ?: 0L
+
+    suspend fun setSelectionShellTerm(term: String, millis: Long) {
+        context.displayDataStore.edit {
+            it[KEY_SELECTION_SHELL_TERM] = term
+            it[KEY_SELECTION_SHELL_AT_MILLIS] = millis
+        }
     }
 
     /** 选课轮次上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写。 */
@@ -572,6 +643,70 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setSelectionGrabDisclaimerAt(millis: Long) {
         context.displayDataStore.edit { p -> p[KEY_SELECTION_GRAB_DISCLAIMER_AT] = millis }
+    }
+
+    // ---- 调课检测（DESIGN §4.17，2026-10-04 重立）----
+
+    /** 调课提醒开关。默认关（通知是打扰型能力，与成绩/考试/选课提醒同一口径）。 */
+    val scheduleAlertEnabled: Flow<Boolean> =
+        context.displayDataStore.data.map { p -> p[KEY_SCHEDULE_ALERT_ENABLED] ?: false }
+
+    suspend fun setScheduleAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { p -> p[KEY_SCHEDULE_ALERT_ENABLED] = value }
+    }
+
+    /** 调课上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写（同成绩/考试纪律）。 */
+    suspend fun scheduleCheckMillis(): Long =
+        context.displayDataStore.data.first()[KEY_SCHEDULE_CHECK_MILLIS] ?: 0L
+
+    suspend fun setScheduleCheckMillis(millis: Long) {
+        context.displayDataStore.edit { p -> p[KEY_SCHEDULE_CHECK_MILLIS] = millis }
+    }
+
+    /**
+     * 「已阅」差异指纹（[ScheduleDiff.fingerprintOf] 的结果）。用户点了「忽略」或
+     * 「合并」后写入——下次检查到相同指纹的差异不再重复提醒；教务再出新差异指纹
+     * 才会变。基线推进（合并/重新导入）时清空（旧指纹失去意义）。
+     */
+    suspend fun scheduleIgnoredFingerprint(): String =
+        context.displayDataStore.data.first()[KEY_SCHEDULE_IGNORED_FP].orEmpty()
+
+    suspend fun setScheduleIgnoredFingerprint(value: String) {
+        context.displayDataStore.edit { p -> p[KEY_SCHEDULE_IGNORED_FP] = value }
+    }
+
+    /**
+     * 待处置差异缓存：检查到新差异时写入，处置页与课表 hub 的入口行读它，
+     * 合并/忽略成功后清空。**它同时是「已提醒」的记录**——指纹与缓存相同的差异
+     * 不再发第二条通知（用户还没处置，重发只是打扰）。
+     */
+    val schedulePendingChanges: Flow<SchedulePendingChanges?> =
+        context.displayDataStore.data.map { p ->
+            p[KEY_SCHEDULE_PENDING_JSON]?.takeIf { it.isNotBlank() }?.let(SchedulePendingChanges::decode)
+        }
+
+    suspend fun schedulePendingChanges(): SchedulePendingChanges? = schedulePendingChanges.first()
+
+    suspend fun setSchedulePendingChanges(value: SchedulePendingChanges?) {
+        context.displayDataStore.edit { p ->
+            p[KEY_SCHEDULE_PENDING_JSON] = value?.encode().orEmpty()
+        }
+    }
+
+    /**
+     * 首启引导的后台同步结果（课表 / 成绩 / 学业三项各自 tried + ok）。
+     * 引导页 `startBgSync` 在三项全部 settle 后写入；主界面读它弹「已导入」结果弹窗，
+     * 弹过即置 consumed。null = 没有未消费的结果（没走过首启 / 已消费 / startAtJw 重进）。
+     */
+    val onboardingSyncOutcome: Flow<OnboardingSyncOutcome?> =
+        context.displayDataStore.data.map { p ->
+            p[KEY_ONBOARDING_SYNC_JSON]?.takeIf { it.isNotBlank() }?.let(OnboardingSyncOutcome::decode)
+        }
+
+    suspend fun setOnboardingSyncOutcome(value: OnboardingSyncOutcome?) {
+        context.displayDataStore.edit { p ->
+            p[KEY_ONBOARDING_SYNC_JSON] = value?.let(OnboardingSyncOutcome::encode).orEmpty()
+        }
     }
 
     /**
@@ -1547,17 +1682,30 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_ALERT_INTERVAL_HOURS = intPreferencesKey("alert_interval_hours")
         val KEY_SCORE_CHECK_MILLIS = longPreferencesKey("score_check_millis")
         val KEY_EXAM_CHECK_MILLIS = longPreferencesKey("exam_check_millis")
+        val KEY_EXAM_SHELL_TERM = stringPreferencesKey("exam_shell_term")
+        val KEY_EXAM_SHELL_AT_MILLIS = longPreferencesKey("exam_shell_at_millis")
         val KEY_ALERT_PERIODIC_INTERVAL = intPreferencesKey("alert_periodic_interval")
 
         // 选课（DESIGN §4.35）：上次同步时刻 + 学期下拉全量 + 轮次检查时刻 + 提醒开关与已发键
         val KEY_SELECTION_SYNC_MILLIS = longPreferencesKey("selection_sync_millis")
         val KEY_SELECTION_TERMS = stringPreferencesKey("selection_terms")
+        val KEY_SELECTION_SHELL_TERM = stringPreferencesKey("selection_shell_term")
+        val KEY_SELECTION_SHELL_AT_MILLIS = longPreferencesKey("selection_shell_at_millis")
         val KEY_SELECTION_ROUNDS_CHECK_MILLIS = longPreferencesKey("selection_rounds_check_millis")
         val KEY_SELECTION_ALERT_ENABLED = booleanPreferencesKey("selection_alert_enabled")
         val KEY_SELECTION_REMINDED_KEYS = stringSetPreferencesKey("selection_reminded_keys")
         val KEY_SELECTION_WISHES_JSON = stringPreferencesKey("selection_wishes_json")
         val KEY_SELECTION_GRAB_INTERVAL_MS = longPreferencesKey("selection_grab_interval_ms")
         val KEY_SELECTION_GRAB_DISCLAIMER_AT = longPreferencesKey("selection_grab_disclaimer_at")
+
+        // 调课检测（DESIGN §4.17，2026-10-04 重立）：提醒开关 + 检查时刻 + 已阅指纹 + 待处置差异
+        val KEY_SCHEDULE_ALERT_ENABLED = booleanPreferencesKey("schedule_alert_enabled")
+        val KEY_SCHEDULE_CHECK_MILLIS = longPreferencesKey("schedule_check_millis")
+        val KEY_SCHEDULE_IGNORED_FP = stringPreferencesKey("schedule_ignored_fingerprint")
+        val KEY_SCHEDULE_PENDING_JSON = stringPreferencesKey("schedule_pending_changes_json")
+
+        // 首启引导后台同步结果（课表/成绩/学业），主界面弹结果弹窗后消费
+        val KEY_ONBOARDING_SYNC_JSON = stringPreferencesKey("onboarding_sync_outcome_json")
 
         // ---- 全局显示偏好（2026-09-19 起；原课表级 prefs_json 的接棒者） ----
         val KEY_VIEW_PREFS_JSON = stringPreferencesKey("view_prefs_json")

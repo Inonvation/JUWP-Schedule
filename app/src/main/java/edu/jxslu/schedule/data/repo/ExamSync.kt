@@ -1,12 +1,14 @@
 package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.data.jw.ExamScheduleParser
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.domain.ExamChangeDetector
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -14,8 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 /**
  * 考试安排自动检查（DESIGN §4.33）：考试变动提醒的数据链。
  *
- * 走 [CasSession.fetchHtml]（已存凭证 + OkHttp），不开窗口：先 GET 考试安排壳页
- * `/jsxsd/xsks/xsksap_query` 读学期下拉的当前选中项（缺省学期以教务为准，同
+ * 走 [CasSession.fetchHtml]（已存凭证 + OkHttp），不开窗口：缺省学期以教务壳页为准（同
  * `scripts/fetch_exams.py` 的做法），再 GET 数据接口 `/jsxsd/xsks/xsksap_list`
  * 翻页抓全量，解析用 [ExamScheduleParser.parseFetchJson]——与教务 WebView 导入
  * **同一份解析口径**，只是传输层换成 OkHttp（同 `ScoreSync` 与成绩页的关系）。
@@ -26,6 +27,8 @@ import kotlinx.coroutines.sync.Mutex
  * 闸门与基线纪律：
  * - 只服务提醒：开关关着直接 Skipped，一行网络请求都不发；
  * - 间隔 + `exam_check_millis`（失败不写时刻，下个周期自动补查）；
+ * - 壳页学期缓存（[AutoSyncRules.shellTermCacheUsable]）：TTL 内复用上次抓到的学期，
+ *   省一个壳页 GET；force（手动更新按钮）永远真抓；
  * - 基线为空（首跑）或学期切换 = 只存基线**不通知**，防首跑/换学期整表刷屏；
  * - 撤考忽略（[ExamChangeDetector] 的口径），宁可少打扰。
  */
@@ -80,16 +83,26 @@ class ExamSync(
             else -> return Result.Failed(ScholarProgressSync.describe(ensured))
         }
 
-        // 缺省学期以教务为准：先抓壳页读学期下拉的选中项，失败不猜测
-        val shell = cas.fetchHtml(SHELL_URL)
-            ?: return Result.Failed("没取到考试安排页面（会话可能已失效）")
-        val term = termFromShell(shell)
-            ?: return Result.Failed("考试安排页没有学期下拉（教务结构可能变了）")
+        // 缺省学期以教务为准：优先用壳页学期缓存（TTL 内，省一次壳页 GET），
+        // 过期 / 首跑 / force 才真抓壳页；抓不到不猜测
+        val cachedTerm = prefs.examShellTerm()
+        val term: String = if (cachedTerm != null &&
+            AutoSyncRules.shellTermCacheUsable(cachedTerm, prefs.examShellTermAtMillis(), force, now)
+        ) {
+            cachedTerm
+        } else {
+            val shell = cas.fetchHtml(JwUrls.EXAM_QUERY)
+                ?: return Result.Failed("没取到考试安排页面（会话可能已失效）")
+            termFromShell(shell)
+                ?.also { prefs.setExamShellTerm(it, nowMillis()) }
+                ?: return Result.Failed("考试安排页没有学期下拉（教务结构可能变了）")
+        }
 
         val exams = mutableListOf<ExamEntry>()
         var count = 0
         var page = 1
         do {
+            if (page > 1) delay(AutoSyncRules.interRequestDelayMs())
             val body = cas.fetchHtml(listUrl(term, page))
                 ?: return Result.Failed("没取到考试数据（会话可能已失效）")
             val parsed = try {
@@ -119,12 +132,6 @@ class ExamSync(
     }
 
     companion object {
-        /** 考试安排壳页（学期下拉在这里），同 `scripts/fetch_exams.py` 的 KSAP_QUERY。 */
-        const val SHELL_URL = "http://jiaowu.juwp.edu.cn:8080/jsxsd/xsks/xsksap_query"
-
-        /** 考试数据接口（**不带 .do** 的 layui JSON），同脚本 KSAP_LIST。 */
-        const val LIST_URL = "http://jiaowu.juwp.edu.cn:8080/jsxsd/xsks/xsksap_list"
-
         /** 翻页上限，同 [ScoreSync.MAX_PAGES]：挡住 count 异常时不至于空转。 */
         const val MAX_PAGES = 20
 
@@ -148,6 +155,6 @@ class ExamSync(
         }
 
         fun listUrl(term: String, page: Int): String =
-            "$LIST_URL?xnxqid=${java.net.URLEncoder.encode(term, "UTF-8")}&xqlb=&pageNum=$page&pageSize=${ExamScheduleParser.PAGE_SIZE}"
+            "${JwUrls.EXAM_LIST_API}?xnxqid=${java.net.URLEncoder.encode(term, "UTF-8")}&xqlb=&pageNum=$page&pageSize=${ExamScheduleParser.PAGE_SIZE}"
     }
 }
