@@ -6,8 +6,11 @@ import kotlin.math.max
  * 共享单车免费时长倒计时（DESIGN §3.9）。
  *
  * 运营方口径：扫码开车后 15 分钟内免费，超时计费。App 无法感知实际开车成功
- * （扫码发生在微信里），计时起点 = 用户点「打开微信扫一扫」的时刻——
- * 偏保守（可能比实际开车早 1~2 分钟），宁可提醒早一点。
+ * （扫码发生在微信里），计时起点 = 用户点「打开微信扫一扫」+ [SCAN_DELAY_MS]
+ * 的缓冲（2026-10-05 用户拍板：点完按钮还要切微信、选图、扫码、开车，倒计时
+ * 从点击 5 秒后才开始走，偏保守但不再把头几秒算进免费期）——仍偏保守
+ * （可能比实际开车早），宁可提醒早一点。**倒计时是预估**，展示处要写明
+ * 「实际以微信小程序显示为准」。
  *
  * 本文件只做纯 JVM 的时刻计算与文案格式化，不含任何 Android API。
  * 15 分钟是运营方活动政策、可能变化，文案一律写「按 15 分钟计」，不承诺。
@@ -21,6 +24,15 @@ object EbikeFreeRide {
 
     /** 免费时长（分钟）。运营方政策口径，变了这里和文案一起改。 */
     const val FREE_MINUTES = 15
+
+    /**
+     * 小程序方式的扫码缓冲（毫秒）：计时起点 = 点「打开微信扫一扫」+ 这段
+     * （2026-10-05 用户拍板 5 秒）。点完按钮到真正开车之间要切微信、选图、扫码，
+     * 倒计时不能从点击那一毫秒就走；缓冲期内倒计时显示满格 [FREE_MINUTES] 分钟不动
+     * （[remainingSeconds] 钳上限）。只作用于小程序方式的「点扫一扫」路径——
+     * 账号方式的起点是服务端确认的开锁时刻，不需要缓冲。
+     */
+    const val SCAN_DELAY_MS = 5_000L
 
     /** 提前量下限（分钟）。 */
     const val LEAD_MIN = 1
@@ -155,9 +167,16 @@ object EbikeFreeRide {
 
     fun endDedupKey(startAtMillis: Long): String = "end|$startAtMillis"
 
-    /** 免费剩余秒数（到点后为 0，不为负）。 */
+    /**
+     * 免费剩余秒数（到点后为 0，不为负）。
+     *
+     * 上限钳在免费时长：起点在未来（点扫一扫后的 [SCAN_DELAY_MS] 缓冲期内）时
+     * `freeEnd - now` 会超过 15 分钟，钳住后倒计时显示满格、**到缓冲结束才开始走**
+     * ——「点扫一扫后 5 秒再开始倒计时」就靠这一钳（2026-10-05 用户拍板）。
+     */
     fun remainingSeconds(startAtMillis: Long, nowMillis: Long): Int =
         max(0, ((freeEndMillis(startAtMillis) - nowMillis) / 1000L).toInt())
+            .coerceAtMost(FREE_MINUTES * 60)
 
     /** 进度条比例 0f..1f（1 = 刚开始）。 */
     fun progressFraction(startAtMillis: Long, nowMillis: Long): Float {

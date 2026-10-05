@@ -371,6 +371,16 @@
 
 ## 免费时长提醒
 
+- **小程序方式的计时起点 = 点「打开微信扫一扫」+ 5 秒缓冲**（2026-10-05 用户拍板，
+  `EbikeFreeRide.SCAN_DELAY_MS`）：起点由 `EbikeViewModel.onWechatScanClicked` 算好
+  传给 `startFreeRideNotice(startAtMillis)`——**别把参数改回函数内取当下**；账号方式
+  开锁成功走默认参数，起点仍是真正开锁时刻。缓冲期内（now < 起点）倒计时**显示满格
+  15:00 不走**（`remainingSeconds` 钳上限，`progressFraction` 的 elapsed 钳 0，
+  `EbikeFreeRideTest` 钉住），免费结束与两个提醒点整体后移 5 秒。**倒计时是预估**：
+  骑行页倒计时块（`RideCountdown` 的 `showEstimateNote`，判据 `caps.wechatScan`，
+  经 `RideRidingUpper` 透传）进度线下常驻「倒计时为预估，实际以微信小程序显示为准」；
+  账号方式起点是服务端确认的开锁时刻，**不写这句**。
+
 - 免费时长提醒（DESIGN §3.9）：**走 App 通知 + 前台服务常驻倒计时，不写系统日历**
   （2026-09-24 用户拍板改回；2026-09-23 那次「改系统日历」已作废）。
   两个提醒点（提前量点、免费结束）由 `AlarmManager.setAlarmClock` **精确**触发：
@@ -393,7 +403,9 @@
 - **震动要 `VIBRATE` 权限，横幅弹不弹不由我们定**（2026-09-30 用户报「通知了但只在通知栏
   看到，不弹出也没震动」）：manifest 此前一直**没声明 `VIBRATE`**——Android 8 起渠道上的
   `vibrationPattern` 靠它才生效，缺了系统静默丢弃，所以 `enableVibration(true)` 配了也白配
-  （这是那一轮的真根因，已补）。另外 `EbikeFreeRideNotifier.vibrateAlert` 在两条提醒里
+  （这是那一轮的真根因，已补）。另外 `ReminderVibration.vibrate`（2026-10-05 自
+  `EbikeFreeRideNotifier.vibrateAlert` 抽成共享工具 `ui/reminder/ReminderVibration`，
+  上课/作业截止提醒也用它）在两条提醒里
   各发一次**直接震动**（`VibrationEffect`；API 31+ 走 `VibratorManager.defaultVibrator`，
   更低走 `Vibrator`）：渠道震动归系统通知设置管，用户把那条渠道的「震动」关掉后它就不震，
   直接震动不看那个开关。**横幅（heads-up）只能尽力**：App 侧只有「HIGH 渠道 + 不静音」

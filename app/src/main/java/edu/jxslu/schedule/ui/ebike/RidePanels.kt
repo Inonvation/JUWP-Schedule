@@ -439,6 +439,7 @@ private fun RideActionUpper(
             busy = busy,
             timerActive = timerActive,
             timerStartAt = timerStartAt,
+            showEstimateNote = caps.wechatScan,
             onRefresh = onRefreshRide,
             onRingFind = onRingFind,
             onQueryLock = onQueryLock,
@@ -695,6 +696,8 @@ private fun RideRidingUpper(
     busy: KvcxAction?,
     timerActive: Boolean,
     timerStartAt: Long,
+    /** 小程序方式（`caps.wechatScan`）：倒计时是预估的，进度线下写明以小程序为准。 */
+    showEstimateNote: Boolean,
     onRefresh: () -> Unit,
     onRingFind: () -> Unit,
     onQueryLock: () -> Unit,
@@ -769,7 +772,11 @@ private fun RideRidingUpper(
             }
         }
         if (timerActive) {
-            RideCountdown(startAt = timerStartAt, onExpired = onTimerExpired)
+            RideCountdown(
+                startAt = timerStartAt,
+                onExpired = onTimerExpired,
+                showEstimateNote = showEstimateNote,
+            )
         }
         if (ride != null) {
             val elapsed = rememberRideElapsed(ride, rideFetchedAt)
@@ -2067,9 +2074,17 @@ private fun IconButtonSmall(
  *
  * 每秒自刷新（[produceState] 计时循环）；到点调 [onExpired] 让**父级**重组一次把卡撤掉
  * ——tick 只跑在这块里，整页不跟着每秒重组。
+ *
+ * [showEstimateNote] = 小程序方式（`caps.wechatScan`）：计时起点是「点扫一扫 + 5 秒缓冲」
+ * 的预估时刻，App 感知不到真实开车，进度线下常驻一句「以小程序为准」（2026-10-05 用户要求）
+ * ——账号方式的起点是服务端确认的开锁时刻，不需要这句。
  */
 @Composable
-private fun RideCountdown(startAt: Long, onExpired: () -> Unit) {
+private fun RideCountdown(
+    startAt: Long,
+    onExpired: () -> Unit,
+    showEstimateNote: Boolean = false,
+) {
     val now by produceState(
         initialValue = System.currentTimeMillis(),
         key1 = startAt,
@@ -2107,6 +2122,13 @@ private fun RideCountdown(startAt: Long, onExpired: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
         )
+        if (showEstimateNote) {
+            Text(
+                text = "倒计时为预估，实际以微信小程序显示为准",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+        }
     }
 }
 

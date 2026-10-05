@@ -559,10 +559,14 @@ internal fun rememberRideElapsed(ride: KqcxAuth.Ride?, fetchedAt: Long): String?
 
 /**
  * 起免费时长计时并把结果映射成提示文案与语气（点扫一扫 / 本机开锁成功共用）。
- * 起点一律取**当下**：扫一扫那一刻或真正开锁那一刻。
+ * 起点由调用方给：点「打开微信扫一扫」传 `now + [EbikeFreeRide.SCAN_DELAY_MS]`
+ * （2026-10-05 用户拍板：切微信、选图、扫码、开车要时间，倒计时从点击 5 秒后才开始走）；
+ * 本机开锁成功传当下（服务端确认的开锁时刻，不用缓冲）。
  */
-internal suspend fun startFreeRideNotice(): Pair<String, NoticeTone> {
-    val outcome = EbikeFreeRideReminder.startRide(Graph.appContext, System.currentTimeMillis())
+internal suspend fun startFreeRideNotice(
+    startAtMillis: Long = System.currentTimeMillis(),
+): Pair<String, NoticeTone> {
+    val outcome = EbikeFreeRideReminder.startRide(Graph.appContext, startAtMillis)
     return when (outcome) {
         EbikeFreeRideReminder.Outcome.Started ->
             "已开始计时，通知栏已显示倒计时" to NoticeTone.Success

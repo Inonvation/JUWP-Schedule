@@ -1255,7 +1255,8 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
-     * 本次骑行计时起点（epoch 毫秒）：点「打开微信扫一扫」即写。
+     * 本次骑行计时起点（epoch 毫秒）：点「打开微信扫一扫」写**点击 + [EbikeFreeRide.SCAN_DELAY_MS]**
+     * （缓冲期内倒计时满格不走，2026-10-05 用户拍板）；本机开锁成功写开锁时刻。
      * 0 = 无进行中计时。**持久化**——进程被杀重启后状态条与兜底核对都靠它。
      */
     suspend fun setEbikeRideStartAt(value: Long) {

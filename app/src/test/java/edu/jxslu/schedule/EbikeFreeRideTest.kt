@@ -130,6 +130,34 @@ class EbikeFreeRideTest {
     }
 
     @Test
+    fun `点扫一扫后的五秒缓冲内倒计时满格不走`() {
+        // 2026-10-05 用户拍板：小程序方式计时起点 = 点击 + 5 秒，缓冲期内倒计时
+        // 显示满格 15:00 不动（remainingSeconds 钳上限），5 秒后才开始递减。
+        val delayedStart = start + EbikeFreeRide.SCAN_DELAY_MS
+        assertEquals(5_000L, EbikeFreeRide.SCAN_DELAY_MS)
+        // 缓冲期内（now < 起点）：满格，不出现 15:05 这样的越界值
+        assertEquals(15 * 60, EbikeFreeRide.remainingSeconds(delayedStart, start))
+        assertEquals(
+            "免费剩余 15:00",
+            EbikeFreeRide.countdownText(delayedStart, start + 4_999L),
+        )
+        // 进度条同样满格（elapsed 钳 0）
+        assertEquals(1f, EbikeFreeRide.progressFraction(delayedStart, start))
+        // 计时在案（缓冲期也算进行中：扫完即焚不删、页面照常显示倒计时块）
+        assertTrue(EbikeFreeRide.isActive(delayedStart, start))
+        // 缓冲期一过照常递减：免费结束 = 起点 + 15 分钟，不多算那 5 秒
+        assertEquals(
+            7 * 60 + 30,
+            EbikeFreeRide.remainingSeconds(delayedStart, delayedStart + 7 * 60_000L + 30_000L),
+        )
+        // 免费结束时刻整体后移 5 秒：提醒点跟着后移，不被缓冲吃掉
+        assertEquals(
+            minutesAfterStart(15) + EbikeFreeRide.SCAN_DELAY_MS,
+            EbikeFreeRide.freeEndMillis(delayedStart),
+        )
+    }
+
+    @Test
     fun `进度条从1递减到0`() {
         assertEquals(1f, EbikeFreeRide.progressFraction(start, start))
         assertEquals(0.5f, EbikeFreeRide.progressFraction(start, start + 7 * 60_000L + 30_000L), 0.001f)

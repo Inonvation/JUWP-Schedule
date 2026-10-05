@@ -184,6 +184,11 @@ class EbikeViewModel(
      *
      * 补存是 2026-09-28 加的动线补全：单机用户到微信只能走「扫一扫 → 相册」选图，
      * 没存就跳过去等于让他白跑（旧版只在「生成后自动保存」开着时才存）。
+     *
+     * 起点 = 点击 + [EbikeFreeRide.SCAN_DELAY_MS]（2026-10-05 用户拍板）：切微信、
+     * 选图、扫码、开车要时间，倒计时从点击 5 秒后才开始走——所以这条路**只在小程序
+     * 方式出现**（`caps.wechatScan`），账号方式开锁成功走的 [startFreeRideNotice]
+     * 默认参数仍是当下。倒计时因此是预估的，展示处写明以小程序为准。
      */
     fun onWechatScanClicked() {
         viewModelScope.launch {
@@ -200,7 +205,9 @@ class EbikeViewModel(
                     null -> Unit
                 }
             }
-            val (timerText, timerTone) = startFreeRideNotice()
+            val (timerText, timerTone) = startFreeRideNotice(
+                System.currentTimeMillis() + EbikeFreeRide.SCAN_DELAY_MS,
+            )
             _events.send(
                 EbikeEvent.Notice(
                     text = if (saveText == null) timerText else "$saveText；$timerText",
