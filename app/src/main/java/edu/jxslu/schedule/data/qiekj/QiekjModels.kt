@@ -65,12 +65,6 @@ data class DeviceItem(
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val goodsId: String? = null,
     @kotlinx.serialization.Serializable(LenientStringNonNullSerializer::class) val goodsName: String = "",
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val id: String? = null,
-    /**
-     * 设备工作状态（2026-10-05 起解出来备用，UI 尚未读）。来源是社区实现
-     * （Night-stars-1/wash 在洗衣列表里用 `workStatus == 10` 判「使用中」），
-     * 饮水侧（`categoryCode=5`）有没有这个字段、取值怎么定义，还没样本，等 `qiekj_debug/` 的原文确认。
-     */
-    val workStatus: Int? = null,
 ) {
     /** 列表选择/解锁流程统一用 goodsId，旧字段 id 作回退（对齐参考实现）。 */
     val effectiveGoodsId: String? get() = goodsId ?: id
@@ -84,14 +78,6 @@ data class SkuData(
 @Serializable
 data class ImeiData(
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val imei: String? = null,
-    /**
-     * 2026-10-05 起多解三个字段：`shopId` 是探测门店设备清单的入参，
-     * `deviceErrorCode` / `deviceErrorMsg` 是「设备离线或故障」的候选信号（实测断电时两者仍为 null，
-     * 语义待更多样本）。业务逻辑目前只读 [imei]。
-     */
-    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val shopId: String? = null,
-    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val deviceErrorCode: String? = null,
-    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val deviceErrorMsg: String? = null,
 )
 
 // ── 开水流程 ──

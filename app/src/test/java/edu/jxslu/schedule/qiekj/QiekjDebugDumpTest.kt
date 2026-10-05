@@ -1,10 +1,8 @@
 package edu.jxslu.schedule.qiekj
 
 import edu.jxslu.schedule.data.qiekj.dumpQiekjResponse
-import edu.jxslu.schedule.data.qiekj.dumpQiekjProbe
 import edu.jxslu.schedule.data.qiekj.isQiekjDumpTarget
 import edu.jxslu.schedule.data.qiekj.pruneQiekjDumps
-import edu.jxslu.schedule.data.qiekj.QiekjProbeSnapshot
 import edu.jxslu.schedule.data.qiekj.redactQiekjDump
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,7 +28,6 @@ class QiekjDebugDumpTest {
         assertTrue(isQiekjDumpTarget("goods/normal/skus"))
         assertTrue(isQiekjDumpTarget("goods/water/sync"))
         assertTrue(isQiekjDumpTarget("goods/water/unlock"))
-        assertTrue(isQiekjDumpTarget("appointNew/near/newMachines"))
     }
 
     @Test
@@ -97,32 +94,4 @@ class QiekjDebugDumpTest {
         assertTrue(text.contains(""""httpStatus":502"""))
     }
 
-    @Test
-    fun 探测摘要落盘文件名与关键字段() {
-        val dir = temp.newFolder("probe")
-        dumpQiekjProbe(
-            dir = dir,
-            snapshot = QiekjProbeSnapshot(
-                at = "20261005-230000-000",
-                goodsId = "1100",
-                latestUsedWorkStatus = 10,
-                skuId = "sku",
-                syncStatus = 6,
-                syncWorkStatus = 1,
-                syncAmount = null,
-                syncIdentifyPresent = false,
-                shopId = "2024",
-                deviceErrorCode = null,
-                deviceErrorMsg = null,
-                nearMachinesCode = 0,
-                nearMachinesMsg = "成功",
-            ),
-        )
-        val file = dir.listFiles()!!.single()
-        assertEquals("probe-20261005-230000-000.json", file.name)
-        val text = file.readText()
-        assertTrue(text.contains(""""latestUsedWorkStatus":10"""))
-        assertTrue(text.contains(""""nearMachinesCode":0"""))
-        assertTrue(text.contains(""""syncIdentifyPresent":false"""))
-    }
 }

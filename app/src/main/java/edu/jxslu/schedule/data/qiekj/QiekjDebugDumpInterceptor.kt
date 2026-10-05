@@ -55,8 +55,6 @@ private val QIEKJ_DUMP_PATHS = setOf(
     "goods/normal/skus",
     "goods/water/sync",
     "goods/water/unlock",
-    // 探测端点（2026-10-05，只在 debug 探测时走到）：门店维度的设备清单，看有没有设备状态字段
-    "appointNew/near/newMachines",
 )
 
 /** 每个端点最多留多少份样本：轮询 sync 一秒一条，不设上限会堆出几千个文件。 */

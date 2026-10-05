@@ -295,13 +295,6 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                 val keep = s.selectedDevice?.let { cur -> devices.firstOrNull { it.effectiveGoodsId == cur.effectiveGoodsId } }
                 s.copy(devices = devices, loadingDevices = false, selectedDevice = keep ?: devices.firstOrNull())
             }
-            // debug 专用只读探测（2026-10-05）：进页与下拉刷新后各跑一轮，样本落 qiekj_debug/。
-            // 只读 skus / sync / details / 门店清单，不碰 unlock；release 时 debugProbeEnabled 恒 false。
-            if (repo.debugProbeEnabled) {
-                _uiState.value.selectedDevice?.let { device ->
-                    viewModelScope.launch { repo.probeDeviceState(device) }
-                }
-            }
         }.onFailure {
             _uiState.update { it.copy(loadingDevices = false) }
             if (it is TokenExpiredException) {

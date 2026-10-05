@@ -42,9 +42,6 @@ class QiekjRepository(
 ) {
     private val api: QiekjApi
 
-    /** debug 专用探测接口；release（`debugDumpDir == null`）为 null，永不发请求。 */
-    private val probeApi: QiekjProbeApi?
-
     init {
         // BASIC 级日志只打请求行不打 header，token/sign 不会进 Logcat（DESIGN 5 隐私要求）
         val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
@@ -54,17 +51,13 @@ class QiekjRepository(
             logging,
             *listOfNotNull(debugDumpDir?.let { QiekjDebugDumpInterceptor(it) }).toTypedArray(),
         ).newBuilder().build()
-        val retrofit = Retrofit.Builder()
+        api = Retrofit.Builder()
             .baseUrl(QiekjApiConfig.BASE_URL)
             .client(client)
             .addConverterFactory(QiekjJson.json.asConverterFactory("application/json".toMediaType()))
             .build()
-        api = retrofit.create(QiekjApi::class.java)
-        probeApi = if (debugDumpDir == null) null else retrofit.create(QiekjProbeApi::class.java)
+            .create(QiekjApi::class.java)
     }
-
-    /** 是否开着 debug 探测（页面据此决定要不要在刷新后补一轮只读探测）。 */
-    val debugProbeEnabled: Boolean get() = probeApi != null
 
     // ── 登录态 ──
 
@@ -137,53 +130,6 @@ class QiekjRepository(
     }
 
     fun orderHistory(): List<OrderHistoryItem> = orderHistoryStore.list()
-
-    /**
-     * debug 专用只读探测（2026-10-05）：把「设备状态可不可读」这一串查询跑一遍，样本落
-     * `qiekj_debug/`。**只读**：skus / sync / details / 门店设备清单，不碰 unlock、风控、
-     * 后付与订单，不产生任何订单与扣款。release 直接返回。
-     *
-     * 触发点见 `WaterViewModel.refreshDevices`：进页与下拉刷新各一次，用户换个设备状态
-     * （插电 / 拔电 / 别人在用）再刷一次，两份摘要就能对照出哪个字段跟着变。
-     */
-    suspend fun probeDeviceState(device: DeviceItem) = withContext(Dispatchers.IO) {
-        val probe = probeApi ?: return@withContext
-        val token = runCatching { requireToken() }.getOrNull() ?: return@withContext
-        val goodsId = device.effectiveGoodsId ?: return@withContext
-        val stamp = qiekjProbeStamp()
-
-        val skuId = runCatching {
-            api.goodsid2sku(goodsId = goodsId, token = token).requireData().firstOrNull()?.skuId
-        }.getOrNull()
-        val sync = skuId?.let {
-            runCatching { api.syncWater(skuId = it, token = token).data }.getOrNull()
-        }
-        val details = runCatching { api.getImei(goodsId = goodsId, token = token).data }.getOrNull()
-        val near = details?.shopId?.takeIf { it.isNotBlank() }?.let { shopId ->
-            runCatching {
-                probe.nearMachines(shopId = shopId, machineTypeId = PROBE_MACHINE_TYPE_ID, orgId = "", token = token)
-            }.getOrNull()
-        }
-
-        dumpQiekjProbe(
-            dir = checkNotNull(debugDumpDir),
-            snapshot = QiekjProbeSnapshot(
-                at = stamp,
-                goodsId = goodsId,
-                latestUsedWorkStatus = device.workStatus,
-                skuId = skuId,
-                syncStatus = sync?.status,
-                syncWorkStatus = sync?.workStatus,
-                syncAmount = sync?.amount,
-                syncIdentifyPresent = sync?.identify != null,
-                shopId = details?.shopId,
-                deviceErrorCode = details?.deviceErrorCode,
-                deviceErrorMsg = details?.deviceErrorMsg,
-                nearMachinesCode = near?.code,
-                nearMachinesMsg = near?.message ?: near?.msg,
-            ),
-        )
-    }
 
     // ── 开水全流程 ──
 
@@ -344,13 +290,6 @@ class QiekjRepository(
     private companion object {
         /** 轮询上限与参考实现一致：1s × 300 次；UI 层另有 165s 自动结算兜底。 */
         const val MAX_POLL_ATTEMPTS = 300
-
-        /**
-         * 探测门店设备清单用的机型参数。取自社区 Python 实现（`3ryng1um/qiekj` 对饮水用 "04"），
-         * 与 `goods/normal/details` 回来的 `categoryCode`（"04"）一致。不对就换值重试，
-         * 应答整包会落在 `qiekj_debug/` 里。
-         */
-        const val PROBE_MACHINE_TYPE_ID = "04"
 
         /**
          * promotions 两套常量取自 light-life unlockDevice，字段原样保留：

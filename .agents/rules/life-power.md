@@ -43,27 +43,19 @@
   `Graph.qiekj` 按 `BuildConfig.DEBUG` 传目录，release 一个字节都不写）。
   为什么不在仓库层落盘：`SyncData` / `DeviceItem` 只声明了少数字段，`QiekjJson` 又开了
   `ignoreUnknownKeys`，服务端多给的字段在解码那步就没了，要确认「设备在线」有没有字段可读
-  只能拿原文。配套改动：`DeviceItem.workStatus`、`SyncData.status` / `SyncData.amount`
-  已解出来但 **UI 还没读**。社区实现的线索（洗衣 `workStatus == 10` 判使用中、sync 的
-  `status` 1/5 与 `amount` >0 判实际出水）在饮水侧都没验证过，口径等样本。
+  只能拿原文。（`SyncData.status` / `amount` 是解出来在用的字段，见下条。）
   取样本：`adb exec-out run-as edu.jxslu.schedule.debug sh -c 'cd files/qiekj_debug && tar -cf - .' > qiekj_dump.tar`。
   这三条纯逻辑（白名单 / 脱敏 / 裁剪）由 `QiekjDebugDumpTest` 钉住。
-- **只读探测随刷新自动跑**（2026-10-05）：`QiekjRepository.probeDeviceState` 在 debug 包跟着
-  `WaterViewModel.refreshDevices` 的 onSuccess 走（进页与下拉刷新各一轮），按
-  `skus → sync → details → appointNew/near/newMachines` 各调一次，摘要落
-  `qiekj_debug/probe-<时间戳>.json`。**只读**：不碰 unlock / 风控 / 后付 / 订单，不产生扣款；
-  release（`debugDumpDir == null`）连 `QiekjProbeApi` 都不创建。`near/newMachines` 是社区 Python
-  实现里的门店设备清单，参数 `shopId`（取自 `details`）+ `machineTypeId="04"`，返回结构未知，
-  按 `JsonElement` 收；机型值不对就改 `PROBE_MACHINE_TYPE_ID` 再看应答。
-   **为什么留着它**：实测证明 `sync` 的 `status` / `workStatus` 是服务端会话状态，
-  设备断电时照样回 `status=1 / workStatus=2`，`latestUsed.workStatus`（10）与
-  `details.deviceErrorCode`（null）也都不变——判不了设备在不在线。门店清单接口是最后一根线索。
-  **实测结论（2026-10-05，同一天的第二轮）**：门店清单这条路也断了。`appointNew/near/newMachines`
-  在旧协议下回 `{"code":-1,"msg":null,"data":null}`（HTTP 200、业务码 -1），社区文档记新版
-  （1.139.0）要求 `deviceId` 头与双签，我们这套 1.60.3 客户端凑不齐，换参数不值得再试。
-  另外发现 `sync` 的会话状态会**黏住**：断电那笔会话过了 15 分钟仍回 `status=1 / workStatus=2`，
-  服务端没把它关掉。下次开水若提示设备忙/失败，先怀疑这笔挂着的会话。
-  结论：**设备在线状态，用现有接口判不出来**，别再重复这三组实验。
+- **设备在线检测：判不了，别再试这三组实验**（2026-10-05 实测）：
+  ① `sync` 的 `status` / `workStatus` 是**服务端会话状态**，设备拔电后照样回
+  `status=1 / workStatus=2`，而且会**黏住**（断电那笔会话 15 分钟后仍回 1/2，服务端不关它）
+  ——下次开水若提示设备忙或失败，先怀疑这笔挂单；
+  ② `latestUsed` 回的 `workStatus` 恒为 10（通电 / 断电 / 空闲都一样），`details` 的
+  `deviceErrorCode` / `deviceErrorMsg` 恒为 null，与设备死活无关；
+  ③ 门店设备清单 `appointNew/near/newMachines` 在旧协议下回 `{"code":-1,"msg":null,"data":null}`
+  （HTTP 200、业务码 -1），社区文档记新版 1.139.0 要求 `deviceId` 头与双签，这套 1.60.3 凑不齐。
+  能判的只有**结束态**：`status==5` 且 `amount>0` 才算真的出过水。为实验加过的只读探测
+  （`QiekjProbe` / `probeDeviceState`）已随收尾删除，别再照那个思路加回来。
 - **「结束用水」与超时话术**（2026-10-05 用户拍板）：出水满
   `WaterViewModel.END_SESSION_MIN_SECONDS`（5 秒）在开水页与今日页开水面板同时给出
   「结束用水」（共用 `ui/water/WaterFlowControls.kt`）。它只**结束本地等待**：

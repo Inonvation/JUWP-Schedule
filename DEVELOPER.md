@@ -197,12 +197,14 @@ goods/latestUsed(categoryCode=5) 取设备
 每次开水默认先扣小票，扣完才走现金后付，所以「实付 ¥0.00」只是现金口径为零。
 本次花费 = 小票支付 + 现金实付；把实付 0.00 当「免单」展示是方向性错误。
 
-**待补样本（2026-10-05）**：`goods/water/sync` 的 `data` 里，除了我们在用的
-`workStatus`（2 = 出水中）与 `identify`（订单号），社区文档还记录了 `status`（出水中 1、
-结束 5）与 `amount`（> 0 表示确实出过水，== 0 表示解锁了却没出水，null 表示还在工作）。
-语义与单位未经验证，`data/qiekj/QiekjModels.kt` 只把这两个字段宽松解出来、UI 没读。
+**sync 的会话字段（2026-10-05 实测回填）**：`goods/water/sync` 的 `data` 是
+`{status, workStatus, amount, identify}`，实测三态——未开始 `status=6 / workStatus=1 /
+amount=null`、出水中 `status=1 / workStatus=2 / amount=null`、设备回报结束 `status=5 /
+workStatus=1 / amount=275`。**`status==5` 是判「设备回报过结束」的唯一依据**
+（`isSessionFinished`）；`workStatus` 只说明服务端会话开着，设备断电时它也是 2。
+`amount` 是设备侧使用量，> 0 表示确实出过水，单位未知（实测那单 275），流程里还没用。
 debug 包把只读与开水链路的响应原文落到 `filesDir/qiekj_debug/`（机制与取文件命令见
-`.agents/rules/life-power.md`「胖乖」节），拿真机样本后再定口径。
+`.agents/rules/life-power.md`「胖乖」节）。
 
 **设备在线检测：实测判不了（2026-10-05）**。同一台饮水机在「通电正常」与「拔掉电源」两种状态下，
 `sync` 都回 `status=1 / workStatus=2`（会话已开、等设备回报），`latestUsed.workStatus` 都是 10，
