@@ -69,6 +69,9 @@ object ClassReminder {
      */
     suspend fun scheduleNext(context: Context) {
         runCatching {
+            // 渠道迁移（删旧建 v2）顺手挂在这里：冷启动 / 设置变更 / 核对后都会走到，
+            // 升级后不用等下一次提醒真的触发，系统设置里就能看到带振动的 v2 渠道
+            ReminderNotifications.ensureChannels(context)
             val repo = Graph.repository(context)
             val manager = context.getSystemService(AlarmManager::class.java)
                 ?: return
@@ -158,7 +161,11 @@ object ClassReminder {
  */
 internal object ReminderNotifications {
 
-    private const val CHANNEL_ID = "class_reminder"
+    // 渠道 id 用 _v2：旧 id 的渠道在用户设备上已按「无振动」建成，而渠道建出来后
+    // vibration 就改不动（与免费时长提醒 _v2 同坑，见 EbikeFreeRide.NotificationIds 的 KDoc）。
+    // 旧 id 只剩清理职责，见 ensureChannels。
+    private const val CHANNEL_ID = "class_reminder_v2"
+    private const val LEGACY_CHANNEL_ID = "class_reminder"
     private const val NOTIFICATION_TAG = "class_reminder"
     /** 固定 id：新提醒覆盖上一条，不堆叠。 */
     private const val NOTIFICATION_ID = 1001
@@ -168,7 +175,10 @@ internal object ReminderNotifications {
     private const val CLASS_START_NOTIFICATION_ID = 1004
 
     /** 作业截止提醒通道（DESIGN §3.11）。与上课提醒同档 importance，用户可在系统设置降级。 */
-    private const val HOMEWORK_CHANNEL_ID = "homework_deadline"
+    private const val HOMEWORK_CHANNEL_ID = "homework_deadline_v2"
+
+    /** 作业渠道的旧 id（无振动版，见 [CHANNEL_ID] 的注释），只剩清理职责。 */
+    private const val LEGACY_HOMEWORK_CHANNEL_ID = "homework_deadline"
 
     /** 单条作业提醒（只提醒到一条作业时）：点击直达该作业（DESIGN §3.11）。 */
     private const val HOMEWORK_NOTIFICATION_TAG = "homework_reminder"
@@ -196,25 +206,46 @@ internal object ReminderNotifications {
     private const val SUMMARY_TITLE_LIMIT = 3
 
     fun ensureChannel(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "上课提醒",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply { description = "上课前按设定的提前量发出通知" }
-        manager.createNotificationChannel(channel)
+        ensureChannels(context, homework = false)
     }
 
-    private fun ensureHomeworkChannel(context: Context) {
+    /** 两个渠道一起确保。冷启动重排（[ClassReminder.scheduleNext]）也调它：升级后旧渠道
+     *  （无振动版）能尽快被 v2 取代，不用等下一次提醒真的触发。 */
+    fun ensureChannels(context: Context) {
+        ensureChannels(context, homework = true)
+    }
+
+    private fun ensureChannels(context: Context, homework: Boolean) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(HOMEWORK_CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            HOMEWORK_CHANNEL_ID,
-            "作业截止提醒",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply { description = "截止前一天 20:00 与截止当天 20:00 提醒未完成的作业" }
-        manager.createNotificationChannel(channel)
+        // 旧渠道（2026-09-19 建的无振动版）清掉免得设置页留死通道；
+        // delete 与 create 用的是不同 id，不会踩「delete 异步、紧接 create 被当成更新」的坑
+        manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+        if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "上课提醒",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "上课前按设定的提前量发出通知"
+                enableVibration(true)
+                vibrationPattern = ReminderVibration.PATTERN
+            }
+            manager.createNotificationChannel(channel)
+        }
+        if (!homework) return
+        manager.deleteNotificationChannel(LEGACY_HOMEWORK_CHANNEL_ID)
+        if (manager.getNotificationChannel(HOMEWORK_CHANNEL_ID) == null) {
+            val channel = NotificationChannel(
+                HOMEWORK_CHANNEL_ID,
+                "作业截止提醒",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "截止前一天 20:00 与截止当天 20:00 提醒未完成的作业"
+                enableVibration(true)
+                vibrationPattern = ReminderVibration.PATTERN
+            }
+            manager.createNotificationChannel(channel)
+        }
     }
 
     /** 核对入口：上课先、作业后，两者互不阻塞（各自开关关掉时是空跑）。 */
@@ -288,9 +319,13 @@ internal object ReminderNotifications {
             )
             .build()
         // 无 POST_NOTIFICATIONS 权限时系统静默丢弃；SecurityException 等异常也不外漏
-        return runCatching {
+        val posted = runCatching {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_TAG, id, notification)
         }.isSuccess
+        // 发出即直接震动：HyperOS 的通知策略默认把渠道振动关掉（见 ReminderVibration），
+        // 靠渠道震在用户设备上大概率无声无息，直接震动不看那个开关
+        if (posted) ReminderVibration.vibrate(context)
+        return posted
     }
 
     /**
@@ -309,12 +344,14 @@ internal object ReminderNotifications {
         val fresh = group.filter { it.dedupKey !in alreadySent }
         if (fresh.isEmpty()) return
 
-        ensureHomeworkChannel(context)
+        ensureChannels(context, homework = true)
         val posted = if (fresh.size == 1) {
             postSingleHomework(context, fresh.single())
         } else {
             postHomeworkSummary(context, fresh)
         }
+        // 发出即直接震动（口径同上课提醒，见 postClassNotification）
+        if (posted) ReminderVibration.vibrate(context)
         // 发出后才落键（发失败不落，下一轮还有机会）；整组一起记，免得下轮把同组再发一遍
         if (posted) fresh.forEach { repo.addHomeworkRemindedKey(it.dedupKey) }
     }
