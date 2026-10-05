@@ -577,8 +577,8 @@ private fun tabExit(): ExitTransition = fadeOut(tween(TabFadeMillis))
  * 学业三项在后台静默同步，引导走完回到主界面时在这里一次性汇报。
  *
  * 每行 = 一个数据项：成功给「查看」入口（成绩 → 成绩页，学业 → 学业页，课表本身就是
- * 主界面不另给入口）；失败不渲染成错误堆栈，直接给下一步出路（手动导一遍 / 下次进页补抓）。
- * 确认或查看都会把 outcome 置 consumed——弹窗只在首启结束后出现这一次。
+ * 主界面不另给入口）；失败显示教务返回的原因 + 下一步出路。**「查看」只跳页不关闭**——
+ * 弹窗保持挂起，用户看完回来可以接着看另一项；只有「知道了」（或点弹窗外部）才消费。
  */
 @Composable
 private fun OnboardingSyncResultDialog(
@@ -597,6 +597,7 @@ private fun OnboardingSyncResultDialog(
                     shown = outcome.scheduleTried,
                     okText = "课表已导入" + (if (outcome.scheduleCount > 0) "（${outcome.scheduleCount} 门）" else ""),
                     failText = "课表未能自动导入",
+                    failReason = outcome.scheduleFailReason,
                     failHint = "在课表页点「导入课表」手动导一遍即可",
                 )
                 OnboardingSyncLine(
@@ -604,16 +605,27 @@ private fun OnboardingSyncResultDialog(
                     shown = outcome.scoreTried,
                     okText = "成绩已导入" + (if (outcome.scoreCount > 0) "（${outcome.scoreCount} 条）" else ""),
                     failText = "成绩未能自动导入",
+                    failReason = outcome.scoreFailReason,
                     failHint = "到「我的 → 学习 → 成绩查询」手动导入即可",
                     onView = { onOpenSubpage(SubpageScreen.SCORES) },
                 )
                 OnboardingSyncLine(
                     ok = outcome.scholarOk,
                     shown = outcome.scholarTried,
-                    okText = "学业完成情况已更新",
+                    okText = "学业完成情况已更新" +
+                        (if (outcome.scholarCount > 0) "（${outcome.scholarCount} 条课程）" else ""),
                     failText = "学业完成情况暂未同步",
+                    failReason = outcome.scholarFailReason,
                     failHint = "下次进「学业完成情况」页会自动补抓",
                     onView = { onOpenSubpage(SubpageScreen.SCHOLAR) },
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "完成于 " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(outcome.finishedAt)) +
+                        " · 成功的项目后续也会随提醒自动更新",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
             }
         },
@@ -623,13 +635,14 @@ private fun OnboardingSyncResultDialog(
     )
 }
 
-/** 结果弹窗的一行：状态点 + 主文案（+ 失败出路），成功时行尾可带「查看」。 */
+/** 结果弹窗的一行：状态点 + 主文案（+ 失败原因与出路），成功时行尾可带「查看」。 */
 @Composable
 private fun OnboardingSyncLine(
     ok: Boolean,
     shown: Boolean,
     okText: String,
     failText: String,
+    failReason: String?,
     failHint: String,
     onView: (() -> Unit)? = null,
 ) {
@@ -657,7 +670,10 @@ private fun OnboardingSyncLine(
             )
             if (!ok) {
                 Text(
-                    text = failHint,
+                    text = listOfNotNull(
+                        failReason?.takeIf { it.isNotBlank() },
+                        failHint,
+                    ).joinToString("。"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
@@ -742,21 +758,18 @@ internal fun JuwApp(
     // 局部量接一次再判空：委托属性不吃智能转换
     val outcome = syncOutcome
     val showSyncOutcome = outcome != null && !outcome.consumed && onboardingSeen
-    // 查看动作 = 消费 + 跳子页；本地 flag 防连点期间 flow 未落地时重复 startActivity
-    var outcomeHandled by remember { mutableStateOf(false) }
-    if (showSyncOutcome && outcome != null && !outcomeHandled) {
+    // 「查看」只跳页不消费（用户看完回来还要看别的）；连点用时间戳挡，防重复 startActivity
+    var lastViewClickAt by remember { mutableStateOf(0L) }
+    if (showSyncOutcome && outcome != null) {
         OnboardingSyncResultDialog(
             outcome = outcome,
             onConsume = {
-                if (!outcomeHandled) {
-                    outcomeHandled = true
-                    outcomeScope.launch { outcomePrefs.setOnboardingSyncOutcome(outcome.copy(consumed = true)) }
-                }
+                outcomeScope.launch { outcomePrefs.setOnboardingSyncOutcome(outcome.copy(consumed = true)) }
             },
             onOpenSubpage = { screen ->
-                if (!outcomeHandled) {
-                    outcomeHandled = true
-                    outcomeScope.launch { outcomePrefs.setOnboardingSyncOutcome(outcome.copy(consumed = true)) }
+                val now = System.currentTimeMillis()
+                if (now - lastViewClickAt > 800) {
+                    lastViewClickAt = now
                     openSubpage(context, SubpageRequest(screen = screen))
                 }
             },

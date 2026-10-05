@@ -109,7 +109,7 @@ fun SelectionScreen(onBack: () -> Unit) {
     var showIntervalPicker by remember { mutableStateOf(false) }
 
     val alertEnabled by prefs.selectionAlertEnabled.collectAsStateWithLifecycle(initialValue = false)
-    val intervalHours by prefs.alertIntervalHours
+    val intervalHours by prefs.selectionAlertIntervalHours
         .collectAsStateWithLifecycle(initialValue = ScoreAlertDefaults.INTERVAL_DEFAULT)
     val wishes by prefs.selectionWishes.collectAsStateWithLifecycle(initialValue = emptyList())
     val grab by SelectionGrabStore.state.collectAsStateWithLifecycle()
@@ -270,7 +270,7 @@ fun SelectionScreen(onBack: () -> Unit) {
             onConfirm = { index ->
                 showIntervalPicker = false
                 scope.launch {
-                    prefs.setAlertIntervalHours(ScoreAlertDefaults.INTERVAL_CHOICES[index])
+                    prefs.setSelectionAlertIntervalHours(ScoreAlertDefaults.INTERVAL_CHOICES[index])
                     ScoreAlertReminder.onSettingsChanged(context)
                 }
             },

@@ -45,11 +45,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.repo.ScheduleSync
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.ScheduleAlertDefaults
 import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.domain.SchedulePendingChanges
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.theme.semanticColors
@@ -96,6 +98,10 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
     // 缓存归属校验：差异是按课表存的，活跃课表被切走后这里的合并会落到错误的表
     val currentTimetableId by repo.currentTimetableId.collectAsStateWithLifecycle(initialValue = 0L)
     val belongsToCurrent = pending == null || pending?.timetableId == currentTimetableId
+    // 调课检查间隔独立设置（默认 24h：每次核对抓两张整页，低频起步）
+    val scheduleIntervalHours by prefs.scheduleAlertIntervalHours
+        .collectAsStateWithLifecycle(initialValue = ScheduleAlertDefaults.INTERVAL_DEFAULT)
+    var showIntervalPicker by remember { mutableStateOf(false) }
 
     val changes = remember(pending) { pending?.toChanges().orEmpty() }
     val conflicts = remember(changes, currentCourses) {
@@ -176,18 +182,42 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
         },
         snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
-        when {
-            // 缓存只在有差异时写入；读到空 changes（防御）视同没有待处置
-            pending == null || changes.isEmpty() -> Column(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            // 开关与间隔两行**空态也常显**：第一次进页要配置的就是这两行，
+            // 收在有差异的分支里等于永远配不上
+            AlertSwitchRow(alertOn, prefs, scope, context)
+            AppCard(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 22.dp),
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 8.dp),
+                onClick = { showIntervalPicker = true },
             ) {
-                AlertSwitchRow(alertOn, prefs, scope, context)
-                Box(
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("自动检查间隔", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "独立于成绩/考试提醒，互不影响",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                    }
+                    Text(
+                        ScheduleAlertDefaults.intervalLabel(scheduleIntervalHours),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            when {
+                // 缓存只在有差异时写入；读到空 changes（防御）视同没有待处置
+                pending == null || changes.isEmpty() -> Box(
                     modifier = Modifier
-                        .fillMaxSize(),
+                        .weight(1f)
+                        .fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -206,15 +236,9 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                         TextButton(onClick = ::refreshNow, enabled = !busy) { Text("立即检查一次") }
                     }
                 }
-            }
 
-            else -> Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
-                AlertSwitchRow(alertOn, prefs, scope, context)
-                Text(
+                else -> {
+                    Text(
                     buildString {
                         append("教务课表与你的课表存在 ${changes.size} 处差异")
                         conflicts.count { it }.takeIf { it > 0 }?.let {
@@ -285,6 +309,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                         Text("忽略全部")
                     }
                 }
+                }
             }
         }
         if (busy) Box(
@@ -295,11 +320,29 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
         ) { CircularProgressIndicator() }
     }
 
+    if (showIntervalPicker) {
+        WheelValueDialog(
+            title = "自动检查间隔",
+            values = ScheduleAlertDefaults.INTERVAL_CHOICES.map { ScheduleAlertDefaults.intervalLabel(it) },
+            initialIndex = ScheduleAlertDefaults.intervalChoiceIndex(scheduleIntervalHours),
+            onConfirm = { index ->
+                showIntervalPicker = false
+                scope.launch {
+                    prefs.setScheduleAlertIntervalHours(ScheduleAlertDefaults.INTERVAL_CHOICES[index])
+                    // 清检查时刻 + 周期任务重排（取四链最小档）+ 即时核对，收口在一个入口
+                    ScoreAlertReminder.onSettingsChanged(context)
+                }
+            },
+            onDismiss = { showIntervalPicker = false },
+        )
+    }
+
     if (confirmingIgnore) {
         DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmingIgnore = false },
-            title = { Text("忽略这些差异？") },            text = {
+            title = { Text("忽略这些差异？") },
+            text = {
                 Text(
                     "忽略后本轮不再提醒；基线保持不变，教务课表与你课表的差异仍然存在，" +
                         "教务再出新变化时会连同这些一起重新提醒。",
@@ -326,7 +369,7 @@ private fun AlertSwitchRow(
     AppCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(horizontal = 22.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {

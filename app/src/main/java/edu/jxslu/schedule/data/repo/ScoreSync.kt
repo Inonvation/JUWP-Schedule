@@ -74,7 +74,7 @@ class ScoreSync(
 
     private suspend fun syncLocked(force: Boolean): Result {
         val alertOn = prefs.scoreAlertEnabled.first()
-        val intervalHours = prefs.alertIntervalHours.first()
+        val intervalHours = prefs.scoreAlertIntervalHours.first()
         val now = nowMillis()
         if (!force) {
             if (alertOn) {

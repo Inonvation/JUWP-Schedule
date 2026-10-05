@@ -114,7 +114,7 @@ fun ExamScreen(onBack: () -> Unit) {
     var changes by remember { mutableStateOf<Map<String, ExamChangeDetector.Kind>>(emptyMap()) }
 
     val examAlertEnabled by prefs.examAlertEnabled.collectAsState(initial = false)
-    val intervalHours by prefs.alertIntervalHours
+    val intervalHours by prefs.examAlertIntervalHours
         .collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
     var intervalPickerOpen by remember { mutableStateOf(false) }
 
@@ -298,7 +298,7 @@ fun ExamScreen(onBack: () -> Unit) {
             onConfirm = { index ->
                 intervalPickerOpen = false
                 scope.launch {
-                    prefs.setAlertIntervalHours(ScoreAlertDefaults.INTERVAL_CHOICES[index])
+                    prefs.setExamAlertIntervalHours(ScoreAlertDefaults.INTERVAL_CHOICES[index])
                     ScoreAlertReminder.onSettingsChanged(context)
                 }
             },
@@ -309,7 +309,7 @@ fun ExamScreen(onBack: () -> Unit) {
 
 /**
  * 提醒设置卡（页首）。开关与间隔都在这里——课表 hub 只留一个入口行，不再内联开关。
- * 间隔与出分提醒共用一份 DataStore 值，副标题写明，免得用户以为能分开设。
+ * 间隔 2026-10-04 起独立设置（与成绩提醒各一份 DataStore 值），互不牵动。
  */
 @Composable
 private fun AlertSection(
@@ -330,7 +330,7 @@ private fun AlertSection(
         )
         SettingItem(
             title = "自动检查间隔",
-            subtitle = "与「成绩设置」里的出分提醒共用",
+            subtitle = "与成绩提醒分开设置，互不影响",
             value = ScoreAlertDefaults.intervalLabel(intervalHours),
             enabled = enabled,
             onClick = onPickInterval,

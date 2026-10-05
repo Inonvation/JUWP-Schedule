@@ -38,10 +38,15 @@ object ScheduleAlertReminder {
 
     private const val CHANNEL_ID = "schedule_alert"
 
-    /** 通知 id/tag/requestCode 与成绩(1008/3008)、考试(1009/3009)错开，互不覆盖。 */
-    private const val NOTIFICATION_ID = 1010
+    /**
+     * 通知 id/tag/requestCode 与成绩(1008/3008)、考试(1009/3009)、选课(1010/3010)错开。
+     * requestCode **不能撞**：两条落点 intent 都无 action、同一个 SubpageActivity，
+     * filterEquals 只看 action/data/component 不看 extra——requestCode 撞了会互相
+     * 改写落点（1005/1006、3005/3006 两轮历史坑）。
+     */
+    private const val NOTIFICATION_ID = 1011
     private const val NOTIFICATION_TAG = "schedule_alert"
-    private const val REQUEST_CODE = 3010
+    private const val REQUEST_CODE = 3011
 
     /** 通知正文最多列出的差异条数，多出的折叠。 */
     private const val MAX_LINES = 4

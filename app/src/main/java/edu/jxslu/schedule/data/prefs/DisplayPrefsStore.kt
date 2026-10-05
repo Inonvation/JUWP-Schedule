@@ -26,6 +26,7 @@ import edu.jxslu.schedule.domain.SelectionGrabPolicy
 import edu.jxslu.schedule.domain.SelectionWish
 import edu.jxslu.schedule.domain.SelectionWishes
 import edu.jxslu.schedule.domain.ReminderDefaults
+import edu.jxslu.schedule.domain.ScheduleAlertDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.SchedulePendingChanges
 import edu.jxslu.schedule.domain.ShortcutItem
@@ -270,7 +271,8 @@ data class NoticeConsentRecord(
  * 首启引导的后台同步结果（DESIGN §4.29 / §4.17）：课表、成绩、学业三项各自
  * 「试没试过 + 成没成功」。[tried] 与 [ok] 分开是因为课表只有「目标为空」才会试——
  * 试都没试就不该在弹窗里报失败。全部 settle 后由引导页 `startBgSync` 一次性写入；
- * 主界面弹结果弹窗后置 [consumed]（消费即清，不重复打扰）。
+ * 主界面弹结果弹窗后置 [consumed]（点「知道了」才消费——「查看」只跳页不清状态，
+ * 用户可以回来接着看另一项）。
  */
 @kotlinx.serialization.Serializable
 data class OnboardingSyncOutcome(
@@ -285,7 +287,13 @@ data class OnboardingSyncOutcome(
     val scoreCount: Int = 0,
     val scholarTried: Boolean = false,
     val scholarOk: Boolean = false,
-    /** 引导完成页点完、主界面弹过结果弹窗后置 true。 */
+    /** 学业完成情况的课程明细条数（scholarOk 时有意义）。 */
+    val scholarCount: Int = 0,
+    /** 失败原因（对应项 ok = false 时弹窗里展示，帮用户判断是网络还是会话问题）。 */
+    val scheduleFailReason: String? = null,
+    val scoreFailReason: String? = null,
+    val scholarFailReason: String? = null,
+    /** 「知道了」按下后置 true（消费即清，不重复打扰）；「查看」跳页不改它。 */
     val consumed: Boolean = false,
 ) {
     companion object {
@@ -490,12 +498,44 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EXAM_ALERT_ENABLED] = value }
     }
 
-    /** 自动检查间隔（小时）。设置页只允许档位表里的值，这里不再兜底（档位表单一来源在 [ScoreAlertDefaults]）。 */
-    val alertIntervalHours: Flow<Int> =
-        context.displayDataStore.data.map { it[KEY_ALERT_INTERVAL_HOURS] ?: ScoreAlertDefaults.INTERVAL_DEFAULT }
+    /**
+     * 成绩变动提醒的检查间隔（小时）。**2026-10-04 起四条提醒链各自独立**（用户口径：
+     * 成绩/考试/选课/调课分开设置），旧共用键 `KEY_ALERT_INTERVAL_HOURS` 只作老用户
+     * 读取回退——新键没写过时沿用旧值，写过后永远优先，无需一次性迁移。
+     */
+    val scoreAlertIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_SCORE_INTERVAL_HOURS] ?: p[KEY_ALERT_INTERVAL_HOURS] ?: ScoreAlertDefaults.INTERVAL_DEFAULT
+    }
 
-    suspend fun setAlertIntervalHours(value: Int) {
-        context.displayDataStore.edit { it[KEY_ALERT_INTERVAL_HOURS] = value }
+    suspend fun setScoreAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_SCORE_INTERVAL_HOURS] = value }
+    }
+
+    /** 考试变动提醒的检查间隔（小时），独立于成绩（口径见 [scoreAlertIntervalHours]）。 */
+    val examAlertIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_EXAM_INTERVAL_HOURS] ?: p[KEY_ALERT_INTERVAL_HOURS] ?: ScoreAlertDefaults.INTERVAL_DEFAULT
+    }
+
+    suspend fun setExamAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_EXAM_INTERVAL_HOURS] = value }
+    }
+
+    /** 选课轮次提醒的核对间隔（小时），独立设置；精确闹钟仍由轮次时刻驱动。 */
+    val selectionAlertIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_SELECTION_INTERVAL_HOURS] ?: p[KEY_ALERT_INTERVAL_HOURS] ?: ScoreAlertDefaults.INTERVAL_DEFAULT
+    }
+
+    suspend fun setSelectionAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_SELECTION_INTERVAL_HOURS] = value }
+    }
+
+    /** 调课检测的检查间隔（小时），独立设置；默认低频档（每次核对抓两张课表页）。 */
+    val scheduleAlertIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_SCHEDULE_INTERVAL_HOURS] ?: p[KEY_ALERT_INTERVAL_HOURS] ?: ScheduleAlertDefaults.INTERVAL_DEFAULT
+    }
+
+    suspend fun setScheduleAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_SCHEDULE_INTERVAL_HOURS] = value }
     }
 
     /** 成绩上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写。 */
@@ -1679,6 +1719,12 @@ class DisplayPrefsStore(private val context: Context) {
         // 成绩/考试变动提醒（DESIGN §4.33）：两开关 + 间隔 + 各自上次成功检查时刻
         val KEY_SCORE_ALERT_ENABLED = booleanPreferencesKey("score_alert_enabled")
         val KEY_EXAM_ALERT_ENABLED = booleanPreferencesKey("exam_alert_enabled")
+        // 成绩/考试变动提醒（DESIGN §4.33）：2026-10-04 起四链间隔各自独立，
+        // KEY_ALERT_INTERVAL_HOURS 保留只为老用户读取回退，不再写入
+        val KEY_SCORE_INTERVAL_HOURS = intPreferencesKey("score_alert_interval_hours")
+        val KEY_EXAM_INTERVAL_HOURS = intPreferencesKey("exam_alert_interval_hours")
+        val KEY_SELECTION_INTERVAL_HOURS = intPreferencesKey("selection_alert_interval_hours")
+        val KEY_SCHEDULE_INTERVAL_HOURS = intPreferencesKey("schedule_alert_interval_hours")
         val KEY_ALERT_INTERVAL_HOURS = intPreferencesKey("alert_interval_hours")
         val KEY_SCORE_CHECK_MILLIS = longPreferencesKey("score_check_millis")
         val KEY_EXAM_CHECK_MILLIS = longPreferencesKey("exam_check_millis")

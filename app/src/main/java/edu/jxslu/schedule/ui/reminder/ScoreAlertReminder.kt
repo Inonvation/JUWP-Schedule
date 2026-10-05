@@ -24,6 +24,7 @@ import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.data.repo.ExamSync
 import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.domain.ExamChangeDetector
+import edu.jxslu.schedule.domain.ScheduleAlertDefaults
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.subpageLaunchIntent
 import java.util.concurrent.TimeUnit
@@ -91,9 +92,21 @@ object ScoreAlertReminder {
      * 改间隔那一刻发生）。已排周期记在 DataStore（`alert_periodic_interval`），
      * 进程重启后也能比对；0 = 当前没有在排的周期任务。
      *
-     * 选课提醒（DESIGN §4.35）搭同一趟车：间隔共用 `alert_interval_hours`（三向共用，
-     * 不为它单开键——口径见 `.agents/rules/import-jw.md` 的提醒纪律），核对时它自己
-     * 顺带刷新轮次快照。
+     * 选课提醒（DESIGN §4.35）搭同一趟车，核对时它自己顺带刷新轮次快照。
+     */
+    /**
+     * 周期核对：四个开关都关时**撤销**任务而不是留着空跑（同 [BalanceAlertReminder]）。
+     * 幂等策略：**间隔没变时 KEEP**，免得每次冷启动都把周期相位推后；间隔变了用
+     * REPLACE 换周期（2.7.1 没有 UPDATE 策略；REPLACE 取消旧任务重新排，只在用户
+     * 改间隔那一刻发生）。已排周期记在 DataStore（`alert_periodic_interval`），
+     * 进程重启后也能比对；0 = 当前没有在排的周期任务。
+     *
+     * 间隔（2026-10-04 起四链各自独立设置）取**四条链的最小档**：周期任务只负责
+     * 「按最勤的那条叫醒」，各路 sync 里的 `shouldAttemptAt` 用各自的间隔与检查时刻
+     * 决定真抓还是跳过——把成绩设成 1 小时、调课设成 24 小时，任务每小时醒来一次，
+     * 调课那路自己会挡住 23 次。
+     *
+     * 选课提醒（DESIGN §4.35）搭同一趟车：核对时它自己顺带刷新轮次快照。
      */
     suspend fun ensurePeriodicWork(context: Context) {
         runCatching {
@@ -108,7 +121,12 @@ object ScoreAlertReminder {
                 prefs.setAlertPeriodicInterval(0)
                 return
             }
-            val intervalHours = ScoreAlertDefaults.coerceIntervalHours(prefs.alertIntervalHours.first())
+            val intervalHours = listOf(
+                ScoreAlertDefaults.coerceIntervalHours(prefs.scoreAlertIntervalHours.first()),
+                ScoreAlertDefaults.coerceIntervalHours(prefs.examAlertIntervalHours.first()),
+                ScoreAlertDefaults.coerceIntervalHours(prefs.selectionAlertIntervalHours.first()),
+                ScheduleAlertDefaults.coerceIntervalHours(prefs.scheduleAlertIntervalHours.first()),
+            ).min()
             val request = PeriodicWorkRequestBuilder<ScoreAlertCheckWorker>(intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(connectedConstraint())
                 .build()

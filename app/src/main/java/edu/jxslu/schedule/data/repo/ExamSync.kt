@@ -69,7 +69,7 @@ class ExamSync(
 
     private suspend fun syncLocked(force: Boolean): Result {
         val alertOn = prefs.examAlertEnabled.first()
-        val intervalHours = prefs.alertIntervalHours.first()
+        val intervalHours = prefs.examAlertIntervalHours.first()
         val now = nowMillis()
         if (!force) {
             if (!alertOn) return Result.Skipped

@@ -134,9 +134,10 @@
   （`SubpageScreen.SCORE_SETTINGS`，成绩页齿轮进入；分组/排序/任选课口径也在这页），
   考试提醒在考试页 `ExamScreen`（`SubpageScreen.EXAMS`，入口「我的 → 学习 → 成绩与考试 →
   考试安排」；同日先内联在课表 hub 的 `ExamAlertRows`，再收成课表 hub 入口行，傍晚挪进
-  学习 hub——**别搬回课表 hub**，用户口径是「考试跟成绩一起看」）。两边
-  **共用 `alert_interval_hours`**——改任意一边另一边跟着变，别给它加「按提醒分开」的键；
-  `ScoreAlertReminder.ensurePeriodicWork` 只排一个周期任务，两链共用。
+  学习 hub——**别搬回课表 hub**，用户口径是「考试跟成绩一起看」）。检查间隔
+  **2026-10-04 起两处各自独立**（`score_alert_interval_hours` / `exam_alert_interval_hours`；
+  用户口径推翻了此前「共用一键」，旧 `alert_interval_hours` 只作老用户读取回退）；
+  `ScoreAlertReminder.ensurePeriodicWork` 仍只排一个周期任务，按四链最小档叫醒。
 - **考试页的列表与提醒同源**（2026-09-30）：列表读 `ExamSnapshotStore`（`ExamSync` 每次
   成功检查落的基线），所以**没把考试导进课表也能看**；页尾的导入卡只是「进课表」的口子，
   考试进课表仍然只有手动导入一条路。列表里「新增/调整」标用 `ExamChangeDetector.keyOf`
@@ -211,8 +212,9 @@
   （`SelectionRounds.parseTimeRange` 支持 日期+时刻对 / 仅日期对 / 单个时刻）。
   提醒点 = 开始前 30 分钟 + 截止前 6 小时；已发键 `轮次id|start` / `轮次id|end` 落 DataStore，
   闹钟与周期核对共用去重；发不出去不落键（同作业提醒）。
-- **周期核对搭 `ScoreAlertReminder` 的周期任务**（间隔共用 `alert_interval_hours`，
-  **不为它单开键**）：`ensurePeriodicWork` 的开关条件与 `check` 里多了选课一路，
+- **周期核对搭 `ScoreAlertReminder` 的周期任务**（核对间隔独立设置
+  `selection_alert_interval_hours`，2026-10-04 起；轮次提醒本身由轮次时刻的精确闹钟驱动）：
+  `ensurePeriodicWork` 的开关条件与 `check` 里多了选课一路，
   改那两处时三个开关（成绩/考试/选课）一起想。闹钟落点 `SelectionAlertReceiver`
   （requestCode 4004，与 4002/4003 错开），开机补排在 `ReminderBootReceiver` 里顺带叫它。
 - **`JwImportMode.Selection` 没有导入动作**：底部只给「选课中心」一个入口，

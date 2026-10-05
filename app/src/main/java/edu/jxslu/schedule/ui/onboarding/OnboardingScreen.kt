@@ -292,6 +292,8 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
             val okSchedule = scheduleResult is ScheduleSync.AutoImportResult.Imported
             bgSyncPhase = if (okScore || okScholar || okSchedule) BgSyncPhase.DoneOk else BgSyncPhase.DoneFailed
             if (!isRepeatEntry) {
+                val scoreResult = score.getOrNull()
+                val scholarResult = scholar.getOrNull()
                 runCatching {
                     Graph.displayPrefs(appContext).setOnboardingSyncOutcome(
                         OnboardingSyncOutcome(
@@ -299,11 +301,15 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                             scheduleTried = scheduleResult !is ScheduleSync.AutoImportResult.Skipped,
                             scheduleOk = okSchedule,
                             scheduleCount = (scheduleResult as? ScheduleSync.AutoImportResult.Imported)?.count ?: 0,
+                            scheduleFailReason = (scheduleResult as? ScheduleSync.AutoImportResult.Failed)?.reason,
                             scoreTried = true,
                             scoreOk = okScore,
-                            scoreCount = (score.getOrNull() as? ScoreSync.Result.Updated)?.records ?: 0,
+                            scoreCount = (scoreResult as? ScoreSync.Result.Updated)?.records ?: 0,
+                            scoreFailReason = (scoreResult as? ScoreSync.Result.Failed)?.reason,
                             scholarTried = true,
                             scholarOk = okScholar,
+                            scholarCount = (scholarResult as? ScholarProgressSync.Result.Updated)?.courses ?: 0,
+                            scholarFailReason = (scholarResult as? ScholarProgressSync.Result.Failed)?.reason,
                         ),
                     )
                 }

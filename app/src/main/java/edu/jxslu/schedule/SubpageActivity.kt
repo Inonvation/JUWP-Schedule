@@ -139,7 +139,7 @@ enum class SubpageScreen {
     HOMEWORK_DETAIL,
     /** 今日页作业卡/截止提醒 → 作业中心（未完成汇总，DESIGN §3.11） */
     HOMEWORK_TODO,
-    /** 我的 → 校园服务 → 快趣出行（登录 · 骑行状态只读查询，DESIGN §4.32） */
+    /** 我的 → 校园服务 → 快趣账号（登录 · 骑行状态只读查询，DESIGN §4.32） */
     KVCX,
     /** 我的 → 校园服务 → 校历（仓库镜像 + 内置兜底，DESIGN §4.34） */
     CAMPUS_CALENDAR,
@@ -347,7 +347,6 @@ class SubpageActivity : ComponentActivity() {
                 },
                 onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
                 onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
-                onOpenRide = { SubpageActivity.start(this, SubpageScreen.RIDE) },
                 onOpenKvcx = { SubpageActivity.start(this, SubpageScreen.KVCX) },
                 onOpenCampusCalendar = {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CALENDAR)

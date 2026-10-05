@@ -74,7 +74,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
     val includeFreeElectives by prefs.scoreIncludeFreeElectives.collectAsState(initial = false)
     val sortMode by prefs.scoreSortMode.collectAsState(initial = ScoreSortMode.Default)
     val scoreAlertEnabled by prefs.scoreAlertEnabled.collectAsState(initial = false)
-    val intervalHours by prefs.alertIntervalHours.collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
+    val intervalHours by prefs.scoreAlertIntervalHours.collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
     var intervalPickerOpen by remember { mutableStateOf(false) }
 
     // 开启提醒那一刻请求 POST_NOTIFICATIONS（API 33+），拒绝不阻塞开关本身
@@ -193,7 +193,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
                 intervalPickerOpen = false
                 val value = ScoreAlertDefaults.INTERVAL_CHOICES[index]
                 scope.launch {
-                    prefs.setAlertIntervalHours(value)
+                    prefs.setScoreAlertIntervalHours(value)
                     ScoreAlertReminder.onSettingsChanged(context)
                 }
             },

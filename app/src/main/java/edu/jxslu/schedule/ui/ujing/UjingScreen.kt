@@ -58,6 +58,7 @@ import edu.jxslu.schedule.domain.QzxyPhoneMask
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
@@ -278,6 +279,7 @@ fun UjingScreen(
         }
         state.order?.let { order ->
             if (confirmCancelOrder) {
+                DialogWindowFadeEffect()
                 AlertDialog(
                     onDismissRequest = { confirmCancelOrder = false },
                     title = { Text("取消订单") },
@@ -297,6 +299,7 @@ fun UjingScreen(
             }
         }
         houseToRemove?.let { house ->
+            DialogWindowFadeEffect()
             AlertDialog(
                 onDismissRequest = { houseToRemove = null },
                 title = { Text("删除洗衣房") },
@@ -315,6 +318,7 @@ fun UjingScreen(
             )
         }
         if (confirmLogout) {
+            DialogWindowFadeEffect()
             AlertDialog(
                 onDismissRequest = { confirmLogout = false },
                 title = { Text("退出登录") },
@@ -804,6 +808,9 @@ private fun HousePickerSheet(state: UjingUiState, viewModel: UjingViewModel) {
  */
 @Composable
 private fun UjingNoticeDialog(onConfirm: () -> Unit) {
+    // 首次进页异步弹出（等 ujingNoticeSeenAt 读到才置 true），没有窗口动画就是
+    // 凭空一跳——与快趣确认弹窗同款修法（2026-10-03）
+    DialogWindowFadeEffect()
     val remainingMs = rememberCloseLock(3_000L)
     val locked = remainingMs > 0L
     AlertDialog(

@@ -188,7 +188,7 @@ class ScheduleSync(
             if (!prefs.scheduleAlertEnabled.first()) return CheckResult.Skipped
             if (!AutoSyncRules.shouldAttemptAt(
                     prefs.scheduleCheckMillis(),
-                    prefs.alertIntervalHours.first(),
+                    prefs.scheduleAlertIntervalHours.first(),
                     nowMillis(),
                 )
             ) {
