@@ -1,290 +1,81 @@
-# 开发者文档：复刻一个你自己学校的课表 App
+# 开发者文档：逆向协议与爬取实现
 
-本文档面向想把这套方案搬到**自己学校**的开发者：讲清楚本项目的整体架构、
-「从教务系统拿到课表/考试/成绩」完整数据链路的实现细节，以及换校适配的动手步骤。
-应用功能与界面规格见 [DESIGN.md](DESIGN.md)，爬虫脚本速查见 [scripts/README.md](scripts/README.md)。
+本项目（水贝贝，江西水利电力大学的**非官方**课表 App）里**别人最值得借鉴的部分**：
+强智教务的爬取链路与解析算法，以及五个校园第三方平台（胖乖生活、趣智校园、快趣出行、
+U净 洗衣房、一卡通/电费）逆向出来的协议结构——端点、登录、签名、实机踩坑，和把它们
+搬进 App 的工程做法。
 
-> 快照：v2.0.0（2026-09-29，Room v16）。工程实况（依赖版本、数据库版本）以
-> [AGENTS.md](AGENTS.md) 为准，领域口径清单按主题拆在 [`.agents/rules/`](.agents/rules/)，
-> 本文只讲「为什么这么设计、换校要动哪里」。
-
-> 本项目是**江西水利电力大学的非官方学生项目**，仅供学习交流。
-> 换校适配时请同样遵守：模拟正常客户端操作、凭证不入代码仓库、不刷积分、不伪造官方身份。
-
----
-
-## 目录
-
-1. [全景：两条数据链路](#1-全景两条数据链路)
-2. [工程形态与架构分层](#2-工程形态与架构分层)
-3. [领域模型与数据存储](#3-领域模型与数据存储)
-4. [链路 A：Python 爬虫（逆向参考实现）](#4-链路-apython-爬虫逆向参考实现)
-5. [链路 B：App 端 WebView 导入（生产路径）](#5-链路-bapp-端-webview-导入生产路径)
-6. [核心算法与口径（改代码前必读）](#6-核心算法与口径改代码前必读)
-7. [考试安排映射](#7-考试安排映射)
-8. [换一所学校：适配指南](#8-换一所学校适配指南)
-9. [测试](#9-测试)
-10. [构建环境与已知坑](#10-构建环境与已知坑)
-11. [安全与合规红线](#11-安全与合规红线)
+> 产品与 UI 规格见 [DESIGN.md](DESIGN.md)（§3 UI / §4 逐模块技术决策）；
+> 爬虫脚本速查见 [scripts/README.md](scripts/README.md)（比本文更细的排错表）；
+> AI 结对约定见 [AGENTS.md](AGENTS.md)。
+>
+> 换校/复用时请遵守同样的红线：只模拟正常客户端操作、凭证不进代码仓库、
+> 不刷积分、不绕过付费、不伪造官方身份。本文所有端点均来自**对自己账号**的抓包与
+> 公开逆向资料的交叉核对。
 
 ---
 
-## 1. 全景：两条数据链路
+## 0. 全景：App 连了哪些系统
 
-本项目要解决的核心问题只有一个：**把教务系统里的课表，变成手机上可交互的数据**。
-围绕它有两条互补的链路（外加一条生产侧复刻，见本节末尾）：
+| 系统 | 网关 | 鉴权 | 请求签名 | 代码 | 借鉴价值 |
+|------|------|------|----------|------|----------|
+| 教务（强智） | `jiaowu.juwp.edu.cn:8080/jsxsd` | CAS → SSO Cookie | 无 | `data/jw/` + `scripts/` | DOM 解析算法、layui 接口族、WebView 注入 |
+| 胖乖生活（开水） | `userapi.qiekj.com` | token 头 | SHA-256 拼串 | `data/qiekj/` | 最简单的签名协议样板 |
+| 趣智校园（热水） | `v3-api.china-qzxy.cn` | loginCode 会话串 | 双重 MD5（.so 逆向所得） | `data/qzxy/` | **蓝牙帧协议 + so 反汇编签名**，最硬核 |
+| 快趣出行（单车） | `api.kvcoogo.com/ManagerApi/api` | token 头（部分接口免鉴权） | 无 | `data/kqcx/` | 无签名 API、GCJ-02 地图、写操作的责任闸 |
+| U净 洗衣房 | `phoenix.ujing.online/api/v1` | JWT | 无（只有 header 指纹） | `data/ujing/` | 官方支付宝 SDK 接入、header 指纹 |
+| 一卡通（新中新） | `yktwx.juwp.edu.cn/plat` | OAuth2 + JWT | 下单独立 SIGN | `data/ykt/` | 「安全键盘」复现、字形识别 |
+| 寝室电费（新开普） | `charge.juwp.edu.cn` | OAuth token | 无 | `data/power/` | 读表参数纪律、收银台 UA 陷阱 |
+| 盖章成绩单（金格） | `jwxyxx.juwp.edu.cn/ptwork` | CAS + sid | 无 | `scripts/fetch_transcript.py` | 令牌式出单（见 scripts/README §5.6） |
 
-```
-链路 A（Python 爬虫，本机调试用 —— 逆向参考实现）
-  scripts/jw_session.py        CAS 统一认证 → 教务 SSO，拿到可用会话
-  scripts/fetch_courses.py     理论课表 HTML → courses.json
-  scripts/fetch_lab_courses.py 实验课表 HTML → lab_courses.json（含周次聚合）
-  scripts/fetch_exams.py       考试 JSON 接口 → exams.json
-  scripts/fetch_scores.py      成绩 JSON 接口 → scores.json
-  scripts/fetch_textbooks.py   教材确认 JSON 接口 → textbooks.json
-  scripts/fetch_transcript.py  盖章成绩单 PDF（金格签章系统，非强智教务）
-
-链路 B（App 端 WebView 注入导入 —— 生产路径，用户数据不出本机）
-  JwImportActivity → WebView 里用户自己登录教务
-    → 按当前 URL 判定页面类型 → 注入 JS 抽 DOM / 同源 fetch JSON
-    → Kotlin 解析成 Course → 确认弹窗（选目标课表/合并或覆盖）→ Room 入库
-```
-
-> 另有 `scripts/fetch_power.py`：寝室电费（新开普「移动服务平台」缴费 `charge.juwp.edu.cn`），
-> 与教务链路无关，也不进 App，说明见 `scripts/README.md` §5.5。
-
-为什么两条链路并存：
-
-- **Python 爬虫跑在开发机上**，用来把页面结构逆向清楚、产出可当解析器回归
-  fixture 的 JSON 与 HTML 快照。改 App 解析器之前先跑它确认页面规则没变。
-- **App 端不跑 Python、也不内置任何账号密码**：用户在 WebView 里自己登录，
-  Cookie 留在系统 `CookieManager`，代码里只有 URL 与解析规则。这是隐私与合规的底线。
-
-两条链路共用同一套**页面规则**（DOM 结构、接口参数、字段语义），因此排错文档
-`scripts/README.md` 同时覆盖 App 行为——脚本里趟过的坑，App 端实现已经一并规避。
-
-2026-09-19 起，链路 A 的登录与抓取又多了**第二份实现**：`data/jw/JwHttpSession.kt`
-用 OkHttp 把 `scripts/jw_session.py` 的 CAS → SSO 链路原样复刻进 App，最初服务「调课自动检测」。
-该功能 2026-09-24 下线、2026-10-04 以 OkHttp 直取 + 统一会话层的新形态重立（DESIGN §4.17），
-OkHttp 直取链现已服务成绩/考试/选课/调课四条同步。同一套页面规则自此有 Python 与 Kotlin
-两份独立实现，**换校时两边要同步改**（见 §5.6）。
-
-除课表链路外，App 还随附几个**校园生活**模块（胖乖开水、趣智校园开热水、一卡通付款码与账单、
-寝室电费、快趣出行出码与附近单车地图），它们是彼此独立的 API 客户端（`data/qiekj/`、
-`data/qzxy/`、`data/ykt/`、`data/power/`、`data/kqcx/`），与课表核心零耦合——换校适配时整块
-删掉不影响课表功能（入口在 `ui/` 对应包、今日页底部固定区与底栏「生活」）。
-各自的实现细节见 DESIGN §3.9 / §3.10 / §3.13 / §3.18 / §4.5 / §4.10 / §4.18 / §4.19 /
-§4.23 / §4.24 / §4.30 / §4.32。
+架构一句话：单模块 `:app`，`domain/` 纯 Kotlin 可 JVM 测，`data/<系统>/` 每个系统一个
+独立 API 客户端（互不依赖、可整块删除），`ui/` Compose 按模块分包。细节见 DESIGN §4.2。
 
 ---
 
-## 2. 工程形态与架构分层
+## 1. 教务（强智）：从登录到课表 JSON
 
-| 项 | 值 |
-|----|-----|
-| 模块 | 单模块 `:app` |
-| 语言/UI | Kotlin 2.1.21 + Jetpack Compose + Material3 |
-| 持久化 | Room 2.7.1（v16：课表/成绩/学业/一卡通流水/笔记/作业/电费读数/教材/骑行记录）+ DataStore（显示偏好与开关） |
-| 网络 | App 端 WebView + OkHttp（教务、一卡通、电费、快趣、趣智）+ Retrofit（胖乖）；课表数据零自建后端 |
-| SDK | minSdk 26 / compileSdk 35 |
-| 测试 | 纯 JVM 单测 114 个类 / 1111 个用例（domain 层可全量测，见 §9） |
+完整脚本在 `scripts/`（`jw_session.py` 登录 + 6 个 fetch 脚本），App 端 WebView 导入在
+`ui/jwvw/`，OkHttp 直取链在 `data/jw/`。**同一套页面规则有三份实现**（Python / 注入 JS /
+Kotlin 解析），换校时三处同步改。
 
-分层与依赖方向（`app/src/main/java/edu/jxslu/schedule/`）：
+### 1.1 登录链路：CAS → 教务 SSO
 
 ```
-MainActivity.kt        底栏四 Tab：今日 / 课表 / 生活（可关，§3.13）/ 我的
-SubpageActivity.kt     二级页容器（成绩查询、笔记/作业 7 个二级页、各类设置）
-JwImportActivity.kt    教务导入独立窗口（独立 Activity，见 §5）
-OnboardingActivity.kt  首启引导（登录教务 / 各第三方账号 / 跳过）
-XgFormActivity.kt      学工表单 WebView（宿舍报修等，走统一认证）
-TranscriptActivity.kt  盖章成绩单导出（金格签章系统）
-PowerBankPayActivity.kt 农行手机版收银台（电费充值内嵌，§4.24）
-Graph.kt               手写单例装配：Repository / 数据库 / 偏好
-domain/                纯 Kotlin：Course、ScheduleCalculator、ExamMapper、ScheduleExporter、
-                       CourseTweak、ReminderPlanner、Markdown/MathTex、
-                       EbikeUseMode（快趣能力矩阵）、QzxyWaterFlow（用水状态机）、
-                       Shortcuts …… 不依赖 Android，可 JVM 测
-data/local/            Room v16：Entities / Daos / JuwDatabase（含 v1→v16 逐级迁移）
-data/repo/             ScheduleRepository（课表读写 + 导入校验）、ScoreRepository、
-                       NoteRepository / HomeworkRepository、AttachmentStore（笔记图片）、
-                       ScoreSync / ScholarProgressSync / TextbookSync（登录后自动导入）
-data/prefs/            DataStore 显示偏好与全局开关（含 slotSchemaVersion）
-data/session/          统一登录会话层（CAS 自动填表、Cookie 桥接、登录闸门）
-data/jw/               教务：JwUrls、课表/考试/成绩/学业/教材解析器、JwHttpSession（检测）
-data/qiekj/            胖乖生活 API（登录/开水/余额/订单）
-data/qzxy/             趣智校园开热水（协议状态机、蓝牙水控、用水记账）
-data/ykt/              一卡通（新中新慧新e校）登录、付款码与流水同步
-data/power/            寝室电费（新开普缴费平台）：登录、读表、流水与充值（§4.24）
-data/kqcx/             快趣出行：附近车辆、还车点图层、账号登录与本机用车
-data/xg/               学工表单（统一认证免登）
-data/calendar/         系统日历同步（CalendarSyncer）
-ui/                    Compose Screen + ViewModel（today/week/life/me/water/qzxy/campus/score/
-                       notes/homework/timetable/ebike/jwvw/onboarding/theme/common/...）
-ui/widget/             Glance 桌面小组件（课表 / 校园卡·电费 / 胖乖开水 / 趣智开水）
-```
-
-原则：
-
-- UI 不直接碰网络与数据库，一律走 Repository；
-- 教务解析结果必须先变成 `domain.Course` 才能入库（解析层只产出纯模型）；
-- 所有可能出错的外部交互（导入、网络、解析）都要有可展示的错误文案与重试路径。
-
----
-
-## 3. 领域模型与数据存储
-
-### 3.1 三个核心模型（`domain/Models.kt`）
-
-```kotlin
-data class Course(
-    val id: Long,
-    val name: String, val teacher: String, val position: String,
-    val day: Int,              // 1=周一 … 7=周日
-    val startSection: Int,     // 小节号 1–11（不是大节号！）
-    val endSection: Int,
-    val weeks: Set<Int>,       // 教学周
-    val isCustomTime: Boolean = false,       // 自定义时间课（考试也走这里）
-    val customStartTime: String? = null,     // "HH:mm"
-    val customEndTime: String? = null,
-    val colorIndex: Int = 0,
-    val kind: CourseKind = CourseKind.Theory, // Theory / Lab / Exam
-    val remark: String = "",                  // 课程备注（用户自写，属课程行）
-)
-
-data class TimeSlot(val number: Int, val startTime: String, val endTime: String) // 小节 1–11
-
-data class SemesterConfig(
-    val startDate: String,     // 第 1 周周一，"yyyy-MM-dd"
-    val totalWeeks: Int = 20,
-    val firstDayOfWeek: Int = 1,
-)
-```
-
-三个关键设计决策：
-
-1. **`kind` 扩展而非新表**。实验课、考试都复用 `Course`：
-   考试日期落 `weeks`（单元素）+ `day`，起止时刻落 `customStart/EndTime`
-   （`isCustomTime = true`，今日页倒计时/时刻口径自动生效），考场落 `position`。
-   加一种课程类型**不需要任何数据库迁移**。
-2. **行号 = 小节号**。本校作息是 11 小节、每节 40 分钟（大节内歇 5 分钟、
-   大节之间 20 分钟换教室）。网格第 N 行就是第 N 小节，与教务返回的
-   `startSection/endSection` 直接对齐，不做任何折算。详见 DESIGN §3.5。
-3. **课程行的身份不靠 `id`**——行 id 在覆盖导入（清表重建）里会被换掉，稳定键只有两个：
-   - 课程之间的同一性用 `Course.mergeKey()`（名称+星期+节次+教师+kind）：
-     导入去重、导入统计与**备注搬运**共用这一把钥匙，唯一实现在 `domain/Models.kt`，
-     不要再写第二份；
-   - 笔记·课件与作业按**课程名原样字符串**归属，不带 courseId、不带 timetableId
-     （DESIGN §4.20）：换课表/换学期后旧内容仍可查，代价是同名课程跨学期共用一个抽屉。
-   加字段可以，任何新功能绑行 id 必丢数据。
-
-### 3.2 Room schema（`data/local/JuwDatabase.kt`）
-
-| 表 | 主键 | 说明 |
-|----|------|------|
-| `timetables` | `id` | 课表身份；`slotsCustomized` 标记用户改过作息；`term`（v14）记这张表的数据学期，是课程详情查教材的钥匙 |
-| `courses` | `id`（+ `timetableId` 索引） | 课程行：`timetableId` 归属；`weeksCsv` 逗号分隔周次；`kind` 课型；`remark` 备注 |
-| `time_slots` | `(timetableId, number)` | 每张课表一份作息表（小节号 1–11） |
-| `semester_config` | `timetableId` | 每张课表一份开学日/总周数 |
-| `scores` | `id`（+ `term` 索引） | 成绩全局归属学生、不挂课表；按学期整体替换 |
-| `scholar_groups` / `scholar_courses` | `id` | 学业完成情况（v13）：四个维度的达成度 + 课程明细，全局归属学生 |
-| `ykt_turnovers` | `orderId`（+ `jndatetime` 索引） | 一卡通流水；按服务端订单号去重；v15 起 `fromAccount` / `accType` 记充值到账的账户 |
-| `notes` | `id`（+ `courseName` / `updatedAt` 索引） | 笔记·课件，按课程名归属（§3.1 决策 3） |
-| `homework` | `id`（+ `courseName` / `done` / `dueDate` 索引） | 作业，按课程名归属；`dueDate` 存 `yyyy-MM-dd` 文本（字典序即时间序） |
-| `power_readings` | `(epochMs, roomId)` 唯一 | 电表读数本机记录，用电量差分靠它（DESIGN §4.24）；`roomId` 是平台数字 id，v12 起另存 `roomName`（房号显示名，只给界面） |
-| `textbooks` | `id`（+ `courseName` 索引） | 教材（v14）：挂课程名 + 学期，导入课表后自动抓一次 |
-| `ride_records` | `id` | 本机骑行记录（v16），只记本机用车那条链路，不拉服务端历史 |
-
-版本史（v1→v16 逐级迁移，每级一个 `Migration`）：v2 `courses.kind` → v3 多课表
-（`timetables` + `courses.timetableId`）→ v4 成绩表 → v5 调课检测两表 →
-v6 一卡通流水 → v7 笔记/作业 → v8 `courses.remark` → v9 `homework` 去 `title` →
-v10 DROP 调课检测两表（功能已移除）→ v11 `power_readings` → v12 `power_readings.roomName` →
-v13 学业两表 → v14 `timetables.term` + `textbooks` → v15 `ykt_turnovers.fromAccount/accType` →
-v16 `ride_records`。
-
-迁移纪律三条：
-
-1. **逐级 `ALTER TABLE` / `CREATE TABLE`，禁用 destructive migration**。
-   用户设备上是真实课表，重建表式的迁移等于删库。主键变更（v2→v3 把作息表从全局单份
-   改为每课表一份）只能「建新表 → 搬数据 → 改名」。
-2. **实体 `@Index` 必须与迁移里的 `CREATE INDEX` 逐字对齐**（Room 生成名
-   `index_<表>_<列>`），漏一个就迁移校验崩溃。2026-09-20 实测：`ykt_turnovers.jndatetime`
-   漏声明，**只影响从 v5 升级的设备，全新安装不崩**——这类缺陷只在特定升级路径上暴露，
-   改 schema 后必须逐级真机验证（旧版升上来 + 全新安装各一次）。
-3. **实体里带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 的 `courses.remark`、
-   v11→v12 的 `power_readings.roomName`、v13→v14 的教材展示列都是同一个坑）：
-   Room 生成的建表语句带 `DEFAULT`，迁移里少写一次，升级设备的表结构就与实体对不上。
-
-### 3.3 JSON 导入导出（与拾光课程表互通）
-
-`ScheduleRepository.exportJson()/importJson()` 产出/读取的顶层结构（导出 = 当前课表）：
-
-```json
-{
-  "courses": [ { "name": "...", "teacher": "...", "position": "...",
-                 "day": 1, "startSection": 1, "endSection": 2, "weeks": [1,2],
-                 "colorIndex": 0, "kind": "theory", "remark": "" } ],
-  "term": "2026-2027-1",
-  "scores":  [ { "term": "2025-2026-2", "name": "...", "scoreStr": "92", ... } ],
-  "semester": { "startDate": "2026-09-01", "totalWeeks": 20, "firstDayOfWeek": 1 },
-  "timeSlots": [ { "number": 1, "startTime": "08:30", "endTime": "09:10" } ]
-}
-```
-
-- 课程字段名与领域模型一致，第三方课表 App（拾光）的用户可以互导；
-- 所有段都是**可选键、只增不减**：读取侧 `ignoreUnknownKeys`，旧版 App 忽略新段、
-  新版读旧文件缺省为空，双向兼容——`remark`、`semester`/`timeSlots` 都是这么加进来的，
-  加字段时保持这条纪律；
-- 课程导入支持「合并（按 mergeKey 去重）/覆盖」，成绩导入是**按学期整体替换**（先清后插），
-  `semester`/`timeSlots` 应用到**目标课表**；
-- 任一已存在的段校验不过（开学日期格式 / `TimeSlotRules` 不变量 / 成绩缺 term）→
-  **整个导入拒绝**，不留「课程对了时间错」的半套；
-- `term` 是来源学期标记（脚本/教务导出带的），只用于导入弹窗展示，不落库。
-
----
-
-## 4. 链路 A：Python 爬虫（逆向参考实现）
-
-代码在 `scripts/`（说明：[scripts/README.md](scripts/README.md)）。
-这一节讲**可迁移的方法论**：即使你的学校不是强智教务，排查套路也是同一套。
-
-### 4.1 登录链路（`jw_session.py`）
-
-本校链路：CAS 统一认证 → 教务 SSO，共三步，每步都要显式校验：
-
-```
-[1] CAS：GET 门户落地页拿登录页 → POST username/password/execution/_eventId=submit
-    → 302 后 session 里有了 TGC cookie
-[2] SSO：先预热教务 :81 端口拿 bzb_njw cookie（缺了教务不认票据，这是「第一次必挂」的根因）
+[1] CAS  POST cas/login（username/password/execution/_eventId=submit）→ 拿 TGC cookie
+[2] 预热 GET 教务 :81 端口（拿 bzb_njw cookie——缺了教务不认票据，「第一次必挂」的根因）
     → GET cas/login?service=http://jiaowu.juwp.edu.cn/sso.jsp   ← service 不能带端口，带了 500
-    → 跟 302 链落到教务学生端 xsMainV.htmlx
-[3] 校验：请求主页，确认不是「用户没有登录」的 860 字节退化响应（正常主页 ~150KB）
+    → 跟 302 链落到 :8080/jsxsd/framework/xsMainV.htmlx
+[3] 校验 拉主页：正常 ~150KB；860 字节的「用户没有登录」= 退化响应
 ```
 
-三条通用经验：
+三条通用经验（脚本里趟出来的，多数学校适用）：
 
-1. **`trust_env = False`**：开发机 shell 里被注入的 `HTTP_PROXY/HTTPS_PROXY` 会被
-   `requests` 默认读取，而很多教务对代理出口区别对待，现象是「同一请求时而 200 时而
-   404」，极易误判成教务挂了。所有 Session 显式直连。
-2. **手动跟 302 而不是 `allow_redirects=True`**：保留每一跳落点，出问题能说出断在哪。
-3. **每个环节都有可判定的成功标志**（cookie 名、落点 URL、主页字节数/标记文本），
-   失败时报「断在哪一步」而不是笼统的「登录失败」。
+1. **`trust_env = False`**。shell 注入的 `HTTP_PROXY/HTTPS_PROXY` 会被 requests 默认读取，
+   而教务对代理出口区别对待——现象是**同一请求时而 200 时而 404**，极易误判「教务挂了」。
+   App 端同病：用户手机开着 VPN 时统一认证直接超时，检测到要点名提示。
+2. **手动跟 302**（`allow_redirects=False` 逐跳跟）：出问题能说出断在哪一跳。
+3. **每步都有可判定的成功标志**（cookie 名 / 落点 URL / 字节数），报「断在哪步」而不是
+   笼统的「登录失败」。
 
-### 4.2 理论课表解析（`fetch_courses.py` + `data/jw/QiangzhiScheduleParser.kt`）
+会话别每次重登：CAS 已知会因连环完整登录触发验证码。三级降级——教务会话探针复用
+（1 个请求）→ CAS TGC 换新票（≈5 个）→ 完整账密登录。见 `scripts/jw_session.py` 的
+`load_or_login`。
 
-页面：`GET /jsxsd/xskb/xskb_list.do?viweType=0`（学期参数 `xnxq01id`）。
-课程块是 `li.courselists-item`，名称在 `.qz-hasCourse-title`，
-详情在 `.qz-hasCourse-abbrinfo`（形如 `老师:张三;时间:1-10周[1-2节];地点:XX楼(B102)`）。
+### 1.2 理论课表解析：列序 + colspan/rowspan carry
 
-**星期必须从课程所在 `<td>` 的列序推**——这是本项目踩过最深的坑，规则值得抄走：
+页面 `GET /jsxsd/xskb/xskb_list.do?viweType=0`（学期参数 `xnxq01id`）。课程块
+`li.courselists-item`，详情 `.qz-hasCourse-abbrinfo`（`老师:X;时间:1-10周[1-2节];地点:Y`）。
+
+**星期必须从课程所在 `<td>` 的列序推**——这是本项目踩过最深的坑：
 
 - 表格第 0 列是节次标签，第 1–7 列才是周一到周日；
-- `li` 上的 `qz-hasCourse-N` class **几乎恒为 1**（模板拿它当「有课」样式，实测 33 处
-  `-1`、2 处 `-3`），不能当星期来源；
-- 列号要**累加 `colspan`**，并用一张 carry 表记录 `rowspan` 的跨行占用：
-  强智在「同一天连续两大节上同一门课」时会合并单元格，不补偏移的话，
-  该行之后所有课程的星期会整体前移一格。
+- `li` 上的 `qz-hasCourse-N` class **几乎恒为 1**（模板拿它当「有课」样式），
+  拿它当星期来源，所有课会堆到周一；
+- 列号要**累加 `colspan`**，并用 carry 表记录 `rowspan` 的跨行占用：强智在
+  「同一天连续两大节上同一门课」时合并单元格，不补偏移的话该行之后所有课的星期整体前移。
 
-核心算法（Python 与 Kotlin 注入 JS 是同一套，`fetch_courses.py:parse_courses`）：
+核心算法（Python 与注入 JS 同一套）：
 
 ```python
 carry: dict[int, int] = {}          # 列号 → 还剩几行被上方 rowspan 占用
@@ -303,418 +94,428 @@ for tr in soup.select("tbody tr"):
         col += colspan
 ```
 
-配套细节：
+另两个坑：用 `html.parser` 别用 `lxml`（强智页面有双 doctype，lxml 会丢节点）；
+教务**会忽略未知学期参数**照常返回当前学期——所以「请求学期 ≠ 返回学期」要直接报错，
+不能静默爬错学期。
 
-- 详情文本用正则拆 `老师/时间/地点`；周次串 `1-10`、`1,3,5-8` 展开成集合（限定 1..40）；
-- 学期口径取 `select#xnxq01id` 的 selected 项——教务**会忽略未知学期参数**照常返回当前
-  学期，所以脚本校验「请求学期 = 返回学期」，不一致直接报错而不是静默爬错学期；
-- 用 `html.parser` 而不是 `lxml`：强智页面有双 doctype，lxml 会丢节点。
+### 1.3 实验课表解析：与理论课表零复用
 
-### 4.3 实验课表解析（`fetch_lab_courses.py` + `data/jw/SyjxScheduleParser.kt`）
+页面 `GET /jsxsd/syjx/toXskb.do`。**同一教务里两张课表页结构完全不同**，解析逻辑不可互相套用：
 
-页面：`GET /jsxsd/syjx/toXskb.do`。与理论课表**没有任何可复用之处**——
-同一教务里两张课表页结构完全不同，解析逻辑不可互相套用。差异有三：
+- 表是「周次 × 节次」两级纵轴：每个周次占 6 行，周次标签是首行里 `rowspan=6` 的单元格，
+  **课块不知道自己属于哪一周**，必须按行向上找周次标签；
+- 星期按行形态右对齐：`day = td 下标 - (本行 td 总数 - 8)`；
+- 页面**不提供教师字段**（保持空串而不是瞎猜）；tooltip 里的「节次：60304」是页面内部编码；
+- 同一门课每个有课周次各出一块，必须按 `(名称, 星期, 节次, 地点)` 聚合、weeks 取并集。
+  **聚合键必须含地点**——实训课按批次分周上课，同名课会分布在不同实训室。
 
-1. 没有 `td[name=kbDataTd]`，也没有 `老师:X;时间:Y;地点:Z` 合并文本；
-   `abbrinfo` 里只有地点，**页面根本不提供教师字段**（保持空串而不是瞎猜）。
-2. 表是「周次 × 节次」两级纵轴：每个周次占 6 行，周次标签是首行里带 `rowspan=6`
-   的单元格。**课块不知道自己属于哪一周**，必须按行向上找周次标签。
-3. 同一门课在每个有课周次各出一块，必须聚合：按
-   `(名称, 星期, 起止节次, 地点)` 分组、`weeks` 取并集。
-   聚合键**必须含地点**——实训课按批次分周上课，同名课会在不同实训室
-   （实测一门课分布在三个房间），只按课名合并会丢掉地点差异。
+### 1.4 layui JSON 接口族：考试 / 成绩 / 教材 / 选课
 
-星期换算公式（首行比其他行多一列周次标签，按行形态右对齐）：
+这四类数据不走 DOM，是 **layui 表格的 JSON 接口**，GET 即可（壳页 → `<table data-url>` 找到地址）：
 
 ```
-day = td 下标 - (本行 td 总数 - 8)      # 8 = 节次标签 + 7 天
+考试  GET /jsxsd/xsks/xsksap_list?xnxqid=<学期>&pageNum=1&pageSize=200   （学期参数 xnxqid）
+成绩  GET /jsxsd/kscj/cjcx_list?kksj=<学期|空=全部>&pageNum=1&pageSize=200（学期参数 kksj）
+教材  GET /jsxsd/nxsjc/xsjcqr?xnxqid=<学期>&pageNum=1&pageSize=200
+选课  GET /jsxsd/xkgl/loadXsxkjgList?lx=xkrz&type=list&xnxqid=<学期>&pageNum=1&pageSize=200
+轮次  GET /jsxsd/xsxk/xklc_list_data
+响应  { "code": 0, "count": <总条数>, "data": [...] }
 ```
 
-另：tooltip 里的「节次：60304」是页面内部编码，不是真实节次，只能取行标签。
+换个强智学校大概率原样复现的四个坑：
 
-### 4.4 考试与成绩（`fetch_exams.py` / `fetch_scores.py` + App 同名解析器）
+1. **分页参数是 `pageNum`/`pageSize`**（强智 `window.initQzTable` 自定义），layui 默认的
+   `page`/`limit` 拿不到数据；超出单页按 `count` 翻页。
+2. **接口地址不带 `.do`**。带 `.do` 的同名地址返回「系统功能暂未开放」页面——那是校方的
+   功能开关，必须与「接口正常但 count=0」区分开。
+3. **学期参数名每个页面都不一样**：课表 `xnxq01id`、考试/教材 `xnxqid`、成绩 `kksj`。
+   轮次接口的 `code` 还是**字符串 `"0"`**（其他接口是数字），判等统一按字符串比。
+4. 成绩是双字段：`zcj`（数值）+ `zcjstr`（字符串），**展示一律以 `zcjstr` 为口径**
+   （等级制「优」时数值为空）；`kz=1` = 「请评教」，成绩被锁定不显示分数。
 
-两者都是 **layui 表格的 JSON 接口**，GET 即可，不解析 HTML：
+字段语义对照（强智原名 → 含义）见 [scripts/README.md §5.4](scripts/README.md#54-考试安排与课程成绩2026-09-19-实测)。
 
-```
-考试安排  GET /jsxsd/xsks/xsksap_list?xnxqid=<学期>&xqlb=&pageNum=1&pageSize=200
-课程成绩  GET /jsxsd/kscj/cjcx_list?kksj=<学期|空=全部>&kcxz=&kcsx=&kcmc=&xsfs=&pageNum=1&pageSize=200
-响应      { "code": 0, "count": <总条数>, "data": [ ... ] }
-```
+### 1.5 App 端 WebView 注入（生产导入路径）
 
-三个必踩坑（换个强智学校大概率原样复现）：
+用户在 WebView 里自己登录（代码只有 URL 与解析规则，零凭证），然后注入 JS 抽取。
+几个不踩不知道的坑：
 
-1. **分页参数是 `pageNum`/`pageSize`**（强智 `window.initQzTable` 自定义），
-   用 layui 默认的 `page`/`limit` 拿不到数据；超出单页按 `count` 翻页。
-2. **接口地址不带 `.do`**。带 `.do` 的同名地址返回「系统功能暂未开放」页面——
-   那是校方的功能开关，必须与「接口正常但 `count=0`」区分开，报错文案不能混。
-3. 考试时间 `kssj` 是单字符串 `"2026-05-18 08:30~09:55"`，拆成 date/startTime/endTime 再用；
-   成绩是双字段：`zcj`（数值）+ `zcjstr`（字符串，等级制「优」时数值为空），
-   **展示一律以 `zcjstr` 为口径**；`kz=1` 表示「请评教」，成绩被锁定不显示分数。
+- **`loadUrl` 是异步的**：注入前必须等 `onPageFinished`（按 URL 片段放行的闸门 +
+  CompletableDeferred，超时 20s/页），否则抽到的是旧页面 DOM。且**不能用 URL 子串判页面类型**
+  ——两张课表的 URL 都含 `xskb`（`xskb_list` / `syjx/toXskb`），要按页面特征判。
+- **`evaluateJavascript` 不会 await Promise**：同源 fetch 的结果收不回来。方案是注入
+  fire-and-forget 脚本把结果写进 `window.__qzJson`（`'ERR:'+e` 表示失败），Kotlin 侧每 300ms
+  轮询回收（页面不跳转，窗口变量不会丢）。
+- **HTTP 5xx 只有 `onReceivedHttpError` 能看到**：Chromium 把错误响应体当普通页面渲染，
+  `onPageFinished` 照常回调——失败页会把错误态「洗成正常」，要按失败 URL 标记一次性消费。
+- **教务把「未登录」渲染成 HTTP 200 的登录页**（URL 不变）：会话探测注入 DOM 探针
+  （`#loginDiv`/`input[type=password]`），且只在教务域判定（在 CAS 域判定会把用户正在
+  登录误报成会话失效）。
+- **CAS ticket 是一次性票据**：重试要区分「reload 失败页」与「回认证入口重走链路」，
+  重放已消费的 ticket 只会再挂一次；认证链上的 500 是自愈型（响应顺手写下缺失 cookie），
+  自动重试一次即可。
+- **从预热入口进而不是 CAS 直链**：WebView 从未访问过教务域时，第一次 `sso.jsp?ticket=`
+  会 500（缺 `bzb_njw`），先落教务域再跳认证，把竞态消掉。
+- 学期号用**白名单正则**校验后才允许拼进注入 JS——既防脏数据落库，也从根上杜绝引号注入。
 
-关键字段对照（强智原名 → 语义）见 [scripts/README.md §5.4](scripts/README.md#54-考试安排与课程成绩2026-09-19-实测)。
+OkHttp 直取链（成绩/考试/选课/调课四条自动同步用，`data/jw/`）复刻同一登录链，两个专属坑：
+重定向基准写反（`current.resolve(location)` 别写成反向，每轮回到原 URL 误报重定向过多）；
+**校园 IPv6 黑洞**（域名有 AAAA 记录而 v6 不可达时 OkHttp 默认 v6 优先，每步白等 31 秒
+超时）——修法是 v4 优先的自定义 Dns（AAAA 不丢弃）。
 
 ---
 
-## 5. 链路 B：App 端 WebView 导入（生产路径）
+## 2. 胖乖生活（开水）：HTTP 全链路 + 最简单的签名
 
-实现集中在 `ui/jwvw/JwImportScreen.kt`（约 1200 行，导入全流程）+
-`data/jw/` 各解析器。课表（理论 + 实验）流程：**用户登录 → 一键导入依次打开两张课表页 →
-注入抽取 → 合成 → 确认 → 入库**；考试与成绩仍是「停在对应页再导入」。
+协议来源：参考实现 light-life（`Inonvation/light-life`）。设备是联网型，开阀全程 HTTP。
 
-### 5.1 入口与会话
+- 网关 `https://userapi.qiekj.com/`，Retrofit Form POST；信封 `{code, msg, data}`。
+- **接口返回脏数据**：`data` 可能是空串、数字字段当字符串——模型层要做宽容解码
+  （kotlinx 自定义 lenient serializer），别信严格 DTO。
+- **签名**（整串小写 SHA-256 hex，字段序不可调换；登录类接口 `common/*`、`user/reg` 不签名）：
 
-- 导入窗口是**独立 Activity**（`JwImportActivity`），不用 NavHost 子页：
-  导入时主界面布局完全不动，写库走 `Graph` 单例 + Flow，返回后课表自动刷新。
-- 首次加载从 **预热入口**（`JwUrls.SSO_WARMUP`，即教务域 `sso.jsp`）进而不是 CAS 直链：
-  WebView 从未访问过教务域时，CAS 回跳的第一次 `sso.jsp?ticket=` 会 500（缺 `bzb_njw`
-  cookie），而那个 500 响应会顺手写下 cookie——这就是「第一次必挂、刷新又好」的全部原因。
-  先落教务域再跳认证，把这个竞态消掉。
-- WebView 配置要点（`configureForJw`）：
-  `useWideViewPort + loadWithOverviewMode`（教务页没有 viewport meta，是固定宽桌面布局）；
-  `setLayerType(LAYER_TYPE_SOFTWARE)`（MIUI 上硬件合成层会丢，表现为「功能正常但整面白屏」）；
-  CookieManager 接受第三方 cookie（CAS 与教务是两个域）。
-- **会话探测**：教务把「未登录」就地渲染成 HTTP 200 的登录页（URL 不变），
-  所以每次 `onPageFinished` 先注入探针检查 `#loginDiv`/`input[type=password]`
-  （不要按文案找——实测登录页上没有「用户没有登录」五个字），且**只在教务域判定**，
-  在 CAS 域判定会把用户正在登录误报成会话失效。
-
-### 5.2 DOM 抽取：`evaluateJavascript` 注入
-
-课表导入只有一个入口（DESIGN §4.4.2）：点「一键导入课表」后，App 自己依次打开学期理论课表页
-与实验课表页，各注入一次抽取脚本。两张课表结构完全不同，脚本各自绑定页面，不靠"猜"：
-
-```kotlin
-openPageAndWait(JwUrls.SCHEDULE_LIST, THEORY_URL_PART, "学期理论课表")
-val theory = OneClickImport.theorySource(evalJs(wv, QiangzhiScheduleParser.EXTRACT_JS))
-// 实验页跟着理论页的学期号走，否则两页默认学期不一致时合并出来的是跨学期课表
-openPageAndWait(JwUrls.labScheduleUrl(theory.term), LAB_URL_PART, "实验课表")
-val lab = OneClickImport.labSource(evalJs(wv, SyjxScheduleParser.EXTRACT_JS))
-// evalJs 回收的 raw 是包了一层引号的 JSON 字符串（unwrapJsString 先剥引号与转义）
+```
+sign = sha256("appSecret=$s&channel=$c&timestamp=$t&token=$tok&version=$v" + path)
 ```
 
-**`loadUrl` 是异步的**：注入前必须等 `onPageFinished`（`PageLoadGate` + `CompletableDeferred`，
-超时 20 秒/页），否则抽到的是旧页面的 DOM。闸门按 URL **片段**放行（`xskb_list.do` / `syjx/toXskb`），
-失败由 `reportFailure` 放行 false（自动重试那一轮不算失败）。
+开水调用链**顺序不可乱**（每步失败走诊断，风控类失败不可程序化绕过）：
 
-注入脚本与 §4 的 Python 解析是同一套算法（列序 + colspan/rowspan carry），
-返回 `JSON.stringify({ ok, items, term, cells|container, url })`；Kotlin 侧用
-`kotlinx.serialization` 解析（`unwrapJsString` 先剥掉外层引号与转义）。
-`cells`（理论：`td[name=kbDataTd]` 个数）与 `container`（实验：课表 tbody 在不在）是**页面形态**，
-一键导入靠它区分「这张课表本来就空」与「拿到的不是这张课表」——实验课表在前期学期本来就空，
-当成失败会让用户根本导不进来（`data/jw/OneClickImport.kt`）。
-每个解析器还提供一份正则版 `parseFromHtml`，供 JVM 单测跑 HTML fixture、不依赖真机。
-
-经验：**两张课表的 URL 都含 `xskb`**（理论 `xskb_list`、实验 `toXskb`），
-不能用子串判型，必须按页面特征分别匹配。
-
-### 5.3 同源 fetch JSON（考试/成绩）
-
-考试与成绩不解析 DOM，直接复用用户的登录态发同源请求。难点：
-`evaluateJavascript` **不会 await Promise**，异步结果收不回来。方案是
-「注入 fire-and-forget 的 fetch 脚本 + Kotlin 轮询窗口变量」：
-
-```js
-// FETCH_JS：结果写进 window.__qzJson（"ERR:..." 表示失败）
-window.__qzJson = null;
-fetch('/jsxsd/xsks/xsksap_list?xnxqid=...&pageNum=1&pageSize=200',
-      { credentials: 'same-origin' })
-  .then(function(r){ return r.text(); })
-  .then(function(t){ window.__qzJson = t; })
-  .catch(function(e){ window.__qzJson = 'ERR:' + String(e); });
+```
+goods/latestUsed(categoryCode=5) 取设备
+→ goods/normal/skus(goodsId)         取 skuId（必需）
+→ goods/water/sync                   预检（失败不阻断）
+→ goods/normal/details(goodsId)      取 imei（必需）
+→ userIntegral/checkUserIsRisk       积分风控（必需）
+→ payChannelRoute/addUserAfterPayChannel(method=15)  开通后付（必需）
+→ orderRisk/isCheckLocation          位置风控（必需）
+→ goods/water/unlock(skuId, promotions)  出水
+→ 轮询 goods/water/sync（1s × ≤300，workStatus==2 为出水中）
+→ order/afterPay/creating(orderNo) → order/detail(orderId) 取账单
 ```
 
-```kotlin
-// Kotlin 侧：每 300ms 读一次，最多 60 轮（≈18s 超时）；页面不跳转，窗口变量不会丢
-suspend fun fetchJsonInWebView(wv, fetchJs, readJs): String? { ... }
+**账单口径最容易读反**：`tokenCoinDiscount`（小票）是**账户余额抵扣**，不是平台优惠——
+每次开水默认先扣小票，扣完才走现金后付，所以「实付 ¥0.00」只是现金口径为零。
+本次花费 = 小票支付 + 现金实付；把实付 0.00 当「免单」展示是方向性错误。
+
+**充值不在 REST 层**：胖乖没有充值端点，实为支付宝小程序深链（appId `2018072460764274`）。
+剥掉分享短链的埋点参数（chInfo/shareTimestamp 等）钉住业务参数；`page` 值要**整体百分号
+编码**——`?`/`&` 不编码会被当成外层 query 截断。manifest 声明 `alipays` scheme 的
+`<queries>`（Android 11+ 包可见性，不声明直接 ActivityNotFoundException）。
+
+---
+
+## 3. 趣智校园（热水）：蓝牙帧协议 + .so 反汇编签名
+
+**最硬核的一个**。与胖乖的本质差别：多数学校的趣智设备是**蓝牙水控型**——服务端只签发
+一份加密的开阀数据（`downData`），真正让设备出水的是客户端通过 BLE 把它写进去。
+两个公开第三方客户端（linyu、quzhi-lite）只实现了联网型端点，这正解释了「扫描能认到设备、
+点开阀没反应」。
+
+### 3.1 帧格式与命令码
+
+```
+包头 0x60 | 长度(2B 大端 = 数据体长+3) | 0x80 | 功能码 | 0x00 | 数据体 | 校验和 | 0x16
+校验和 = (数据体各字节之和 + 0x80 + 功能码 + 0x00) & 0xFF
+外包装：`#` + 帧的小写十六进制 + `\n`，整串按 ASCII 字节写入
 ```
 
-安全细节：学期号先从壳页下拉读出，再用**白名单正则** `\d{4}-\d{4}-\d` 校验，
-才允许拼进注入 JS 的字符串——既防脏数据落库，也从根上杜绝引号注入。
+| 功能码 | 作用 |
+|---|---|
+| 0x23 | 查询设备（响应带 projectId/deviceId/accountId/snCode/随机数/状态） |
+| 0x21 | 下发费率数据（downData）= 开阀 |
+| 0x31/0x32 | 开始/结束交易 |
+| 0x85/0x86 | 采集/清除消费数据 |
+| 0x22 | 结束费率（停阀） |
 
-### 5.4 确认与入库
+**成败只能看数据体首字节**（`0x80` 成功，否则第 2 字节是错误码）——别只看回读状态：
+设备明明回了错误码，代码只看「回读状态没变」，就会把「拒收」和「收下了但没清」当成同一件事。
+错误码表来自官方头文件 `KRWMDefine.h`。
 
-解析结果不直接写库，先过确认弹窗（`ImportTargetDialogHost`）：
+蓝牙通道是**低功耗 GATT + Microchip/ISSC 透传服务**，不是经典 SPP——走 SPP 会触发系统
+配对并报「PIN 码不正确」。写入口 `49535343-8841-…`、通知口 `49535343-1e4d-…`。
+Android 的 GATT 同一时刻只允许一个操作在飞，`writeCharacteristic` 排队失败返回 false 且
+**不报错**（刚连上时最容易撞上，现象「连上后第一条命令超时」）——重试几次、间隔几十毫秒。
 
-- 用户**强制选择**目标课表（可新建）与合并/覆盖方式——多课表之后
-  「导到当前课表」不再是唯一合理解释，静默覆盖正在用的数据不可接受；
-- 一键导入多传一个 `breakdown`，逐项列出「理论课表 29 条 / 实验课表 12 条」——
-  只写「共 N 条」时，0 条的来源是隐形的；
-- 弹窗展示解析出的条数与页面学期（`term`）；
-- 弹窗里的「数据学期」在**一键导入**路径下可点开下拉，换一个学期就重新爬一次（DESIGN §4.4.2）；
-  带 `--term` 的脚本会校验「请求学期 = 教务返回学期」，对不上直接报错而不是静默爬错学期；
-- 考试导入在确认时用**目标课表**的开学日重新映射周次（预览口径 ≠ 落库口径）；
-- 入库走 `ScheduleRepository.importParsedCourses`：合并按 mergeKey 去重，
-  覆盖整体替换；整批颜色按课程名排序名次分配（§6.4）；
-- **写库成功即 `finish()` 回主界面**，结果不在导入窗口里展示（用户点完「完成」就关窗，
-  反馈会停在他看不见的那个窗口里）：导了几门、覆盖还是合并、导到哪张表经
-  `ui/jwvw/JwImportResultBus` 交给落点页面下方那条提示条，见 §6 第 8 条；教材抓取
-  （`TextbookSync`）挂进程级作用域异步进行，失败静默，不影响导入主流程。
+### 3.2 两段式开阀与签名
 
-### 5.5 失败呈现与自愈
-
-导入链路大部分故障来自 WebView，处理原则：
-
-- **HTTP 4xx/5xx 只有 `onReceivedHttpError` 能看到**——Chromium 把 5xx 响应体当普通
-  页面渲染，`onPageFinished` 照常回调，`onReceivedError` 只管传输层错误；
-- 失败页的 `onPageFinished` 仍会到达并把错误态「洗成正常」，需要按
-  失败 URL 标记 + 相等匹配一次性消费（实测回调顺序是
-  `onReceivedHttpError → onPageStarted → onPageFinished`，错误先到）；
-- CAS ticket 是一次性票据：错误浮层的「重试」区分「reload 失败页」与
-  「回认证入口重新走链路」，重放已消费的 ticket 只会再挂一次；
-- 认证链上的 500 是**自愈型**（响应同时写下缺失的 cookie），自动重试一次，
-  真故障时不无限重试打服务端；
-- 诊断文案集中在 `data/jw/JwImportDiagnosis.kt`，含 VPN/代理场景识别（`JwVpnDetector`）。
-
-### 5.6 调课自动检测：脚本链路的 App 内复刻（2026-09-19）
-
-默认关闭的后台链路（DESIGN §4.17）：OkHttp 直接登录教务，拉理论+实验课表，与本地做
-**三方合并**（基线快照 / 教务现状 / 本地现状），差异经气泡与通知提示、用户确认才写库。
-对本文而言重点是它**复用了同一套页面规则**——换校时这是除 WebView 之外要同步改的第二处：
-
-- `data/jw/JwHttpSession.kt` 复刻 `scripts/jw_session.py`：CAS 表单 → 预热 `:81`
-  拿 `bzb_njw` → SSO ticket → `sso.jsp` 302 链 → 会话校验（`xsMainV` 字节数阈值）；
-  独立 `CookieJar`（与 WebView 的 `CookieManager` 互不干扰），每次检测全量重登。
-- 两个曾让开启流程 100% 失败的坑，换校时大概率原样复现：
-  1. **重定向基准写反**：`current.resolve(location)` 误写成 `location.resolve(current)`，
-     每轮回到原 URL，误报「重定向次数过多、链路可能已变」；
-  2. **校园 IPv6 黑洞**：校园域同时有 A/AAAA 记录而 v6 在移动网络不可达，OkHttp 默认
-     v6 优先建连，每步白等约 31 秒超时。修法 `Ipv4FirstDns`（v4 排前、AAAA 不丢弃）。
-- 凭证 EncryptedSharedPreferences 加密存储、排除云备份；**连续 3 次凭证错自动停用**
-  （防触发验证码锁号）；代理出口命中时检测前直接跳过，不消耗失败计数。
-- 基线/报告的刷新时机只有两个：教务导入确认落库后、应用检测报告后——用户手动调课
-  **不**刷新基线，这是三方合并能区分「教务改课」与「用户自己调课」的全部前提。
-
----
-
-## 6. 核心算法与口径（改代码前必读）
-
-这些是全 App 共享的**唯一口径**，任何新功能都应复用而不是重写：
-
-1. **课程时间只有一条口径**：`ScheduleCalculator.courseStartMinutes / courseEndMinutes`
-   （自定义时间课以 `customStart/EndTime` 为准，否则查作息表）。
-   排序、行内时刻、倒计时、进度条、下一节判定全部走它。
-   自己再写一个 `isCustomTime` 分支，自定义时间课就会排错序。
-2. **周次计算**：`weekNumberOf` = `startOfWeek(开学日)` 到 `startOfWeek(目标日)` 的周数 + 1，
-   两侧都归一化到所在周的周一（`startOfWeek`），开学日填一周内的哪天都不影响周次。
-3. **网格列位置**：可见星期序列以 `ScheduleCalculator.visibleDays` 为唯一来源、
-   `columnOf` 取列下标。允许单独隐藏周六/周日之后，`day - 1` 不再等于列号
-   （隐藏周六但显示周日时整体错位）。
-4. **配色必须稳定可复现**：不能用 `name.hashCode()`（JVM 字符串哈希带随机盐，
-   两次运行结果不同；且中文课名 12 桶内必撞色）。批量导入用
-   `colorIndexesBySortedName`（按课程名排序取名次，同一份课表每次导入颜色一致），
-   单条新增用 `nextColorIndex`（不占用已用色），渲染期撞色兜底用
-   `weekColorOverrides`（只影响显示、不改库）。
-5. **作息表结构版本**存 DataStore（`DisplayPrefsStore.slotSchemaVersion`）：
-   改默认作息时要同时升版本号并写一次性迁移，老安装才能拿到新表；
-   用户自定义过（`slotsCustomized`）则永不覆盖。
-6. **课程行的稳定身份与搬运纪律**（细节见 §3.1 决策 3）：`Course.mergeKey()` 唯一实现在
-   `domain/Models.kt`（导入去重、导入统计、备注搬运共用同一把钥匙）；覆盖导入
-   （`replaceAllCourses`）**必须**经 `domain/courseRemarksCarriedOver` 把课程备注搬回来，
-   少了这一步的表现是
-   「导入一次备注全没了」。
-7. **提示只有一条通道**：页面级提示统一走 Scaffold 的 `AppSnackbarHost`
-   （`ui/common/AppNotice.kt`），语气四档 `NoticeTone`；不要新引入 `android.widget.Toast`。
-   `ModalBottomSheet` / `AlertDialog` 是更高一层的独立窗口，Snackbar 会被它盖住——
-   弹层内的提示用 `InlineNoticeRow`（或先关弹层再提示）。
-8. **跨窗口的一次性结果走进程内单例 + 新鲜期**：导入窗口与主界面是两个 Activity，没有共同的
-   CompositionLocal，结果只能经单例转交（`ui/jwvw/JwImportResultBus` +
-   `JwImportOutcomeEffect`）。消费方**先 `consume()` 再判 `isFresh()`**——顺序反了，
-   过期的那条会一直留在通道里，下一次组合又读到、又判过期，白跑一轮；没有新鲜期这道闸，
-   十分钟前的结果会在用户随手切回课表页时冒出来。同形态的还有一卡通付款码结果
-   （`ui/campus/PayCodeResultBus`）。
-
----
-
-## 7. 考试安排映射
-
-考试没有独立实体，`domain/ExamMapper.kt` 把接口行映射成 `Course(kind = Exam)`：
-
-| 接口字段 | 落点 |
-|----------|------|
-| 考试日期 | 按学期配置反推 → `weeks`（单元素）+ `day` |
-| `kssj` 起止时刻 | `customStartTime/EndTime`（`isCustomTime = true`），今日页时刻/倒计时口径自动生效 |
-| 起止时刻 | 按作息表映射到**相交小节**（半开区间判定，如 08:30~09:55 → 1-2 节）；落在空档时取下一节兜底 |
-| 考场 `js_mc` | `position` |
-
-日期超出学期范围（或开学日未配置）时返回 null：导入层跳过并计数提示，
-不静默丢弃也不落错周。历史/未来学期没有开学日配置时，按学期号
-（如 `2026-2027-1`）**估算开学日**兜底，并在确认弹窗明示「可能与实际相差一两周」。
-
----
-
-## 8. 换一所学校：适配指南
-
-把本仓库改造成你自己学校的课表，工作量集中在**数据获取层**；
-UI、存储、小组件等全部可以原样复用。建议顺序：
-
-### 第 1 步：认清你的教务系统
-
-浏览器登录教务，看两样东西：
-
-- **URL 形态**：`/jsxsd/...`、`.do` 结尾 → 强智（本项目）；`xskbcx.aspx` → 正方；
-  其他常见厂商还有青果、金智、URP 等，各自有一套页面族。
-- **页面渲染方式**：服务端直出 HTML 表格（照 §4 逆向 DOM），或前端调 JSON 接口
-  （照 §4.4 抓包逆向接口）。很多系统两者混用——像本校：课表是 DOM，考试/成绩是 JSON。
-
-### 第 2 步：存快照、跑通 Python 链路
-
-1. 登录后把目标页面「另存为」完整 HTML，放进 `scripts/out/`（已 gitignore）当 fixture；
-2. 仿照 `jw_session.py` 写你学校的登录链路（CAS 通常大同小异，注意 `service` 参数）；
-3. 仿照 `fetch_courses.py` 写解析：先跑通「能拿到课程名列表」，再补星期/周次/节次。
-   排错时对照快照与 `*_raw.json` 中间产物，而不是凭想象猜 DOM。
-
-### 第 3 步：App 端替换常量与解析器
-
-| 要改的位置 | 内容 |
-|------------|------|
-| `data/jw/CourseImporter.kt` 的 `JwUrls` | CAS/SSO/课表/考试/成绩全部 URL 与 `schedulePageKind` 的判型规则 |
-| `QiangzhiScheduleParser.EXTRACT_JS` 等注入脚本 | 换成你学校页面的 DOM 选择器与字段抽取 |
-| `ExamScheduleParser` / `ScoreParser` | JSON 接口地址、参数名、字段名 |
-| `data/jw/JwHttpSession.kt` | 同一条登录链路的 OkHttp 复刻（§5.6）：教务 WebView 与成绩/考试/选课/调课四条直取同步链共用，与上面几行同步改 |
-| `data/DefaultData.kt` | 作息表（从教务页行标签逐节核对，不要拍脑袋）与默认开学日 |
-
-解析器契约保持不变：注入 JS 返回 `{ok, items, term}`，Kotlin 侧把每条数据转成
-`Course`。下游（确认弹窗、入库、网格渲染）完全不用动。
-
-**不做校园生活模块**（胖乖 / 趣智 / 一卡通 / 电费 / 快趣）时：删掉 `data/qiekj/`、
-`data/qzxy/`、`data/ykt/`、`data/power/`、`data/kqcx/` 与
-`ui/water|qzxy|campus|life|ebike/`、今日页底部固定区与底栏「生活」的对应入口即可，
-课表链路零牵动；
-若要改 Room 实体，务必遵守 §3.2 的迁移两条纪律。
-
-### 第 4 步：换品牌信息与包名
-
-- `applicationId`、应用显示名（`app/src/main/res/values/strings.xml`，debug 变体在
-  `app/src/debug/res/values/strings.xml`）；AGENTS.md 记录了 debug 后缀共存的机制；
-- 免责声明改挂你自己的学校；**不要**保留「江西水利电力大学」字样或本项目的
-  教务地址（否则你的用户会连到我们的教务）。
-
-### 第 5 步：用单测锁住解析器
-
-把第 2 步的 HTML 快照裁剪后放进 `app/src/test/` 当 fixture
-（先抹掉学号姓名等个人信息），仿照 `QiangzhiScheduleParserTest` 写断言。
-教务改版时：重抓快照 → 跑测试看哪些断言挂了 → 改解析器。**对着过期结构改代码
-是教务解析的头号事故来源。**
-
----
-
-## 9. 测试
-
-```powershell
-.\gradlew.bat :app:testDebugUnitTest          # 纯 JVM，秒级
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
+```
+GATT 连接 → 发 0x23 查询设备（状态须为 0 空闲，拿 randomNumber）
+→ POST order/downRate/bluetooth/rateOrder（带 signature）拿 downData
+→ 发 0x21 把 downData 写进设备 → 出水
+用完 → 0x22 停阀 → 轮询状态到 3 → 0x85 读消费数据
+→ POST order/upload/bluetooth/data 结算 → 0x86 清设备记录
 ```
 
-覆盖面（114 个测试类 / 1111 个用例，`app/src/test/`）：
+**签名从 `libklcxkjencry.so` 反汇编得到**（官方 APK 加固过，DEX 里搜不到 getSign）：
+`Java_com_klcxkj_jni_JniUtils_signParams` 的逻辑是
 
-- **解析与数据链路**：`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`（HTML fixture）、
-  `ExamScheduleParserTest` / `ScoreParserTest`（注入 fetch JSON 样例）、
-  `JsStringDecodeTest`、`JwHttpSessionTest`（检测登录链路：重定向解析 / IPv4 优先 DNS）、
-  `JwImportDiagnosisTest`、`ImportJsonShapeTest`（互通 JSON 形状）；
-- **课表领域算法**：`ScheduleCalculatorTest`（周次/时刻/配色）、
-  `TimeSlotRulesTest` / `TimeSlotScheduleTest`（作息不变量）、`WeekGridLayoutTest`（网格几何）、
-  `TodayStateTest` / `TodayBoundaryTest`、`ExamMapperTest`（含历史学期开学日估算）、
-  `ScoreCalculatorTest` / `ScoreGroupsTest`、`CourseTweakTest`（调课规划）、
-  `ScheduleExporterTest`（日历/CSV 展开）、
-  `ReminderPlannerTest`（提醒时刻与窗口）、`CalendarSyncDefaultsTest`、
-  `TimetablePrefsDefaultsTest`、`ScheduleBackgroundTest`（背景图：参数夹取 / 模糊档位到解码尺寸 /
-  文件名白名单）、`ShortcutsTest`、`GridFontDecouplingTest`；
-- **笔记·作业**：`NoteExcerptTest`、`MarkdownParserTest` / `MarkdownEditTest`（自研子集
-  与编辑器补全全分支）、`MathTexTest`、`HomeworkCenterTest` / `HomeworkReminderTest`、
-  `CourseRemarkTest`（备注搬运：mergeKey 匹配 / kid 区分 / 不覆盖新行）；
-- **学业、教材与导入通道**：`ScholarProgressParserTest` / `ScholarProgressRulesTest`
-  （学业达成情况：表头名映射 / 四维度聚合）、`TextbookParserTest`（教材 JSON 的学期校验）、
-  `OneClickImportTest`（一键导入的判型与一次性标记）、`JwImportResultBusTest`
-  （结果通道的新鲜期边界）、`AutoSyncRulesTest` / `ProfileSyncRulesTest`（自动导入闸门）、
-  `LoginGateRulesTest` / `NoticeConsentTest`（自动续登闸门与首启两份声明的同意判定）；
-- **校园生活**：`QiekjSignTest` / `QiekjModelsTest`、`YktKeyboardTest` / `YktModelsTest` /
-  `YktPayCodeTest` / `YktRechargeSignTest` / `YktTurnoverSyncerTest` / `YktArrivalTest` /
-  `YktPayWatchTest` / `YktSyncGateTest`、`EbikeQrTest` / `EbikeFreeRideTest` /
-  `EbikeUseModeTest`（两档能力矩阵）、`BikeNearbyTest`（附近车辆响应容错 / 停车点聚簇 /
-  距离与状态推导 / 采样点数夹取）、`KqcxBikeClientTest`（失败分类：超时不能吃成网络不可达） /
-  `KqcxAuthTest` / `KvcxZonesTest` / `ZoneCacheTest` / `ZoneCacheStoreTest` / `RideRecordTest`、
-  `QzxyWaterFlowTest`（用水状态机全分支）/ `QzxyWateringTest` / `QzxyProtocolTest` /
-  `QzxySessionLinkTest` / `QzxyPhoneMaskTest` / `QzxyCredentialTest` / `QzxyFrameTest` /
-  `QzxyClDataTest` / `QzxyRechargeTest` / `QzxySignTest`、
-  `Gcj02Test`（WGS84 → GCJ-02：境外不偏移 / 境内偏移量级 / 邻近两点相对距离不变）、
-  `PowerModelsTest`（电费响应解析：项目 / 读数 / 流水 + 500 与 401 外壳 + 剩余电量键回退）、
-  `PowerPayTest` / `PowerBillTest` / `PowerUsageTest`（下单字段完整性、账单与用电差分）、
-  `RechargeDisclaimerTest`（充值免责声明的静默期与首次锁定）、
-  `LifeFeedTest`（一卡通与电费流水分段：按来源分组 / 段内倒序 / 限量按段算 / 同刻稳定 /
-  解析失败沉底 / 只有一段有内容不算空态）、
-  `DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
-  `PowerClientUrlTest`（缴费页 / 账单页深链形态与 feeitemid 钉子）；
-- **UI 边界与外观**：`WidgetModelTest` / `LifeWidgetModelsTest` / `WaterWidgetModelsTest`
-  （小组件分档 / 行数 / 明日接棒）、`ThemePaletteTest` / `PaletteContractTest`
-  （六套配色与全角色落值）、`ParseWeeksInputTest`、`CompactPositionTest`、`PanelSnapTest`、
-  `GridFontScaleTest`。
+```
+signature = md5( md5(字段按键名字典序拼接 + "&key=" + loginCode) + "&key=sign-kailu-855c74a88b8b494187c99b08b8c9a744" )
+```
 
-结论从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总
-（Gradle 成功时不打印用例数；读 XML 记得 `-Encoding UTF8`）。
+下单只签 `telephone`（或 `telPhone`）、`deviceId`、`xfModel`、`randomNumber` 四项——
+`randomNumber` 来自蓝牙实时读取，**这是纯 HTTP 方案必然失败的原因**。同一条 so 的
+`.rodata` 里还藏着 `clData` 解密的 AES 密钥（`20210118klcx@002`）与 IV（`1234567876543210`）。
+
+### 3.3 clData：AES 解密出「清除参数」
+
+结算响应里的 `clData` 用 `JniUtils.decryptByAES` 解：**AES-128/ECB**，模式按无填充处理
+（so 里的 `Data not multiple of BlockSize` 提示），自己再剥 PKCS#7。明文格式
+（2026-09-27 真机解开）：
+
+```
+1790517647206-2609272200370000011f000010450000a03a00000002
+└─ 毫秒时间戳 ─┘└────── 22 字节清除参数 ──────┘
+清除参数 = 时间序号(6) + 项目号(4) + 设备号(4) + 账号号(4) + 使用次数(4)
+```
+
+把它发进 0x86 设备立刻回空闲。且**可以从消费记录直接切片算出**（记录 `[1..18]`+`[20..23]`），
+不依赖服务端——「记录早结算过、上传被拒」的场景也能清。
+
+消费记录的字段偏移有两份独立来源交叉验证（官方 iOS SDK 反汇编 + 看雪反编译完全一致）：
+`[1..6]` 时间序号 yyMMddHHmmss、`[7..10]` 项目号、`[11..14]` 设备号、`[15..18]` 账号、
+`[19]` 账户类别、`[20..23]` 使用次数、`[24..27]` 预扣金额、`[28..31]` 本次消费、
+`[32..35]` 费率、`[36..41]` MAC。
+
+### 3.4 真机踩到的四个坑（文档查不到的）
+
+1. **MAC 首字节不一致**：Android 上报的蓝牙地址首字节是 `C0`，设备在服务端登记的是 `00`。
+   下单必须用**服务端登记值**（`device/info/mac`），用蓝牙地址会让订单挂到「另一台设备」，
+   结算回「未找到订单」。
+2. **结束用水必须先停阀**：直接读消费数据，设备在出水/空闲态没有记录可给，0x85 不回包
+   （表现成「等待回包超时」）。停阀后要轮询状态到 3 再采集。
+3. **状态 3（消费完成待采集）只收采集与清除**：这时发 0x22 停阀会被回错误码 1——
+   这个码在这里实际是「当前状态不接受这条命令」。「结束用水」在状态 3 要**跳过停阀**直接采集。
+4. **状态 6 = 「结算中」，官方头文件里没有**：停阀后设备先落状态 6，实测五秒以上才变 3。
+   轮询预算只给五秒的话，症状是「第一次结束失败，再点一次就好了」。
+
+**请求预算（风控）**：一条流程只下一次单/只上报一次；设备信息查询串行化 + 跨扫描记住已查
+地址；不自动重试 HTTP；同一时刻只跑一条流程；空闲 60 秒主动断开蓝牙（BLE 外设被连着就
+停止广播，占着会让这台设备在别人的扫描里消失）。**不伪造 User-Agent、不对齐 TLS 指纹**——
+那是第三方客户端的固有特征，改不掉也不该去装。
 
 ---
 
-## 10. 构建环境与已知坑
+## 4. 快趣出行（共享单车）：无签名 API + GCJ-02 地图
+
+协议来源：微信小程序解包（`api.kvcoogo.com/ManagerApi/api` **无请求签名**，token 是唯一凭证）；
+另有两个开源参考仓库（接口契约层面，AGPL 项目只读参考不复用代码）。
+
+**登录**：`POST /v1.0.0/userLoginByPassword {mobile, password: MD5(密码)}`（小写 hex）；
+响应 `resultCode==1 && errorCode==0` 为成功；之后 `client-type: 1` + `token` 头调全部接口。
+
+**字段类型不稳定——宽容解析**：数值可能给字符串（`"3665"`）或带小数点的 number（`85.0`）、
+布尔给 `0/1`。首版用严格 `@Serializable` DTO，真实订单直接解析崩溃；改成逐字段按
+`JsonPrimitive.content` 宽容取值后稳定。**后端字段类型不稳定的接口，别用严格 DTO 硬解**。
+
+核心端点（均为 POST form）：
+
+| 端点 | 鉴权 | 作用 |
+|------|------|------|
+| `v1.0.0/queryNearbyCar {lat,lng,deviceType=1}` | **无**（token 不校验） | 附近车辆，≤20 辆按距离升序，坐标 GCJ-02 |
+| `v1.0.0/queryZoneList {lat,lng,carNum,page,rows}` | 实测可免 | 还车点 `givecarList[]` / 禁停区 `nogoZoneList[]`（`scopeArray` 多边形）；**按 carNum 所属校区出点，rows=15 封顶是「离查询点最近的 15 个」**——集合极其局部，缓存覆盖半径只能给 50 米 |
+| `v1.0.0/queryUnderwayOrder {}` | token | 骑行中订单：`totalDate` 已骑**秒**、`payMoney` 当前费用**分**、`lockStatus` 1=锁上（不等于订单结束）、`currentPercent` 电量 |
+| `v1.0.0/createOrder {carNum,lat,lng,...}` | token | 开锁第一跳（超时**绝不重发**，防重复订单） |
+| `v1.0.0/greenCarUnlock/lock`、`endTheOrder` | token | 开锁 / 临时锁车 / 还车；每动作后有界确认查询（≤4 次 × 1.5s，官方同款） |
+| `v1.0.0/queryUnPayOrder {}` | token | `12004`=已结清；有欠费给官方出路，**支付本身不做** |
+| `v2.0.0/queryOneCar {carNum,lat,lng}` | 可免 | 按车号点名查车（「按车号定位」） |
+| `v2.0.0/getUserInfo` / `queryUserCoupon` | token | 余额（分）/ 卡券，只读展示 |
+
+**写操作的责任闸**（开锁起计费、还车失败继续计费、有调度费——App 必须自己兜住责任）：
+① 零自动重试（超时只读刷新判状态，「重试开锁」是安全特例且由用户手动点）；② 动作前先查
+在案订单（有骑行禁开锁、无骑行禁还车）；③ 写操作二次确认（临时锁车/解锁继续骑免确认
+——无新增计费后果）；④ 降级矩阵：调度费、出围栏、免押授权一律不代用户接受，提示到官方渠道。
+
+**11035 支付分授权是硬约束**：需要微信支付分授权的账号每单命中，`wx.openBusinessView`
+是微信客户端专属 API，第三方 App 无法代调；出路只有客服开通免授权 / 缴诚信金 / 回微信扫一扫。
+**伪造授权属绕过付费红线，不做**。
+
+**坐标基准**：高德瓦片与车辆坐标都是 GCJ-02，**两者之间直接用不转换**；手机定位的 WGS84
+是链路上唯一需要转换的地方（单向 WGS84→GCJ-02，漏了偏 500 米，转两次同样偏 500 米）。
+「只看本校」围栏用 PNPOLY 射线法 + 校区名白名单双条件互为兜底；**围栏顶点按路网中心线
+从瓦片提取，别凭截图目测配准**（实测会整体偏 30–70 米）。
+
+---
+
+## 5. U净 洗衣房：无签名 JWT + 官方支付宝 SDK
+
+美的「U净」平台（无锡小净共享网络），官方无开放 API。协议事实来自**社区多份独立逆向
+成果交叉核对**（GPL 项目只取协议事实、不复制代码）；端点自 2024 年未变。
+
+- 网关 `https://phoenix.ujing.online/api/v1`，壳 `{code, message, data}`（`code==0` 成功，
+  `401/-99` 会话过期）。**无客户端签名**，只有 header 指纹：取码/登录组 `x-app-code: ZI`、
+  业务组 `BI` + `weex-version: 1.1.30`（服务端对 code 宽容，ZA/BA 亦可用）。
+- 登录：`captcha` → `login`（手机号 + 短信验证码）拿 JWT。**高频登录会被服务端限制数十分钟**。
+- **实测：匿名 `scanWasherCode` 回 401 "JWT token is missing"**——只读也必须登录，无免登路径。
+- 核心链（POST/GET，二维码**原文直传**）：
+
+```
+stores/near（经度拼写是 lont 不是 lng！）→ devices/reserve?storeId=（空闲看板）
+→ devices/scanWasherCode → app/washer/devices/program/info?deviceId=
+   （套餐/水温开关 isWashTemperatureEnable/强制投放声明 isForceDetergent·Disinfectant 全由服务端动态下发）
+→ orders/create（body 基础五字段：type/deviceTypeId/deviceId/deviceWashModelId/storeId；
+   可选字段按「服务端声明需要才发」：washTemperatureId（1常温/2/3/4=水温）、
+   wp_detergentGearId/wp_disinfectantGearId（投放加购，标准档 1/4）、dryTime（烘干机 = 模式时长/10））
+→ payment/arguments?channel=alipay → payInfo.orderInfo 交官方支付宝 SDK
+→ orders/{id}/detail?additional=price（status 是字符串；remainTime 秒）
+→ app/payment/{id}/lastPayStatus（支付结果双查）→ orders/{id}/cancel → orders/{id}/control/start
+```
+
+**支付宝接入**：`com.alipay.sdk:alipaysdk-android`（Maven Central），`PayTask.payV2(orderInfo)`，
+orderInfo 全部由服务端签发，App 不经手资金。返回四态：**9000 成功 / 6001 取消 /
+8000 = 确认中（钱可能已扣，必须用服务端 payFlag 对表后定文案，绝不按失败报诱导重付）**/ 其余失败。
+
+**写操作纪律**：下单/取消/启动零自动重试 + 二次确认；**启动前必须先查订单状态**（服务端对
+已运行订单返回 `{}` 静默拒绝）；已有在案订单不许叠单；订单轮询限「页面可见 + 15s」，
+不做后台轮询。**订单号必须跨进程存活**（落盘）——重启丢 orderId 服务端就无从签发指令。
+
+---
+
+## 6. 校园卡（新中新「慧新e校」）：安全键盘复现
+
+移动平台 `https://yktwx.juwp.edu.cn/plat/`（前端 Vue2+Vant），学号登录可完全用 HTTP 复现：
+
+**「安全键盘」本质是一次字符替换**：服务端每次下发 10 张数字字形图（base64 PNG，跨会话
+同一组、顺序随机）与等长乱序字符集（`numberKeyboard`），点第 i 个键发第 i 个字符；
+提交时拼 `密文$1$uuid`，服务端凭 uuid 还原。传输层无任何密码学保护——因此复现合法可行。
+
+```
+GET  /berserker-secure/keyboard?type=Number&order=1     取 uuid + 乱序字符集 + 10 张字形图
+POST /berserker-auth/oauth/token                        OAuth2 password 模式
+     （Authorization: Basic mobile_service_platform:mobile_service_platform_secret，前端公开常量）
+GET  /berserker-app/ykt/tsm/codebarPayinfo              付款账户列表（取 code=CARD）
+GET  /berserker-app/ykt/tsm/batchGetBarCodeGet?...      一批 10 个 20 位付款码（expires 17280s/个）
+GET  /berserker-app/ykt/tsm/queryCard                   卡列表+余额（分）；余额口径 = (db_balance + unsettle_amount)/100
+GET  /berserker-search/search/personal/turnover?size&current   消费流水（分页，不带时间参数）
+鉴权头  synjones-auth: bearer <token>；响应可能带 UTF-8 BOM，解析前剥离
+```
+
+- **字形识别**：对每张字形图做「alpha 合白底 → 裁包围盒 → 归一 → 与标准字形 IoU 匹配」，
+  生成 **MD5 全量表 → 数字**（全量 32 位表零成本消除 8 位前缀的碰撞歧义）；未知哈希直接
+  报协议漂移，宁报错不猜。
+- **协议自检零成本**：服务端响应自带 `password` 字段 = `numberKeyboard + "$1$" + uuid`，
+  每次登录顺带校验，不一致 = 平台改版信号。
+- 错误码：HTTP 400 = 凭证错（**与密文构造错误同貌**——先怀疑构造）；`8001` 学号绑多账号；
+  **`8002/8003` = 触发图形验证码，绝不重试**，引导浏览器登录一次；401 = token 失效重登一次。
+- **时间参数实测矩阵全无效**（`timeFrom/timeTo`、`dateFrom/dateTo`、`jnDate`…单独传被忽略、
+  组合传直接清零）——月过滤只能在客户端做：无参全量倒序拉 + 本地按月切分求和。
+  数据库本地化后增量同步（时间倒序翻页，**遇到已入库 orderId 即停**），通常一页内完成。
+- **充值**：下单是 **HTML 表单同步提交**（非 JSON API）`POST /charge/order/thirdOrder`，
+  成功 = **302 Location 下发收银台 URL**（OkHttp 必须关自动重定向才能拿到）。独立 SIGN
+  算法：参数按 key 字典序、跳过空值（0 保留）、拼 `k=v&` 末尾拼 SECRET_KEY，SHA256 hex
+  **大写**（appid/SECRET_KEY 都硬编码在公开前端 JS，属公开常量）。支付走微信 H5 渠道
+  （checkmweb → `weixin://wap/pay?...`，**Referer 必须商户域名**）。**`queryCard` 的
+  `account` 是 6 位卡号不是学号**——传错就是「未找到要充值的卡账户」。
+
+---
+
+## 7. 寝室电费（新开普）：读表纪律与收银台 UA 陷阱
+
+新开普「移动服务平台」缴费（`charge.juwp.edu.cn`，前端 BladeX + Vue），**与教务无关**。
+
+- **登录**：`POST /blade-auth/oauth/token`（在根域，不在 `/charge` 下），Basic
+  `charge:charge_secret`（前端公开常量），`logintype=student-sno-queryPassword`——
+  **查询密码与教务/统一认证密码不通用**（实测教务密码回 `{"error":"unauthorized"}`）。
+  token 3599 秒。除登录外每个请求带 `Authorization` + `synjones-auth: bearer <token>` 两头。
+- **读表** `POST /charge/feeitem/getThirdData`：`type=IEC&level=3` + 场景三键（campus/building/room），
+  **参数少一个就回 `code=500「未知异常，请联系管理员」`**——别把它当平台故障。
+  读数在 `map.showData` 的**中文键**里（`{"当前剩余电量":"55.57"}`）。平台没有用电量接口，
+  只能自己按时间记读数差分。
+- **充值两渠道**（下单后渠道不可换）：
+  - 电子账户：`blade-pay` 继续 paystep，6 位消费密码（食堂 POS 密码，不是登录密码）；
+  - **农行支付**：`paystep=2 + NEWPAYMENTPLATFORM:4` 换手机版收银台链接，**按请求 UA 分三支**——
+    微信 UA（含 `MicroMessenger`）→ 手机版收银台；桌面 UA → 网页版；
+    **手机浏览器 UA → 空 body + `code=6230`，msg 却写「处理成功」**（假成功！别当成解析错误）。
+    另外：**手机版链接不能拿网页版那条的 TOKEN 自己拼**（回 `90015 无可用的支付方式`）；
+    收银台 URL 只在返回 HTML 表单的 `action` 里（值首尾带空格要 trim）。内嵌页**只当容器**：
+    不注入脚本、不读输入，手机号/验证码/密码只进农行页面。
+- **充值下单必须带 `third_party`**（读表 `map.data` 原文 JSON）：缺了平台照样收钱但**永不
+  入账**（只能人工找管理员）——所以下单前强制新鲜读表、缺读数拒单，扣款与入账分开报告。
+- 未支付订单平台不自动清，堆积会导致 paystep=0 回 500：先查 `paystatus=0` 列出再逐单
+  `deleteOrder`（JSON body）清理。
+
+---
+
+## 8. 可迁移的工程经验（跨系统总结）
+
+1. **逆向方法论**：先解包/抓包拿端点表 → 写最小探针脚本对自己账号实测 → 用 fixture
+   （脱敏后）钉住解析 → App 实现 + JVM 单测复用同一份 fixture。**先探明「不存在的路径」**
+   （U净匿名 401、快趣死导出 `carLockFlag`、电费无用电量接口）与探明端点同样重要。
+2. **风控友好**：渐进轮询（事件驱动的间隔衰减，别固定 5 秒拉长窗口）、请求间随机延迟
+   （200–600ms，是放慢不是重试）、**失败一律不自动重试**、验证码类响应绝不重试
+   （重试会把「可恢复」打成「锁号」）、写操作零自动重试（超时只读刷新判状态）。
+3. **宽容解析**：第三方后端字段类型不稳定（字符串/数字/布尔混给）——逐字段按原始值
+   宽容取值 + 未知字段忽略；坏数据丢点不丢层（图层解析失败回空，不整页崩）。
+4. **凭证分级**：EncryptedSharedPreferences + `backup_rules.xml`/`data_extraction_rules.xml`
+   排除备份；token「仅内存」还是「落盘复用」看寿命（60 天的落盘省一次登录，短命的存密码
+   静默重登）；无日志拦截器，密码/token/付款码不进 Logcat。
+5. **会话失效判定要显式排除「签名错误」类文案**——签名没过不该把人踢去重新登录。
+6. **深链支付模式**：需要支付的一律把用户交给官方容器（支付宝小程序深链 / 官方 SDK /
+   微信 H5），App 不拼支付参数、不经手资金、不碰支付密码——既是合规红线也省掉
+   整个支付协议的维护成本。Android 11+ 记得 `<queries>` 声明目标 scheme。
+7. **R8 与反射序列化**：只被泛型签名引用的模型类会被 R8 整类删除（Retrofit/序列化走
+   运行期反射），现象是「某个功能坏了」而非「混淆炸了」——API 模型包整包 keep。
+   改混淆规则后必须装 release 包冒到真实网络路径。
+
+---
+
+## 9. 换一所学校：适配指南
+
+工作量集中在**数据获取层**；UI、存储、小组件全部原样复用。
+
+1. **认清教务系统**：URL `/jsxsd/`+`.do` → 强智（本文 §1 照搬）；`xskbcx.aspx` → 正方；
+   青果/金智/URP 各有一套页面族。看清是服务端直出 HTML（逆向 DOM）还是 JSON 接口（抓包），
+   多数系统两者混用。
+2. **存快照、跑通 Python 链路**：登录后把目标页「另存为」完整 HTML 放 `scripts/out/`
+   当 fixture；仿 `jw_session.py` 写登录链路；仿 `fetch_courses.py` 写解析——先跑通
+   「能拿到课程名列表」，再补星期/周次/节次。**排错对照快照与 `*_raw.json` 中间产物，
+   不要凭想象猜 DOM**。
+3. **App 端替换常量与解析器**：`data/jw/` 的 URL 常量（`JwUrls`）与判型规则、各解析器的
+   `EXTRACT_JS` 注入脚本、考试/成绩解析器的接口参数、`DefaultData.kt` 的作息表（从教务页
+   行标签逐节核对，不要拍脑袋）。解析器契约保持 `{ok, items, term}` 不变，下游零改动。
+4. **校园生活模块按需取舍**：`data/qiekj|qzxy|ykt|power|kqcx|ujing/` 每个系统独立成包，
+   整块删除不影响课表链路；要保留哪个就换哪家的协议。
+5. **换品牌与单测锁死**：`applicationId`、显示名、免责声明换掉；**不要保留原学校的教务
+   地址**。把 HTML 快照裁剪脱敏后放进 `app/src/test/` 当 fixture 写断言——教务改版时
+   重抓快照跑测试就知道哪里挂了。**对着过期结构改代码是教务解析的头号事故来源。**
+
+---
+
+## 10. 构建环境与已知坑（速查）
 
 | 项 | 现值 / 坑 |
 |----|-----------|
-| Gradle / AGP | Wrapper 8.10.2 / AGP 8.7.3 |
-| Kotlin | 2.1.21（compose / serialization / KSP 同版本） |
-| Room | **2.7.1**——2.6 配 Kotlin 2.1 会 KSP `unexpected jvm signature V` |
-| HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（JitPack，**必须 `isTransitive = false`**，否则拉 androidx.core 1.17 编不过）；查名用 `.agents/skills/find-hugeicons/SKILL.md` 的本地 JAR 方法 |
-| Glance | 1.2.0（传递抬 compose runtime 到 1.7.8，`androidx.core` 保持 1.15.0） |
-| osmdroid | `org.osmdroid:osmdroid-android:6.1.18`（Maven Central，POM 里没有 `<dependencies>`，不拉传递依赖）；**加依赖后第一次构建要联网 resolve 一次**，之后 `--offline` 照常 |
-| debug/release | 两个 applicationId（`.debug` 后缀），可共存；启动 debug 包必须写全限定 Activity 名（`am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity`） |
-| WebView | MIUI 白屏 → 软件渲染兜底；教务页无 viewport meta → `useWideViewPort` 方案 |
-| 离线构建 | 依赖齐备后加 `--offline` 秒级完成：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline` |
-| 系统权限 | 2026-09-23 起**不需要任何 adb 授权**：快趣出行的「助手通道」（`WRITE_SECURE_SETTINGS` + 改写 `Settings.Secure.assistant`）已随内置单车地图上线而删除，只剩桌面启动意图。详见 DESIGN §3.9 |
-| 运行时权限 | 只有快趣出行页的「定位到我的位置」会在**点击那一刻**申请定位权限（精确/粗略任一即可），进页不弹框；不给也能用——地图默认落在校区中心，拖动照常查车。见 DESIGN §4.23 |
-| release 体积 | 自 2026-09-21 开 R8 + 资源压缩：17.9MB → 4.6MB（2.0.0 实测，见 §10.1） |
-
-### 10.1 R8（release 自 2026-09-21 开启）
-
-改 `proguard-rules.pro` 后**必须装 release 包冒烟，且要冒到真实网络路径**——R8 的问题不在
-编译期暴露。已经踩过的坑，换校加自己的 API 模型时会原样找上来：
-
-1. Tink 引用的 errorprone 注解、KeysDownloader 的可选依赖缺失 → `-dontwarn` 收口即可；
-   不要写成 `-keep class com.google.crypto.tink.**`，那会把缺口一起保住。
-2. **只被泛型签名引用的模型类会被整类删除**（2026-09-21 的真实根因）：R8 静态分析看不到
-   使用者（Retrofit / 序列化都走运行期反射），删掉 `data/qiekj` 的模型类后
-   `ApiEnvelope<EmptyData>` 的签名实参退化成 `Object`，调用时抛
-   `Unable to create converter for ApiEnvelope<java.lang.Object> for method …`——
-   **只有用到被删类型的接口会炸**，看起来像「某个功能坏了」而不是「混淆炸了」。
-   修法 = 整包 keep（`-keep class edu.jxslu.schedule.data.qiekj.**`）。
-   定位手法：release 临时加 `-printusage`，报告里**没有冒号的行**就是被整类删除的类
-   （用完删掉，它会把路径写进仓库文件）。
-3. 冒烟要覆盖「开了混淆才走到的分支」；DataStore / 课表那条 JSON 链是**编译期** serializer，
-   不受影响——别只测它们就以为序列化没事。
+| Gradle / AGP / Kotlin | Wrapper 8.10.2 / AGP 8.7.3 / Kotlin 2.1.21 |
+| Room | **2.7.1**——2.6 配 Kotlin 2.1 会 KSP `unexpected jvm signature V`；**禁 destructive migration**；实体 `@Index` 必须与迁移 `CREATE INDEX` 逐字对齐；实体带默认值的列迁移建表必须写 `DEFAULT` |
+| HugeIcons | `com.github.rikkahub:hugeicons-compose`（JitPack，**必须 `isTransitive = false`**，否则拉 androidx.core 1.17 编不过） |
+| osmdroid | 6.1.18（Maven Central，POM 无 `<dependencies>`）；加依赖后第一次构建要联网 resolve |
+| WebView | MIUI 硬件合成层会丢 → 软件渲染兜底（否则「功能正常但整面白屏」）；教务页无 viewport meta → `useWideViewPort` |
+| debug/release | 两个 applicationId（`.debug` 后缀）可共存；启动 debug 包必须写全限定 Activity 名 |
+| 离线构建 | 依赖齐备后 `--offline` 秒级：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline` |
 
 ---
 
 ## 11. 安全与合规红线
 
-- 凭证只进 gitignore 的 `scripts/credentials.local.json`；**App 端代码里永远不出现
-  学号/密码/token**，登录默认由用户在 WebView 里亲手完成（自动检测是显式开启的例外，
-  凭证经 EncryptedSharedPreferences 加密存本机、排除云备份）；
-- 公开仓库的文档、注释、示例里不得出现真实学号、姓名、手机号；抓取产物
-  （`scripts/out/`，含真实数据）不入库；
-- 校园卡凭证单独加密存储（`ykt_credentials.xml`，同样排除备份）；付款码等同现金——
-  不进日志、不进剪贴板/相册，token 只存内存；验证码类响应（8002/8003）**绝不重试**，
-  开启类交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）；
-- 快趣账号凭证单独加密存储（`secure_kqcx.xml`，排除备份），token 只存内存；电费平台复用
-  一卡通的学号 + 查询密码，没有第二份密码落盘（教务密码实测登不进电费平台）；
+- 凭证只进 gitignore 的本地文件；**App 端代码里永远不出现学号/密码/token**；导入默认由用户
+  在 WebView 亲手完成（自动同步的凭证经 EncryptedSharedPreferences 加密、排除云备份）；
+- 公开仓库的文档、注释、示例、测试 fixture 不出现真实学号、姓名、手机号、卡号、房号；
+  抓取产物（含真实数据）不入库；
+- 付款码等同现金：`FLAG_SECURE` 防截屏、不进日志/剪贴板、凭证清除即全链路关闭；
+  只调只读接口 + 用户主动触发的充值，挂失/转账/改限额一律不做；
 - 模拟登录/抓取以「正常客户端」为限：不刷积分、不绕过付费、不伪造官方身份、
-  不对教务接口做高频请求；
+  不对接口做高频请求；写操作（选课、退课、开锁、下单）只由用户显式触发、零自动重试；
 - 对外发布你的改编版时，同样写明非官方声明，使用风险自负。
 
 ---
 
 ## 参考
 
-- [scripts/README.md](scripts/README.md) —— 爬虫速查：登录链路、DOM 规则、排错表（比本文更细）
-- [DESIGN.md](DESIGN.md) —— 产品与界面规格（§3 UI、§4 技术架构逐模块决策记录；
-  与本文互补：§3.11/§4.20 笔记·作业与作业提醒）
-- [AGENTS.md](AGENTS.md) —— 给 AI 结对工具的工程约定（版本实况 + 任务路由表），
-  领域口径清单在 [`.agents/rules/`](.agents/rules/)
-- [拾光课程表](https://github.com/XingHeYuZhuan/shiguangschedule) —— JSON 互通格式参照
+- [scripts/README.md](scripts/README.md) —— 爬虫速查：登录链路细节、DOM 规则、盖章成绩单、排错表
+- [DESIGN.md](DESIGN.md) —— 产品与界面规格 + 逐模块技术决策（§4.17 调课、§4.19 一卡通、
+  §4.23 快趣地图、§4.24 电费、§4.27 统一会话、§4.30 趣智、§4.32 快趣用车、§4.35 选课、§4.37 U净）
+- [AGENTS.md](AGENTS.md) + [`.agents/rules/`](.agents/rules/) —— AI 结对约定与领域口径清单
+- 参考仓库：[拾光课程表](https://github.com/XingHeYuZhuan/shiguangschedule)（JSON 互通格式）、
+  [light-life](https://github.com/Inonvation/light-life)（胖乖）、
+  [kqcx-bikemap](https://github.com/dlkz/kqcx-bikemap)（快趣接口，AGPL 只读）、
+  [linyu](https://github.com/yehu-imei/linyu) / [quzhi-lite](https://github.com/wzk-chi/quzhi-lite)（趣智联网型）
