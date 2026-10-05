@@ -36,6 +36,45 @@
   `WaterViewModel.exportToken()`（= `QiekjRepository.readToken()`，只读、不走网络）
   进剪贴板，snackbar 按「账号通行证，只粘到本应用的『Token 登录』」口径提示
   （对齐趣智「复制会话串」）。这是 token 唯一的主动出 App 通道，别再加别的口。
+- **设备状态样本靠 debug 落盘**（2026-10-05）：`goods/latestUsed`、`goods/normal/details`、
+  `goods/normal/skus`、`goods/water/sync`、`goods/water/unlock` 五个端点的**响应体原文**
+  在 debug 包落 `filesDir/qiekj_debug/`（`data/qiekj/QiekjDebugDumpInterceptor.kt`；
+  每个端点只留最新 40 份，落盘前把 `token` / `phone` 字段替换成 `<redacted>`；
+  `Graph.qiekj` 按 `BuildConfig.DEBUG` 传目录，release 一个字节都不写）。
+  为什么不在仓库层落盘：`SyncData` / `DeviceItem` 只声明了少数字段，`QiekjJson` 又开了
+  `ignoreUnknownKeys`，服务端多给的字段在解码那步就没了，要确认「设备在线」有没有字段可读
+  只能拿原文。配套改动：`DeviceItem.workStatus`、`SyncData.status` / `SyncData.amount`
+  已解出来但 **UI 还没读**。社区实现的线索（洗衣 `workStatus == 10` 判使用中、sync 的
+  `status` 1/5 与 `amount` >0 判实际出水）在饮水侧都没验证过，口径等样本。
+  取样本：`adb exec-out run-as edu.jxslu.schedule.debug sh -c 'cd files/qiekj_debug && tar -cf - .' > qiekj_dump.tar`。
+  这三条纯逻辑（白名单 / 脱敏 / 裁剪）由 `QiekjDebugDumpTest` 钉住。
+- **只读探测随刷新自动跑**（2026-10-05）：`QiekjRepository.probeDeviceState` 在 debug 包跟着
+  `WaterViewModel.refreshDevices` 的 onSuccess 走（进页与下拉刷新各一轮），按
+  `skus → sync → details → appointNew/near/newMachines` 各调一次，摘要落
+  `qiekj_debug/probe-<时间戳>.json`。**只读**：不碰 unlock / 风控 / 后付 / 订单，不产生扣款；
+  release（`debugDumpDir == null`）连 `QiekjProbeApi` 都不创建。`near/newMachines` 是社区 Python
+  实现里的门店设备清单，参数 `shopId`（取自 `details`）+ `machineTypeId="04"`，返回结构未知，
+  按 `JsonElement` 收；机型值不对就改 `PROBE_MACHINE_TYPE_ID` 再看应答。
+   **为什么留着它**：实测证明 `sync` 的 `status` / `workStatus` 是服务端会话状态，
+  设备断电时照样回 `status=1 / workStatus=2`，`latestUsed.workStatus`（10）与
+  `details.deviceErrorCode`（null）也都不变——判不了设备在不在线。门店清单接口是最后一根线索。
+  **实测结论（2026-10-05，同一天的第二轮）**：门店清单这条路也断了。`appointNew/near/newMachines`
+  在旧协议下回 `{"code":-1,"msg":null,"data":null}`（HTTP 200、业务码 -1），社区文档记新版
+  （1.139.0）要求 `deviceId` 头与双签，我们这套 1.60.3 客户端凑不齐，换参数不值得再试。
+  另外发现 `sync` 的会话状态会**黏住**：断电那笔会话过了 15 分钟仍回 `status=1 / workStatus=2`，
+  服务端没把它关掉。下次开水若提示设备忙/失败，先怀疑这笔挂着的会话。
+  结论：**设备在线状态，用现有接口判不出来**，别再重复这三组实验。
+- **「结束用水」与超时话术**（2026-10-05 用户拍板）：出水满
+  `WaterViewModel.END_SESSION_MIN_SECONDS`（5 秒）在开水页与今日页开水面板同时给出
+  「结束用水」（共用 `ui/water/WaterFlowControls.kt`）。它只**结束本地等待**：
+  `UnlockStopSignal` 置位 → 仓库轮询下一轮就地收尾 → 设备已回报结束
+  （`isSessionFinished`，即 `status==5` + `identify` 非空，判定函数 `shouldSettleOnManualStop`）
+  才照常建单读账单，否则抛 `UnlockStoppedException`，VM 走 `finishWithoutSettlement`：
+  Idle + 提示「本次未确认用水」，不建单、不刷新订单快照。**QiekjApi 没有远程关阀端点**
+  （13 个端点逐条对过），按钮副行话术因此写「出水由设备侧或平台超时停止」，别改成「已关阀」。
+  同一批实测还改了 165s 兜底话术：不再说「饮水机已自动关闭并结算」（设备断电时 `workStatus`
+  一直回 2，仓库走不到建单那步，说结算是假话），改成「设备未回报结束，实际用量以平台账单为准」。
+  收尾判定由 `QiekjModelsTest` 的「会话结束判定只认 status5」与「手动结束_read到账单才结算」两例钉住。
 - 一卡通付款码（DESIGN §3.10/§4.19）：密码字段 = 安全键盘密文（字形 MD5 表一次替换）+ `$1$` + uuid；
   **未知字形/非双射/样板自检不过 = 立即报错不猜**；登录密码仅数字（键盘只映射 0-9）；
   token 只存内存不落盘；付款码不进日志/剪贴板/相册；凭证交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）

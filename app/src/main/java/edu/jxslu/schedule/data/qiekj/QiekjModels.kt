@@ -65,6 +65,12 @@ data class DeviceItem(
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val goodsId: String? = null,
     @kotlinx.serialization.Serializable(LenientStringNonNullSerializer::class) val goodsName: String = "",
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val id: String? = null,
+    /**
+     * 设备工作状态（2026-10-05 起解出来备用，UI 尚未读）。来源是社区实现
+     * （Night-stars-1/wash 在洗衣列表里用 `workStatus == 10` 判「使用中」），
+     * 饮水侧（`categoryCode=5`）有没有这个字段、取值怎么定义，还没样本，等 `qiekj_debug/` 的原文确认。
+     */
+    val workStatus: Int? = null,
 ) {
     /** 列表选择/解锁流程统一用 goodsId，旧字段 id 作回退（对齐参考实现）。 */
     val effectiveGoodsId: String? get() = goodsId ?: id
@@ -78,6 +84,14 @@ data class SkuData(
 @Serializable
 data class ImeiData(
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val imei: String? = null,
+    /**
+     * 2026-10-05 起多解三个字段：`shopId` 是探测门店设备清单的入参，
+     * `deviceErrorCode` / `deviceErrorMsg` 是「设备离线或故障」的候选信号（实测断电时两者仍为 null，
+     * 语义待更多样本）。业务逻辑目前只读 [imei]。
+     */
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val shopId: String? = null,
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val deviceErrorCode: String? = null,
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val deviceErrorMsg: String? = null,
 )
 
 // ── 开水流程 ──
@@ -92,7 +106,35 @@ data class UnlockData(
 data class SyncData(
     val workStatus: Int? = null,
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val identify: String? = null,
+    /**
+     * 会话状态机（2026-10-05 起解出来备用，UI 尚未读）。社区文档记录的样本：
+     * 出水中 `status=1`，结束时 `status=5`；语义未验证。
+     */
+    val status: Int? = null,
+    /**
+     * 设备侧使用量（2026-10-05 起解出来备用，UI 尚未读）。
+     * 社区文档记录的判据：`amount > 0` 表示实际用过水，`== 0` 表示解锁了却没出水，
+     * `null` 表示还在工作中。单位未知，形态可能不是纯数字，故按宽松字符串读。
+     */
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val amount: String? = null,
 )
+
+/** 会话结束态：设备回报结束（2026-10-05 实测；出水中为 1，未开始为 6）。 */
+const val SESSION_FINISHED_STATUS = 5
+
+/**
+ * 会话是否已经由设备回报结束。断电等设备不回应的情形下 `status` 会一直停在 1
+ * （2026-10-05 实测，服务端 15 分钟都没关），所以只能拿它判「设备说结束了」，
+ * 不能反过来判「设备在线」。
+ */
+fun isSessionFinished(sync: SyncData?): Boolean = sync?.status == SESSION_FINISHED_STATUS
+
+/**
+ * 手动结束时的收尾判定（2026-10-05 用户拍板）：
+ * 设备刚好回报了结束且带单号，就照常结算读账单；否则按「未确认用水」收尾，不建单。
+ */
+fun shouldSettleOnManualStop(sync: SyncData?): Boolean =
+    isSessionFinished(sync) && !sync?.identify.isNullOrBlank()
 
 @Serializable
 data class AfterPayCreatingData(
@@ -153,6 +195,24 @@ class UnlockException(
     val diagnosis: edu.jxslu.schedule.domain.DiagnosisResult,
     cause: Throwable? = null,
 ) : Exception(message, cause)
+
+/**
+ * 用户手动结束等待（2026-10-05 用户拍板）：设备没回报结束，按「未确认用水」收尾。
+ * 与 [UnlockException] 分开：这不是故障，界面不套失败卡的诊断与建议。
+ */
+class UnlockStoppedException(message: String = "已结束等待") : Exception(message)
+
+/**
+ * 开水流程的手动结束开关：UI 点「结束用水」置位，仓库在轮询循环里看到就收尾。
+ * 每次 [QiekjRepository.unlockDevice] 新建一个，流程结束即作废。
+ */
+class UnlockStopSignal {
+    private val flag = java.util.concurrent.atomic.AtomicBoolean(false)
+    val isRequested: Boolean get() = flag.get()
+    fun request() {
+        flag.set(true)
+    }
+}
 
 class TokenExpiredException(
     message: String = "登录已失效，请重新登录",

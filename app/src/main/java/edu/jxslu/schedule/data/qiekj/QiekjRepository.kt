@@ -15,6 +15,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 class NotLoggedInException(message: String = "请先登录") : Exception(message)
@@ -26,12 +27,23 @@ class NotLoggedInException(message: String = "请先登录") : Exception(message
  * latestUsed → skus → sync(预检，可失败) → details(imei) → 积分风控 → 开后付 →
  * 位置风控 → unlock → 轮询 sync(等 workStatus 离开 2) → afterPay/creating → order/detail →
  * 写本地订单快照。前置步骤里风控/后付/位置任一失败都阻断；预检失败仅记录不阻断。
+ *
+ * debug 包另挂 [QiekjDebugDumpInterceptor]，把只读查询与开水链路的响应体原文落到
+ * `filesDir/qiekj_debug/`（2026-10-05，为确认设备状态字段而加）。
  */
 class QiekjRepository(
     private val tokenStore: QiekjTokenStore,
     private val orderHistoryStore: QiekjOrderHistoryStore,
+    /**
+     * debug 专用样本目录（`filesDir/qiekj_debug`，见 [QiekjDebugDumpInterceptor]）。
+     * release 传 null，一个字节都不落盘。
+     */
+    private val debugDumpDir: File? = null,
 ) {
     private val api: QiekjApi
+
+    /** debug 专用探测接口；release（`debugDumpDir == null`）为 null，永不发请求。 */
+    private val probeApi: QiekjProbeApi?
 
     init {
         // BASIC 级日志只打请求行不打 header，token/sign 不会进 Logcat（DESIGN 5 隐私要求）
@@ -40,14 +52,19 @@ class QiekjRepository(
         val client = AppHttp.withInterceptors(
             QiekjHeaderInterceptor { tokenStore.readToken() },
             logging,
+            *listOfNotNull(debugDumpDir?.let { QiekjDebugDumpInterceptor(it) }).toTypedArray(),
         ).newBuilder().build()
-        api = Retrofit.Builder()
+        val retrofit = Retrofit.Builder()
             .baseUrl(QiekjApiConfig.BASE_URL)
             .client(client)
             .addConverterFactory(QiekjJson.json.asConverterFactory("application/json".toMediaType()))
             .build()
-            .create(QiekjApi::class.java)
+        api = retrofit.create(QiekjApi::class.java)
+        probeApi = if (debugDumpDir == null) null else retrofit.create(QiekjProbeApi::class.java)
     }
+
+    /** 是否开着 debug 探测（页面据此决定要不要在刷新后补一轮只读探测）。 */
+    val debugProbeEnabled: Boolean get() = probeApi != null
 
     // ── 登录态 ──
 
@@ -121,15 +138,67 @@ class QiekjRepository(
 
     fun orderHistory(): List<OrderHistoryItem> = orderHistoryStore.list()
 
+    /**
+     * debug 专用只读探测（2026-10-05）：把「设备状态可不可读」这一串查询跑一遍，样本落
+     * `qiekj_debug/`。**只读**：skus / sync / details / 门店设备清单，不碰 unlock、风控、
+     * 后付与订单，不产生任何订单与扣款。release 直接返回。
+     *
+     * 触发点见 `WaterViewModel.refreshDevices`：进页与下拉刷新各一次，用户换个设备状态
+     * （插电 / 拔电 / 别人在用）再刷一次，两份摘要就能对照出哪个字段跟着变。
+     */
+    suspend fun probeDeviceState(device: DeviceItem) = withContext(Dispatchers.IO) {
+        val probe = probeApi ?: return@withContext
+        val token = runCatching { requireToken() }.getOrNull() ?: return@withContext
+        val goodsId = device.effectiveGoodsId ?: return@withContext
+        val stamp = qiekjProbeStamp()
+
+        val skuId = runCatching {
+            api.goodsid2sku(goodsId = goodsId, token = token).requireData().firstOrNull()?.skuId
+        }.getOrNull()
+        val sync = skuId?.let {
+            runCatching { api.syncWater(skuId = it, token = token).data }.getOrNull()
+        }
+        val details = runCatching { api.getImei(goodsId = goodsId, token = token).data }.getOrNull()
+        val near = details?.shopId?.takeIf { it.isNotBlank() }?.let { shopId ->
+            runCatching {
+                probe.nearMachines(shopId = shopId, machineTypeId = PROBE_MACHINE_TYPE_ID, orgId = "", token = token)
+            }.getOrNull()
+        }
+
+        dumpQiekjProbe(
+            dir = checkNotNull(debugDumpDir),
+            snapshot = QiekjProbeSnapshot(
+                at = stamp,
+                goodsId = goodsId,
+                latestUsedWorkStatus = device.workStatus,
+                skuId = skuId,
+                syncStatus = sync?.status,
+                syncWorkStatus = sync?.workStatus,
+                syncAmount = sync?.amount,
+                syncIdentifyPresent = sync?.identify != null,
+                shopId = details?.shopId,
+                deviceErrorCode = details?.deviceErrorCode,
+                deviceErrorMsg = details?.deviceErrorMsg,
+                nearMachinesCode = near?.code,
+                nearMachinesMsg = near?.message ?: near?.msg,
+            ),
+        )
+    }
+
     // ── 开水全流程 ──
 
     /**
      * 一键开水。挂在调用方协程上（页面级生命周期），轮询期间协程取消即停止观察，
      * 但服务端会继续按 165s 超时自动关阀结算，不会出现"关不上水"。
+     *
+     * [stopSignal] 是 UI 的「结束用水」（2026-10-05）：置位后轮询就地收尾，
+     * 设备已回报结束（`status==5` + 单号）则照常结算读账单，否则抛
+     * [UnlockStoppedException] 交给调用方按「未确认用水」收尾。
      */
     suspend fun unlockDevice(
         device: DeviceItem,
         usePoints: Boolean,
+        stopSignal: UnlockStopSignal? = null,
         onStep: suspend (String) -> Unit,
     ): UnlockResult = withContext(Dispatchers.IO) {
         val token = requireToken()
@@ -167,6 +236,10 @@ class QiekjRepository(
 
         // 轮询：workStatus==2 表示出水中；必须记录 everWorked，
         // 否则设备从未启动时会被误判为"用完了"（对齐参考实现）。
+        //
+        // 注意 workStatus 说的是「服务端会话开着」，设备断电时也一直回 2
+        // （2026-10-05 实测，15 分钟不变）。会话真结束的标志是 status==5，
+        // 见 isSessionFinished / shouldSettleOnManualStop。
         var lastStatus: SyncData
         var everWorked = false
         var attempts = 0
@@ -178,6 +251,12 @@ class QiekjRepository(
             attempts++
             if (attempts >= MAX_POLL_ATTEMPTS) {
                 throw diagnosedOf(Exception("设备使用超时（${MAX_POLL_ATTEMPTS} 秒）"), "设备状态轮询")
+            }
+            // 手动结束（2026-10-05）：刚拿到的这条如果已经是结束态就照常结算，
+            // 否则按「未确认用水」收尾——设备没回报过结束，建单也没账单可读
+            if (stopSignal?.isRequested == true) {
+                if (!shouldSettleOnManualStop(lastStatus)) throw UnlockStoppedException()
+                break
             }
             onStep("设备工作中，正在等待完成")
             delay(1_000)
@@ -265,6 +344,13 @@ class QiekjRepository(
     private companion object {
         /** 轮询上限与参考实现一致：1s × 300 次；UI 层另有 165s 自动结算兜底。 */
         const val MAX_POLL_ATTEMPTS = 300
+
+        /**
+         * 探测门店设备清单用的机型参数。取自社区 Python 实现（`3ryng1um/qiekj` 对饮水用 "04"），
+         * 与 `goods/normal/details` 回来的 `categoryCode`（"04"）一致。不对就换值重试，
+         * 应答整包会落在 `qiekj_debug/` 里。
+         */
+        const val PROBE_MACHINE_TYPE_ID = "04"
 
         /**
          * promotions 两套常量取自 light-life unlockDevice，字段原样保留：

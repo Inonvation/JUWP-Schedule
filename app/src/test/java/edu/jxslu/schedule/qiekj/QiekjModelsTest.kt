@@ -2,11 +2,16 @@ package edu.jxslu.schedule.qiekj
 
 import edu.jxslu.schedule.data.qiekj.ApiEnvelope
 import edu.jxslu.schedule.data.qiekj.BalanceData
+import edu.jxslu.schedule.data.qiekj.DeviceItem
+import edu.jxslu.schedule.data.qiekj.ImeiData
 import edu.jxslu.schedule.data.qiekj.LoginData
 import edu.jxslu.schedule.data.qiekj.OrderDetailData
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.QiekjJson
+import edu.jxslu.schedule.data.qiekj.SyncData
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
+import edu.jxslu.schedule.data.qiekj.isSessionFinished
+import edu.jxslu.schedule.data.qiekj.shouldSettleOnManualStop
 import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
 import edu.jxslu.schedule.domain.calculateActualCost
@@ -101,6 +106,98 @@ class QiekjModelsTest {
         val balance = BalanceData()
         assertEquals("-", balance.ticketText)
         assertEquals("-", balance.pointsText)
+    }
+
+    // ── 设备状态字段（2026-10-05 加，等 qiekj_debug 样本确认语义） ──
+
+    @Test
+    fun latestUsed_设备状态字段可解码() {
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<List<DeviceItem>>>(
+            """{"code":0,"data":[
+                {"goodsId":"1","goodsName":"饮水机","workStatus":1},
+                {"goodsId":"2","goodsName":"饮水机B","workStatus":"10"}
+            ]}""",
+        )
+        val devices = env.requireData()
+        assertEquals(1, devices[0].workStatus)
+        // 服务端有把数字回成字符串的先例，宽松解析要能读出 10
+        assertEquals(10, devices[1].workStatus)
+    }
+
+    @Test
+    fun latestUsed_缺状态字段时为null不报错() {
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<List<DeviceItem>>>(
+            """{"code":0,"data":[{"goodsId":"1","goodsName":"饮水机"}]}""",
+        )
+        assertEquals(null, env.requireData()[0].workStatus)
+    }
+
+    @Test
+    fun syncWater_会话状态与使用量可解码() {
+        // 社区文档记录的结束态样本：status=5、workStatus=1、amount=85（非我们抓的原文）
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<SyncData>>(
+            """{"code":0,"data":{"status":5,"workStatus":1,"amount":85,"identify":"NO"}}""",
+        )
+        val data = env.requireData()
+        assertEquals(5, data.status)
+        assertEquals(1, data.workStatus)
+        assertEquals("85", data.amount)
+    }
+
+    @Test
+    fun syncWater_出水中amount为null不报错() {
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<SyncData>>(
+            """{"code":0,"data":{"status":1,"workStatus":2,"amount":null,"identify":null}}""",
+        )
+        val data = env.requireData()
+        assertEquals(2, data.workStatus)
+        assertEquals(null, data.amount)
+    }
+
+    @Test
+    fun details_门店与设备故障字段可解码() {
+        // 实测断电时 deviceErrorCode / deviceErrorMsg 仍为 null（2026-10-05），
+        // 这里钉的是「填了值时要能读出来」：形态未知，数字也按字符串收
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<ImeiData>>(
+            """{"code":0,"data":{"imei":"000000000000000","shopId":"20240809150",
+                "deviceErrorCode":3001,"deviceErrorMsg":"设备离线"}}""",
+        )
+        val data = env.requireData()
+        assertEquals("20240809150", data.shopId)
+        assertEquals("3001", data.deviceErrorCode)
+        assertEquals("设备离线", data.deviceErrorMsg)
+    }
+
+    @Test
+    fun details_缺失新字段时为null不报错() {
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<ImeiData>>(
+            """{"code":0,"data":{"imei":"000000000000000"}}""",
+        )
+        val data = env.requireData()
+        assertEquals(null, data.shopId)
+        assertEquals(null, data.deviceErrorCode)
+    }
+
+    // ── 「结束用水」的收尾判定（2026-10-05） ──
+
+    @Test
+    fun 会话结束判定只认status5() {
+        assertTrue(isSessionFinished(SyncData(status = 5, workStatus = 1, amount = "275")))
+        // 出水中（断电的设备也长这样）不算结束
+        assertFalse(isSessionFinished(SyncData(status = 1, workStatus = 2, identify = "NO")))
+        assertFalse(isSessionFinished(SyncData(status = 6, workStatus = 1)))
+        assertFalse(isSessionFinished(null))
+    }
+
+    @Test
+    fun 手动结束_read到账单才结算() {
+        // 设备刚好回报结束且带单号 → 照常建单读账单
+        assertTrue(shouldSettleOnManualStop(SyncData(status = 5, workStatus = 1, identify = "NO")))
+        // 结束态但没单号 → 没账单可读，按未确认收尾
+        assertFalse(shouldSettleOnManualStop(SyncData(status = 5, workStatus = 1, identify = null)))
+        // 还在出水 → 未确认收尾
+        assertFalse(shouldSettleOnManualStop(SyncData(status = 1, workStatus = 2, identify = "NO")))
+        assertFalse(shouldSettleOnManualStop(null))
     }
 
     // ── 订单快照序列化往返 ──

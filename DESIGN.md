@@ -3189,8 +3189,15 @@ Graph.kt                     增 qiekjRepository(context) 单例
    LOGIN_CHANNEL 且不带 sign。
 4. **开水状态机**：`UnlockFlowState` 进 domain，ViewModel 驱动；Mutex 防重入；Working 阶段 UI 显示
    165s 自动结算倒计时兜底（light-life 同款，服务端超时自动关阀）。
+   **出水满 5 秒给「结束用水」**（2026-10-05 用户拍板）：只结束本地等待，设备已回报结束
+   （`status==5` + 单号）就照常建单读账单，否则按「未确认用水」收尾（`UnlockStoppedException`
+   → Idle + 提示，不建单）。开水页与今日页开水面板共用 `ui/water/WaterFlowControls.kt`。
+   同一批实测还改掉了两条话术：165s 兜底不再说「已自动关闭并结算」（设备断电时根本走不到建单，
+   说结算是假话），改说「设备未回报结束，实际用量以平台账单为准」。
 5. **轮询**：`goods/water/sync` 等 `workStatus==2`，1s 间隔、上限 300 次，放 repository suspend +
    delay，随协程取消；须记录「曾经出过水」（`everWorked`）区分设备未启动。
+   **`workStatus` 判不了设备死活**（2026-10-05 实测：设备拔电 15 分钟后仍回 `status=1 / workStatus=2`，
+   服务端 165s 超时也不翻状态）。会话是否结束只看 `status==5`，见 `isSessionFinished`。
 6. **网络层**：复用工程 Retrofit 2.11 + OkHttp 4.12；`HttpLoggingInterceptor` BASIC 级（不打 header，
    token/sign 不进日志）；共享单例 client（20s 超时）。
 

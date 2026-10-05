@@ -9,6 +9,8 @@ import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
 import edu.jxslu.schedule.data.qiekj.UnlockException
+import edu.jxslu.schedule.data.qiekj.UnlockStopSignal
+import edu.jxslu.schedule.data.qiekj.UnlockStoppedException
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.ui.common.NoticeTone
@@ -79,6 +81,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
     private var unlockJob: Job? = null
     private var timerJob: Job? = null
     private var timeoutJob: Job? = null
+
+    /** 当前这轮开水的手动结束开关（「结束用水」置位，仓库在轮询里看到就收尾）。 */
+    private var stopSignal: UnlockStopSignal? = null
     private var codeSentAt = 0L
 
     private val _uiState = MutableStateFlow(
@@ -290,6 +295,13 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                 val keep = s.selectedDevice?.let { cur -> devices.firstOrNull { it.effectiveGoodsId == cur.effectiveGoodsId } }
                 s.copy(devices = devices, loadingDevices = false, selectedDevice = keep ?: devices.firstOrNull())
             }
+            // debug 专用只读探测（2026-10-05）：进页与下拉刷新后各跑一轮，样本落 qiekj_debug/。
+            // 只读 skus / sync / details / 门店清单，不碰 unlock；release 时 debugProbeEnabled 恒 false。
+            if (repo.debugProbeEnabled) {
+                _uiState.value.selectedDevice?.let { device ->
+                    viewModelScope.launch { repo.probeDeviceState(device) }
+                }
+            }
         }.onFailure {
             _uiState.update { it.copy(loadingDevices = false) }
             if (it is TokenExpiredException) {
@@ -356,6 +368,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
             notice("请先选择设备", NoticeTone.Warning)
             return
         }
+        // 每次开水新建一个手动结束开关（「结束用水」用）；上一轮的作废
+        val signal = UnlockStopSignal()
+        stopSignal = signal
         unlockJob = viewModelScope.launch {
             if (!unlockMutex.tryLock()) return@launch
             try {
@@ -365,7 +380,7 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                 startTimer()
                 startTimeout()
                 runCatching {
-                    repo.unlockDevice(device, usePoints = _uiState.value.usePoints) { step ->
+                    repo.unlockDevice(device, usePoints = _uiState.value.usePoints, stopSignal = signal) { step ->
                         val working = step.contains("等待") || step.contains("设备工作")
                         _uiState.update { s ->
                             s.copy(
@@ -379,6 +394,7 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                     }
                 }.onSuccess { result ->
                     cancelFlowJobs()
+                    stopSignal = null
                     _uiState.update {
                         it.copy(
                             flow = UnlockFlowState.Success(result),
@@ -388,8 +404,14 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                     refreshBalance()
                 }.onFailure { e ->
                     cancelFlowJobs()
+                    stopSignal = null
                     if (e is TokenExpiredException) {
                         handleTokenExpired()
+                        return@launch
+                    }
+                    // 手动结束：设备没回报结束，按「未确认用水」收尾，不套失败卡的诊断
+                    if (e is UnlockStoppedException) {
+                        finishWithoutSettlement("已结束等待。设备未回报结束，本次未确认用水")
                         return@launch
                     }
                     val failed = if (e is UnlockException) {
@@ -407,7 +429,20 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
 
     fun dismissFlow() {
         cancelFlowJobs()
+        stopSignal = null
         _uiState.update { it.copy(flow = UnlockFlowState.Idle) }
+    }
+
+    /**
+     * 「结束用水」（2026-10-05 用户拍板）：只在出水中有意义，出水满
+     * [END_SESSION_MIN_SECONDS] 秒才给按钮（界面侧判）。置位后仓库会在下一轮轮询就地收尾，
+     * 设备已回报结束就照常读账单，否则按「未确认用水」收尾。
+     *
+     * 这里**不取消协程**：收尾由仓库完成，取消会连结算路径一起掐掉。
+     */
+    fun endSession() {
+        if (_uiState.value.flow !is UnlockFlowState.Working) return
+        stopSignal?.request()
     }
 
     private fun startTimer() {
@@ -426,8 +461,11 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
     }
 
     /**
-     * 165s 兜底：对齐参考实现——服务端超时会自动关阀结算，本地把状态收回 Idle 并刷新余额；
+     * 165s 兜底：服务端超时会自动关阀，本地把状态收回 Idle 并刷新余额；
      * 仓库层轮询协程不取消，收尾完成后 Success 会重新落卡（订单快照不丢）。
+     *
+     * 话术不写「已结算」（2026-10-05 改）：设备断电时 `workStatus` 一直回 2，
+     * 仓库根本走不到建单那一步，说结算就是假话。
      */
     private fun startTimeout() {
         timeoutJob?.cancel()
@@ -435,12 +473,21 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
             delay(AUTO_SETTLE_SECONDS * 1_000L)
             if (_uiState.value.flow is UnlockFlowState.Working) {
                 cancelTimerOnly()
-                _uiState.update { it.copy(flow = UnlockFlowState.Idle) }
-                notice("出水超时，饮水机已自动关闭并结算", NoticeTone.Warning)
-                refreshBalance()
-                refreshDevices()
+                finishWithoutSettlement("等待超时。设备未回报结束，实际用量以胖乖平台账单为准")
             }
         }
+    }
+
+    /**
+     * 「没读到订单」的统一收尾：状态归 Idle、给一句实话、顺手刷新余额与设备。
+     * 与 [UnlockFlowState.Success] 相对——那条路是设备回报了结束并读到了账单。
+     */
+    private fun finishWithoutSettlement(message: String) {
+        stopSignal = null
+        _uiState.update { it.copy(flow = UnlockFlowState.Idle) }
+        notice(message, NoticeTone.Warning)
+        refreshBalance()
+        refreshDevices()
     }
 
     private fun cancelTimerOnly() {
@@ -464,6 +511,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
 
     companion object {
         const val AUTO_SETTLE_SECONDS = 165
+
+        /** 「结束用水」按钮的出场门槛：出水满 5 秒才给（2026-10-05 用户拍板）。 */
+        const val END_SESSION_MIN_SECONDS = 5
     }
 
     class Factory(private val repo: QiekjRepository) : ViewModelProvider.Factory {

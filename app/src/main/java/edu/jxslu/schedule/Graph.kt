@@ -392,6 +392,9 @@ object Graph {
             qiekjRepository ?: QiekjRepository(
                 QiekjTokenStore(context.applicationContext),
                 QiekjOrderHistoryStore(context.applicationContext),
+                // debug 专用：只读查询与开水链路的响应原文落盘，供确认设备状态字段
+                debugDumpDir = File(context.applicationContext.filesDir, "qiekj_debug")
+                    .takeIf { BuildConfig.DEBUG },
             ).also { qiekjRepository = it }
         }
 

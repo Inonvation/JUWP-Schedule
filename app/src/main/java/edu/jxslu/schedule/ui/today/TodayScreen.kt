@@ -660,6 +660,7 @@ fun TodayScreen(
             onUnlock = { waterViewModel.unlock() },
             onDismissFlow = { waterViewModel.dismissFlow() },
             onToggleUsePoints = { waterViewModel.toggleUsePoints() },
+            onEndSession = { waterViewModel.endSession() },
             onDismiss = { showWaterEntrySheet = false },
         )
     }

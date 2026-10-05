@@ -52,6 +52,7 @@ fun WaterEntrySheet(
     onUnlock: () -> Unit,
     onDismissFlow: () -> Unit,
     onToggleUsePoints: () -> Unit,
+    onEndSession: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // 失败详情与订单详情都是弹窗上的二级弹窗（与开水页 ErrorDetailDialog/OrderDetailDialog
@@ -80,91 +81,21 @@ fun WaterEntrySheet(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
-            when (val flow = state.flow) {
-                is UnlockFlowState.Idle -> Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("使用积分抵扣", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "关闭后开水不消耗积分",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        )
-                    }
-                    Switch(checked = state.usePoints, onCheckedChange = { onToggleUsePoints() })
-                }
-                is UnlockFlowState.PreChecking -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        flow.step,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    )
-                }
-                is UnlockFlowState.Working -> Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "正在出水 ${clock(flow.elapsedSeconds)}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "${(WaterViewModel.AUTO_SETTLE_SECONDS - flow.elapsedSeconds).coerceAtLeast(0)} 秒后自动关闭",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        )
-                    }
-                    androidx.compose.material3.LinearProgressIndicator(
-                        progress = {
-                            (flow.elapsedSeconds.toFloat() / WaterViewModel.AUTO_SETTLE_SECONDS).coerceIn(0f, 1f)
-                        },
-                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        flow.step,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
-                is UnlockFlowState.Success -> SettlementBlock(
-                    result = flow.result,
-                    onShowDetail = { detailItem = flow.result },
+            // 状态区带过渡（2026-10-05 用户反馈）：待机↔准备↔出水↔结算之间淡入淡出，
+            // 高度差跟着 AnimatedContent 的尺寸动画走；同相位内的每秒走字不触发动画
+            WaterFlowStatusHost(flow = state.flow) { flow ->
+                SheetFlowStatus(
+                    flow = flow,
+                    usePoints = state.usePoints,
+                    onToggleUsePoints = onToggleUsePoints,
+                    onShowDetail = { detailItem = it },
                 )
-                is UnlockFlowState.Failed -> Column {
-                    Text(
-                        flow.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "失败步骤：${flow.step}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                    Text(
-                        "查看详情 ›",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .clickable { detailItem = flow },
-                    )
-                }
             }
             // 流程按钮：Idle/失败给「开水 / 重试」，进行中禁点（VM 内 Mutex 另有防重入），
             // 成功给「完成」归位。固定单击，无确认步（用户拍板）。
             // enabled 只能卡「有没有设备」：这一支本就只覆盖 Idle 与 Failed，
             // 再写一句 `flow is Idle` 会把失败态的「重试」一起禁掉（点了没反应）
+            val workingFlow = state.flow as? UnlockFlowState.Working
             when (state.flow) {
                 is UnlockFlowState.Idle, is UnlockFlowState.Failed -> Button(
                     onClick = onUnlock,
@@ -176,11 +107,17 @@ fun WaterEntrySheet(
                         else "开水" + (state.selectedDevice?.goodsName?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                     )
                 }
-                is UnlockFlowState.PreChecking, is UnlockFlowState.Working -> Button(
-                    onClick = {},
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                ) { Text("开水进行中…") }
+                // 出水满 5 秒，「开水进行中…」原地换成「结束用水」（动作位与开水页共用组件，
+                // 切换带动画；早先塞在状态区里会让弹窗 5 秒一到长一截）
+                is UnlockFlowState.PreChecking -> WaterWorkingAction(
+                    canEndSession = false,
+                    onEndSession = onEndSession,
+                )
+                is UnlockFlowState.Working -> WaterWorkingAction(
+                    canEndSession = workingFlow != null &&
+                        workingFlow.elapsedSeconds >= WaterViewModel.END_SESSION_MIN_SECONDS,
+                    onEndSession = onEndSession,
+                )
                 // 完成 = 这次开水到此为止：先归位流程态，再把面板收掉。
                 // 开水页上的同名按钮只归位、不收页（那里本来就是页面）——面板收掉才是
                 // 用户要的「点完成窗口就没了」（2026-09-27 用户反馈）
@@ -205,6 +142,97 @@ fun WaterEntrySheet(
     when (val d = detailItem) {
         is UnlockFlowState.Failed -> EntryFailDetailDialog(item = d, onDismiss = { detailItem = null })
         is UnlockResult -> EntryOrderDetailDialog(item = d, onDismiss = { detailItem = null })
+    }
+}
+
+/** 面板里的流程状态区（各相位的内容）；过渡由 [WaterFlowStatusHost] 负责。 */
+@Composable
+private fun SheetFlowStatus(
+    flow: UnlockFlowState,
+    usePoints: Boolean,
+    onToggleUsePoints: () -> Unit,
+    onShowDetail: (Any) -> Unit,
+) {
+    when (flow) {
+        is UnlockFlowState.Idle -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("使用积分抵扣", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "关闭后开水不消耗积分",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+            Switch(checked = usePoints, onCheckedChange = { onToggleUsePoints() })
+        }
+        is UnlockFlowState.PreChecking -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                flow.step,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+        }
+        is UnlockFlowState.Working -> Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "正在出水 ${clock(flow.elapsedSeconds)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${(WaterViewModel.AUTO_SETTLE_SECONDS - flow.elapsedSeconds).coerceAtLeast(0)} 秒后自动关闭",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = {
+                    (flow.elapsedSeconds.toFloat() / WaterViewModel.AUTO_SETTLE_SECONDS).coerceIn(0f, 1f)
+                },
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                flow.step,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+        }
+        is UnlockFlowState.Success -> SettlementBlock(
+            result = flow.result,
+            onShowDetail = { onShowDetail(flow.result) },
+        )
+        is UnlockFlowState.Failed -> Column {
+            Text(
+                flow.message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "失败步骤：${flow.step}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            Text(
+                "查看详情 ›",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .clickable { onShowDetail(flow) },
+            )
+        }
     }
 }
 

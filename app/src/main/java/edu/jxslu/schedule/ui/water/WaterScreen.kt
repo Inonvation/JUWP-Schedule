@@ -325,11 +325,15 @@ fun WaterScreen(
                         fillMaxWidth = true,
                         height = 48.dp,
                     )
-                    is UnlockFlowState.PreChecking, is UnlockFlowState.Working -> Button(
-                        onClick = {},
-                        enabled = false,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                    ) { Text("开水进行中…") }
+                    // 出水满 5 秒，「开水进行中…」原地换成「结束用水」（动作位共用组件）
+                    is UnlockFlowState.PreChecking -> WaterWorkingAction(
+                        canEndSession = false,
+                        onEndSession = { viewModel.endSession() },
+                    )
+                    is UnlockFlowState.Working -> WaterWorkingAction(
+                        canEndSession = flow.elapsedSeconds >= WaterViewModel.END_SESSION_MIN_SECONDS,
+                        onEndSession = { viewModel.endSession() },
+                    )
                     is UnlockFlowState.Success -> OutlinedButton(
                         onClick = { viewModel.dismissFlow() },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -596,104 +600,124 @@ private fun UnlockStatusArea(
     onShowDetail: (Any) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        when (val flow = state.flow) {
-            is UnlockFlowState.Idle -> Row(
+        // 状态切换带过渡（2026-10-05 用户反馈「突变了都」）：待机↔准备↔出水↔结算之间淡入淡出，
+        // 高度差跟着 AnimatedContent 的尺寸动画走；同相位内每秒走字不触发动画
+        WaterFlowStatusHost(flow = state.flow) { flow ->
+            PageFlowStatus(
+                flow = flow,
+                usePoints = state.usePoints,
+                onToggleUsePoints = onToggleUsePoints,
+                onShowDetail = onShowDetail,
+            )
+        }
+    }
+}
+
+/** 开水页状态区各相位的内容；过渡由 [WaterFlowStatusHost] 负责。 */
+@Composable
+private fun PageFlowStatus(
+    flow: UnlockFlowState,
+    usePoints: Boolean,
+    onToggleUsePoints: () -> Unit,
+    onShowDetail: (Any) -> Unit,
+) {
+    when (flow) {
+        is UnlockFlowState.Idle -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("使用积分抵扣", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "关闭后开水不消耗积分",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+            Switch(checked = usePoints, onCheckedChange = { onToggleUsePoints() })
+        }
+        is UnlockFlowState.PreChecking -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                flow.step,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+        }
+        is UnlockFlowState.Working -> Column {
+            Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("使用积分抵扣", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "关闭后开水不消耗积分",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
-                Switch(checked = state.usePoints, onCheckedChange = { onToggleUsePoints() })
-            }
-            is UnlockFlowState.PreChecking -> Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(10.dp))
                 Text(
-                    flow.step,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    "正在出水 ${formatClock(flow.elapsedSeconds)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
-            }
-            is UnlockFlowState.Working -> Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "正在出水 ${formatClock(flow.elapsedSeconds)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "${(WaterViewModel.AUTO_SETTLE_SECONDS - flow.elapsedSeconds).coerceAtLeast(0)} 秒后自动关闭",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = {
-                        (flow.elapsedSeconds.toFloat() / WaterViewModel.AUTO_SETTLE_SECONDS).coerceIn(0f, 1f)
-                    },
-                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.weight(1f))
                 Text(
-                    flow.step,
+                    "${(WaterViewModel.AUTO_SETTLE_SECONDS - flow.elapsedSeconds).coerceAtLeast(0)} 秒后自动关闭",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
-            is UnlockFlowState.Success -> Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "花费 ¥${calculateActualCost(flow.result)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "订单详情 ›",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable { onShowDetail(flow.result) },
-                    )
-                }
-                Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = {
+                    (flow.elapsedSeconds.toFloat() / WaterViewModel.AUTO_SETTLE_SECONDS).coerceIn(0f, 1f)
+                },
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                flow.step,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+        }
+        is UnlockFlowState.Success -> Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    // 支付构成副行（DESIGN §4.10 账单口径）：小票是账户余额支付，
-                    // 现金实付 0.00 只代表没走在线支付，不能当作「本次花费 0」
-                    costBreakdownText(flow.result),
+                    "花费 ¥${calculateActualCost(flow.result)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "订单详情 ›",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onShowDetail(flow.result) },
                 )
             }
-            is UnlockFlowState.Failed -> Column {
-                Text(flow.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "失败步骤：${flow.step}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        "查看详情 ›",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable { onShowDetail(flow) },
-                    )
-                }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                // 支付构成副行（DESIGN §4.10 账单口径）：小票是账户余额支付，
+                // 现金实付 0.00 只代表没走在线支付，不能当作「本次花费 0」
+                costBreakdownText(flow.result),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+        }
+        is UnlockFlowState.Failed -> Column {
+            Text(flow.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "失败步骤：${flow.step}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "查看详情 ›",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onShowDetail(flow) },
+                )
             }
         }
     }
