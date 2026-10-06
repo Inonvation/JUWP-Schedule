@@ -48,6 +48,7 @@ import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.local.InboxMessageEntity
 import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxRules
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.SkeletonBox
@@ -163,7 +164,22 @@ fun InboxScreen(onBack: () -> Unit) {
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(list, key = { it.id }) { msg ->
+                        // 时间分段（「今天 / 昨天 / 本周 / 更早」，InboxRules.timeGroupOf）：
+                        // 列表本身按 createdAt 倒序，逐条与上一条比桶、换桶插头。
+                        // key 带前缀防止消息 id 与分组头 key 撞车。
+                        val zone = ZoneId.systemDefault()
+                        val today = LocalDate.now(zone)
+                        var lastGroup: InboxRules.TimeGroup? = null
+                        items(list, key = { "msg-${it.id}" }) { msg ->
+                            val group = InboxRules.timeGroupOf(
+                                Instant.ofEpochMilli(msg.createdAt),
+                                zone,
+                                today,
+                            )
+                            if (group != lastGroup) {
+                                GroupHeader(label = group.label)
+                                lastGroup = group
+                            }
                             MessageRow(
                                 msg = msg,
                                 selecting = selection != null,
@@ -228,6 +244,19 @@ fun InboxScreen(onBack: () -> Unit) {
             },
         )
     }
+}
+
+/** 分段头：「今天 / 昨天 / 本周 / 更早」，比消息行窄一档、贴左。 */
+@Composable
+private fun GroupHeader(label: String, modifier: Modifier = Modifier) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, top = 4.dp),
+    )
 }
 
 /** 消息行：kind 图标 + 标题/正文/时间 + 右侧未读红点（多选时换成勾选框）。 */

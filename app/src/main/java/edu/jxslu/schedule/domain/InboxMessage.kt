@@ -134,4 +134,38 @@ object InboxRules {
 
     /** 未删消息总量上限（列表查询同样 LIMIT 这个数）。 */
     const val MAX_MESSAGES = 200
+
+    // ------------------------------------------------------------------
+    // 时间分组（收件箱页的「今天 / 昨天 / 本周 / 更早」分段头）
+    // ------------------------------------------------------------------
+
+    /** 分组标签按时间从新到旧排列。 */
+    enum class TimeGroup(val label: String) {
+        TODAY("今天"),
+        YESTERDAY("昨天"),
+        THIS_WEEK("本周"),
+        OLDER("更早"),
+    }
+
+    /**
+     * 消息的分组判定（收件箱页按此分段）。输入是本地时区日期，页面层把
+     * `createdAt` 与 [today] 各转一次；归进 [TimeGroup.OLDER] 的「跨年带年份」
+     * 由 UI 格式化负责，这里只定桶。
+     *
+     * 边界口径：本周 = [today] 所在周的周一（ISO 周）起的七天；昨天到七天前之间
+     * 落 [TimeGroup.THIS_WEEK]——「上周六」不在本周但距今 5 天，归更早比归本周诚实。
+     */
+    fun timeGroupOf(
+        createdAt: java.time.Instant,
+        zone: java.time.ZoneId,
+        today: java.time.LocalDate,
+    ): TimeGroup {
+        val date = createdAt.atZone(zone).toLocalDate()
+        return when {
+            date == today -> TimeGroup.TODAY
+            date == today.minusDays(1) -> TimeGroup.YESTERDAY
+            !date.isBefore(today.with(java.time.DayOfWeek.MONDAY)) -> TimeGroup.THIS_WEEK
+            else -> TimeGroup.OLDER
+        }
+    }
 }

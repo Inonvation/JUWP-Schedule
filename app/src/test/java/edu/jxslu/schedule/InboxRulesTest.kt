@@ -4,9 +4,14 @@ import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.InboxMessage
 import edu.jxslu.schedule.domain.InboxRules
 import edu.jxslu.schedule.domain.InboxRules.PostDecision
+import edu.jxslu.schedule.domain.InboxRules.TimeGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 
 /**
  * 收件箱投递与清理决策（DESIGN §4.38）：去重语义与保留策略的契约。
@@ -112,5 +117,57 @@ class InboxRulesTest {
         val alive = (2..InboxRules.MAX_MESSAGES + 1L).map { id -> msg(id = id, readAt = now) }
         val plan = InboxRules.planPurge(listOf(toPurge) + alive, now)
         assertEquals(listOf(1L), plan.ids)
+    }
+
+    // ------------------------------------------------------------------
+    // 时间分组
+    // ------------------------------------------------------------------
+
+    private val zone: ZoneId = ZoneId.of("Asia/Shanghai")
+
+    /** 2026-10-06 是周二：本周一 = 10-05，上周一 = 09-28。 */
+    private val today: LocalDate = LocalDate.of(2026, 10, 6)
+
+    private fun groupOf(date: LocalDate, hour: Int = 12): TimeGroup =
+        InboxRules.timeGroupOf(
+            ZonedDateTime.of(date, java.time.LocalTime.of(hour, 0), zone).toInstant(),
+            zone,
+            today,
+        )
+
+    @Test
+    fun `今天与昨天各成一桶`() {
+        assertEquals(TimeGroup.TODAY, groupOf(today))
+        // 当天凌晨 0 点前按本地日期判，仍算今天
+        assertEquals(TimeGroup.TODAY, groupOf(today, hour = 0))
+        assertEquals(TimeGroup.YESTERDAY, groupOf(today.minusDays(1)))
+    }
+
+    @Test
+    fun `昨天到本周一之间归本周`() {
+        // 2026-10-06 周二：本周一 10-05 = 昨天；10-04（周日）、09-28（上周一）→ 更早；
+        // 本周没有「昨天之外」的日子可测（周一只比今天早一天），构造周三做锚再验
+        val wednesday = LocalDate.of(2026, 10, 7)
+        val zoneW = zone
+        assertEquals(
+            TimeGroup.THIS_WEEK,
+            InboxRules.timeGroupOf(
+                ZonedDateTime.of(wednesday.minusDays(2), java.time.LocalTime.NOON, zoneW).toInstant(),
+                zoneW,
+                wednesday,
+            ),
+        )
+        // 上周一（距今天 8 天）不在本周
+        assertEquals(TimeGroup.OLDER, groupOf(LocalDate.of(2026, 9, 28)))
+        // 上周日（昨天之前、不在本周）归更早
+        assertEquals(TimeGroup.OLDER, groupOf(LocalDate.of(2026, 10, 4)))
+    }
+
+    @Test
+    fun `分组标签从新到旧排列`() {
+        assertEquals(
+            listOf("今天", "昨天", "本周", "更早"),
+            TimeGroup.entries.map { it.label },
+        )
     }
 }
