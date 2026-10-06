@@ -141,19 +141,24 @@ object SelectionAlertReminder {
                 Graph.selectionSync(context).cachedRounds(),
                 now,
             ).firstOrNull { it.key !in sent && it.at <= now + DUE_GRACE_MS }
-            if (due != null && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
-                if (postNotification(context, due, now)) {
+            if (due != null) {
+                // 收件箱留痕（DESIGN §4.38）：入箱不依赖通知——通知全关的用户恰好最
+                // 依赖收件箱。键与已发键同源（轮次id|start/end），同一条只投一次。
+                val (title, text) = reminderCopy(due, now)
+                Graph.inboxRepository(context).post(
+                    kind = InboxKind.SELECTION_ROUND,
+                    dedupeKey = InboxKeys.SELECTION_PREFIX + due.key,
+                    title = title,
+                    body = text,
+                    route = SubpageScreen.SELECTIONS.name,
+                )
+                // 已发键落两种情况：通知真发出去；或通知被系统整体关闭——后者事实已进
+                // 收件箱，重试没有意义，且不落键会让 scheduleNext 把这个已过去的点
+                // 反复排成立即触发的闹钟空转。只有「通知开着但发送异常」才留给下一轮。
+                val notificationsEnabled =
+                    NotificationManagerCompat.from(context).areNotificationsEnabled()
+                if (!notificationsEnabled || postNotification(context, due, now)) {
                     prefs.addSelectionRemindedKey(due.key)
-                    // 收件箱留痕（DESIGN §4.38）：通知发出去的同时落一条，横幅被 ROM
-                    // 吞掉也能回来查。键与已发键同源（轮次id|start/end），同一条只投一次。
-                    val (title, text) = reminderCopy(due, now)
-                    Graph.inboxRepository(context).post(
-                        kind = InboxKind.SELECTION_ROUND,
-                        dedupeKey = InboxKeys.SELECTION_PREFIX + due.key,
-                        title = title,
-                        body = text,
-                        route = SubpageScreen.SELECTIONS.name,
-                    )
                 }
             }
             scheduleNext(context)

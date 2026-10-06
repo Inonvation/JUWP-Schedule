@@ -149,14 +149,15 @@ object BalanceAlertReminder {
             val powerOn = prefs.powerAlertEnabled.first()
             val yktOn = prefs.yktAlertEnabled.first()
             if (!powerOn && !yktOn) return
-            // 通知被系统/用户整体关闭时静默跳过：写不出去也不该白打一次接口
-            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
             val credentials = Graph.yktCredentialStore(context).read() ?: return
             val today = LocalDate.now()
             // 通知落点：生活页开关关掉时不给 extra（落今日页），免得落在一个不存在的 Tab 上
             val toLife = prefs.lifeTabEnabled.first()
-            if (powerOn) checkPower(context, prefs, credentials, today, toLife)
-            if (yktOn) checkYkt(context, prefs, credentials, today, toLife)
+            // 通知总开关只拦「发通知」，不拦核对本身（2026-10-06 收件箱 §4.38）：
+            // 状态消解（回升移除消息）与入箱都靠这条核对链，通知全关也得照跑。
+            val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+            if (powerOn) checkPower(context, prefs, credentials, today, toLife, notificationsEnabled)
+            if (yktOn) checkYkt(context, prefs, credentials, today, toLife, notificationsEnabled)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 
@@ -170,6 +171,7 @@ object BalanceAlertReminder {
         credentials: YktCredentialStore.Credentials,
         today: LocalDate,
         toLife: Boolean,
+        notificationsEnabled: Boolean,
     ) {
         if (!BalanceAlert.isDueToday(prefs.alertLastCheckDate(BalanceAlertSource.Power), today)) return
         val snapshot = runCatching {
@@ -210,7 +212,7 @@ object BalanceAlertReminder {
             body = text,
             route = SubpageScreen.POWER_BILL.name,
         )
-        post(
+        if (notificationsEnabled) post(
             context = context,
             channelTag = POWER_NOTIFICATION_TAG,
             notificationId = POWER_NOTIFICATION_ID,
@@ -230,6 +232,7 @@ object BalanceAlertReminder {
         credentials: YktCredentialStore.Credentials,
         today: LocalDate,
         toLife: Boolean,
+        notificationsEnabled: Boolean,
     ) {
         if (!BalanceAlert.isDueToday(prefs.alertLastCheckDate(BalanceAlertSource.Ykt), today)) return
         val cards = runCatching {
@@ -258,7 +261,7 @@ object BalanceAlertReminder {
             body = text,
             route = SubpageScreen.CAMPUS_CARD_SETTINGS.name,
         )
-        post(
+        if (notificationsEnabled) post(
             context = context,
             channelTag = YKT_NOTIFICATION_TAG,
             notificationId = YKT_NOTIFICATION_ID,

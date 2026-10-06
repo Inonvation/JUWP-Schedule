@@ -174,6 +174,11 @@ object ScoreAlertReminder {
     /**
      * 核对一次：成绩、考试、选课各查各的（开关各自独立），有变更/到期才发通知。
      * 整体兜异常：后台任务里任何失败都不该让 Worker 报错重试（重试会再打一次教务）。
+     *
+     * 通知总开关只拦「发通知」，不拦核对本身（2026-10-06 收件箱 §4.38）：成绩/考试的
+     * 入箱不依赖通知——通知全关的用户恰好是最依赖收件箱的人。选课/调课两路不在此列：
+     * 前者的入箱点在「通知发成功」内（发不出就不落已发键也不入箱，下一轮还有机会），
+     * 后者的调度开关在 [ScheduleAlertReminder.check] 内部自判。
      */
     suspend fun check(context: Context) {
         runCatching {
@@ -183,10 +188,9 @@ object ScoreAlertReminder {
             val selectionOn = prefs.selectionAlertEnabled.first()
             val scheduleOn = prefs.scheduleAlertEnabled.first()
             if (!scoreOn && !examOn && !selectionOn && !scheduleOn) return
-            // 通知被系统/用户整体关闭时静默跳过：写不出去也不该白打一次教务
-            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
-            if (scoreOn) checkScores(context)
-            if (examOn) checkExams(context)
+            val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+            if (scoreOn) checkScores(context, notificationsEnabled)
+            if (examOn) checkExams(context, notificationsEnabled)
             // 选课提醒自带落盘去重与闹钟重排（DESIGN §4.35），这里只负责按周期叫醒它
             if (selectionOn) SelectionAlertReminder.check(context)
             // 调课检测（DESIGN §4.17 重立）：第四路搭同一趟车，闸门与静默纪律在 ScheduleSync.check
@@ -198,12 +202,12 @@ object ScoreAlertReminder {
     // 成绩
     // ------------------------------------------------------------------
 
-    private suspend fun checkScores(context: Context) {
+    private suspend fun checkScores(context: Context, notificationsEnabled: Boolean) {
         when (val result = Graph.scoreSync(context).sync()) {
             is ScoreSync.Result.Updated -> {
                 if (result.firstImport) return // 首次导入是基线，不是变动
                 if (result.changes.isEmpty()) return
-                postScores(context, result.changes)
+                if (notificationsEnabled) postScores(context, result.changes)
             }
             else -> Unit // Skipped / InProgress / Failed 一律静默，失败闸门不落时刻
         }
@@ -213,11 +217,11 @@ object ScoreAlertReminder {
     // 考试
     // ------------------------------------------------------------------
 
-    private suspend fun checkExams(context: Context) {
+    private suspend fun checkExams(context: Context, notificationsEnabled: Boolean) {
         when (val result = Graph.examSync(context).sync()) {
             is ExamSync.Result.Updated -> {
                 if (result.changes.isEmpty()) return
-                postExams(context, result.changes)
+                if (notificationsEnabled) postExams(context, result.changes)
             }
             else -> Unit
         }

@@ -512,7 +512,11 @@ App 侧落地两件：① 新增 `ui/reminder/ReminderVibration`（自 ebike `vi
 purge。五个挂点（ExamSync / ScoreSync / ScheduleSync / SelectionAlertReminder /
 BalanceAlertReminder）全部落在既有结果点上，**收件箱不发任何网络请求**、写操作吞错
 不反向打断业务链；`ScoreSync` 的 changes 与 `scoreAlertEnabled` 解耦（恒计算，通知层
-自判开关）；余额消息是状态型（回升即整条移除，失败绝不误删）。时刻型提醒不入箱。
+自判开关）；余额消息是状态型（回升即整条移除，失败绝不误删）；**通知总开关只拦发通知
+不拦核对与入箱**（2026-10-06 修正：`ScoreAlertReminder`/`BalanceAlertReminder` 入口
+原先 `areNotificationsEnabled()` 早退，通知全关收件箱跟着失效；选课已发键在通知被
+系统整体关闭时也落——否则重排闹钟把已过去的点反复排成立即触发的空转）。
+时刻型提醒不入箱。
 新增 `InboxRulesTest` 8 例，全量 **1322 例 0 失败**；碰网络结果路径与 Room 迁移，
 debug 包已装真机，点验交用户执行（角标亮起、消息内容与教务实际比对、跳转/已读/
 多选删除往返）。
