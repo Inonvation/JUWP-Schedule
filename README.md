@@ -81,7 +81,7 @@
 > - 严禁滥用：刷积分、绕过付费、伪造官方身份、售卖本软件及其脚本、攻击学校网站、爬取售卖敏感数据、逆向学校官网或教务系统。
 > - 项目仅供学习交流使用；如因不正当使用造成任何损失，本人概不负责。如有侵权，请联系删除。
 
-问题、建议或想加功能，欢迎提 [Issue](https://github.com/Inonvation/JUWP-Schedule/issues)。
+问题、建议或想新增功能，欢迎提 [Issue](https://github.com/Inonvation/JUWP-Schedule/issues)。
 
 ## 📄 License
 
