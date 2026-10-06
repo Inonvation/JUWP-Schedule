@@ -162,17 +162,21 @@ object EbikeFreeRideReminder {
 
         val lead = prefs.ebikeFreeLeadMinutes.first()
         val sent = prefs.ebikeFreeNotifiedKeys.first().toMutableSet()
+        // 通知强提醒（2026-10-06，通用设置）：默认关，开了才在发出后直接震动
+        val strongVibration = prefs.strongReminderVibration.first()
 
         // 3) 该发的提醒（各自去重）。发失败不落键，下一轮还有机会
         if (EbikeFreeRide.isLeadDue(startAt, lead, now)) {
             val key = EbikeFreeRide.leadDedupKey(startAt)
-            if (key !in sent && EbikeFreeRideNotifier.postLeadReminder(context, startAt, now)) {
+            if (key !in sent &&
+                EbikeFreeRideNotifier.postLeadReminder(context, startAt, now, strongVibration)
+            ) {
                 sent += key
             }
         }
         if (endDue) {
             val key = EbikeFreeRide.endDedupKey(startAt)
-            if (key !in sent && EbikeFreeRideNotifier.postEndReminder(context)) {
+            if (key !in sent && EbikeFreeRideNotifier.postEndReminder(context, strongVibration)) {
                 sent += key
             }
             // 免费时长已结束（结束提醒窗口内）：扫完即焚的码此刻删除。

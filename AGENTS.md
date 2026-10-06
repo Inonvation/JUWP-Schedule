@@ -488,6 +488,16 @@ App 侧落地两件：① 新增 `ui/reminder/ReminderVibration`（自 ebike `vi
 免费结束与提醒点整体后移 5 秒，新增 `EbikeFreeRideTest` 缓冲用例。全量 **1314 例
 0 失败**；debug 包已装真机，点验待用户执行（点扫一扫后倒计时是否 5 秒后才走、
 说明句是否只在小程序方式出现）。
+通知强提醒开关（2026-10-06，DESIGN §3.3 通用设置；规则同步 `.agents/rules/ebike.md`
+通知节）：用户确认直接震动能穿免打扰后要求收成显式开关——通用设置新增「通知」区
+「通知强提醒」（`strong_reminder_vibration`，**默认关**，`HugeIcons.Notification03`），
+上课 / 作业截止 / 免费时长三类提醒发出后的直接震动改为**开了才发**；其余提醒
+（U净 / 余额 / 调课 / 选课）本来就没接直接震动，不受影响。偏好走独立单流
+（`baseDisplayPrefs` combine 已满员，不进合并模型；`MeViewModel.strongReminderVibration`
+首帧 runBlocking 真值）。全量 **1322 例 0 失败**；模拟器本轮起不来（jw35 崩，
+同 10-04），碰提醒链路按口径交用户真机点验：开/关开关后提醒是否分别「直接震」/
+「只走系统渠道」，以及上一轮遗留的上课提醒震动点验（若被 IGNORED_BACKGROUND 拦
+考虑 USAGE_ALARM 出路）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

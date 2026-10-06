@@ -405,7 +405,9 @@
   `vibrationPattern` 靠它才生效，缺了系统静默丢弃，所以 `enableVibration(true)` 配了也白配
   （这是那一轮的真根因，已补）。另外 `ReminderVibration.vibrate`（2026-10-05 自
   `EbikeFreeRideNotifier.vibrateAlert` 抽成共享工具 `ui/reminder/ReminderVibration`，
-  上课/作业截止提醒也用它）在两条提醒里
+  上课/作业截止提醒也用它；**2026-10-06 起收在通用设置「通知强提醒」开关后面**——
+  直接震动能穿免打扰，属强打扰，默认关，`EbikeFreeRideReminder.check` 读
+  `strongReminderVibration` 传入）在两条提醒里
   各发一次**直接震动**（`VibrationEffect`；API 31+ 走 `VibratorManager.defaultVibrator`，
   更低走 `Vibrator`）：渠道震动归系统通知设置管，用户把那条渠道的「震动」关掉后它就不震，
   直接震动不看那个开关。**横幅（heads-up）只能尽力**：App 侧只有「HIGH 渠道 + 不静音」

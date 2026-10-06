@@ -801,6 +801,21 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_EBIKE_FREE_REMINDER_ENABLED] ?: false
     }
 
+    /**
+     * 通知强提醒（DESIGN §3.3 通用设置 / §3.7）。全局项，**默认关**。
+     *
+     * 开 = 上课 / 作业截止 / 免费时长三类提醒发出时**直接震动**
+     * （`ReminderVibration`，`Vibrator` 硬件调用不走通知渠道）——zen/免打扰的拦截面
+     * 是「通知呈现」与铃声/通知类 usage，`USAGE_UNKNOWN` 的直接震动不在其中，
+     * 所以能穿过免打扰与 HyperOS 的应用级通知策略；强打扰只能显式开启。
+     * 关 = 提醒的震动只走渠道配置（可能被通知策略 / 免打扰 / 系统设置拦）。
+     * **不进 [DisplayPrefs] 合并模型**——`baseDisplayPrefs` 的 combine 已满员
+     * （AGENTS.md 口径），消费方各自收这条单流。
+     */
+    val strongReminderVibration: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_STRONG_REMINDER_VIBRATION] ?: false
+    }
+
     /** 共享单车免费时长提醒提前量（分钟）。读路径吸附 1~5。 */
     val ebikeFreeLeadMinutes: Flow<Int> = context.displayDataStore.data.map { p ->
         EbikeFreeRide.coerceLead(p[KEY_EBIKE_FREE_LEAD] ?: EbikeFreeRide.DEFAULT_LEAD_MINUTES)
@@ -1247,6 +1262,11 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_FREE_REMINDER_ENABLED] = value }
     }
 
+    /** 通知强提醒开关（DESIGN §3.3 通用设置；语义见 [strongReminderVibration]）。 */
+    suspend fun setStrongReminderVibration(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_STRONG_REMINDER_VIBRATION] = value }
+    }
+
     /** 共享单车免费时长提醒提前量（分钟，1~5）。 */
     suspend fun setEbikeFreeLeadMinutes(value: Int) {
         context.displayDataStore.edit {
@@ -1643,6 +1663,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_HOMEWORK_REMINDER_ENABLED = booleanPreferencesKey("homework_reminder_enabled")
         val KEY_HOMEWORK_REMINDED_KEYS = stringSetPreferencesKey("homework_reminded_keys")
         val KEY_EBIKE_FREE_REMINDER_ENABLED = booleanPreferencesKey("ebike_free_reminder_enabled")
+        val KEY_STRONG_REMINDER_VIBRATION = booleanPreferencesKey("strong_reminder_vibration")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
 

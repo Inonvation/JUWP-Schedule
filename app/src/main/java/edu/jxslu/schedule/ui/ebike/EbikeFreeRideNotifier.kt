@@ -137,10 +137,17 @@ internal object EbikeFreeRideNotifier {
      * 提前量提醒。正文按**实际剩余**写（[EbikeFreeRide.leadText]）——
      * 闹钟被 ROM 推迟时，写死「还剩 3 分钟」而实际只剩 40 秒是假信息。
      *
-     * 通知之外再补一次 [ReminderVibration.vibrate]：渠道配的是「通知栏里那条」的震动，
-     * 直接震动是「手机本身」的，两路都走才不怕 ROM 只放行其中一路。
+     * [strongVibration] 开（通用设置「通知强提醒」，默认关）时通知之外再补一次
+     * [ReminderVibration.vibrate]：渠道配的是「通知栏里那条」的震动，直接震动是
+     * 「手机本身」的，两路都走才不怕 ROM 只放行其中一路；直接震动也穿免打扰，
+     * 所以收在显式开关后面。
      */
-    fun postLeadReminder(context: Context, startAtMillis: Long, nowMillis: Long): Boolean {
+    fun postLeadReminder(
+        context: Context,
+        startAtMillis: Long,
+        nowMillis: Long,
+        strongVibration: Boolean,
+    ): Boolean {
         ensureChannels(context)
         val text = EbikeFreeRide.leadText(startAtMillis, nowMillis)
         val notification = NotificationCompat.Builder(context, EbikeFreeRide.NotificationIds.ALERT_CHANNEL)
@@ -156,12 +163,12 @@ internal object EbikeFreeRideNotifier {
             .setContentIntent(contentIntent(context, REQUEST_LEAD))
             .build()
         val posted = post(context, EbikeFreeRide.NotificationIds.LEAD, notification)
-        ReminderVibration.vibrate(context)
+        if (strongVibration) ReminderVibration.vibrate(context)
         return posted
     }
 
-    /** 结束提醒：免费时段已过，该还车了。 */
-    fun postEndReminder(context: Context): Boolean {
+    /** 结束提醒：免费时段已过，该还车了。[strongVibration] 口径见 [postLeadReminder]。 */
+    fun postEndReminder(context: Context, strongVibration: Boolean): Boolean {
         ensureChannels(context)
         val notification = NotificationCompat.Builder(context, EbikeFreeRide.NotificationIds.ALERT_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_bell)
@@ -174,7 +181,7 @@ internal object EbikeFreeRideNotifier {
             .setContentIntent(contentIntent(context, REQUEST_END))
             .build()
         val posted = post(context, EbikeFreeRide.NotificationIds.END, notification)
-        ReminderVibration.vibrate(context)
+        if (strongVibration) ReminderVibration.vibrate(context)
         return posted
     }
 

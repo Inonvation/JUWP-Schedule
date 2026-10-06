@@ -762,7 +762,18 @@ class ScheduleRepository(
 
     val reminderLeadMinutes: Flow<Int> = prefs.reminderLeadMinutes
 
+    /**
+     * 通知强提醒（2026-10-06，通用设置；语义见 `DisplayPrefsStore.strongReminderVibration`）：
+     * 上课 / 作业截止 / 免费时长三类提醒发出即直接震动。**单独一条流，不进
+     * `baseDisplayPrefs` 合并模型**（combine 已满员）——消费方是提醒链（receiver/
+     * worker 里的 suspend 读）与通用设置页，各自 `first()` / collect 即可。
+     */
+    val strongReminderVibration: Flow<Boolean> = prefs.strongReminderVibration
+
     suspend fun setReminderEnabled(value: Boolean) = prefs.setReminderEnabled(value)
+
+    suspend fun setStrongReminderVibration(value: Boolean) =
+        prefs.setStrongReminderVibration(value)
 
     suspend fun setReminderLeadMinutes(value: Int) = prefs.setReminderLeadMinutes(value)
 

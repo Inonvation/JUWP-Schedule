@@ -582,6 +582,16 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
   悬浮导航栏（§4.22，**默认关**：底栏半透明磨砂，课表背景图透到屏幕底部，
   **重启生效**——切完当场提示「重启应用后生效」，理由见 §4.22）、
   **启动页**（`DisplayPrefs.startPage`，**重启生效**，默认「今日」，见下）
+- **通知强提醒**（2026-10-06，通用设置「通知」区，`strong_reminder_vibration`，
+  **默认关**）：上课 / 作业截止 / 免费时长三类提醒发出时的**直接震动**
+  （`ReminderVibration`）收成显式开关。背景：直接震动走 `Vibrator` 硬件调用、
+  usage 为 `UNKNOWN`，不在 zen/免打扰的拦截面内（AOSP 只拦铃声/通知类 usage），
+  也不受 HyperOS 应用级通知策略管——**能穿透免打扰**，属强打扰，只能用户显式开启。
+  开 = 提醒发出后额外直接震一次（双震 pattern）；关 = 震动只走系统通知渠道那一路
+  （可能被通知策略 / 免打扰 / 系统振动强度设置拦，那是系统层的事）。偏好走**独立单流**
+  （`ScheduleRepository.strongReminderVibration`，`baseDisplayPrefs` 的 combine 已满员
+  不进合并模型），提醒链在发通知前 `first()` 读一次传入；其余提醒（U净 / 余额 /
+  调课 / 选课）没接直接震动，不受此开关影响
 - **主题配色**（2026-09-28，`domain/ThemePalette` + `ui/theme/Palettes.kt`）：
   内置六套——水电青（默认，即品牌色）· 晴空蓝 · 暮山紫 · 樱花粉 · 落日橙 · 森野绿，
   每套深浅两份方案，**全角色落值**（2026-09-28 补齐：此前每套只填 9 个角色，
@@ -1034,7 +1044,9 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
   渠道建出来后振动与 importance 都改不动，旧 id（`class_reminder` / `homework_deadline`，
   无振动版）由 `ensureChannels` 删除，迁移挂在冷启动重排上（升级后不用等下一次提醒触发）。
   点击进主界面；自动消失。
-- **发出即直接震动**（2026-10-05，`ReminderVibration`，与免费时长提醒同一共享工具）：
+- **发出即直接震动**（2026-10-05，`ReminderVibration`，与免费时长提醒同一共享工具；
+  **2026-10-06 起收在通用设置「通知强提醒」开关后面**——它穿免打扰，属强打扰，
+  默认关，见 §3.3 该节）：
   HyperOS 对第三方应用的通知策略（悬浮通知 / 声音 / 振动 / 锁屏）**默认全关、且不认渠道创建参数**
   ——2026-10-05 实测（Redmi K70 Pro）：渠道记录里 importance HIGH、`mVibrationEnabled=true`，
   设置页那几个开关照样显示关，App 也没有公开 API 能改这个策略层。`Vibrator` 直接震动不走
@@ -1253,7 +1265,7 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 | 提示 | 「打开微信扫一扫」按钮 best-effort 三级兜底：`ShortCutDispatchAction`（微信桌面长按快捷方式真身，直达扫一扫）→ `BIZSHORTCUT` 旧式入口 → 微信首页手动引导；失败走页内 Snackbar；manifest `queries` 声明微信包可见性仅用于该探测 |
 | 打开快趣出行（2026-09-21 首版；2026-09-23 降级为文字入口） | 降为页面最下方一行 `TextButton`，与免责声明相邻。**助手通道整套删除**（`Settings.Secure.assistant` 改写 + 反射 `launchAssist` + `WRITE_SECURE_SETTINGS` + `KILL_BACKGROUND_PROCESSES` + `queries` 里的 `com.kvcoo.go` + 未安装引导弹窗）：内置地图（见下节）已经承担「看车在哪」这件事，官方 App 不再是必经步骤，而那条链路要用户先跑一次 adb 授权、且只在小米 ROM 上真机验证过。现在只剩桌面启动意图一级：装了则打开（启动页），未装给一句 Snackbar 提示，不再弹下载引导 |
 | 提亮 | **不做**自动屏幕提亮（用户拍板） |
-| 免费时长倒计时（2026-09-22 首版；2026-09-23 改系统日历；**2026-09-24 改回 App 通知**） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点**：微信小程序方式 = 点「打开微信扫一扫」+ **5 秒缓冲**（`EbikeFreeRide.SCAN_DELAY_MS`，2026-10-05 用户拍板：切微信、选图、扫码、开车要时间，倒计时从点击 5 秒后才开始走——缓冲期内显示满格 15:00 不动（`remainingSeconds` 钳上限），免费结束与提醒点整体后移 5 秒），**账号登录方式 = 服务端确认的开锁时刻**（见「本机用车」行；那一档没有扫一扫这个动作）。**倒计时是预估**（2026-10-05 用户要求）：骑行页倒计时块在小程序方式（判据 `caps.wechatScan`）的进度线下常驻一句「倒计时为预估，实际以微信小程序显示为准」，账号方式不写这句；开关 `ebikeFreeReminderEnabled` 默认关（通知是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。**有在案计时**就显示倒计时块（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」；2026-09-28 起并入置顶的「当前骑行」卡，有快趣订单在案时不给「结束骑行」——还车即结束）——页面上的倒计时**不再看提醒开关**（2026-09-28 用户口径：能软件开车的今天，开车后的免费计时要同步显示）；开关只管通知（闹钟 + 常驻倒计时通知），一个通知偏好不该把事实藏起来。**本机开锁成功时若开关关着会顺手打开它**（见下「本机用车」行），所以开锁后的倒计时通知照常来。**提醒 = 两条 App 通知**（`NotificationIds.LEAD` / `END`，channel `ebike_free_ride_alert_v2`，HIGH + **震动**（双震 pattern；channel 建出来后震动与 importance 都改不动，而「删掉重建」也无效——delete 是异步的、紧接着 create 会被当成更新，所以直接换了新 id，旧 id 清掉），category 用 `EVENT` 与上课提醒对齐）：提前量点（免费结束前 N 分钟）与免费结束那一刻各一次，由 `AlarmManager.setAlarmClock` **精确**触发——系统级闹钟，到点唤醒设备、不受 Doze/省电推迟，且不需要任何特殊权限（与上课提醒同一手法）。**通知栏常驻倒计时**由前台服务 `EbikeFreeRideService` 承载（`specialUse` 类型，`FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE` 权限），剩余时间由服务**每秒**重发一次通知文案（`EbikeFreeRide.countdownText`，「免费剩余 mm:ss」）；**不用**系统 chronometer——2026-09-24 真机实测（Redmi K70 / 澎湃OS）面板静止时系统不主动重绘 chronometer，用户看到的是一个不动的数字。**只有亮屏才刷**（用户拍板省电口径）：灭屏时通知栏没人看，一个 notify 都不发（协程阻塞在屏幕事件上等，零 CPU），点亮瞬间补刷一次——省电与「点亮即准」两头都占。三层兜底：精确闹钟（主）→ 前台服务进程（中）→ `EbikeFreeRideCheckWorker` 周期核对 + 进页 / 冷启动核对（兜，**类名别改**——老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排；周期 15 分钟 = WorkManager 的最小周期，且**只在计时期间排**，平时由 `cancelPeriodicWork` 撤掉，省掉「没骑行也每 15 分钟冷启动一次进程」）。迟到窗口（用户拍板 2026-09-24）：提前量那条**只要免费时段没结束就补发**，结束那条结束后 5 分钟内仍发（`EbikeFreeRide.END_WINDOW_MS`），越过静默。去重键带计时起点（`lead` / `end` 前缀 + 起点毫秒，落 DataStore 已发集合），闹钟与周期核对共用。换车 = 再点一次「扫一扫」重新计时（已发键与校准标记清空、上一轮挂在通知栏的提醒撤掉、闹钟重排；常驻倒计时由 `EbikeFreeRideService.start` 按**起点是否变化**自动重建 tick——判据**不是**「服务在不在跑」，否则上一轮没结束就换车时倒计时不会重置，2026-09-24 修）。**系统日历链路整套删除**（`EbikeCalendarEvents.kt`、`ebikeFreeEventId`、`水贝贝骑行提醒` 标记、日历权限申请），理由：日历 App 发提醒时 App 自己没法展示倒计时，体验是两套。开机补排**不做**（用户拍板，重启后进行中的计时静默失效）。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖提醒点 / 迟到窗口 / 去重键 / 吸附 / 倒计时 / 有效期 / 通知 id 契约），通知构建在 `ui/ebike/EbikeFreeRideNotifier.kt`（**PendingIntent requestCode 与通知 id 分离**：2000/2005/2006，2026-09-24 修——此前直接用通知 id 当 requestCode，与余额提醒撞号、两边落点互相改写，见 §3.13 余额提醒「通知」行）。**「精确倒计时」（微信通知校准）已整套删除（2026-09-30）**：`WechatRentListener` / `domain/WechatRentNotice` / prefs 两键 / 设置开关 / manifest 服务声明都没了，计时起点固定为「点扫一扫」（小程序方式）与「开锁成功」（账号方式）两个口径，别加回来。**提醒的两路信号（2026-09-30 修）**：manifest 一直缺 `VIBRATE` 权限——Android 8 起渠道上的震动靠它才生效，缺了系统静默丢弃（渠道里 `enableVibration(true)` 配了也白配），用户报的「没有震动」就是它；权限已补，且 `ReminderVibration.vibrate`（2026-10-05 自 `vibrateAlert` 抽成共享工具，上课/作业提醒同用）在两条提醒里另发一次**不依赖通知策略的直接震动**（渠道震动被用户关掉、通知被 ROM 静默折叠时它还在）。**横幅（heads-up）弹不弹由系统与 ROM 决定**——App 能做的只有 HIGH 渠道 + 不静音，应用被后台限制、通知设置里「悬浮通知」被关都会让提醒只落在通知栏；设置弹层「提醒」区因此常驻一条「通知与悬浮」，点进系统通知设置去开（`AppPermissions.jumpNotificationSettings`）。**2026-10-05 实测补充：HyperOS 对第三方应用的悬浮通知/振动/声音/锁屏四开关默认全关、且不认渠道创建参数**（渠道记录 HIGH+振动俱全，设置页照样显示关），改渠道救不了它们，只能手动开。常驻倒计时那条**保持 LOW 无震动**：它每秒重发一次，做成横幅等于每秒弹一次。 |
+| 免费时长倒计时（2026-09-22 首版；2026-09-23 改系统日历；**2026-09-24 改回 App 通知**） | 运营方口径「扫码开车后 15 分钟免费」，App 无法感知实际开车，**计时起点**：微信小程序方式 = 点「打开微信扫一扫」+ **5 秒缓冲**（`EbikeFreeRide.SCAN_DELAY_MS`，2026-10-05 用户拍板：切微信、选图、扫码、开车要时间，倒计时从点击 5 秒后才开始走——缓冲期内显示满格 15:00 不动（`remainingSeconds` 钳上限），免费结束与提醒点整体后移 5 秒），**账号登录方式 = 服务端确认的开锁时刻**（见「本机用车」行；那一档没有扫一扫这个动作）。**倒计时是预估**（2026-10-05 用户要求）：骑行页倒计时块在小程序方式（判据 `caps.wechatScan`）的进度线下常驻一句「倒计时为预估，实际以微信小程序显示为准」，账号方式不写这句；开关 `ebikeFreeReminderEnabled` 默认关（通知是打扰型能力），提前量 `ebikeFreeLeadMinutes` 1~5 分钟可设、默认 3（用户拍板）。**有在案计时**就显示倒计时块（「免费剩余 mm:ss」+ 进度条 + 「结束骑行」；2026-09-28 起并入置顶的「当前骑行」卡，有快趣订单在案时不给「结束骑行」——还车即结束）——页面上的倒计时**不再看提醒开关**（2026-09-28 用户口径：能软件开车的今天，开车后的免费计时要同步显示）；开关只管通知（闹钟 + 常驻倒计时通知），一个通知偏好不该把事实藏起来。**本机开锁成功时若开关关着会顺手打开它**（见下「本机用车」行），所以开锁后的倒计时通知照常来。**提醒 = 两条 App 通知**（`NotificationIds.LEAD` / `END`，channel `ebike_free_ride_alert_v2`，HIGH + **震动**（双震 pattern；channel 建出来后震动与 importance 都改不动，而「删掉重建」也无效——delete 是异步的、紧接着 create 会被当成更新，所以直接换了新 id，旧 id 清掉），category 用 `EVENT` 与上课提醒对齐）：提前量点（免费结束前 N 分钟）与免费结束那一刻各一次，由 `AlarmManager.setAlarmClock` **精确**触发——系统级闹钟，到点唤醒设备、不受 Doze/省电推迟，且不需要任何特殊权限（与上课提醒同一手法）。**通知栏常驻倒计时**由前台服务 `EbikeFreeRideService` 承载（`specialUse` 类型，`FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE` 权限），剩余时间由服务**每秒**重发一次通知文案（`EbikeFreeRide.countdownText`，「免费剩余 mm:ss」）；**不用**系统 chronometer——2026-09-24 真机实测（Redmi K70 / 澎湃OS）面板静止时系统不主动重绘 chronometer，用户看到的是一个不动的数字。**只有亮屏才刷**（用户拍板省电口径）：灭屏时通知栏没人看，一个 notify 都不发（协程阻塞在屏幕事件上等，零 CPU），点亮瞬间补刷一次——省电与「点亮即准」两头都占。三层兜底：精确闹钟（主）→ 前台服务进程（中）→ `EbikeFreeRideCheckWorker` 周期核对 + 进页 / 冷启动核对（兜，**类名别改**——老版本排下的周期任务按类名实例化，`KEEP` 策略又不会重排；周期 15 分钟 = WorkManager 的最小周期，且**只在计时期间排**，平时由 `cancelPeriodicWork` 撤掉，省掉「没骑行也每 15 分钟冷启动一次进程」）。迟到窗口（用户拍板 2026-09-24）：提前量那条**只要免费时段没结束就补发**，结束那条结束后 5 分钟内仍发（`EbikeFreeRide.END_WINDOW_MS`），越过静默。去重键带计时起点（`lead` / `end` 前缀 + 起点毫秒，落 DataStore 已发集合），闹钟与周期核对共用。换车 = 再点一次「扫一扫」重新计时（已发键与校准标记清空、上一轮挂在通知栏的提醒撤掉、闹钟重排；常驻倒计时由 `EbikeFreeRideService.start` 按**起点是否变化**自动重建 tick——判据**不是**「服务在不在跑」，否则上一轮没结束就换车时倒计时不会重置，2026-09-24 修）。**系统日历链路整套删除**（`EbikeCalendarEvents.kt`、`ebikeFreeEventId`、`水贝贝骑行提醒` 标记、日历权限申请），理由：日历 App 发提醒时 App 自己没法展示倒计时，体验是两套。开机补排**不做**（用户拍板，重启后进行中的计时静默失效）。纯逻辑在 `domain/EbikeFreeRide.kt`（`EbikeFreeRideTest` 覆盖提醒点 / 迟到窗口 / 去重键 / 吸附 / 倒计时 / 有效期 / 通知 id 契约），通知构建在 `ui/ebike/EbikeFreeRideNotifier.kt`（**PendingIntent requestCode 与通知 id 分离**：2000/2005/2006，2026-09-24 修——此前直接用通知 id 当 requestCode，与余额提醒撞号、两边落点互相改写，见 §3.13 余额提醒「通知」行）。**「精确倒计时」（微信通知校准）已整套删除（2026-09-30）**：`WechatRentListener` / `domain/WechatRentNotice` / prefs 两键 / 设置开关 / manifest 服务声明都没了，计时起点固定为「点扫一扫」（小程序方式）与「开锁成功」（账号方式）两个口径，别加回来。**提醒的两路信号（2026-09-30 修）**：manifest 一直缺 `VIBRATE` 权限——Android 8 起渠道上的震动靠它才生效，缺了系统静默丢弃（渠道里 `enableVibration(true)` 配了也白配），用户报的「没有震动」就是它；权限已补，且 `ReminderVibration.vibrate`（2026-10-05 自 `vibrateAlert` 抽成共享工具，上课/作业提醒同用）在两条提醒里另发一次**不依赖通知策略的直接震动**（渠道震动被用户关掉、通知被 ROM 静默折叠时它还在；**2026-10-06 起收在通用设置「通知强提醒」开关后面，默认关**——直接震动穿免打扰，见 §3.3 该节）。**横幅（heads-up）弹不弹由系统与 ROM 决定**——App 能做的只有 HIGH 渠道 + 不静音，应用被后台限制、通知设置里「悬浮通知」被关都会让提醒只落在通知栏；设置弹层「提醒」区因此常驻一条「通知与悬浮」，点进系统通知设置去开（`AppPermissions.jumpNotificationSettings`）。**2026-10-05 实测补充：HyperOS 对第三方应用的悬浮通知/振动/声音/锁屏四开关默认全关、且不认渠道创建参数**（渠道记录 HIGH+振动俱全，设置页照样显示关），改渠道救不了它们，只能手动开。常驻倒计时那条**保持 LOW 无震动**：它每秒重发一次，做成横幅等于每秒弹一次。 |
 
 #### 附近单车地图（2026-09-23，`ui/ebike/BikeMapScreen`）
 
@@ -3686,7 +3698,8 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   通知构建与两个 channel 在 `ui/ebike/EbikeFreeRideNotifier.kt`（倒计时 LOW 无震动 / 提醒 HIGH
   **带震动**、category `EVENT`；带震动的提醒 channel 用新 id `_v2`，早期无震动的旧 id 由
   `ensureChannels` 清掉——channel 建出来后震动改不动，「删掉重建」也因 delete 异步而无效）。
-  两条提醒除通知外还各发一次**直接震动**（`ReminderVibration.vibrate`，2026-09-30）：
+  两条提醒除通知外还各发一次**直接震动**（`ReminderVibration.vibrate`，2026-09-30；
+  **2026-10-06 起收在通用设置「通知强提醒」开关后面，默认关**，见 §3.3 该节）：
   渠道震动要 `VIBRATE` 权限才生效（manifest 此前一直没声明，用户报的「没有震动」就是它，
   已补），直接震动则连渠道被用户关掉都还能震——提醒关乎计费，宁可多一路信号。
   **横幅（heads-up）弹不弹由系统 / ROM 决定**：App 只能给 HIGH 渠道 + 不静音，

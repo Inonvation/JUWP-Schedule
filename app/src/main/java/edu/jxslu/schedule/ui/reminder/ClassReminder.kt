@@ -271,12 +271,15 @@ internal object ReminderNotifications {
         // 两个窗口重叠导致的重复计算。
         val startDue = dueClassStartPlan(semester, slots, courses, now)
         val startKey = startDue?.dedupKey
+        // 通知强提醒（2026-10-06，通用设置）：默认关，开了才在发出后直接震动
+        val strongVibration = repo.strongReminderVibration.first()
         if (startKey != null && repo.reminderLastKey(ReminderKeyKind.Start) != startKey) {
             val posted = postClassNotification(
                 context,
                 id = CLASS_START_NOTIFICATION_ID,
                 title = "上课 · ${startDue.course.name}",
                 text = metaLine(slots, startDue.course),
+                strongVibration = strongVibration,
             )
             if (posted) repo.setReminderLastKey(ReminderKeyKind.Start, startKey)
         }
@@ -289,6 +292,7 @@ internal object ReminderNotifications {
                 id = NOTIFICATION_ID,
                 title = "${ReminderDefaults.leadLabel(lead)}后上课 · ${due.course.name}",
                 text = metaLine(slots, due.course),
+                strongVibration = strongVibration,
             )
             if (posted) repo.setReminderLastKey(ReminderKeyKind.Before, key)
         }
@@ -300,6 +304,7 @@ internal object ReminderNotifications {
         id: Int,
         title: String,
         text: String,
+        strongVibration: Boolean,
     ): Boolean {
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -322,9 +327,10 @@ internal object ReminderNotifications {
         val posted = runCatching {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_TAG, id, notification)
         }.isSuccess
-        // 发出即直接震动：HyperOS 的通知策略默认把渠道振动关掉（见 ReminderVibration），
-        // 靠渠道震在用户设备上大概率无声无息，直接震动不看那个开关
-        if (posted) ReminderVibration.vibrate(context)
+        // 开了「通知强提醒」才在发出后直接震动（2026-10-06 收成通用设置开关，默认关）：
+        // HyperOS 的通知策略默认把渠道振动关掉（见 ReminderVibration），直接震动不看那个开关，
+        // 但它也穿免打扰——所以只能由用户显式打开，关 = 回到纯渠道震动
+        if (posted && strongVibration) ReminderVibration.vibrate(context)
         return posted
     }
 
@@ -345,13 +351,14 @@ internal object ReminderNotifications {
         if (fresh.isEmpty()) return
 
         ensureChannels(context, homework = true)
+        // 口径同上课提醒：开了「通知强提醒」才直接震动（默认关）
+        val strongVibration = repo.strongReminderVibration.first()
         val posted = if (fresh.size == 1) {
             postSingleHomework(context, fresh.single())
         } else {
             postHomeworkSummary(context, fresh)
         }
-        // 发出即直接震动（口径同上课提醒，见 postClassNotification）
-        if (posted) ReminderVibration.vibrate(context)
+        if (posted && strongVibration) ReminderVibration.vibrate(context)
         // 发出后才落键（发失败不落，下一轮还有机会）；整组一起记，免得下轮把同组再发一遍
         if (posted) fresh.forEach { repo.addHomeworkRemindedKey(it.dedupKey) }
     }

@@ -65,6 +65,7 @@ import me.rerere.hugeicons.stroke.ColorPicker
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.Home01
+import me.rerere.hugeicons.stroke.Notification03
 import me.rerere.hugeicons.stroke.Palette
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
@@ -107,6 +108,8 @@ fun GeneralSettingsScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 单独一条流（不进 displayPrefs 合并模型，combine 已满员）：首帧即真值（VM 里 runBlocking 读）
+    val strongReminderVibration by viewModel.strongReminderVibration.collectAsStateWithLifecycle()
     val haptics = rememberAppHaptics()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -219,6 +222,19 @@ fun GeneralSettingsScreen(
                     checked = state.displayPrefs.lifeTabEnabled,
                     onCheckedChange = viewModel::setLifeTabEnabled,
                     icon = HugeIcons.Wallet03,
+                )
+            }
+
+            // 通知强提醒（2026-10-06 用户要求）：ReminderVibration 的直接震动收成显式开关。
+            // 默认关——穿免打扰的震动是强打扰；关掉后提醒的震动只走系统通知渠道那一路，
+            // 可能被通知策略 / 免打扰 / 系统设置拦（横幅同理，那是系统层的事，App 管不了）
+            SettingsSection(title = "通知") {
+                SettingSwitchRow(
+                    title = "通知强提醒",
+                    subtitle = "上课 / 作业 / 免费时长提醒发出时直接震动，可穿透免打扰与系统的通知限制；关闭时按系统通知设置振动",
+                    checked = strongReminderVibration,
+                    onCheckedChange = viewModel::setStrongReminderVibration,
+                    icon = HugeIcons.Notification03,
                 )
             }
 

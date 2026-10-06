@@ -153,6 +153,19 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     private val _oneShot = MutableStateFlow<OneShot?>(null)
     val oneShot: StateFlow<OneShot?> = _oneShot
 
+    /**
+     * 通知强提醒（2026-10-06，通用设置）：上课 / 作业截止 / 免费时长三类提醒发出即
+     * 直接震动，能穿过免打扰与 HyperOS 的通知策略。**单独一条流**——
+     * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型。
+     * 首帧真值同 [initialPrefs] 的模式，开关不先按默认渲染再跳一次。
+     */
+    val strongReminderVibration: StateFlow<Boolean> = repo.strongReminderVibration
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            runBlocking { repo.strongReminderVibration.first() },
+        )
+
     // ---- 背景图（DESIGN §4.21）：选图与移除都在 VM 里跑，转屏不丢进行中的导入 ----
 
     private val _bgImporting = MutableStateFlow(false)
@@ -373,6 +386,11 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     /** 触感反馈开关（全局，写入 DataStore）。 */
     fun setHapticsEnabled(value: Boolean) {
         viewModelScope.launch { repo.setHapticsEnabled(value) }
+    }
+
+    /** 通知强提醒开关（全局，通用设置；语义见 [strongReminderVibration]）。 */
+    fun setStrongReminderVibration(value: Boolean) {
+        viewModelScope.launch { repo.setStrongReminderVibration(value) }
     }
 
     /** 动态取色开关（全局，Material You）。 */
