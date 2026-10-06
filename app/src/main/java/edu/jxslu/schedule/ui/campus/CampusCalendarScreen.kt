@@ -57,7 +57,8 @@ import me.rerere.hugeicons.stroke.Refresh
  * 我的 → 校园服务 → 校历（DESIGN §4.34）。
  *
  * 整页就是一张校历图：**进页即整图**（满宽、按真实比例、可点开全屏手势缩放），
- * 没有任何要登录的东西。图源三层——已下载的镜像图 → 内置兜底图 → 骨架占位；
+ * 没有任何要登录的东西。图源——已下载的校历图（教务处官网直取为主、仓库镜像兜底）
+ * → 内置兜底图 → 骨架占位；
  * 刷新 = 顶栏按钮（force 绕闸门；进行中显进度圈、结果给 snackbar——已更新 / 已是最新 /
  * 失败。2026-10-06 补：原「成功全静默」被用户当成「点刷新没反应」），平时冷启动静默刷
  * （7 天闸门）。
@@ -172,7 +173,7 @@ fun CampusCalendarScreen(onBack: () -> Unit) {
 
             // 年次与来源说明：镜像没下到时只说内置图的归属学年，不编造
             Text(
-                text = if (state.year.isNotBlank()) "$state.year 学年 · 图片来自仓库镜像，每学年自动更新"
+                text = if (state.year.isNotBlank()) "$state.year 学年 · 图片来自学校公开发布，每学年自动更新"
                 else "图片为内置版本，联网后自动更新到最新学年",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),

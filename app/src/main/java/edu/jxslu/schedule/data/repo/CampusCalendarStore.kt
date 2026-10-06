@@ -6,6 +6,7 @@ import android.util.Log
 import edu.jxslu.schedule.data.net.AppHttp
 import edu.jxslu.schedule.domain.CampusCalendarIndex
 import edu.jxslu.schedule.domain.CampusCalendarRules
+import edu.jxslu.schedule.domain.CampusCalendarSchoolRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,11 +21,13 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * 校历镜像的落盘缓存与远程刷新（DESIGN §4.34）。
+ * 校历的落盘缓存与远程刷新（DESIGN §4.34）。
  *
- * 数据源 = 开发者仓库镜像（`docs-public/calendar/`，规则在 [CampusCalendarRules]）：
- * `index.json`（学年 + 文件名）+ 校历图。刷新 = 拉 JSON → 比对本地已存学年 →
- * 不同才下载图，**原子落盘**（临时文件写完改名，中断不留半张图）。
+ * 数据源（2026-10-07 起主次换位）= ① **教务处官网**（`jw.juwp.edu.cn` 通知公告，
+ * 免登录直取高清海报原图；规则在 [CampusCalendarSchoolRules]）；② 仓库镜像
+ * `docs-public/calendar/`（多源，已停日常维护，仅主源不可达时兜底；规则在
+ * [CampusCalendarRules]）。刷新 = 找最新「学年校历」→ 比对本地学年 + 文件名 →
+ * 变了才下载图，**原子落盘**（临时文件写完改名，中断不留半张图）。
  *
  * 为什么不用 Room/Not：就两样东西（一张图 + 一个学年标签），SharedPreferences + filesDir
  * 足够；StateFlow 只为「后台刷完页内立即换图」（同 `QzxyWateringStore` 的理由）。
@@ -66,10 +69,13 @@ class CampusCalendarStore(context: Context) {
         }
         return withContext(Dispatchers.IO) {
             runCatching {
-                // 1) 清单
+                // 1) 主源：教务处官网（免登录直取，2026-10-07 起）
+                val school = refreshFromSchool(now)
+                if (school == RefreshResult.Updated || school == RefreshResult.Unchanged) {
+                    return@runCatching school
+                }
+                // 2) 兜底：仓库镜像（多源；已停日常维护，仅应急/兼容）
                 val index = fetchIndex() ?: return@runCatching RefreshResult.Failed
-                // 2) 已是最新（学年与文件名都对上且图在）→ 只记成功时刻，省一次下载；
-                //    文件名一并比对：同学年也可能换文件（2026-10-07 镜像切高清版 png→jpg）
                 val current = _state.value
                 if (CampusCalendarRules.matchesLocal(current.year, current.localFile, index) &&
                     exists(CampusCalendarRules.localFileName(index))
@@ -77,24 +83,72 @@ class CampusCalendarStore(context: Context) {
                     prefs.edit().putLong(KEY_LAST_SUCCESS, now).apply()
                     return@runCatching RefreshResult.Unchanged
                 }
-                // 3) 下载图 → 原子落盘
-                val file = downloadImage(index) ?: return@runCatching RefreshResult.Failed
-                // 4) 换状态 + 记时刻；旧学年图顺带清掉（只保留当前一张，同背景图口径）
-                val previous = current.localFile
-                _state.value = CampusCalendarState(year = index.year, localFile = file.name)
-                prefs.edit()
-                    .putString(KEY_YEAR, index.year)
-                    .putString(KEY_IMAGE, file.name)
-                    .putLong(KEY_LAST_SUCCESS, now)
-                    .apply()
-                if (previous != null && previous != file.name) {
-                    runCatching { File(dir, previous).delete() }
-                }
+                val file = downloadImage(
+                    CampusCalendarRules.imageUrls(index),
+                    CampusCalendarRules.localFileName(index),
+                ) ?: return@runCatching RefreshResult.Failed
+                applyNewImage(index.year, file.name, current.localFile, now)
                 RefreshResult.Updated
             }.getOrElse {
                 Log.w(TAG, "calendar refresh failed", it)
                 RefreshResult.Failed
             }
+        }
+    }
+
+    /**
+     * 主源：教务处官网。扫通知公告（页序 = 时间倒序，第一处命中页即含最新一条）→ 取
+     * 学年最大的「学年校历」→ 学年/文件名都对上且图在 = Unchanged，否则下载官网高清原图。
+     * 任何一步失败返回 [RefreshResult.Failed]（由 [refresh] 落镜像兜底）。
+     */
+    private fun refreshFromSchool(now: Long): RefreshResult {
+        val hits = mutableListOf<Pair<String, String>>()
+        for (pageUrl in CampusCalendarSchoolRules.listUrls()) {
+            val html = fetchText(pageUrl) ?: continue
+            val found = CampusCalendarSchoolRules.parseArticleLinks(html, pageUrl)
+            if (found.isNotEmpty()) {
+                hits += found
+                break
+            }
+        }
+        val (articleUrl, year) = CampusCalendarSchoolRules.latest(hits) ?: return RefreshResult.Failed
+        val articleHtml = fetchText(articleUrl) ?: return RefreshResult.Failed
+        val imageUrl = CampusCalendarSchoolRules.parseImageUrl(articleHtml, articleUrl)
+            ?: return RefreshResult.Failed
+        Log.i(TAG, "school source: $year $articleUrl")
+
+        val name = CampusCalendarSchoolRules.localFileName(year, imageUrl)
+        val current = _state.value
+        val indexLike = CampusCalendarIndex(year = year, file = name)
+        if (CampusCalendarRules.matchesLocal(current.year, current.localFile, indexLike) && exists(name)) {
+            prefs.edit().putLong(KEY_LAST_SUCCESS, now).apply()
+            return RefreshResult.Unchanged
+        }
+        val file = downloadImage(listOf(imageUrl), name) ?: return RefreshResult.Failed
+        applyNewImage(year, file.name, current.localFile, now)
+        return RefreshResult.Updated
+    }
+
+    /** 拉一个页面文本；失败（网络 / 非 2xx）记日志返回 null。官网页无 charset 头，OkHttp 按 UTF-8 解。 */
+    private fun fetchText(url: String): String? = try {
+        http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+            if (!resp.isSuccessful) null else resp.body?.string()
+        }
+    } catch (e: IOException) {
+        Log.w(TAG, "source unreachable: $url", e)
+        null
+    }
+
+    /** 落好图后统一收口：换状态、记时刻、清旧图（只保留当前一张，同背景图口径）。 */
+    private fun applyNewImage(year: String, fileName: String, previousFile: String?, now: Long) {
+        _state.value = CampusCalendarState(year = year, localFile = fileName)
+        prefs.edit()
+            .putString(KEY_YEAR, year)
+            .putString(KEY_IMAGE, fileName)
+            .putLong(KEY_LAST_SUCCESS, now)
+            .apply()
+        if (previousFile != null && previousFile != fileName) {
+            runCatching { File(dir, previousFile).delete() }
         }
     }
 
@@ -125,18 +179,17 @@ class CampusCalendarStore(context: Context) {
         return null
     }
 
-    /** 下载校历图，临时文件写完原子改名；解码探测保它真是张图。逐源尝试，返回落好的文件。 */
-    private fun downloadImage(index: CampusCalendarIndex): File? {
-        for (url in CampusCalendarRules.imageUrls(index)) {
-            val file = tryDownloadImage(url, index)
+    /** 逐源下载校历图，临时文件写完原子改名；解码探测保它真是张图。返回落好的文件。 */
+    private fun downloadImage(urls: List<String>, targetName: String): File? {
+        for (url in urls) {
+            val file = tryDownloadImage(url, targetName)
             if (file != null) return file
         }
         return null
     }
 
     /** 单源下载：失败（网络 / 非 2xx / 解码探测不过）清掉临时文件返回 null。 */
-    private fun tryDownloadImage(url: String, index: CampusCalendarIndex): File? {
-        val targetName = CampusCalendarRules.localFileName(index)
+    private fun tryDownloadImage(url: String, targetName: String): File? {
         dir.mkdirs()
         val tmp = File(dir, "$targetName.tmp")
         val ok = try {
