@@ -19,7 +19,7 @@
   <img src="screenshots/week.jpg" width="31%" alt="课表页：一周课程网格">
   <img src="screenshots/life.jpg" width="31%" alt="生活页：一卡通与寝室电费">
   <br>
-  <sub>今日 · 课表 · 生活 —— 截图中的姓名与余额已打码</sub>
+  <sub>今日 · 课表 · 生活 —— 截图中的教师名与寝室房号已打码</sub>
 </p>
 
 > **非学校官方应用**，学生自用学习项目，详见文末[免责声明](#-免责声明)。
