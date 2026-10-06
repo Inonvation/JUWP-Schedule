@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.data.repo.CampusCalendarStore
+import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.ImageSource
 import edu.jxslu.schedule.ui.common.decodeFileSampled
@@ -55,7 +58,9 @@ import me.rerere.hugeicons.stroke.Refresh
  *
  * 整页就是一张校历图：**进页即整图**（满宽、按真实比例、可点开全屏手势缩放），
  * 没有任何要登录的东西。图源三层——已下载的镜像图 → 内置兜底图 → 骨架占位；
- * 刷新 = 顶栏按钮（force 绕闸门），平时冷启动静默刷（7 天闸门）。
+ * 刷新 = 顶栏按钮（force 绕闸门；进行中显进度圈、结果给 snackbar——已更新 / 已是最新 /
+ * 失败。2026-10-06 补：原「成功全静默」被用户当成「点刷新没反应」），平时冷启动静默刷
+ * （7 天闸门）。
  *
  * 点图开 [ImageViewerDialog]：全屏黑底 + 双指缩放/拖动，与笔记附件看大图同一组件。
  */
@@ -88,14 +93,43 @@ fun CampusCalendarScreen(onBack: () -> Unit) {
                                     refreshing = true
                                     val result = store.refresh(force = true)
                                     refreshing = false
-                                    if (result == CampusCalendarStore.RefreshResult.Failed) {
-                                        snackbar.showSnackbar("刷新失败，请检查网络后重试")
+                                    // 手动刷新给结果反馈（2026-10-06）：成功不再全静默——
+                                    // 「点刷新没反应」就是被静默坑的；冷启动仍静默（见 KDoc）
+                                    val year = store.state.value.year
+                                    when (result) {
+                                        CampusCalendarStore.RefreshResult.Updated ->
+                                            snackbar.showSnackbar(
+                                                AppNoticeVisuals(
+                                                    if (year.isBlank()) "校历已更新" else "校历已更新到 $year 学年",
+                                                    tone = NoticeTone.Success,
+                                                ),
+                                            )
+                                        CampusCalendarStore.RefreshResult.Unchanged ->
+                                            snackbar.showSnackbar(
+                                                AppNoticeVisuals(
+                                                    if (year.isBlank()) "已是最新" else "已是最新（$year 学年）",
+                                                    tone = NoticeTone.Info,
+                                                ),
+                                            )
+                                        CampusCalendarStore.RefreshResult.Failed ->
+                                            snackbar.showSnackbar(
+                                                AppNoticeVisuals("刷新失败，请检查网络后重试", tone = NoticeTone.Warning),
+                                            )
+                                        CampusCalendarStore.RefreshResult.Skipped -> Unit
                                     }
                                 }
                             }
                         },
+                        enabled = !refreshing,
                     ) {
-                        Icon(HugeIcons.Refresh, contentDescription = "刷新")
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(HugeIcons.Refresh, contentDescription = "刷新")
+                        }
                     }
                 },
             )

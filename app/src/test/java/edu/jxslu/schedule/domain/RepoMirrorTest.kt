@@ -6,9 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 仓库镜像多源清单（[RepoMirror]）的钉子——2026-10-06 两处硬伤的回归防线：
- * ① 分支名错（曾写 `master`，仓库只有 `main`，所有请求 404）；
- * ② raw 直连不可达（源顺序须把无代理可达的加速源排在前面）。
+ * 仓库镜像多源清单（[RepoMirror]）的钉子——2026-10-06 的回归防线：
+ * ① ref 统一 `main`（曾写 `master`：raw 侧只是按默认分支旧名兼容解析，GitHub API
+ *    不认，不要依赖——见 [RepoMirror] 类注释）；
+ * ② raw 直连经常不可达（源顺序须把无代理可达的加速源排在前面、逐源容错）。
  */
 class RepoMirrorTest {
 
