@@ -68,7 +68,8 @@
 - [拾光课程表](https://github.com/XingHeYuZhuan/shiguangschedule) — 课表 JSON 互通格式
 - [light-life](https://github.com/Inonvation/light-life) — 胖乖生活（开水）协议
 - [linyu](https://github.com/yehu-imei/linyu) — 趣智校园接口
-- [quzhi-lite](https://github.com/wzk-chi/quzhi-lite) — 趣智校园接口 等
+- [quzhi-lite](https://github.com/wzk-chi/quzhi-lite) — 趣智校园接口
+- 等
 
 ## ⚠️ 免责声明
 
