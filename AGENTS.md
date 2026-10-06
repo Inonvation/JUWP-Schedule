@@ -21,6 +21,7 @@
 | 导航 / 启动页 / 二级页 / 过渡 / 悬浮栏 / 背景图层级 | `.agents/rules/nav-window.md` |
 | 卡片 / 弹层 / 一次性提示 | `.agents/rules/ui-common.md` |
 | 今日页 / 课表网格 / 作息表 / 课程时间 | `.agents/rules/today-ui.md` |
+| 收件箱（入箱挂点 · 去重 · 保留策略） | `.agents/rules/inbox.md` |
 | 桌面小组件 | `.agents/rules/widget.md` |
 | 教务课表导入 / 考试 / 成绩 / 教材 / 选课 | `.agents/rules/import-jw.md` |
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
@@ -223,10 +224,11 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + LifeFeed（一卡通与电费流水分段，§3.13）
  + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
  + QzxyClData·QzxySessionLink·QzxyPhoneMask·QzxyWatering（会话串 · 手机号遮蔽 · 用水记账）
-data/local/      Room v17：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
+data/local/      Room v18：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
                  / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
                  / power_readings（v12 起；房号显示名 roomName）/ textbooks（v14）
                  / ride_records（v16）/ course_selections（v17，选课记录按学期替换，§4.35）
+                 / inbox_messages（v18，收件箱，dedupeKey 唯一索引，§4.38）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
                  ScholarProgressRepository；ScoreSync / ScholarProgressSync（自动导入，DESIGN §4.29）
                  TextbookSync（导入课表后抓教材，§4.31）
@@ -234,6 +236,7 @@ data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成�
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
                  ScheduleSync（课表直取 + 首启自动导入 + 调课检查）/ ScheduleBaselineStore
                  （调课基线 filesDir JSON，§4.17）
+                 InboxRepository（收件箱留痕层，旁路不发网络请求，§4.38；规则见 .agents/rules/inbox.md）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
@@ -254,7 +257,7 @@ data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIG
 data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
                  QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
                  QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|selection|timetable|common|theme|widget|ebike|notes|homework|ujing
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|inbox
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -494,10 +497,25 @@ App 侧落地两件：① 新增 `ui/reminder/ReminderVibration`（自 ebike `vi
 上课 / 作业截止 / 免费时长三类提醒发出后的直接震动改为**开了才发**；其余提醒
 （U净 / 余额 / 调课 / 选课）本来就没接直接震动，不受影响。偏好走独立单流
 （`baseDisplayPrefs` combine 已满员，不进合并模型；`MeViewModel.strongReminderVibration`
-首帧 runBlocking 真值）。全量 **1322 例 0 失败**；模拟器本轮起不来（jw35 崩，
+考虑 USAGE_ALARM 出路）。全量 **1314 例 0 失败**；模拟器本轮起不来（jw35 崩，
 同 10-04），碰提醒链路按口径交用户真机点验：开/关开关后提醒是否分别「直接震」/
 「只走系统渠道」，以及上一轮遗留的上课提醒震动点验（若被 IGNORED_BACKGROUND 拦
 考虑 USAGE_ALARM 出路）。
+收件箱（2026-10-06，DESIGN §3.24 / §4.38；规则见 `.agents/rules/inbox.md`）：
+应用内重要事实的留痕层——系统通知会被 ROM 吞（HyperOS 悬浮通知默认关），收件箱保证
+「打开 App 一定能看到」。入口 = 今日页顶栏「+」下拉第三行（两行改三行），有未读时
+「+」图标叠红点（`BadgedBox`）+ 菜单行未读数；收件箱二级页（`INBOX`）未读行右侧红点、
+点行标已读并按 route 跳转、顶栏「全部已读」、长按进多选（`AppCard` 新增可选
+`onLongClick` 参数）+ 底部批量条「标为已读 / 删除」，删除是软删（重投同键不复活）。
+数据 = Room v18 `inbox_messages`（dedupeKey 唯一索引 upsert 去重：同键不重发、已删
+不复活、未删重投重新置未读）；保留策略软删 30 天 / 已读 90 天 / 总量 200 条，冷启动
+purge。五个挂点（ExamSync / ScoreSync / ScheduleSync / SelectionAlertReminder /
+BalanceAlertReminder）全部落在既有结果点上，**收件箱不发任何网络请求**、写操作吞错
+不反向打断业务链；`ScoreSync` 的 changes 与 `scoreAlertEnabled` 解耦（恒计算，通知层
+自判开关）；余额消息是状态型（回升即整条移除，失败绝不误删）。时刻型提醒不入箱。
+新增 `InboxRulesTest` 8 例，全量 **1322 例 0 失败**；碰网络结果路径与 Room 迁移，
+debug 包已装真机，点验交用户执行（角标亮起、消息内容与教务实际比对、跳转/已读/
+多选删除往返）。
 各功能的最新口径与真机验证状态见 DESIGN §6，逐条实现史见 `docs/devlog.md`（仅本地）。
 
 ## 仓库与发版

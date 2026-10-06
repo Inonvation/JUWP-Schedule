@@ -41,6 +41,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -141,6 +143,7 @@ import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Edit02
+import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
@@ -189,6 +192,8 @@ fun TodayScreen(
     onOpenUjingScan: (String) -> Unit = {},
     /** 顶栏「+ → 付款码」：校园卡付款码展示页（DESIGN §3.10） */
     onOpenPayCode: () -> Unit = {},
+    /** 顶栏「+ → 收件箱」：应用内重要事实的留痕页（DESIGN §3.24） */
+    onOpenInbox: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
@@ -238,6 +243,10 @@ fun TodayScreen(
     // 卡本身与入口不变
     val ebikeUseMode by ebikePrefs.ebikeUseMode
         .collectAsStateWithLifecycle(initialValue = EbikeUseMode.Default)
+    // 收件箱未读数（DESIGN §3.24）：驱动「+」图标与「+」菜单行两处角标
+    val inboxUnread by remember(context) { Graph.inboxRepository(context) }
+        .unreadCount
+        .collectAsStateWithLifecycle(initialValue = 0)
     val dockExpanded by viewModel.todayDockExpanded.collectAsStateWithLifecycle()
     var showWaterEntrySheet by remember { mutableStateOf(false) }
     // 趣智校园的余额面板（DESIGN §3.18）：与开水面板同形态，入口也是卡片右侧的余额
@@ -464,9 +473,10 @@ fun TodayScreen(
                         )
                     }
                 },
-                // 「+」快捷入口（2026-10-02）：扫一扫（车码 / 机身码自动分流）+ 付款码。
-                // 与微信首页右上角同一形态：一枚图标 + 下拉两行，不做页内常驻按钮——
-                // 这两件事都是低频动作，摆常驻会跟底部固定区的卡片抢位置
+                // 「+」快捷入口（2026-10-02，2026-10-06 加收件箱）：扫一扫（车码 / 机身码
+                // 自动分流）+ 付款码 + 收件箱。与微信首页右上角同一形态：一枚图标 + 下拉，
+                // 不做页内常驻按钮——低频动作不跟底部固定区的卡片抢位置。
+                // 有未读时「+」图标右上叠一枚红点（应用内 UI 角标，不接桌面 launcher 角标）。
                 actions = {
                     Box {
                         IconButton(
@@ -475,7 +485,9 @@ fun TodayScreen(
                                 quickMenuOpen = true
                             },
                         ) {
-                            Icon(HugeIcons.Add01, contentDescription = "扫一扫与付款码")
+                            BadgedBox(badge = { if (inboxUnread > 0) Badge() }) {
+                                Icon(HugeIcons.Add01, contentDescription = "快捷入口")
+                            }
                         }
                         DropdownMenu(
                             expanded = quickMenuOpen,
@@ -498,6 +510,20 @@ fun TodayScreen(
                                     quickMenuOpen = false
                                     quickHaptics.tap()
                                     onOpenPayCode()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("收件箱") },
+                                leadingIcon = { Icon(HugeIcons.Inbox, contentDescription = null) },
+                                trailingIcon = {
+                                    if (inboxUnread > 0) {
+                                        Badge { Text(inboxUnread.coerceAtMost(99).toString()) }
+                                    }
+                                },
+                                onClick = {
+                                    quickMenuOpen = false
+                                    quickHaptics.tap()
+                                    onOpenInbox()
                                 },
                             )
                         }

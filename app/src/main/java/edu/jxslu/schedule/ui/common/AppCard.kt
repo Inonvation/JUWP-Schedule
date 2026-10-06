@@ -1,8 +1,9 @@
 package edu.jxslu.schedule.ui.common
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -59,6 +60,8 @@ fun AppCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
+    /** 长按（列表多选入口等）。与 [onClick] 一样由本组件统一触发触感反馈。 */
+    onLongClick: (() -> Unit)? = null,
     /** 只影响点击：false = 卡片可见但不可点（如开水卡在出水过程中不许再进页面）。 */
     enabled: Boolean = true,
     highlighted: Boolean = false,
@@ -93,14 +96,26 @@ fun AppCard(
                 shape = AppCardDefaults.Shape,
             )
             .then(
-                if (onClick == null) {
+                if (onClick == null && onLongClick == null) {
                     Modifier
                 } else {
-                    // 涟漪由 clickable 产生、被上面的 clip 裁进圆角；命中区 = 描边内整张卡
-                    Modifier.clickable(enabled = enabled, onClickLabel = onClickLabel) {
-                        haptics.tap()
-                        onClick()
-                    }
+                    // 涟漪由 combinedClickable 产生、被上面的 clip 裁进圆角；
+                    // 命中区 = 描边内整张卡。有长按才需要它，纯点击走同一入口无行为差
+                    @OptIn(ExperimentalFoundationApi::class)
+                    Modifier.combinedClickable(
+                        enabled = enabled,
+                        onClickLabel = onClickLabel,
+                        onClick = {
+                            haptics.tap()
+                            onClick?.invoke()
+                        },
+                        onLongClick = onLongClick?.let { longClick ->
+                            {
+                                haptics.tap()
+                                longClick()
+                            }
+                        },
+                    )
                 },
             )
             .padding(contentPadding),
@@ -124,6 +139,7 @@ fun AppCardRow(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     highlighted: Boolean = false,
     contentPadding: PaddingValues = AppCardDefaults.Padding,
@@ -134,6 +150,7 @@ fun AppCardRow(
         modifier = modifier,
         onClick = onClick,
         onClickLabel = onClickLabel,
+        onLongClick = onLongClick,
         enabled = enabled,
         highlighted = highlighted,
         contentPadding = contentPadding,

@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.repo
 
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.jw.ExamScheduleParser
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
@@ -8,6 +9,8 @@ import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.domain.ExamChangeDetector
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
@@ -36,6 +39,8 @@ class ExamSync(
     private val cas: CasSession,
     private val prefs: DisplayPrefsStore,
     private val snapshotStore: ExamSnapshotStore,
+    /** 收件箱留痕（DESIGN §4.38）：检测出的变更顺手入箱，与发不发系统通知无关。 */
+    private val inbox: InboxRepository,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -128,7 +133,56 @@ class ExamSync(
 
         snapshotStore.save(ExamSnapshotStore.Snapshot(term = term, exams = exams.map(ExamSnapshotStore::rowOf)))
         prefs.setExamAlertCheckMillis(nowMillis())
+        // 收件箱留痕（DESIGN §4.38）：手动「更新」与周期检查同源，谁先发现都入箱。
+        // 去重键 = 考试身份（courseNo|date），同一场考试反复 sync 只刷新那一条；
+        // 时间/考场再变 = 内容刷新成最新状态，不堆历史消息。
+        if (changes.isNotEmpty()) {
+            for (change in changes) {
+                inbox.post(
+                    kind = InboxKind.EXAM,
+                    dedupeKey = InboxKeys.EXAM_PREFIX + ExamChangeDetector.keyOf(change.entry),
+                    title = if (change.kind == ExamChangeDetector.Kind.NEW) "新增考试安排" else "考试安排调整",
+                    body = examChangeBody(change),
+                    route = SubpageScreen.EXAMS.name,
+                )
+            }
+        }
         return Result.Updated(term = term, count = exams.size, changes = changes)
+    }
+
+    /** 考试变更的消息正文：新发布的给时刻与考场，调整的给「调整后 → 调整前」对照。 */
+    private fun examChangeBody(change: ExamChangeDetector.Change): String {
+        val entry = change.entry
+        val slot = buildString {
+            if (entry.date.isNotBlank()) append(entry.date)
+            if (entry.startTime.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append(entry.startTime)
+                if (entry.endTime.isNotBlank()) append("–${entry.endTime}")
+            }
+            if (entry.room.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append(entry.room)
+            }
+        }
+        val head = "《${entry.name}》" + if (slot.isNotBlank()) " $slot" else ""
+        val before = change.before
+        return if (change.kind == ExamChangeDetector.Kind.UPDATED && before != null) {
+            val oldSlot = buildString {
+                if (before.date.isNotBlank()) append(before.date)
+                if (before.startTime.isNotBlank()) {
+                    if (isNotEmpty()) append(" ")
+                    append(before.startTime)
+                }
+                if (before.room.isNotBlank()) {
+                    if (isNotEmpty()) append(" ")
+                    append(before.room)
+                }
+            }
+            "$head（原 $oldSlot）"
+        } else {
+            head
+        }
     }
 
     companion object {

@@ -22,11 +22,14 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.MainActivity
 import edu.jxslu.schedule.ROUTE_LIFE
 import edu.jxslu.schedule.R
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.power.PowerReadingSource
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.flow.first
 import java.time.Duration
@@ -185,19 +188,34 @@ object BalanceAlertReminder {
         val meter = snapshot.meter
         val yuan = BalanceAlert.remainingYuan(meter.remain, snapshot.feeItem.priceYuan) ?: return
         val threshold = prefs.powerAlertYuan.first()
-        if (!BalanceAlert.isLow(yuan, threshold)) return
         val room = meter.room.room?.takeIf { it.isNotBlank() } ?: snapshot.feeItem.room?.name
+        if (!BalanceAlert.isLow(yuan, threshold)) {
+            // 状态消解（收件箱 §4.38）：回升了就把「电费偏低」那条撤掉。
+            // 走到这里说明取数成功，不存在「失败误删」。
+            Graph.inboxRepository(context).clearState(InboxKeys.POWER_LOW)
+            return
+        }
+        val text = buildString {
+            if (!room.isNullOrBlank()) append("$room ")
+            append("剩余 ¥%.2f".format(yuan))
+            meter.remain?.let { append("（%.2f 度）".format(it)) }
+            append("，低于提醒线 ¥$threshold，记得充值")
+        }
+        // 收件箱留痕：状态型消息，固定一条（balance|power|low），每日复核刷新并
+        // 重新置未读；回升即被上面的 clearState 移除。
+        Graph.inboxRepository(context).post(
+            kind = InboxKind.POWER_LOW,
+            dedupeKey = InboxKeys.POWER_LOW,
+            title = "寝室电费偏低",
+            body = text,
+            route = SubpageScreen.POWER_BILL.name,
+        )
         post(
             context = context,
             channelTag = POWER_NOTIFICATION_TAG,
             notificationId = POWER_NOTIFICATION_ID,
             title = "寝室电费偏低",
-            text = buildString {
-                if (!room.isNullOrBlank()) append("$room ")
-                append("剩余 ¥%.2f".format(yuan))
-                meter.remain?.let { append("（%.2f 度）".format(it)) }
-                append("，低于提醒线 ¥$threshold，记得充值")
-            },
+            text = text,
             toLife = toLife,
         )
     }
@@ -227,13 +245,25 @@ object BalanceAlertReminder {
         runCatching { LifeWidgetSync.pushCampusBalance(context, cards.sumOf { it.cardBalanceFen }) }
         val cardYuan = cards.sumOf { it.cardBalanceFen } / 100.0
         val threshold = prefs.yktAlertYuan.first()
-        if (!BalanceAlert.isLow(cardYuan, threshold)) return
+        if (!BalanceAlert.isLow(cardYuan, threshold)) {
+            // 状态消解（收件箱 §4.38）：同电费——取数成功且不再偏低才撤消息。
+            Graph.inboxRepository(context).clearState(InboxKeys.YKT_LOW)
+            return
+        }
+        val text = "正式卡余额 ¥%.2f，低于提醒线 ¥$threshold，记得充值".format(cardYuan)
+        Graph.inboxRepository(context).post(
+            kind = InboxKind.YKT_LOW,
+            dedupeKey = InboxKeys.YKT_LOW,
+            title = "校园卡余额偏低",
+            body = text,
+            route = SubpageScreen.CAMPUS_CARD_SETTINGS.name,
+        )
         post(
             context = context,
             channelTag = YKT_NOTIFICATION_TAG,
             notificationId = YKT_NOTIFICATION_ID,
             title = "校园卡余额偏低",
-            text = "正式卡余额 ¥%.2f，低于提醒线 ¥$threshold，记得充值".format(cardYuan),
+            text = text,
             toLife = toLife,
         )
     }

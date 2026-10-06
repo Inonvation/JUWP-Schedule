@@ -34,6 +34,7 @@ import edu.jxslu.schedule.data.repo.CampusCalendarStore
 import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
 import edu.jxslu.schedule.data.repo.ExamSync
+import edu.jxslu.schedule.data.repo.InboxRepository
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
@@ -151,6 +152,10 @@ object Graph {
     @Volatile
     private var examSync: ExamSync? = null
 
+    /** 收件箱仓库单例（DESIGN §4.38）：只依赖 Room，Worker / ViewModel / Compose 三类调用点共用。 */
+    @Volatile
+    private var inboxRepository: InboxRepository? = null
+
     @Volatile
     private var textbookSync: TextbookSync? = null
 
@@ -253,6 +258,7 @@ object Graph {
                 cas = casSession(context),
                 repo = repository(context),
                 prefs = displayPrefs(context),
+                inbox = inboxRepository(context),
             ).also { scheduleSync = it }
         }
 
@@ -291,6 +297,7 @@ object Graph {
                 cas = casSession(context),
                 repo = scoreRepository(context),
                 prefs = displayPrefs(context),
+                inbox = inboxRepository(context),
             ).also { scoreSync = it }
         }
 
@@ -301,7 +308,15 @@ object Graph {
                 cas = casSession(context),
                 prefs = displayPrefs(context),
                 snapshotStore = ExamSnapshotStore(context),
+                inbox = inboxRepository(context),
             ).also { examSync = it }
+        }
+
+    /** 收件箱仓库单例（DESIGN §4.38）：应用内重要事实的留痕层，不发网络请求。 */
+    fun inboxRepository(context: Context): InboxRepository =
+        inboxRepository ?: synchronized(this) {
+            inboxRepository ?: InboxRepository(JuwDatabase.get(context.applicationContext).inboxDao())
+                .also { inboxRepository = it }
         }
 
     /** 教材抓取单例（DESIGN §4.31）：教务导入课表成功后顺带抓对应学期，静默失败。 */

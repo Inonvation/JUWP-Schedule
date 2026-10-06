@@ -1,10 +1,13 @@
 package edu.jxslu.schedule.data.repo
 
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.jw.ScoreParser
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.ScoreChangeDetector
 import edu.jxslu.schedule.domain.ScoreRecord
 import java.time.LocalDate
@@ -35,6 +38,8 @@ class ScoreSync(
     private val cas: CasSession,
     private val repo: ScoreRepository,
     private val prefs: DisplayPrefsStore,
+    /** 收件箱留痕（DESIGN §4.38）：出分/改分事实入箱，与成绩提醒开关无关。 */
+    private val inbox: InboxRepository,
     private val today: () -> LocalDate = LocalDate::now,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
@@ -45,8 +50,9 @@ class ScoreSync(
     sealed interface Result {
         /**
          * [terms] 是写入的学期数，[records] 是条数；[changes] 是写库前比对的变更明细
-         * （提醒开着才需要看），[firstImport] 表示旧库为空（首装/清库后的首次导入，
-         * 调用方据此**不发通知**——第一次拿到的东西不算「变动」）。
+         * （2026-10-06 起恒计算，与提醒开关解耦——收件箱要独立收出分/改分事实），
+         * [firstImport] 表示旧库为空（首装/清库后的首次导入，调用方据此**不发通知**——
+         * 第一次拿到的东西不算「变动」）。
          */
         data class Updated(
             val terms: Int,
@@ -114,15 +120,30 @@ class ScoreSync(
 
         if (records.isEmpty()) return Result.Failed("教务没有返回任何成绩")
 
-        // 写库前快照 + 变更检测：替换是盲的，旧值过了这村就没了
+        // 写库前快照 + 变更检测：替换是盲的，旧值过了这村就没了。
+        // 检测与提醒开关解耦（2026-10-06）：纯内存比对零成本，收件箱要独立收
+        // 出分/改分事实；`alertOn` 只决定发不发系统通知（在提醒层判）。
         val old = repo.getAll()
         val firstImport = old.isEmpty()
-        val changes = if (alertOn) ScoreChangeDetector.detect(old, records) else emptyList()
+        val changes = ScoreChangeDetector.detect(old, records)
 
         val grouped = records.groupBy { it.term }
         grouped.forEach { (term, list) -> repo.replaceTerm(term, list) }
         prefs.setScoreSyncDate(today().toString())
         if (alertOn) prefs.setScoreAlertCheckMillis(nowMillis())
+        // 收件箱留痕（DESIGN §4.38）：首导是基线不是「变动」，与通知层同一条豁免。
+        // 分数参与去重键——改分（85→90）是新事实；同一分数反复 sync 同键只刷新。
+        if (!firstImport && changes.isNotEmpty()) {
+            for (change in changes) {
+                inbox.post(
+                    kind = InboxKind.SCORE,
+                    dedupeKey = InboxKeys.SCORE_PREFIX + change.term + "|" + change.name + "|" + change.scoreStr,
+                    title = if (change.kind == ScoreChangeDetector.Kind.PUBLISHED) "成绩发布" else "成绩变更",
+                    body = "《${change.name}》（${change.term}）分数 ${change.scoreStr}",
+                    route = SubpageScreen.SCORES.name,
+                )
+            }
+        }
         return Result.Updated(terms = grouped.size, records = records.size, changes = changes, firstImport = firstImport)
     }
 

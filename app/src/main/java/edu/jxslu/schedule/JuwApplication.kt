@@ -90,6 +90,10 @@ class JuwApplication : Application() {
             // 「洗涤中」的完成提醒会静默消失。check 内部：无在案订单撤销闹钟（空跑）；
             // 有订单先查一次状态再按剩余/总时长补排，失败静默。
             UjingDoneReminder.check(this@JuwApplication)
+            // 收件箱保留策略（DESIGN §4.38）：软删 30 天、已读 90 天、总量 200 条，
+            // 冷启动裁一次。量级很小，廉价；失败不挡后面的启动协程。
+            runCatching { Graph.inboxRepository(this@JuwApplication).purge() }
+                .onFailure { CrashReporter.logCoroutine(this@JuwApplication, "inboxPurge", it) }
         }
         // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
         // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链

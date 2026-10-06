@@ -20,6 +20,8 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.SelectionRounds
 import edu.jxslu.schedule.subpageLaunchIntent
 import java.time.Instant
@@ -140,7 +142,19 @@ object SelectionAlertReminder {
                 now,
             ).firstOrNull { it.key !in sent && it.at <= now + DUE_GRACE_MS }
             if (due != null && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
-                if (postNotification(context, due, now)) prefs.addSelectionRemindedKey(due.key)
+                if (postNotification(context, due, now)) {
+                    prefs.addSelectionRemindedKey(due.key)
+                    // 收件箱留痕（DESIGN §4.38）：通知发出去的同时落一条，横幅被 ROM
+                    // 吞掉也能回来查。键与已发键同源（轮次id|start/end），同一条只投一次。
+                    val (title, text) = reminderCopy(due, now)
+                    Graph.inboxRepository(context).post(
+                        kind = InboxKind.SELECTION_ROUND,
+                        dedupeKey = InboxKeys.SELECTION_PREFIX + due.key,
+                        title = title,
+                        body = text,
+                        route = SubpageScreen.SELECTIONS.name,
+                    )
+                }
             }
             scheduleNext(context)
         }.onFailure { Log.w(TAG, "check failed", it) }
@@ -157,6 +171,27 @@ object SelectionAlertReminder {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+    /** 提醒的标题与正文：通知与收件箱共用同一份文案，两处各写迟早漂。 */
+    internal fun reminderCopy(
+        point: SelectionRounds.ReminderPoint,
+        now: Long,
+    ): Pair<String, String> = when (point.kind) {
+        SelectionRounds.ReminderPoint.Kind.StartSoon ->
+            if (point.eventAt > now) {
+                "选课开始 · ${point.roundName}" to
+                    "${formatEventTime(point.eventAt, now)} 开始，记得去选课"
+            } else {
+                "选课进行中 · ${point.roundName}" to "轮次正在进行，别忘了去选课"
+            }
+        SelectionRounds.ReminderPoint.Kind.EndSoon ->
+            if (point.eventAt > now) {
+                "选课截止 · ${point.roundName}" to
+                    "${formatEventTime(point.eventAt, now)} 截止，还没选完要抓紧"
+            } else {
+                "选课即将截止 · ${point.roundName}" to "轮次快结束了，还没选完要抓紧"
+            }
+    }
+
     /** 发一条选课提醒；成功（系统真的收下了）返回 true，调用方才落已发键。 */
     private fun postNotification(
         context: Context,
@@ -164,22 +199,7 @@ object SelectionAlertReminder {
         now: Long,
     ): Boolean {
         ensureChannel(context)
-        val (title, text) = when (point.kind) {
-            SelectionRounds.ReminderPoint.Kind.StartSoon ->
-                if (point.eventAt > now) {
-                    "选课开始 · ${point.roundName}" to
-                        "${formatEventTime(point.eventAt, now)} 开始，记得去选课"
-                } else {
-                    "选课进行中 · ${point.roundName}" to "轮次正在进行，别忘了去选课"
-                }
-            SelectionRounds.ReminderPoint.Kind.EndSoon ->
-                if (point.eventAt > now) {
-                    "选课截止 · ${point.roundName}" to
-                        "${formatEventTime(point.eventAt, now)} 截止，还没选完要抓紧"
-                } else {
-                    "选课即将截止 · ${point.roundName}" to "轮次快结束了，还没选完要抓紧"
-                }
-        }
+        val (title, text) = reminderCopy(point, now)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle(title)

@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.data.repo
 
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.jw.OneClickImport
 import edu.jxslu.schedule.data.jw.OneClickResult
@@ -11,6 +12,8 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.ScheduleChangeRow
 import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.domain.SchedulePendingChanges
@@ -46,6 +49,8 @@ class ScheduleSync(
     private val cas: CasSession,
     private val repo: ScheduleRepository,
     private val prefs: DisplayPrefsStore,
+    /** 收件箱留痕（DESIGN §4.38）：新差异落待处置缓存的同时入箱。 */
+    private val inbox: InboxRepository,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -242,6 +247,15 @@ class ScheduleSync(
                 fingerprint = fingerprint,
                 savedAt = nowMillis(),
             ),
+        )
+        // 收件箱留痕（DESIGN §4.38）：去重键 = 差异指纹，与双闸同源——同一批差异
+        // 重投只会刷新那一条；合并/忽略后处置页会把这类消息标为已读。
+        inbox.post(
+            kind = InboxKind.SCHEDULE_CHANGE,
+            dedupeKey = InboxKeys.SCHEDULE_PREFIX + fingerprint,
+            title = "课程安排有变动",
+            body = "教务课表检测到 ${changes.size} 处差异，逐条确认后合并或忽略。",
+            route = SubpageScreen.SCHEDULE_CHANGES.name,
         )
         return CheckResult.Ok(term = term, changes = changes, repeated = false)
     }

@@ -12,10 +12,12 @@
 - 今日页结构：**焦点卡（正在上/下一节）+ 单时间轴**；焦点课从列表里剔除（`TodayUiState.listCourses`），
   同一节课不得两处出现；节次号只在焦点卡出现一次。改版前先读 DESIGN §3.3。
 
-## 顶栏「+」快捷入口（2026-10-02）
+## 顶栏「+」快捷入口（2026-10-02，2026-10-06 加收件箱）
 
-- 顶栏右上角一枚 `Add01` + 下拉两行：「扫一扫」「付款码」（DESIGN §3.3）。两条**只在
-  `TodayScreen` 的 `actions` 里组合**，不做常驻按钮——低频动作不跟底部固定区的卡片抢位置。
+- 顶栏右上角一枚 `Add01` + 下拉三行：「扫一扫」「付款码」「收件箱」（DESIGN §3.3 / §3.24）。
+  两条**只在 `TodayScreen` 的 `actions` 里组合**，不做常驻按钮——低频动作不跟底部固定区的
+  卡片抢位置。有未读消息时「+」图标本体叠红点（`BadgedBox`）+「收件箱」行带未读数，
+  数据源是 `Graph.inboxRepository(context).unreadCount`（页面直接订阅，不另开 ViewModel）。
 - 扫一扫取景走 `EbikeScanActivity` 的 **`MODE_RAW`**（原文模式），**去处只有一个判据**：
   `domain/QuickScan.kt` 的 `quickScanTargetOf`，三档按顺序判：车身码进 `RIDE`
   （`focusItemId` = 完整车号）→ 表里认得出的**别家码**（微信支付 / 微信 / 支付宝 / QQ）

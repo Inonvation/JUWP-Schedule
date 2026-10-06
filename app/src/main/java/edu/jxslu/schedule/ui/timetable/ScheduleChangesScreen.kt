@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.repo.ScheduleSync
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.ScheduleAlertDefaults
 import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.domain.SchedulePendingChanges
@@ -149,6 +150,8 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
             // 没勾的条目客观上仍未与教务对齐，下次检查会以剩余差异的形态重新报出
             prefs.setScheduleIgnoredFingerprint(snapshot.fingerprint)
             prefs.setSchedulePendingChanges(null)
+            // 收件箱（DESIGN §4.38）：本轮差异已处置，那条「课程安排有变动」标已读
+            Graph.inboxRepository(context).markKindRead(InboxKind.SCHEDULE_CHANGE)
             busy = false
             haptics.success()
             val detail = if (report.skipped > 0) "，${report.skipped} 条与你的修改冲突被跳过" else ""
@@ -161,6 +164,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
         scope.launch {
             prefs.setScheduleIgnoredFingerprint(snapshot.fingerprint)
             prefs.setSchedulePendingChanges(null)
+            Graph.inboxRepository(context).markKindRead(InboxKind.SCHEDULE_CHANGE)
             confirmingIgnore = false
             snackbar.showSnackbar("已忽略本轮差异；教务再变化时会重新提醒")
         }

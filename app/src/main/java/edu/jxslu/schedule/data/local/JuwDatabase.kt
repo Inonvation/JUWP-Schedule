@@ -25,8 +25,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         TextbookEntity::class,
         RideRecordEntity::class,
         CourseSelectionEntity::class,
+        InboxMessageEntity::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -44,6 +45,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun textbookDao(): TextbookDao
     abstract fun rideRecordDao(): RideRecordDao
     abstract fun courseSelectionDao(): CourseSelectionDao
+    abstract fun inboxDao(): InboxDao
 
     companion object {
 
@@ -513,6 +515,41 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v17 → v18（2026-10-06）：新表 `inbox_messages`（收件箱，DESIGN §4.38）。
+         *
+         * CREATE TABLE / CREATE INDEX 非 destructive。实体列不带 Kotlin 默认值（主键
+         * `id = 0` 不进预期 schema，同 v16→v17），可空列不带 NOT NULL 也不带 DEFAULT
+         * （v14→v15 的口径——预期 schema 里就没有 DEFAULT，多写一个字就是校验崩溃）。
+         * 两条索引与实体的 `@Index` 一一对应：`dedupeKey` 是**唯一**索引（投递去重的
+         * SQL 层兜底，漏写 unique 同样校验崩溃，v10→v11 的 power_readings 同坑）。
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS inbox_messages (" +
+                        "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, " +
+                        "kind TEXT NOT NULL, " +
+                        "dedupeKey TEXT NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        "body TEXT NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "readAt INTEGER, " +
+                        "deletedAt INTEGER, " +
+                        "route TEXT, " +
+                        "focusItemId TEXT)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_inbox_messages_dedupeKey " +
+                        "ON inbox_messages (dedupeKey)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_inbox_messages_createdAt " +
+                        "ON inbox_messages (createdAt)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -540,6 +577,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_14_15,
                         MIGRATION_15_16,
                         MIGRATION_16_17,
+                        MIGRATION_17_18,
                     )
                     .build()
                     .also { instance = it }

@@ -33,6 +33,7 @@ import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
 import edu.jxslu.schedule.ui.homework.HomeworkLibraryScreen
 import edu.jxslu.schedule.ui.homework.HomeworkTodoScreen
+import edu.jxslu.schedule.ui.inbox.InboxScreen
 import edu.jxslu.schedule.ui.notes.NoteCourseScreen
 import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
@@ -151,6 +152,8 @@ enum class SubpageScreen {
     UJING_HISTORY,
     /** 调课检测处置页（差异列表 · 勾选合并 · 忽略，DESIGN §4.17，2026-10-04 重立） */
     SCHEDULE_CHANGES,
+    /** 今日页「+」→ 收件箱（考试/成绩/调课/轮次/余额的留痕，DESIGN §3.24 / §4.38） */
+    INBOX,
 }
 
 /**
@@ -319,6 +322,7 @@ class SubpageActivity : ComponentActivity() {
                 },
             )
             SubpageScreen.SCHEDULE_CHANGES -> ScheduleChangesScreen(onBack = onBack)
+            SubpageScreen.INBOX -> InboxScreen(onBack = onBack)
             SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(
                 onBack = onBack,
                 // 功能开关节 → 快捷方式编辑页（2026-09-28 自扩展服务迁入）
