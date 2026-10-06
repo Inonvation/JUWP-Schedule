@@ -31,6 +31,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history   # 追加电费充值流水
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py    # 教务处盖章成绩单 PDF（非强智教务，见 §5.6）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py --list   # 只列有成绩的学期与门数
+.\.venv-scraper\Scripts\python.exe scripts\sync_calendar.py        # 校历镜像同步（教务处官网→docs-public/calendar，免登录免凭证）
 # 指定学期：加 --term 2025-2026-2（脚本会校验请求学期 = 教务返回学期，不一致即报错）
 # 电费查别的房间：--room 1A101（务必加 --building 1A，省了会逐个楼栋连发查询）
 # 成绩单按学期：--term 2025-2026-2（可多个，合并成一张）
@@ -67,6 +68,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `fetch_selections.py` | 选课记录 + 选课轮次 → JSON | layui JSON 接口；默认抓「当前学期 + 下一学期」，`--term` 可重复，见 §5.8 |
 | `fetch_power.py` | 寝室电费 → JSON | 新开普缴费平台，学号 + 查询密码；**与教务链路无关** |
 | `fetch_transcript.py` | 教务处盖章成绩单 → PDF | 金格签章系统（`jwxyxx`）；共用 CAS，但**不经过强智教务**，见 §5.6 |
+| `sync_calendar.py` | 校历镜像同步：教务处官网（免登录公网）→ `docs-public/calendar/` | 与其他脚本不同：产物进**仓库镜像**（App 端读它）；发现新学年才落盘并自动 commit & push，详见 §5.9 |
 | `gen_week_layout_preview.py` | 生成课表排版提案 HTML | 与爬取无关 |
 | `out/` | 抓取产物与页面快照 | 快照可当解析器回归 fixture |
 | `_archive/` | 历史一次性探测脚本 | **勿依赖**，仅留档溯源 |
@@ -448,6 +450,37 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
   由用户自己操作。
 - 未验证面：`xksj` 时间字符串的真实格式要等选课期才有样本，脚本原样输出 `timeText`，
   App 侧容错解析（`SelectionRounds.parseTimeRange`），解析不了就不排提醒。
+
+### 5.9 校历同步（教务处官网，2026-10-07 实测）
+
+**背景**：校历在学校侧查过三条入口——智慧校园移动端 `m.juwp.edu.cn`（发现链路绑微信
+一次性 JWT + 出口 IP 校验，走不通）、PC 门户 `portal.juwp.edu.cn`（`/calendar_portal/
+getCalendar` 是**个人日历**，实测返回空 `cals`）、**教务处官网 `jw.juwp.edu.cn`
+（免登录公网，发布高清原图）**。App 端只读仓库镜像 `docs-public/calendar/`，
+`sync_calendar.py` 负责把镜像维护自动化，**无需任何凭证**。
+
+**页面结构**（泛微 CMS）：
+- 通知公告列表：`/xxgk/tzgg.htm`（首页），翻页 `/xxgk/tzgg/N.htm`（约 7 页）；条目
+  形如 `<a href="../info/1040/10376.htm"><h3>江西水利电力大学2026-2027学年校历</h3>`。
+- 文章页：`/info/<栏目>/<id>.htm`；正文图挂 `__local` 路径，编辑器**原图在 `orisrc`**
+  （示例 3438×2552 jpg），`src` 是缩放预览。
+- **坑：响应头 `Content-Type` 不带 charset**——requests 会猜成 ISO-8859-1、中文全乱，
+  必须显式 `content.decode("utf-8")`（脚本 `page_text()` 统一处理）。
+
+**脚本行为**：扫列表前 5 页 → 取学年最大的一条 → 抓 `orisrc` 原图 → 与
+`docs-public/calendar/index.json` 比对（学年 + 文件名 + sha256）→ 变了才落盘 + 改写
+index.json + `git add/commit/push`（只动 `docs-public/calendar/`；分支非 main 拒绝）。
+`--dry-run` 完全只读；`--no-push` 只提交不推；`--from-file 图 --year 20XX-20XX` 是
+栏目改版时的救急通道。
+
+**计划任务**（可选，每周一次足够——校历一年一更；`-StartWhenAvailable` 保证错过补跑）：
+
+```powershell
+$a = New-ScheduledTaskAction -Execute "cmd.exe" -Argument '/c "cd /d F:\JUWP-schedule && .venv-scraper\Scripts\python.exe scripts\sync_calendar.py >> scripts\out\sync_calendar.log 2>&1"'
+$t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 20:00
+Register-ScheduledTask -TaskName "JUWP-Schedule-校历同步" -Action $a -Trigger $t `
+  -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
+```
 
 ---
 

@@ -68,9 +68,12 @@ class CampusCalendarStore(context: Context) {
             runCatching {
                 // 1) 清单
                 val index = fetchIndex() ?: return@runCatching RefreshResult.Failed
-                // 2) 学年没变且图在 → 只记成功时刻（图不会变，省一次 1.2MB 下载）
+                // 2) 已是最新（学年与文件名都对上且图在）→ 只记成功时刻，省一次下载；
+                //    文件名一并比对：同学年也可能换文件（2026-10-07 镜像切高清版 png→jpg）
                 val current = _state.value
-                if (current.year == index.year && current.localFile != null && exists(current.localFile)) {
+                if (CampusCalendarRules.matchesLocal(current.year, current.localFile, index) &&
+                    exists(CampusCalendarRules.localFileName(index))
+                ) {
                     prefs.edit().putLong(KEY_LAST_SUCCESS, now).apply()
                     return@runCatching RefreshResult.Unchanged
                 }

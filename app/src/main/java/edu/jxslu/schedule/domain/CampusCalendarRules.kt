@@ -65,6 +65,15 @@ object CampusCalendarRules {
     fun localFileName(index: CampusCalendarIndex): String =
         "calendar_${index.year}.${index.file.substringAfterLast('.')}"
 
+    /**
+     * 本地缓存是否就是该清单对应的图：学年与文件名**都**对上才算（文件是否存在由调用方另查）。
+     *
+     * 2026-10-07：镜像从智慧校园版切到教务处高清版（`png` → `jpg`），只比学年会把旧图
+     * 一直当「已是最新」——文件名一并比对，同学年换文件也会触发重下。
+     */
+    fun matchesLocal(currentYear: String, currentFile: String?, index: CampusCalendarIndex): Boolean =
+        currentYear == index.year && currentFile == localFileName(index)
+
     /** 上一次成功刷新是否已过期（委托 [AutoSyncRules.shouldAttemptAt] 的统一口径）。 */
     fun shouldRefresh(lastSuccessMillis: Long?, nowMillis: Long): Boolean =
         AutoSyncRules.shouldAttemptAt(lastSuccessMillis, REFRESH_INTERVAL_HOURS, nowMillis)

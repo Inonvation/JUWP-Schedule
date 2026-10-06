@@ -87,6 +87,20 @@ class CampusCalendarRulesTest {
         assertEquals("calendar_2027-2028.jpg", CampusCalendarRules.localFileName(index))
     }
 
+    // ── matchesLocal：同学年换文件（png→高清 jpg）也要重下（2026-10-07）──
+
+    @Test
+    fun `matchesLocal requires year and file name both match`() {
+        val index = CampusCalendarIndex("2026-2027", "calendar_2026-2027.jpg")
+        assertTrue(CampusCalendarRules.matchesLocal("2026-2027", "calendar_2026-2027.jpg", index))
+        // 同学年、文件名不同（镜像换源换格式）→ 不匹配，触发重下
+        assertFalse(CampusCalendarRules.matchesLocal("2026-2027", "calendar_2026-2027.png", index))
+        // 学年不同 → 不匹配
+        assertFalse(CampusCalendarRules.matchesLocal("2025-2026", "calendar_2025-2026.jpg", index))
+        // 本地没有文件 → 不匹配
+        assertFalse(CampusCalendarRules.matchesLocal("2026-2027", null, index))
+    }
+
     // ── 刷新闸门 ──
 
     @Test
