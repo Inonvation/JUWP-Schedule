@@ -5,7 +5,8 @@
 U净 洗衣房、一卡通/电费）逆向出来的协议结构——端点、登录、签名、实机踩坑，和把它们
 搬进 App 的工程做法。
 
-> 产品与 UI 规格见 [DESIGN.md](DESIGN.md)（§3 UI / §4 逐模块技术决策）；
+> 产品与 UI 规格见 [DESIGN.md](DESIGN.md)（§3 UI / §4 逐模块技术决策；2026-10-06 起该文件
+> 只做索引，正文拆在 [`design/`](design/) 下，章节号未变）；
 > 爬虫脚本速查见 [scripts/README.md](scripts/README.md)（比本文更细的排错表）；
 > AI 结对约定见 [AGENTS.md](AGENTS.md)。
 >
@@ -532,7 +533,9 @@ GET  /berserker-search/search/personal/turnover?size&current   消费流水（�
 
 - [scripts/README.md](scripts/README.md) —— 爬虫速查：登录链路细节、DOM 规则、盖章成绩单、排错表
 - [DESIGN.md](DESIGN.md) —— 产品与界面规格 + 逐模块技术决策（§4.17 调课、§4.19 一卡通、
-  §4.23 快趣地图、§4.24 电费、§4.27 统一会话、§4.30 趣智、§4.32 快趣用车、§4.35 选课、§4.37 U净）
+  §4.23 快趣地图、§4.24 电费、§4.27 统一会话、§4.30 趣智、§4.32 快趣用车、§4.35 选课、§4.37 U净）。
+  **该文件现在只是索引**，正文在 [`design/`](design/) 下 9 个文件里；`§x.y` 章节号没变，
+  用索引里的「章节 → 文件」表定位
 - [AGENTS.md](AGENTS.md) + [`.agents/rules/`](.agents/rules/) —— AI 结对约定与领域口径清单
 - 参考仓库：[拾光课程表](https://github.com/XingHeYuZhuan/shiguangschedule)（JSON 互通格式）、
   [light-life](https://github.com/Inonvation/light-life)（胖乖）、
