@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,8 +39,10 @@ class CampusCalendarStore(context: Context) {
         .getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
     private val dir = File(context.applicationContext.filesDir, DIR_NAME)
 
-    // 共享池派生：镜像图下载给加长的读超时（1.2MB 图慢网更久）
+    // 共享池派生：镜像图下载给加长的读超时（1.2MB 图慢网更久）；连接超时收紧——
+    // 多源轮询下「死源」最多烧 8s 连接就换下一源，不让冷启动后台刷新卡在死源上
     private val http: OkHttpClient = AppHttp.base.newBuilder()
+        .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
@@ -101,30 +104,51 @@ class CampusCalendarStore(context: Context) {
 
     private fun exists(name: String): Boolean = fileFor(name) != null
 
-    /** 拉 index.json 并过校验；网络失败 / 脏清单都返回 null。 */
+    /** 拉 index.json 并过校验；逐源尝试，网络失败 / 脏清单都换下一源，全挂返回 null。 */
     private fun fetchIndex(): CampusCalendarIndex? {
-        val text = http.newCall(Request.Builder().url(CampusCalendarRules.indexUrl()).build())
-            .execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                resp.body?.string()
-            } ?: return null
-        return CampusCalendarRules.parseIndex(text)
+        for (url in CampusCalendarRules.indexUrls()) {
+            val text = try {
+                http.newCall(Request.Builder().url(url).build())
+                    .execute().use { resp ->
+                        if (!resp.isSuccessful) null else resp.body?.string()
+                    }
+            } catch (e: IOException) {
+                Log.w(TAG, "index source unreachable: $url", e)
+                null
+            }
+            val index = text?.let { CampusCalendarRules.parseIndex(it) }
+            if (index != null) return index
+        }
+        return null
     }
 
-    /** 下载校历图，临时文件写完原子改名；解码探测保它真是张图。返回落好的文件。 */
+    /** 下载校历图，临时文件写完原子改名；解码探测保它真是张图。逐源尝试，返回落好的文件。 */
     private fun downloadImage(index: CampusCalendarIndex): File? {
+        for (url in CampusCalendarRules.imageUrls(index)) {
+            val file = tryDownloadImage(url, index)
+            if (file != null) return file
+        }
+        return null
+    }
+
+    /** 单源下载：失败（网络 / 非 2xx / 解码探测不过）清掉临时文件返回 null。 */
+    private fun tryDownloadImage(url: String, index: CampusCalendarIndex): File? {
         val targetName = CampusCalendarRules.localFileName(index)
         dir.mkdirs()
         val tmp = File(dir, "$targetName.tmp")
-        val request = Request.Builder().url(CampusCalendarRules.imageUrl(index)).build()
-        val ok = http.newCall(request).execute().use { resp ->
-            if (!resp.isSuccessful) return@use false
-            val body = resp.body ?: return@use false
-            tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
-            // 解码探测：镜像被改坏（比如传了个 HTML）时不落盘，保住旧图
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(tmp.absolutePath, bounds)
-            bounds.outWidth > 0
+        val ok = try {
+            http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@use false
+                val body = resp.body ?: return@use false
+                tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                // 解码探测：镜像被改坏（比如传了个 HTML）时不落盘，保住旧图
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(tmp.absolutePath, bounds)
+                bounds.outWidth > 0
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "image source unreachable: $url", e)
+            false
         }
         if (!ok) {
             runCatching { tmp.delete() }

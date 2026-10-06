@@ -64,23 +64,20 @@ class CampusCalendarRulesTest {
 
     @Test
     fun `reject oversized index body`() {
-        val junk = "x".repeat(CampusCalendarRules.MIRROR_BASE.length + 8 * 1024)
+        val junk = "x".repeat(8 * 1024)
         assertNull(CampusCalendarRules.parseIndex("""{"year":"2026-2027","file":"a.png","junk":"$junk"}"""))
     }
 
-    // ── URL 拼装 ──
+    // ── URL 拼装（2026-10-06 起多源，源清单与顺序由 [RepoMirror] 负责）──
 
     @Test
     fun `urls assemble from whitelist-passed values`() {
         val index = CampusCalendarIndex("2026-2027", "calendar_2026-2027.png")
-        assertEquals(
-            "https://raw.githubusercontent.com/Inonvation/JUWP-Schedule/master/docs-public/calendar/index.json",
-            CampusCalendarRules.indexUrl(),
-        )
-        assertEquals(
-            "https://raw.githubusercontent.com/Inonvation/JUWP-Schedule/master/docs-public/calendar/calendar_2026-2027.png",
-            CampusCalendarRules.imageUrl(index),
-        )
+        val indexUrls = CampusCalendarRules.indexUrls()
+        assertTrue(indexUrls.size >= 3)
+        assertTrue(indexUrls.all { it.endsWith("/docs-public/calendar/index.json") })
+        val imageUrls = CampusCalendarRules.imageUrls(index)
+        assertTrue(imageUrls.all { it.endsWith("/docs-public/calendar/calendar_2026-2027.png") })
         assertEquals("calendar_2026-2027.png", CampusCalendarRules.localFileName(index))
     }
 

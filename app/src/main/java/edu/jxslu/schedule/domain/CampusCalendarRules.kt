@@ -11,14 +11,17 @@ import kotlinx.serialization.json.Json
  * 绑微信签发的一次性 token——App 端无法自主走完那条链路。所以图走**开发者仓库镜像**
  * （`docs-public/calendar/`，图 + index.json），App 只做「拉清单 → 比学年 → 下载图」。
  *
+ * 2026-10-06 修复：原直链写死 `raw.githubusercontent.com/.../master/...`——分支名错误
+ * （仓库只有 `main`）且该域名无代理不可达，自上线起从未拉通。现改走 [RepoMirror]
+ * 多源清单（gh-proxy 加速 → jsdelivr → raw 兜底），由 Store 逐源尝试。
+ *
  * 本对象只放纯判定（解析、校验、拼 URL、闸门），网络与落盘在
  * `data/repo/CampusCalendarStore`。纯 Kotlin，JVM 可测。
  */
 object CampusCalendarRules {
 
-    /** 仓库镜像根（raw.githubusercontent.com，master 分支）。 */
-    const val MIRROR_BASE: String =
-        "https://raw.githubusercontent.com/Inonvation/JUWP-Schedule/master/docs-public/calendar"
+    /** 仓库内相对路径前缀（多源完整地址由 [RepoMirror] 拼出）。 */
+    private const val CALENDAR_PATH = "docs-public/calendar"
 
     /** 自动刷新间隔（小时）。校历一学年一换，7 天绰绰有余。 */
     const val REFRESH_INTERVAL_HOURS: Int = 24 * 7
@@ -50,11 +53,12 @@ object CampusCalendarRules {
         return CampusCalendarIndex(year = row.year, file = row.file)
     }
 
-    /** 学年清单的完整镜像地址。 */
-    fun indexUrl(): String = "$MIRROR_BASE/index.json"
+    /** 学年清单的按序源地址（逐源尝试、首个成功即用；源见 [RepoMirror]）。 */
+    fun indexUrls(): List<String> = RepoMirror.urls("$CALENDAR_PATH/index.json")
 
-    /** 校历图完整镜像地址（[CampusCalendarIndex.file] 已过白名单，可放心拼）。 */
-    fun imageUrl(index: CampusCalendarIndex): String = "$MIRROR_BASE/${index.file}"
+    /** 校历图的按序源地址（[CampusCalendarIndex.file] 已过白名单，可放心拼）。 */
+    fun imageUrls(index: CampusCalendarIndex): List<String> =
+        RepoMirror.urls("$CALENDAR_PATH/${index.file}")
 
     /** 拉下来的图该存成什么名字：带学年前缀，换学年时旧图天然不冲突。 */
     fun localFileName(index: CampusCalendarIndex): String =

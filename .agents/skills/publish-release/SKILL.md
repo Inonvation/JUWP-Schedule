@@ -145,6 +145,30 @@ gh api repos/Inonvation/JUWP-Schedule/releases/tags/<版本号> `
   Where-Object { $_.LastWriteTime -gt (Get-Item app\build\outputs\apk\release\app-release.apk).LastWriteTime }`
   —— 有输出就说明 APK 过期，必须重新 `assembleRelease`。
 
+## Step 7.5 · 更新 App 内「检查更新」清单（docs-public/update/latest.json）
+
+App 的「检查更新」（DESIGN §3.3）**不请求 GitHub API**：版本、日志、下载链接全部来自
+仓库镜像 `docs-public/update/latest.json`（App 端 `RepoMirror` 多源轮询：gh-proxy 加速 →
+jsdelivr → raw 兜底）。发版时必须
+同步更新，否则用户检查永远停在旧版本：
+
+```json
+{
+  "version": "<新版本号>",
+  "apk": "JUWP-Schedule-<版本号>.apk",
+  "sha256": "<Step 7 回读的 digest，去掉 sha256: 前缀、小写>",
+  "notes": "<Step 4 用户已确认的更新日志原文>",
+  "mirrorPrefix": "<沿用现值，除非该镜像已确认失效>"
+}
+```
+
+- 字段含义与校验规则在 `domain/UpdateCheck.kt`（版本号三段数字、APK 名 ASCII 白名单、
+  mirrorPrefix 必须 https）。`version` 必须与 tag 一致——App 用它直接拼
+  `releases/download/<version>/<apk>` 直链。
+- `mirrorPrefix` 是公共第三方镜像（gh-proxy 类）的前缀，**可以随时单独改、不用发版**；
+  用户装机后实测不通就改这一个值。留空 = App 只出「GitHub 下载」出口。
+- 提交随 Step 6 一起推（tag 指向的提交里必须带着新清单）。
+
 ## Step 8 · 发布后
 
 - 打 tag 用 `gh release create` 已自动完成；本地 tag 与远端一致即可。
