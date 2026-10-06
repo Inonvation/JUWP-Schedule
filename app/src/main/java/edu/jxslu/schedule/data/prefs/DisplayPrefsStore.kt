@@ -482,17 +482,17 @@ class DisplayPrefsStore(private val context: Context) {
 
     // ---- 成绩/考试变动提醒（DESIGN §4.33）----
 
-    /** 成绩变动提醒开关。默认关。 */
+    /** 成绩变动提醒开关。**默认开**（2026-10-06 用户拍板）；显式关过的用户落盘 false，不受默认值影响。 */
     val scoreAlertEnabled: Flow<Boolean> =
-        context.displayDataStore.data.map { it[KEY_SCORE_ALERT_ENABLED] ?: false }
+        context.displayDataStore.data.map { it[KEY_SCORE_ALERT_ENABLED] ?: true }
 
     suspend fun setScoreAlertEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_SCORE_ALERT_ENABLED] = value }
     }
 
-    /** 考试变动提醒开关。默认关。 */
+    /** 考试变动提醒开关。**默认开**（同成绩，2026-10-06）。 */
     val examAlertEnabled: Flow<Boolean> =
-        context.displayDataStore.data.map { it[KEY_EXAM_ALERT_ENABLED] ?: false }
+        context.displayDataStore.data.map { it[KEY_EXAM_ALERT_ENABLED] ?: true }
 
     suspend fun setExamAlertEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EXAM_ALERT_ENABLED] = value }

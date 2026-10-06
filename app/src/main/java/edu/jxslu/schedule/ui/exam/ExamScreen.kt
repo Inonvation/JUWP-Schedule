@@ -113,7 +113,7 @@ fun ExamScreen(onBack: () -> Unit) {
      */
     var changes by remember { mutableStateOf<Map<String, ExamChangeDetector.Kind>>(emptyMap()) }
 
-    val examAlertEnabled by prefs.examAlertEnabled.collectAsState(initial = false)
+    val examAlertEnabled by prefs.examAlertEnabled.collectAsState(initial = true)
     val intervalHours by prefs.examAlertIntervalHours
         .collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
     var intervalPickerOpen by remember { mutableStateOf(false) }

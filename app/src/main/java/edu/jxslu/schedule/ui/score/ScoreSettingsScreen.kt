@@ -73,7 +73,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
     val groupByYear by prefs.scoreGroupByYear.collectAsState(initial = false)
     val includeFreeElectives by prefs.scoreIncludeFreeElectives.collectAsState(initial = false)
     val sortMode by prefs.scoreSortMode.collectAsState(initial = ScoreSortMode.Default)
-    val scoreAlertEnabled by prefs.scoreAlertEnabled.collectAsState(initial = false)
+    val scoreAlertEnabled by prefs.scoreAlertEnabled.collectAsState(initial = true)
     val intervalHours by prefs.scoreAlertIntervalHours.collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
     var intervalPickerOpen by remember { mutableStateOf(false) }
 
