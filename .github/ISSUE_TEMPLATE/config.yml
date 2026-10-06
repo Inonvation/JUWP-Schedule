@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题 / 想讨论
+    url: https://github.com/Inonvation/JUWP-Schedule/discussions
+    about: 不确定算不算 bug、用法疑问、想聊聊 —— 去 Discussions 发帖
+  - name: 想给自己学校做定制版
+    url: https://github.com/Inonvation/JUWP-Schedule/blob/main/DEVELOPER.md
+    about: 本项目只适配江西水利电力大学；换校适配指南见 DEVELOPER.md

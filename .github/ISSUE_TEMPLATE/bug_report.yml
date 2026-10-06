@@ -1,0 +1,92 @@
+name: 反馈 Bug
+description: 报告一个能复现的问题：功能异常、崩溃、页面错乱等
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **本仓库是公开的**：请勿粘贴真实学号、姓名、手机号、寝室房号、密码、验证码或 token；截图请先打码，敏感信息用 `***` 代替。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述
+      description: 发生了什么？和你预期的有什么不一样？
+      placeholder: 例如：今日页点「开热水」后一直转圈，进不了「用水中」状态。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从打开 App 开始，一步步写清楚怎么触发
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 相关模块
+      description: 问题出在哪个功能里？
+      options:
+        - 课表
+        - 成绩 · 考试 · 学业
+        - 选课
+        - 笔记 · 作业
+        - 收件箱
+        - 一卡通（余额 / 付款码 / 流水）
+        - 寝室电费
+        - 胖乖生活（开水）
+        - 趣智校园（热水）
+        - 快趣出行（共享单车）
+        - U净（洗衣房）
+        - 取快递快捷方式
+        - 教务网页 / 校历 / 请假 / 宿舍报修
+        - 桌面小组件
+        - 其他 / 说不准
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App 版本
+      description: 「我的 → 关于」里的版本号
+      placeholder: 2.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 手机型号与系统
+      description: 有些问题只在特定 ROM 上出现（如小米 HyperOS 的通知策略、MIUI 的安装拦截），请写清楚
+      placeholder: Redmi K70 Pro / HyperOS 1.0（Android 14）
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图 / 录屏 / 日志（可选）
+      description: 图片直接拖进来即可，记得先打码；崩溃日志可在「我的 → 关于」里导出
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索过现有 issue，确认没有重复
+          required: true
+        - label: 内容里不含学号、姓名、密码、验证码、token 等个人信息（截图已打码）
+          required: true
+        - label: 我用的是本仓库 Release 里的正式包，不是其他渠道流传的安装包
+          required: true
