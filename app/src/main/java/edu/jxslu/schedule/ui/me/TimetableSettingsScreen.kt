@@ -116,8 +116,7 @@ fun TimetableSettingsScreen(
         ) {
             SettingsSection(
                 title = if (targetName.isBlank()) "学期" else "学期 · $targetName",
-                subtitle = "每张课表各有独立的开学日期与总周数（新建课表拷贝「默认配置」源）；" +
-                    "默认编辑当前课表，点下方可切换",
+                subtitle = "每张课表各有独立的开学日期与总周数；点课表名切换编辑目标",
             ) {
                 Row(
                     modifier = Modifier
@@ -165,12 +164,9 @@ fun TimetableSettingsScreen(
                 )
             }
 
-            Text(
-                "作息表固定编辑当前课表「${state.timetableName.ifBlank { "—" }}」，不随上方切换",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            )
+            // 作息表固定编辑当前课表：标题里点名（2026-10-07 收口，原孤立说明 Text 删除）
             TimeSlotEditorCard(
+                headerNote = "固定编辑当前课表「${state.timetableName.ifBlank { "—" }}」",
                 slots = state.timeSlots,
                 onSave = viewModel::saveTimeSlots,
                 onReset = viewModel::resetTimeSlots,

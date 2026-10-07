@@ -88,6 +88,11 @@ import me.rerere.hugeicons.stroke.ViewOff
  * 「课表数据送到哪里」——通知栏 / 桌面 / 日历）；「扩展服务」→「校园服务」
  * （快捷方式与三个功能开关迁往通用设置，本页只剩要登录的系统）。
  *
+ * 2026-10-07 排版收口：六入口收成两张节卡——「功能」（课表 / 学习 / 校园服务 /
+ * 提醒与桌面）在前、「设置」（通用设置 / 关于）下沉，对应「去用 / 去配」两种意图；
+ * 「校园服务」副标题按现役功能补全（原「学校系统 · 一卡通 · 胖乖 · 趣智」
+ * 漏了后来加入的 U净 / 报修 / 校历）。
+ *
  * 每个分区收进独立汇总二级页（`ui/me/hub/`），根页面只留实时副标题——
  * 课表行锚定当前课表名与周次，学习行带笔记/作业计数，其余行给职责描述。
  * 账号卡数据源 = 水宝宝一卡通凭证（`YktCredentialStore`），遮罩口径在
@@ -235,13 +240,9 @@ fun SettingsScreen(
                 onOpenQzxy = onOpenQzxy,
             )
 
-            SettingsSection(title = "设置") {
-                SettingItem(
-                    title = "通用设置",
-                    subtitle = "外观 · 布局 · 页面 · 功能开关",
-                    icon = HugeIcons.Settings01,
-                    onClick = onOpenGeneralSettings,
-                )
+            // 入口顺序（2026-10-07 重排）：功能入口在前（课表 / 学习 / 校园服务 /
+            // 提醒与桌面），配置类下沉（通用设置 / 关于）——两张卡对应「去用 / 去配」
+            SettingsSection(title = "功能") {
                 val weekSuffix = if (state.currentWeek > 0) " · 第 ${state.currentWeek} 周" else ""
                 SettingItem(
                     title = "课表",
@@ -262,16 +263,24 @@ fun SettingsScreen(
                     onClick = onOpenLearningHub,
                 )
                 SettingItem(
+                    title = "校园服务",
+                    subtitle = "学工 · 校历 · 一卡通 · 开水 · 洗衣",
+                    icon = HugeIcons.CreditCard,
+                    onClick = onOpenExtensionServices,
+                )
+                SettingItem(
                     title = "提醒与桌面",
                     subtitle = "上课提醒 · 桌面小组件 · 日历同步",
                     icon = HugeIcons.BellRing,
                     onClick = onOpenWidgetCalendarHub,
                 )
+            }
+            SettingsSection(title = "设置") {
                 SettingItem(
-                    title = "校园服务",
-                    subtitle = "学校系统 · 一卡通 · 胖乖 · 趣智",
-                    icon = HugeIcons.CreditCard,
-                    onClick = onOpenExtensionServices,
+                    title = "通用设置",
+                    subtitle = "外观 · 布局 · 页面 · 功能开关",
+                    icon = HugeIcons.Settings01,
+                    onClick = onOpenGeneralSettings,
                 )
                 SettingItem(
                     title = "关于",

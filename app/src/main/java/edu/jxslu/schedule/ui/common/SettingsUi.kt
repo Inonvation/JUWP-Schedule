@@ -72,6 +72,8 @@ fun SettingsSection(
     title: String,
     subtitle: String? = null,
     modifier: Modifier = Modifier,
+    /** 标题右侧的作用域标签（如「当前课表」），与行标题的 [SettingsTag] 同一件。 */
+    titleTag: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
@@ -83,7 +85,7 @@ fun SettingsSection(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            TaggedTitle(title = title, tag = titleTag)
             if (subtitle != null) {
                 Text(
                     subtitle,

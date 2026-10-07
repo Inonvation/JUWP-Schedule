@@ -52,6 +52,8 @@ fun TimeSlotEditorCard(
     slots: List<TimeSlot>,
     onSave: (List<TimeSlot>) -> Unit,
     onReset: () -> Unit,
+    /** 标题旁的作用域注记（如「固定编辑当前课表 xxx」），可选。 */
+    headerNote: String? = null,
 ) {
     val haptics = rememberAppHaptics()
     var resetConfirm by remember { mutableStateOf(false) }
@@ -67,8 +69,8 @@ fun TimeSlotEditorCard(
 
     SettingsSection(
         title = "作息表",
-        subtitle = "默认每小节 40 分钟，大节内休息 5 分钟、大节间 20 分钟换教室。" +
-            "课表行高与时刻线都按这张表推算；改过之后不会被版本升级覆盖",
+        titleTag = headerNote,
+        subtitle = "默认每小节 40 分钟，大节内休息 5 分钟、大节间 20 分钟换教室",
     ) {
         for (index in 0 until rowCount) {
             val draft = drafts.getOrNull(index) ?: ("" to "")

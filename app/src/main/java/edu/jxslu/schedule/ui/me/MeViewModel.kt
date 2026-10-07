@@ -391,7 +391,7 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setHapticsEnabled(value) }
     }
 
-    /** 通知强提醒开关（全局，通用设置；语义见 [strongReminderVibration]）。 */
+    /** 通知强提醒开关（入口在「提醒与桌面」hub，2026-10-07 迁入；语义见 [strongReminderVibration]）。 */
     fun setStrongReminderVibration(value: Boolean) {
         viewModelScope.launch { repo.setStrongReminderVibration(value) }
     }

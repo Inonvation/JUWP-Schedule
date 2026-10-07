@@ -914,8 +914,9 @@ class DisplayPrefsStore(private val context: Context) {
      * 该模型是否支持图片识别，**默认关**。
      *
      * 为什么不自动探测：模型名是用户手填的（DeepSeek 官方对话模型是否支持视觉没有实测过），
-     * 上游 `/models` 只回 id 与名称、不给能力标记。所以只能显式声明；
-     * 关键字预判（[AiScheduleConfig.looksVisionModel]）只用来**建议打勾**，不自动开。
+     * 上游 `/models` 只回 id 与名称、不给能力标记。所以只能显式声明，不自动开
+     * （关键字预判 [AiScheduleConfig.looksVisionModel] 保留在 domain 供测试与未来复用，
+     * 配置页的「看着像视觉模型」提示 2026-10-07 已随排版收口移除）。
      */
     val aiSupportsImage: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_AI_SUPPORTS_IMAGE] ?: false

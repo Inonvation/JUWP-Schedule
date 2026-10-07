@@ -66,7 +66,6 @@ import me.rerere.hugeicons.stroke.ColorPicker
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.Home01
-import me.rerere.hugeicons.stroke.Notification03
 import me.rerere.hugeicons.stroke.Palette
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
@@ -94,6 +93,11 @@ import me.rerere.hugeicons.stroke.Wallet03
  * 标题旁常挂 [SettingsTag]（本轮改版：说明文字容易被扫视漏掉），切完当场提示。
  * 成绩查询 2026-09-24 挪入「学习」页（DESIGN §3.11）。
  *
+ * 2026-10-07 排版收口：三节制——「观感与布局」（悬浮导航栏自单行「布局」节并入）、
+ * 「页面与导航」、「功能」（原「功能开关」，AI 调课服务入口自单行「AI」节并入）。
+ * 「通知强提醒」开关迁往「提醒与桌面」hub（提醒发出方式的开关，语义属那一页），
+ * 本页不再出现通知类条目。
+ *
  * 启动页（DESIGN §3.3）同口径重启生效；选项集跟随底栏 Tab——生活页关掉时
  * 「生活」那一项不列（`StartPage.visiblePages`），选中态显示的是**实际生效页**
  * （`StartPage.effectivePage`），与启动落点同一个口径。
@@ -111,8 +115,6 @@ fun GeneralSettingsScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    // 单独一条流（不进 displayPrefs 合并模型，combine 已满员）：首帧即真值（VM 里 runBlocking 读）
-    val strongReminderVibration by viewModel.strongReminderVibration.collectAsStateWithLifecycle()
     val haptics = rememberAppHaptics()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -144,7 +146,9 @@ fun GeneralSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SettingsSection(title = "观感") {
+            // 观感与布局（2026-10-07 并节）：悬浮导航栏也是观感项（底栏形态），
+            // 「布局」单行节没必要单独立卡
+            SettingsSection(title = "观感与布局") {
                 SettingChoiceRow(
                     title = "外观主题",
                     icon = HugeIcons.Palette,
@@ -181,9 +185,7 @@ fun GeneralSettingsScreen(
                     onCheckedChange = viewModel::setDynamicColor,
                     icon = HugeIcons.ColorPicker,
                 )
-            }
-
-            SettingsSection(title = "布局") {
+                // 悬浮导航栏自「布局」节并入（2026-10-07）：同一份观感语言
                 SettingSwitchRow(
                     title = "悬浮导航栏",
                     titleTag = "重启生效",
@@ -228,24 +230,13 @@ fun GeneralSettingsScreen(
                 )
             }
 
-            // 通知强提醒（2026-10-06 用户要求）：ReminderVibration 的直接震动收成显式开关。
-            // 默认关——穿免打扰的震动是强打扰；关掉后提醒的震动只走系统通知渠道那一路，
-            // 可能被通知策略 / 免打扰 / 系统设置拦（横幅同理，那是系统层的事，App 管不了）
-            SettingsSection(title = "通知") {
-                SettingSwitchRow(
-                    title = "通知强提醒",
-                    subtitle = "上课 / 作业 / 免费时长提醒发出时直接震动，可穿透免打扰与系统的通知限制；关闭时按系统通知设置振动",
-                    checked = strongReminderVibration,
-                    onCheckedChange = viewModel::setStrongReminderVibration,
-                    icon = HugeIcons.Notification03,
-                )
-            }
-
             // AI 调课服务（DESIGN §4.39，2026-10-06）：地址 / 模型 / API Key / 教师名脱敏。
-            // 入口行而不是开关行——配置项多，收进独立二级页；API Key 落加密存储不进 DataStore
+            // 配置项多，收进独立二级页；API Key 落加密存储不进 DataStore。
+            // 2026-10-07 自「AI」单行节并入「功能」：入口行与快捷方式行同构
+            // （节副标题只约束三个开关行：开关语义 = 关闭即全入口隐藏）
             SettingsSection(
-                title = "AI",
-                subtitle = "AI 调课的服务与隐私设置",
+                title = "功能",
+                subtitle = "开关关闭后，该功能的全部入口与卡片一起隐藏",
             ) {
                 SettingItem(
                     title = "AI 调课服务",
@@ -253,13 +244,6 @@ fun GeneralSettingsScreen(
                     icon = HugeIcons.AiBrain01,
                     onClick = onOpenAiSettings,
                 )
-            }
-
-            // 功能开关（2026-09-28 收拢）：原「扩展服务 → 今日页」节 + 服务页尾部开关
-            SettingsSection(
-                title = "功能开关",
-                subtitle = "关闭后该功能的全部入口与卡片一起隐藏",
-            ) {
                 // 快捷方式不是单个开关：条目编辑页里有「在今日页显示」总开关，
                 // 这里给入口行而不是开关行，编辑与显隐管理都在那一页
                 SettingItem(

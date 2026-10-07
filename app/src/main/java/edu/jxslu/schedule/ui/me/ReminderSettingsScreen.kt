@@ -163,6 +163,8 @@ fun ReminderSettingsScreen(
             // 与其余设置子页同口径：分区卡之间留 12dp（漏了会三张卡紧贴）
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // 通知权限并入「上课提醒」节（2026-10-07 收口）：单行节卡没必要单独立卡，
+            // 语义上它是提醒能不能显示的前置条件
             SettingsSection(
                 title = "上课提醒",
                 subtitle = "按当前课表计算；换课表后自动跟随新课表。",
@@ -185,6 +187,12 @@ fun ReminderSettingsScreen(
                     onClick = { showLeadPicker = true },
                     icon = HugeIcons.AlarmClock,
                 )
+                SettingItem(
+                    title = "系统通知权限",
+                    subtitle = if (notifEnabled.value) "已开启" else "未开启 · 未授权时提醒不会显示",
+                    onClick = { openNotificationSettings(context) },
+                    icon = HugeIcons.Notification01,
+                )
             }
 
             // 作业截止提醒（DESIGN §3.11）：独立于上课提醒的开关，调度共用同一闹钟
@@ -204,32 +212,13 @@ fun ReminderSettingsScreen(
                 )
             }
 
-            SettingsSection(
-                title = "通知权限",
-                subtitle = "未授权时提醒不会显示；去系统设置开启后自动生效。",
-            ) {
-                SettingItem(
-                    title = "系统通知权限",
-                    subtitle = if (notifEnabled.value) "已开启" else "未开启",
-                    onClick = { openNotificationSettings(context) },
-                    icon = HugeIcons.Notification01,
-                )
-            }
-
+            // 说明卡（2026-10-07 收口）：只留运行行为里用户测得到、且别处没说的两条——
+            // 省电推迟（对应权限设置的改善出口）与重启自动恢复；触发点与作业时刻两条
+            // 已在上方行副标题里说过，删掉重复
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "· 提醒有两个触发点：「节次开始时间 − 提前量」与上课时刻各发一次，不重复；",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                )
-                Text(
-                    "· 与桌面小组件相同，提醒可能被系统省电策略推迟几分钟；在桌面小组件设置里允许「忽略电池优化」可改善；",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                )
-                Text(
-                    "· 作业截止提醒在截止前一天与当天 20:00 各提醒一次，只提醒未完成的作业；越过次日 00:00 不再补发；",
+                    "· 提醒可能被系统省电策略推迟几分钟；在关于 → 权限设置里允许「忽略电池优化」可改善；",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 )

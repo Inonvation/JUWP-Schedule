@@ -66,6 +66,10 @@ import me.rerere.hugeicons.stroke.Refresh
  * （EncryptedSharedPreferences，`secure_ai.xml` 已排除备份），不进 DataStore。
  *
  * 「测试连接」= 拉一次 `/models`：既验证地址与 Key，也把可用模型列出来供选。
+ *
+ * 2026-10-07 排版收口：「能力」节拆掉——图片识别开关并入「服务」节（紧跟模型行，
+ * 语义顺序：先选模型、再声明能力）；挂在节尾的两条「模型名看着像…」说明 Text 删除
+ * （说教式文案，判断依据已由「从上游获取」的模型列表替代）；隐私节说明收进节副标题。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,6 +134,13 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                     icon = HugeIcons.Cpu,
                     onClick = { editingModel = true },
                 )
+                SettingSwitchRow(
+                    title = "支持图片识别",
+                    subtitle = "开启后可以在 AI 调课里发通知截图",
+                    checked = supportsImage,
+                    onCheckedChange = viewModel::setSupportsImage,
+                    icon = HugeIcons.Image01,
+                )
                 SettingItem(
                     title = "API Key",
                     subtitle = if (apiKey.isNullOrBlank()) "未配置" else "已配置",
@@ -163,29 +174,6 @@ fun AiSettingsScreen(onBack: () -> Unit) {
             }
 
             SettingsSection(
-                title = "能力",
-                subtitle = "模型能力探测不了，只能你声明",
-            ) {
-                SettingSwitchRow(
-                    title = "该模型支持图片识别",
-                    subtitle = "开启后可以在 AI 调课里发通知截图",
-                    checked = supportsImage,
-                    onCheckedChange = viewModel::setSupportsImage,
-                    icon = HugeIcons.Image01,
-                )
-                Text(
-                    if (AiScheduleConfig.looksVisionModel(model)) {
-                        "模型名看着像视觉模型——确认后再打开。"
-                    } else {
-                        "模型名不像视觉模型；带视觉的常见型号：*-vl / *vision / gpt-4o / gemini 等。"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-
-            SettingsSection(
                 title = "思考",
                 subtitle = "档位越高越慢越贵；开启后结构化结果可能降级",
             ) {
@@ -208,19 +196,16 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            SettingsSection(title = "隐私") {
+            SettingsSection(
+                title = "隐私",
+                subtitle = "发送课表与通知内容，不含学号姓名",
+            ) {
                 SettingSwitchRow(
                     title = "教师名脱敏",
-                    subtitle = "把教师姓名替换成「教师1 / 教师2 …」",
+                    subtitle = "教师姓名替换成「教师1 / 教师2 …」",
                     checked = maskTeacher,
                     onCheckedChange = viewModel::setMaskTeacher,
                     icon = HugeIcons.AiBrain01,
-                )
-                Text(
-                    "发送内容：课表（课程名 / 时间 / 周次 / 地点）+ 通知与图片；不含学号姓名。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }

@@ -54,7 +54,11 @@ import me.rerere.hugeicons.stroke.Teacher
  * 培养方案 2026-10-07 新增（DESIGN §3.26 / §4.41）：课程设置总表（按学年/学期看计划课），
  * 与学业完成情况同族（一个看计划、一个看达成），排序挨着放。
  * 教务服务 2026-10-07 新增（DESIGN §3.27）：学生评教（教务 WebView 直达平台）+
- * 实习基地查看（原生只读页）——两个「直连教务」的功能，不属于已导入的数据。 */
+ * 实习基地查看（原生只读页）——两个「直连教务」的功能，不属于已导入的数据。
+ *
+ * 三节结构（2026-10-07 排版收口）：按**数据来源**分——「笔记与作业」是本机内容；
+ * 「学业数据」= 从教务同步落库、可离线看（来源声明收在节副标题，行内不再逐条重复）；
+ * 「教务服务」= 实时直达教务、不留档。实时计数 / 轮次状态等副标题逻辑不变。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LearningHubScreen(
@@ -123,34 +127,34 @@ fun LearningHubScreen(
         ) {
             val noteCount = noteGroups?.sumOf { it.count } ?: 0
             val courseCount = noteGroups?.size ?: 0
-            SettingsSection(title = "笔记·课件") {
+            val pendingCount = homeworkGroups?.sumOf { it.pending } ?: 0
+            SettingsSection(title = "笔记与作业", subtitle = "本机内容 · 按课程分组") {
                 SettingItem(
-                    title = if (noteCount > 0) "$noteCount 篇 · $courseCount 门课" else "笔记·课件库",
-                    subtitle = if (noteCount > 0) "按课程分组查看" else "暂无内容 · 记下课件与公式",
+                    title = "笔记·课件",
+                    subtitle = if (noteCount > 0) "$noteCount 篇 · $courseCount 门课" else "暂无内容 · 记下课件与公式",
                     icon = HugeIcons.Note01,
                     onClick = onOpenNotes,
                 )
-            }
-            val pendingCount = homeworkGroups?.sumOf { it.pending } ?: 0
-            SettingsSection(title = "作业") {
                 SettingItem(
-                    title = if (pendingCount > 0) "$pendingCount 项未完成" else "作业库",
-                    subtitle = if (pendingCount > 0) "按课程分组查看" else "暂无作业 · 可设截止提醒",
+                    title = "作业",
+                    subtitle = if (pendingCount > 0) "$pendingCount 项未完成" else "暂无作业 · 可设截止提醒",
                     icon = HugeIcons.Task01,
                     onClick = onOpenHomework,
                 )
             }
 
-            SettingsSection(title = "成绩与考试") {
+            // 来源声明收在节副标题：这一节全部是「教务同步落库、本机可离线看」的数据，
+            // 行内副标题不再逐条带「从教务导入/更新/同步」尾巴
+            SettingsSection(title = "学业数据", subtitle = "从教务同步 · 本机留档可离线看") {
                 SettingItem(
                     title = "成绩查询",
-                    subtitle = "按学期 · 学年汇总 · 从教务导入",
+                    subtitle = "按学期 · 学年汇总",
                     icon = HugeIcons.GraduationScroll,
                     onClick = onOpenScores,
                 )
                 SettingItem(
                     title = "考试安排",
-                    subtitle = "发布与时间考场变动提醒 · 从教务更新",
+                    subtitle = "发布与时间考场变动提醒",
                     icon = HugeIcons.ClipboardPen,
                     onClick = onOpenExam,
                 )
@@ -166,9 +170,6 @@ fun LearningHubScreen(
                     icon = HugeIcons.ListTree,
                     onClick = onOpenCurriculum,
                 )
-            }
-
-            SettingsSection(title = "选课") {
                 SettingItem(
                     // 功能整体还在窗口期联调前（接口未接入），入口标 beta（2026-10-01）
                     title = "选课（beta）",
@@ -178,7 +179,8 @@ fun LearningHubScreen(
                 )
             }
 
-            SettingsSection(title = "教务服务") {
+            // 与上一节的分界：这一节是「实时连教务办事」，查到什么看什么、不在本机留档
+            SettingsSection(title = "教务服务", subtitle = "实时直达教务 · 不留档") {
                 SettingItem(
                     title = "学生评教",
                     subtitle = "直达教务评教平台 · 评完解锁成绩",
@@ -215,23 +217,23 @@ private fun selectionSubtitle(
     val latestTerm = rows?.groupBy { it.term }?.keys?.maxOrNull()
     val count = if (latestTerm == null) 0 else rows.count { it.term == latestTerm }
     return if (latestTerm != null && count > 0) {
-        "$latestTerm · $count 门 · 从教务同步"
+        "$latestTerm · $count 门"
     } else {
-        "选课记录与轮次 · 从教务同步"
+        "选课记录与轮次"
     }
 }
 
-/** 学业完成情况的副标题：有总账就报进度，没数据就说明来源。 */
+/** 学业完成情况的副标题：有总账就报进度，没数据就报空态（来源见节副标题）。 */
 private fun scholarSubtitle(totals: edu.jxslu.schedule.domain.ScholarTotals?): String {
-    if (totals == null) return "培养方案达成度 · 从教务导入"
+    if (totals == null) return "培养方案达成度"
     if (totals.required <= 0.0) return "培养方案达成度 · 已修 ${trimCredit(totals.earned)} 学分"
     val line = "已修 ${trimCredit(totals.earned)} / ${trimCredit(totals.required)} 学分"
     return if (totals.remaining > 0.0) "$line · 还需 ${trimCredit(totals.remaining)}" else "$line · 已达成"
 }
 
-/** 培养方案的副标题：有数据报规模（门数 · 学分），没数据说明来源。 */
+/** 培养方案的副标题：有数据报规模（门数 · 学分），没数据报空态（来源见节副标题）。 */
 private fun curriculumSubtitle(courses: List<CurriculumCourse>?): String {
-    if (courses.isNullOrEmpty()) return "课程设置总表 · 从教务导入"
+    if (courses.isNullOrEmpty()) return "课程设置总表"
     return "${courses.size} 门课 · 共 ${trimCredit(CurriculumRules.totalCredit(courses))} 学分"
 }
 

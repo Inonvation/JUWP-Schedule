@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.me.MeViewModel
 import kotlinx.coroutines.flow.first
@@ -44,6 +45,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.GridView
+import me.rerere.hugeicons.stroke.Notification03
 import me.rerere.hugeicons.stroke.Shield01
 
 /**
@@ -56,6 +58,11 @@ import me.rerere.hugeicons.stroke.Shield01
  * 入口行右侧带实时状态（提醒开关开着给「已开启」，与根页学习行计数同口径）；
  * 尾部说明卡指路「关于 → 权限设置」——「提醒不响」是这类应用最高频的问题，
  * 三条渠道各对应什么权限一句话说清。
+ *
+ * 2026-10-07 排版收口：桌面与日历并成一节（都是「落到 App 外的出口」）；
+ * 「通知强提醒」开关自通用设置迁入提醒节——它是提醒发出方式（直接震动）的开关，
+ * 语义本就属于这一页。偏好仍走 `MeViewModel.strongReminderVibration` 独立单流，
+ * 迁移只是换渲染位置，读写路径不变。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +77,9 @@ fun WidgetCalendarHubScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 通知强提醒（自通用设置迁入，2026-10-07）：单独一条流（不进 displayPrefs
+    // 合并模型，combine 已满员），首帧即真值（VM 里 runBlocking 读）
+    val strongReminderVibration by viewModel.strongReminderVibration.collectAsStateWithLifecycle()
     // 提醒行右侧状态：开关实时值（repo 流），首帧阻塞读一次避免先按默认渲染再跳
     val context = LocalContext.current
     val reminderEnabled by remember {
@@ -106,16 +116,23 @@ fun WidgetCalendarHubScreen(
                     value = if (reminderEnabled) "已开启" else null,
                     onClick = onOpenReminderSettings,
                 )
+                // 自通用设置迁入（2026-10-07）：提醒发出时直接震动的强打扰开关，
+                // 放在上课提醒旁边比放在通用设置的「通知」单行节更贴语义
+                SettingSwitchRow(
+                    title = "通知强提醒",
+                    subtitle = "提醒发出时直接震动，可穿透免打扰与系统的通知限制；关闭时按系统通知设置振动",
+                    checked = strongReminderVibration,
+                    onCheckedChange = viewModel::setStrongReminderVibration,
+                    icon = HugeIcons.Notification03,
+                )
             }
-            SettingsSection(title = "桌面") {
+            SettingsSection(title = "桌面与日历", subtitle = "课表落到 App 外的出口") {
                 SettingItem(
                     title = "桌面小组件",
                     subtitle = "课表 · 校园卡电费 · 开水卡 · 一键添加",
                     icon = HugeIcons.GridView,
                     onClick = onOpenWidgetSettings,
                 )
-            }
-            SettingsSection(title = "日历") {
                 SettingItem(
                     title = "日历同步",
                     subtitle = "课表写入系统日历 · 提前提醒随同步写入",

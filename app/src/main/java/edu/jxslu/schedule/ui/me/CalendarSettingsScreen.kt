@@ -197,6 +197,8 @@ fun CalendarSettingsScreen(
             // 分区卡之间的 12dp 换气：漏了这行三张卡会上下紧贴（其余设置页统一口径）
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // 三节并两节（2026-10-07 收口）：提前提醒并入同步节（它只对同步事件生效）；
+            // 日历权限是单行节，行副标题已把授权出路说清，节卡没有增量信息
             SettingsSection(
                 title = "同步到手机日历",
                 subtitle = "把当前课表写入系统日历（课程名 / 教室 / 教师）；重复同步先删旧事件再整表重写。",
@@ -227,29 +229,17 @@ fun CalendarSettingsScreen(
                     enabled = !busy,
                     icon = HugeIcons.Delete02,
                 )
-            }
-
-            SettingsSection(
-                title = "提前提醒",
-                subtitle = "对同步到日历的课程生效；修改后重新同步即可更新已同步事件的提醒。",
-            ) {
                 SettingItem(
                     title = "提醒时长",
-                    subtitle = "同步时写入日历的提前提醒",
+                    subtitle = "修改后重新同步即可更新已写入的提醒",
                     value = CalendarSyncDefaults.reminderLabel(reminder),
                     onClick = { showReminderPicker = true },
                     enabled = !busy,
                     icon = HugeIcons.CalendarClock,
                 )
-            }
-
-            SettingsSection(
-                title = "日历权限",
-                subtitle = "同步与删除都需要读写手机日历；未授权时点上面「同步课表到日历」也会发起授权。",
-            ) {
                 SettingItem(
                     title = "日历读写权限",
-                    subtitle = if (calendarGranted) "已授予，可以同步" else "未授予，点此授权",
+                    subtitle = if (calendarGranted) "已授予" else "未授予 · 点此授权",
                     onClick = if (calendarGranted) {
                         null
                     } else {

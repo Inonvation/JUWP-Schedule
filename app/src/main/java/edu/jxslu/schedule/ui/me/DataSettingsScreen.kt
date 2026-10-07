@@ -14,7 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -116,7 +115,7 @@ fun DataSettingsScreen(
         ) {
             SettingsSection(
                 title = "导入 / 导出",
-                subtitle = "JSON 字段对齐拾光互通课表模型，可与兼容工具互导；导出的是当前课表「${state.timetableName.ifBlank { "—" }}」，成绩随文件一起备份（导入时整体替换）。",
+                subtitle = "导出当前课表「${state.timetableName.ifBlank { "—" }}」，成绩随文件一起备份；导入时整体替换",
             ) {
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
@@ -155,15 +154,6 @@ fun DataSettingsScreen(
                 ) {
                     Text("清空全部课程", color = MaterialTheme.colorScheme.error)
                 }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "导入会弹出目标课表选择：可覆盖或合并，也可新建课表承接（DESIGN §4.9）。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(16.dp),
-                )
             }
         }
     }

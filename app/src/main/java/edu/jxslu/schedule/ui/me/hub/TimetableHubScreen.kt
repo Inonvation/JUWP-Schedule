@@ -120,7 +120,8 @@ fun TimetableHubScreen(
         ) {
             TimetableHero(state = state, onOpenJwImport = onOpenJwImport)
 
-            SettingsSection(title = "配置") {
+            // 配置与数据（2026-10-07 并节）：都是「管这张课表」的动作，单行节没必要单独立卡
+            SettingsSection(title = "配置与数据") {
                 SettingItem(
                     title = "课表管理",
                     subtitle = "新建 · 切换 · 删除课表",
@@ -133,6 +134,12 @@ fun TimetableHubScreen(
                     subtitle = "学期起止 · 总周数 · 作息时间",
                     icon = HugeIcons.Clock01,
                     onClick = onOpenTimetableSettings,
+                )
+                SettingItem(
+                    title = "课表数据",
+                    subtitle = "JSON 导出 / 导入 · 清空课程",
+                    icon = HugeIcons.Database,
+                    onClick = onOpenDataSettings,
                 )
             }
 
@@ -155,15 +162,6 @@ fun TimetableHubScreen(
                     subtitle = "粘贴调课通知，由 AI 给出改动建议 · 需自备 API Key",
                     icon = HugeIcons.AiBrain01,
                     onClick = onOpenAiSchedule,
-                )
-            }
-
-            SettingsSection(title = "数据") {
-                SettingItem(
-                    title = "课表数据",
-                    subtitle = "JSON 导出 / 导入 · 清空课程",
-                    icon = HugeIcons.Database,
-                    onClick = onOpenDataSettings,
                 )
             }
         }
