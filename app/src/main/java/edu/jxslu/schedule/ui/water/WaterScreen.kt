@@ -2,6 +2,7 @@ package edu.jxslu.schedule.ui.water
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,6 +19,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +50,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -69,10 +74,14 @@ import edu.jxslu.schedule.domain.QzxyPhoneMask
 import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.domain.cashPaidAmount
 import edu.jxslu.schedule.domain.ticketPaidAmount
+import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
+import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
@@ -85,7 +94,6 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.GlassWater
@@ -213,7 +221,7 @@ fun WaterScreen(
                 title = { Text("胖乖生活") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(HugeIcons.ArrowLeft01, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
@@ -236,16 +244,15 @@ fun WaterScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 LoginSection(state = state, viewModel = viewModel)
-                Spacer(Modifier.height(24.dp))
                 WaterSettingsSection(
                     prefs = prefsState.displayPrefs,
                     onSetRequireDoubleClick = prefsViewModel::setWaterRequireDoubleClick,
                     onToggleHaptics = { haptics.toggle() },
                 )
-                Spacer(Modifier.height(16.dp))
                 Disclaimer()
             }
         } else {
@@ -267,8 +274,8 @@ fun WaterScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     BalanceRow(
                         state = state,
@@ -276,94 +283,62 @@ fun WaterScreen(
                         onToggleShowPhone = { viewModel.toggleShowPhone() },
                     )
 
-                // 设备行
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = state.flow is UnlockFlowState.Idle && state.devices.isNotEmpty()) {
-                            showDeviceSheet = true
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        HugeIcons.Droplet,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
+                    // 设备行（与趣智页同构：一行 AppCardRow，右侧「更换 ›」）
+                    DeviceRow(
+                        state = state,
+                        onPick = { showDeviceSheet = true },
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = state.selectedDevice?.goodsName?.ifBlank { "未命名设备" } ?: "暂无设备",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+
+                    UnlockStatusArea(
+                        state = state,
+                        onToggleUsePoints = { viewModel.toggleUsePoints() },
+                        onShowDetail = { detailItem = it },
                     )
-                    Spacer(Modifier.weight(1f))
-                    if (state.loadingDevices) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text(
-                            "更换",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
+
+                    when (val flow = state.flow) {
+                        is UnlockFlowState.Idle -> WaterUnlockButton(
+                            enabled = state.selectedDevice != null,
+                            onUnlock = { viewModel.unlock() },
+                            fillMaxWidth = true,
+                            height = 48.dp,
                         )
-                    }
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-
-                UnlockStatusArea(
-                    state = state,
-                    onToggleUsePoints = { viewModel.toggleUsePoints() },
-                    onShowDetail = { detailItem = it },
-                )
-
-                when (val flow = state.flow) {
-                    is UnlockFlowState.Idle -> WaterUnlockButton(
-                        enabled = state.selectedDevice != null,
-                        onUnlock = { viewModel.unlock() },
-                        fillMaxWidth = true,
-                        height = 48.dp,
-                    )
-                    // 出水满 5 秒，「开水进行中…」原地换成「结束用水」（动作位共用组件）
-                    is UnlockFlowState.PreChecking -> WaterWorkingAction(
-                        canEndSession = false,
-                        onEndSession = { viewModel.endSession() },
-                    )
-                    is UnlockFlowState.Working -> WaterWorkingAction(
-                        canEndSession = flow.elapsedSeconds >= WaterViewModel.END_SESSION_MIN_SECONDS,
-                        onEndSession = { viewModel.endSession() },
-                    )
-                    is UnlockFlowState.Success -> OutlinedButton(
-                        onClick = { viewModel.dismissFlow() },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                    ) { Text("完成") }
-                    is UnlockFlowState.Failed -> Row(modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = { viewModel.unlock() },
-                            modifier = Modifier.weight(1f).height(48.dp),
-                        ) { Text("重试") }
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedButton(
+                        // 出水满 5 秒，「开水进行中…」原地换成「结束用水」（动作位共用组件）
+                        is UnlockFlowState.PreChecking -> WaterWorkingAction(
+                            canEndSession = false,
+                            onEndSession = { viewModel.endSession() },
+                        )
+                        is UnlockFlowState.Working -> WaterWorkingAction(
+                            canEndSession = flow.elapsedSeconds >= WaterViewModel.END_SESSION_MIN_SECONDS,
+                            onEndSession = { viewModel.endSession() },
+                        )
+                        is UnlockFlowState.Success -> OutlinedButton(
                             onClick = { viewModel.dismissFlow() },
-                            modifier = Modifier.height(48.dp),
-                        ) { Text("关闭") }
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                        ) { Text("完成") }
+                        is UnlockFlowState.Failed -> Row(modifier = Modifier.fillMaxWidth()) {
+                            Button(
+                                onClick = { viewModel.unlock() },
+                                modifier = Modifier.weight(1f).height(48.dp),
+                            ) { Text("重试") }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = { viewModel.dismissFlow() },
+                                modifier = Modifier.height(48.dp),
+                            ) { Text("关闭") }
+                        }
                     }
-                }
 
-                OrderSection(
-                    orders = state.orderHistory,
-                    onClick = { detailItem = it },
-                )
+                    OrderSection(
+                        orders = state.orderHistory,
+                        onClick = { detailItem = it },
+                    )
 
-                Spacer(Modifier.height(8.dp))
-                WaterSettingsSection(
-                    prefs = prefsState.displayPrefs,
-                    onSetRequireDoubleClick = prefsViewModel::setWaterRequireDoubleClick,
-                    onToggleHaptics = { haptics.toggle() },
-                )
-                Disclaimer()
-                Spacer(Modifier.height(24.dp))
+                    WaterSettingsSection(
+                        prefs = prefsState.displayPrefs,
+                        onSetRequireDoubleClick = prefsViewModel::setWaterRequireDoubleClick,
+                        onToggleHaptics = { haptics.toggle() },
+                    )
+                    Disclaimer()
                 }
             }
         }
@@ -390,6 +365,7 @@ fun WaterScreen(
 
     // 退出二次确认（2026-09-27）：顶栏图标就在返回键旁边，一次误触就得重新收短信才能回来
     if (confirmLogout) {
+        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmLogout = false },
             title = { Text("退出胖乖登录？") },
@@ -416,72 +392,84 @@ fun WaterScreen(
 
 // ── 登录 ──
 
+/**
+ * 登录卡（2026-10-07 卡片化）：验证码 / Token 两种方式收进同一张 SettingsSection，
+ * 与趣智 / 快趣 / U净 的登录卡同一形态——本页其余区块都是卡片，表单裸在页面背景上
+ * 会显得「没装进容器」。
+ */
 @Composable
 private fun LoginSection(state: WaterUiState, viewModel: WaterViewModel) {
-    Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(10.dp))
-    OutlinedTextField(
-        value = state.phone,
-        onValueChange = viewModel::updatePhone,
-        label = { Text("手机号") },
-        isError = state.phoneError != null,
-        supportingText = state.phoneError?.let { { Text(it) } },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Spacer(Modifier.height(8.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(
-            value = state.code,
-            onValueChange = viewModel::updateCode,
-            label = { Text("验证码") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(8.dp))
-        Button(onClick = { viewModel.sendCode() }, enabled = !state.sendingCode && state.phone.isNotBlank()) {
-            Text(if (state.sendingCode) "发送中" else "发送验证码")
-        }
-    }
-    Spacer(Modifier.height(12.dp))
-    Button(
-        onClick = { viewModel.login() },
-        enabled = !state.loggingIn && state.phone.isNotBlank() && state.code.isNotBlank(),
-        modifier = Modifier.fillMaxWidth().height(48.dp),
+    SettingsSection(
+        title = "登录",
+        subtitle = "手机号短信登录；充值与退款都在官方渠道完成。",
     ) {
-        Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-    }
-    Spacer(Modifier.height(14.dp))
-    HorizontalDivider()
-    Spacer(Modifier.height(14.dp))
-    if (!state.showTokenLogin) {
-        OutlinedButton(onClick = { viewModel.toggleTokenLogin() }, modifier = Modifier.fillMaxWidth()) {
-            Text("Token 登录")
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "已从其他渠道拿到 Token 时可直接粘贴登录；手机号登录会使旧 Token 失效。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-        )
-    } else {
         OutlinedTextField(
-            value = state.tokenLoginInput,
-            onValueChange = viewModel::updateTokenLoginInput,
-            label = { Text("Token") },
+            value = state.phone,
+            onValueChange = viewModel::updatePhone,
+            label = { Text("手机号") },
+            isError = state.phoneError != null,
+            supportingText = state.phoneError?.let { { Text(it) } },
             singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = state.code,
+                onValueChange = viewModel::updateCode,
+                label = { Text("验证码") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { viewModel.sendCode() }, enabled = !state.sendingCode && state.phone.isNotBlank()) {
+                Text(if (state.sendingCode) "发送中" else "发送验证码")
+            }
+        }
+        Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { viewModel.loginWithToken() },
-            enabled = !state.tokenLoggingIn && state.tokenLoginInput.isNotBlank(),
+            onClick = { viewModel.login() },
+            enabled = !state.loggingIn && state.phone.isNotBlank() && state.code.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
-        ) { Text("Token 登录") }
+        ) {
+            Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(8.dp))
+        if (!state.showTokenLogin) {
+            OutlinedButton(onClick = { viewModel.toggleTokenLogin() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Token 登录")
+            }
+            Text(
+                "已从其他渠道拿到 Token 时可直接粘贴登录；手机号登录会使旧 Token 失效。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        } else {
+            OutlinedTextField(
+                value = state.tokenLoginInput,
+                onValueChange = viewModel::updateTokenLoginInput,
+                label = { Text("Token") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { viewModel.loginWithToken() },
+                enabled = !state.tokenLoggingIn && state.tokenLoginInput.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) { Text("Token 登录") }
+            // 切回短信登录的出口（2026-10-07 补）：此前切进 Token 模式只有输入框 + 登录键，
+            // 想回去只能杀页面重进；趣智的会话串模式一直有「收起」按钮，这里对齐
+            TextButton(
+                onClick = { viewModel.toggleTokenLogin() },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("改用短信验证码登录") }
+        }
     }
 }
 
@@ -516,38 +504,65 @@ private fun WaterSettingsSection(
 
 @Composable
 private fun Disclaimer() {
-    Text(
-        "胖乖功能模拟客户端操作，仅供学习测试，可能违反平台服务条款；账号与封禁风险自负。本应用与学校、胖乖官方均无关。",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+    FooterDisclaimer(
+        body = "胖乖功能模拟客户端操作，仅供学习测试，可能违反平台服务条款；账号与封禁风险自负。" +
+            "本应用与学校、胖乖官方均无关。",
     )
 }
 
 // ── 已登录内容 ──
 
+/**
+ * 余额与充值卡（2026-10-07 卡片化，与趣智页 AccountRow 同构）：余额 + 登录手机号
+ * （遮蔽 + 眼睛）+ 充值按钮 + 说明文，全部收进一张 SettingsSection。
+ * 原先这几样裸在页面背景上，与全 App 的卡片语言脱节。
+ */
 @Composable
 private fun BalanceRow(state: WaterUiState, onRecharge: () -> Unit, onToggleShowPhone: () -> Unit) {
     val balance = state.balance
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    SettingsSection(title = "余额与充值") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 HugeIcons.Wallet01,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(22.dp),
             )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "小票 ¥${balance?.ticketText ?: "-"} · 积分 ${balance?.pointsText ?: "-"}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "小票 ¥${balance?.ticketText ?: "-"} · 积分 ${balance?.pointsText ?: "-"}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // 登录手机号默认遮蔽，点眼睛才展开：页面会被截图、会被旁人瞥见，
+                // 与趣智账号行 / 「我的」页学号同一个口径（QzxyPhoneMask 是通用遮蔽工具）
+                if (state.accountPhone.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "登录手机号 " +
+                                if (state.showPhone) state.accountPhone else QzxyPhoneMask.mask(state.accountPhone),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Icon(
+                            imageVector = if (state.showPhone) HugeIcons.ViewOff else HugeIcons.View,
+                            contentDescription = if (state.showPhone) "隐藏手机号" else "显示手机号",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .padding(start = 6.dp)
+                                .size(16.dp)
+                                .clickable { onToggleShowPhone() },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(10.dp))
             FilledTonalButton(onClick = onRecharge) {
                 Icon(
                     HugeIcons.WalletAdd01,
@@ -558,30 +573,6 @@ private fun BalanceRow(state: WaterUiState, onRecharge: () -> Unit, onToggleShow
                 Text("充值")
             }
         }
-        // 登录手机号默认遮蔽，点眼睛才展开：页面会被截图、会被旁人瞥见，
-        // 与趣智账号行 / 「我的」页学号同一个口径（QzxyPhoneMask 是通用遮蔽工具）
-        if (state.accountPhone.isNotBlank()) {
-            Row(
-                modifier = Modifier.padding(top = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "登录手机号 " +
-                        if (state.showPhone) state.accountPhone else QzxyPhoneMask.mask(state.accountPhone),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
-                Icon(
-                    imageVector = if (state.showPhone) HugeIcons.ViewOff else HugeIcons.View,
-                    contentDescription = if (state.showPhone) "隐藏手机号" else "显示手机号",
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier
-                        .padding(start = 6.dp)
-                        .size(16.dp)
-                        .clickable { onToggleShowPhone() },
-                )
-            }
-        }
         Text(
             text = "点「充值」跳到支付宝的胖乖生活小程序，钱进胖乖账户；充值与退款由胖乖官方负责。" +
                 "小程序按支付宝的登录态进账号，充值前先核对它与本 App 登录的手机号一致，避免充错账户。",
@@ -589,6 +580,61 @@ private fun BalanceRow(state: WaterUiState, onRecharge: () -> Unit, onToggleShow
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
             modifier = Modifier.padding(top = 8.dp),
         )
+    }
+}
+
+/**
+ * 设备行（2026-10-07 与趣智页同构）：AppCardRow + 图标 + 设备名 + 「更换 ›」。
+ * 原先是裸 Row + 分割线；用水中 / 流程进行中不可换（趣智同一条纪律）。
+ */
+@Composable
+private fun DeviceRow(state: WaterUiState, onPick: () -> Unit) {
+    val canPick = state.flow is UnlockFlowState.Idle && state.devices.isNotEmpty()
+    AppCardRow(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = if (canPick) onPick else null,
+        onClickLabel = "更换开水设备",
+    ) {
+        Icon(
+            HugeIcons.Droplet,
+            contentDescription = null,
+            tint = if (state.selectedDevice != null) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = state.selectedDevice?.goodsName?.ifBlank { "未命名设备" } ?: "暂无设备",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = when {
+                    state.flow !is UnlockFlowState.Idle -> "正在处理，等这一步跑完再换"
+                    state.selectedDevice != null -> "已选中 · 点右侧可换"
+                    else -> "还没选设备，点右侧挑一台"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        if (state.loadingDevices) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        } else {
+            Text(
+                text = "更换 ›",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (canPick) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -739,6 +785,7 @@ private fun DeviceSheet(
     onSelect: (DeviceItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val haptics = rememberAppHaptics()
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -754,11 +801,20 @@ private fun DeviceSheet(
             }
             devices.forEach { device ->
                 val isSelected = device.effectiveGoodsId == selected?.effectiveGoodsId
+                // 行规格与趣智设备弹层（DeviceRow）一致：选中态主色淡底 + 触感反馈
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onSelect(device) }
-                        .padding(vertical = 10.dp),
+                        .background(
+                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            else Color.Transparent,
+                            shape = RoundedCornerShape(10.dp),
+                        )
+                        .clickable {
+                            haptics.tap()
+                            onSelect(device)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
@@ -780,57 +836,93 @@ private fun DeviceSheet(
     }
 }
 
+/**
+ * 历史订单：卡片入口 + 底部弹层明细（2026-10-07 收口）。
+ *
+ * 订单列表原先整块平铺在页面上（十几笔时把「开水卡设置」一路顶出屏外），现在
+ * 收成一行入口（共 N 笔 · 点看明细），明细装进与设备选择同规格的底部弹层——
+ * 页面只留「要做的事」，明细按需展开。行点击仍开订单详情弹窗。
+ */
 @Composable
 private fun OrderSection(orders: List<OrderHistoryItem>, onClick: (OrderHistoryItem) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            HugeIcons.History,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            "历史订单（本地快照）",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+    var showOrders by remember { mutableStateOf(false) }
+    SettingsSection(title = "历史订单", subtitle = "本地快照，最多保留 20 笔") {
+        val openDetail: (() -> Unit)? = if (orders.isEmpty()) null else ({ showOrders = true })
+        SettingItem(
+            title = if (orders.isEmpty()) "还没有订单" else "共 ${orders.size} 笔",
+            subtitle = "点看明细",
+            icon = HugeIcons.History,
+            onClick = openDetail,
         )
     }
-    if (orders.isEmpty()) {
-        Text(
-            "暂无订单记录",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+    if (showOrders) {
+        OrderListSheet(
+            orders = orders,
+            onClick = onClick,
+            onDismiss = { showOrders = false },
         )
-        return
     }
-    orders.take(20).forEach { order ->
-        Row(
+}
+
+/** 订单明细弹层：与「选择开水设备」同规格，行点击开订单详情弹窗。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OrderListSheet(
+    orders: List<OrderHistoryItem>,
+    onClick: (OrderHistoryItem) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onClick(order) }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .heightIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    order.goodsName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                )
-                Text(
-                    DATE_FORMAT.format(Date(order.completedAt)),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                )
-            }
             Text(
-                "¥${calculateActualCost(toResult(order))}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
+                "历史订单",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
             )
+            Text(
+                "本地快照 · 点单笔看支付构成",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            Spacer(Modifier.height(8.dp))
+            orders.take(20).forEachIndexed { index, order ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onClick(order) }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            order.goodsName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                        )
+                        Text(
+                            DATE_FORMAT.format(Date(order.completedAt)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        )
+                    }
+                    Text(
+                        "¥${calculateActualCost(toResult(order))}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                if (index < (orders.size.takeIf { it < 20 } ?: 20) - 1) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                }
+            }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     }
 }
 
@@ -849,6 +941,7 @@ private fun toResult(item: OrderHistoryItem) = UnlockResult(
 
 @Composable
 private fun ErrorDetailDialog(item: UnlockFlowState.Failed, onDismiss: () -> Unit) {
+    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("失败详情") },
@@ -879,6 +972,7 @@ private fun ErrorDetailDialog(item: UnlockFlowState.Failed, onDismiss: () -> Uni
 
 @Composable
 private fun OrderDetailDialog(item: UnlockResult, onDismiss: () -> Unit) {
+    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("订单详情") },

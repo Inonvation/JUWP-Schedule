@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.ui.common
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 /**
  * 滚轮选择器（对齐拾光的滚轮交互）。
@@ -44,6 +47,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
  * 所以停稳瞬间 offset 必为 0，不会出现半格选中态）。
  *
  * 用它而不是 Android 原生 NumberPicker：原生控件样式与 M3 主题割裂，且无法做渐隐遮罩。
+ *
+ * **选中值实时回调**（2026-10-07 交互修）：[onSelected] 跟着视觉中心**即时**走，
+ * 不再等停稳——此前必须等 snap 停稳才回写选中值，用户滚到位立刻点「确定」会提交
+ * 上一次停稳的旧值（一卡通阈值 / 总周数等弹窗被报「要等计数停下来才生效」）。
+ * 现在停稳只负责触感与半格吸附，取值永远以「确定」按下那一刻的视觉中心为准。
  */
 @Composable
 fun WheelPicker(
@@ -75,8 +83,18 @@ fun WheelPicker(
         }
     }
 
-    // 停稳后：回调选中值，并把半格状态吸附回整项（animateScrollToItem 对齐到 offset=0）。
-    // snapshotFlow 会先发一个初始值（组合时并未滚动），首帧不算「停稳」、不给触感。
+    // 选中值实时回调：视觉中心每变一档就发一次，滚动中也发（对话框的「确定」因此
+    // 总能拿到当下的值）。首帧也照发——调用方的 selected 初值就是从 initialIndex
+    // 来的，同一值 distinct 后只是省一次写。
+    LaunchedEffect(state, values) {
+        if (values.isEmpty()) return@LaunchedEffect
+        snapshotFlow { centered }
+            .distinctUntilChanged()
+            .collect { onSelected(it) }
+    }
+
+    // 停稳收尾：给触感，并把半格状态吸附回整项（animateScrollToItem 对齐到 offset=0）。
+    // 取值已由上面的实时回调负责，这里只管手感与对齐。
     LaunchedEffect(state) {
         var firstEmission = true
         snapshotFlow { state.isScrollInProgress }
@@ -85,15 +103,16 @@ fun WheelPicker(
             .collect {
                 if (!firstEmission && values.isNotEmpty()) haptics.tick()
                 firstEmission = false
-                if (values.isNotEmpty()) {
-                    onSelected(centered)
-                    if (state.firstVisibleItemScrollOffset != 0) {
-                        state.animateScrollToItem(centered)
-                    }
+                if (values.isNotEmpty() && state.firstVisibleItemScrollOffset != 0) {
+                    state.animateScrollToItem(centered)
                 }
             }
     }
 
+    // 点击直选（2026-10-07）：点非中心项直接滚过去（中心项不响应——它就是当前值）。
+    // 长距离跳转（总周数 20 → 4）不用连拖几屏。目标位置 = 该项滚到中心需要的偏移，
+    // animateScrollToItem 会把它对齐到 contentPadding 让出的中心位。
+    val scope = rememberCoroutineScope()
     Box(modifier.height(itemHeight * visibleCount)) {
         LazyColumn(
             state = state,
@@ -107,7 +126,19 @@ fun WheelPicker(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(itemHeight),
+                        .height(itemHeight)
+                        .then(
+                            if (isCenter) {
+                                Modifier
+                            } else {
+                                Modifier.clickable(
+                                    onClickLabel = values[i],
+                                ) {
+                                    haptics.tick()
+                                    scope.launch { state.animateScrollToItem(i) }
+                                }
+                            }
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -169,6 +200,7 @@ fun TimeWheelDialog(
     val hours = HOURS
     val minutes = MINUTES
 
+    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -212,6 +244,7 @@ fun WheelValueDialog(
     onDismiss: () -> Unit,
 ) {
     var selected by remember { mutableIntStateOf(initialIndex.coerceIn(0, (values.size - 1).coerceAtLeast(0))) }
+    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },

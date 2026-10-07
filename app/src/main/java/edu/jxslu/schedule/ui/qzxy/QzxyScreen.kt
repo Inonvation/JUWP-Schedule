@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,6 +77,8 @@ import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
@@ -82,7 +86,6 @@ import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Logout04
@@ -229,7 +232,7 @@ fun QzxyScreen(
                 title = { Text("趣智校园") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(HugeIcons.ArrowLeft01, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
@@ -260,8 +263,8 @@ fun QzxyScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (!state.loggedIn) {
                     LoginSection(state, viewModel)
@@ -295,6 +298,7 @@ fun QzxyScreen(
 
     // 退出二次确认（2026-09-27）：顶栏图标就在返回键旁边，一次误触就得重新收短信才能回来
     if (confirmLogout) {
+        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmLogout = false },
             title = { Text("退出趣智校园登录？") },
@@ -1014,6 +1018,7 @@ internal fun FailedDetailDialog(
     onOpenDiagnostics: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("失败详情") },
@@ -1397,39 +1402,19 @@ private fun DiagnosticEntry(onOpen: () -> Unit) {
 @Composable
 private fun DisplaySettingSection() {
     // 2026-09-28：卡片显隐开关收进「我的 → 通用设置 → 功能开关」（功能可见性
-    // 一处管理），这里改为指路说明——登录 / 退出仍在本页，语义分离。
-    SettingsSection(title = "显示") {
-        SettingItem(
-            title = "在今日页显示趣智校园卡片",
-            subtitle = "开关在「我的 → 通用设置 → 功能开关」；关掉后今日页与「我的」账号卡同步隐藏",
-        )
-    }
+    // 一处管理）。2026-10-07 排版统一：原先是一条不可点的假设置行，现在降成
+    // 页尾说明（FooterDisclaimer 形态），不再伪装成可交互项。
+    FooterDisclaimer(
+        title = "在今日页显示趣智校园卡片",
+        body = "开关在「我的 → 通用设置 → 功能开关」；关掉后今日页与「我的」账号卡同步隐藏。",
+    )
 }
 
 @Composable
 private fun Disclaimer() {
-    Column(Modifier.padding(bottom = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                HugeIcons.InformationCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "免责声明",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            )
-        }
-        Text(
-            text = "趣智校园开热水是第三方非官方功能，通信协议来自公开逆向资料，" +
-                "与校方及设备厂商无关。开阀照常从你的趣智校园账户扣费，本应用不绕过计费。" +
-                "接口或设备固件变更都可能让它失效。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            modifier = Modifier.padding(top = 4.dp),
-        )
-    }
+    FooterDisclaimer(
+        body = "趣智校园开热水是第三方非官方功能，通信协议来自公开逆向资料，" +
+            "与校方及设备厂商无关。开阀照常从你的趣智校园账户扣费，本应用不绕过计费。" +
+            "接口或设备固件变更都可能让它失效。",
+    )
 }

@@ -341,6 +341,10 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
      * 下拉刷新：余额与设备各拉一轮，任一在途就不重复发起（对齐趣智页 refreshAccount 的
      * 防重入口径）。refreshBalance / refreshDevices 各自返回 Job，这里 join 两轮都结束后
      * 才收 [WaterUiState.refreshing]——指示器不能在设备还没回来时就停。
+     *
+     * 订单快照跟着刷新走（2026-10-07）：`orderHistory()` 是本地读（无网络），此前只在
+     * 进页 / 登录时读一次，开水完回到页面下拉，快照还是旧的，要重进页面才更新。放在
+     * 两轮 join **之后**：刚完成的订单这轮回写后才读得到。
      */
     fun refresh() = viewModelScope.launch {
         if (_uiState.value.refreshing) return@launch
@@ -349,6 +353,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         val devicesJob = refreshDevices()
         balanceJob.join()
         devicesJob.join()
+        if (_uiState.value.loggedIn) {
+            _uiState.update { it.copy(orderHistory = repo.orderHistory()) }
+        }
         _uiState.update { it.copy(refreshing = false) }
     }
 

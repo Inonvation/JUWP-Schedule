@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +51,8 @@ import edu.jxslu.schedule.domain.RideRecord
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
@@ -58,7 +62,9 @@ import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.ScooterElectric
+import me.rerere.hugeicons.stroke.View
+import me.rerere.hugeicons.stroke.ViewOff
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -110,7 +116,7 @@ fun KvcxScreen(
                 title = { Text("快趣账号") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(HugeIcons.ArrowLeft01, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
             )
@@ -148,11 +154,9 @@ fun KvcxScreen(
                 )
             }
             // 边界说明只留一行（此前整段免责区与出码页重复，2026-09-29 收敛）
-            Text(
-                text = "非官方账号页：开锁 / 锁车 / 还车在「快趣出行」工作台逐次确认后执行，" +
+            FooterDisclaimer(
+                body = "非官方账号页：开锁 / 锁车 / 还车在「快趣出行」工作台逐次确认后执行，" +
                     "计费与善后以快趣为准；不提供支付与免押授权。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
         }
     }
@@ -196,6 +200,7 @@ private fun RideHistorySection(records: List<RideRecord>, onClear: () -> Unit) {
         }
     }
     if (confirmClear) {
+        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清空本机记录？") },
@@ -264,6 +269,8 @@ private val RECORD_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern(
  * 充值、退押、买卡都走微信收银台（App 不做支付，DESIGN §4.32 红线），所以这里只有"看"——
  * 区标题下一行就把出路说清，别让人在这张卡里找充值按钮。进页自动查一次，失败保留
  * 已有内容、只给一行说明与「刷新」出路（不打扰：资产不是本页的主任务）。
+ * 余额行 2026-10-07 排版统一：金额是这一节的主角，用 titleMedium 加重大字呈现
+ * （原先是 SettingItem 把金额塞进标题位，与副行「充值余额与赠送余额」大小倒挂）。
  */
 @Composable
 private fun AssetsSection(state: KvcxUiState, onRefresh: () -> Unit) {
@@ -285,7 +292,18 @@ private fun AssetsSection(state: KvcxUiState, onRefresh: () -> Unit) {
                 val assets = state.assets
                 // 余额行：充值 + 赠送（官方钱包页同两项；缺数据不显示成 ¥0）
                 assets.balance?.displayText?.let { balance ->
-                    SettingItem(title = balance, subtitle = "充值余额与赠送余额")
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        Text(
+                            text = balance,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "充值余额与赠送余额",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        )
+                    }
                 }
                 assets.coupons.forEach { coupon -> AssetCouponRow(coupon) }
                 assets.members.forEach { member -> AssetMemberRow(member) }
@@ -347,6 +365,12 @@ private fun AssetMemberRow(member: KqcxAuth.AssetMember) {
 
 // ── 已登录：账号 ──
 
+/**
+ * 账号区（2026-10-07 排版统一）：身份行（SettingItem）+ 动作行。
+ * 原先是身份行下面全宽堆两颗 OutlinedButton——「打开快趣出行」是主去向、
+ * 「退出登录」是低频破坏性动作，两者并列等重不合理。现在主去向独占一行
+ * OutlinedButton，退出收进右侧的 error 色文字按钮。
+ */
 @Composable
 private fun AccountSection(state: KvcxUiState, viewModel: KvcxViewModel) {
     val context = LocalContext.current
@@ -354,19 +378,24 @@ private fun AccountSection(state: KvcxUiState, viewModel: KvcxViewModel) {
         SettingItem(
             title = state.accountMobile.ifBlank { "已登录" },
             subtitle = "快趣出行账号",
+            icon = HugeIcons.ScooterElectric,
         )
-        // 用车在快趣出行页（两档共用同一个页面，2026-09-29 结构重构）
-        OutlinedButton(
-            onClick = { SubpageActivity.start(context, SubpageScreen.RIDE) },
+        Row(
             modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("打开快趣出行")
-        }
-        OutlinedButton(
-            onClick = { viewModel.logout() },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("退出登录")
+            OutlinedButton(
+                onClick = { SubpageActivity.start(context, SubpageScreen.RIDE) },
+                modifier = Modifier.weight(1f).height(42.dp),
+            ) {
+                Text("打开快趣出行")
+            }
+            TextButton(
+                onClick = { viewModel.logout() },
+                modifier = Modifier.padding(start = 4.dp),
+            ) {
+                Text("退出登录", color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
@@ -402,10 +431,12 @@ private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
                 if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             trailingIcon = {
+                // 眼睛图标与一卡通 / 胖乖 / 「我的」页同一套（2026-10-07 统一，原是文字按钮）
                 IconButton(onClick = { showPassword = !showPassword }) {
-                    Text(
-                        if (showPassword) "隐藏" else "显示",
-                        style = MaterialTheme.typography.labelSmall,
+                    Icon(
+                        imageVector = if (showPassword) HugeIcons.ViewOff else HugeIcons.View,
+                        contentDescription = if (showPassword) "隐藏密码" else "显示密码",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     )
                 }
             },

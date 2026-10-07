@@ -405,7 +405,7 @@ private fun LoginSection(state: UjingUiState, viewModel: UjingViewModel) {
             Button(
                 onClick = viewModel::login,
                 enabled = !state.loggingIn,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
             ) {
                 Text(if (state.loggingIn) "登录中…" else "登录")
             }
@@ -572,7 +572,7 @@ private fun ScanSection(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
-            Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = onScan, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Icon(HugeIcons.QrCodeScan, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("扫码识别洗衣机")

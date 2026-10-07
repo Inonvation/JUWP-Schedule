@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,7 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -33,7 +33,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -81,13 +80,19 @@ import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AccountCard
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.RechargeDisclaimerDialog
+import edu.jxslu.schedule.ui.common.SettingSwitchRow
+import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
+import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.CreditCard
+import me.rerere.hugeicons.stroke.Home01
 import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 import kotlinx.coroutines.CancellationException
@@ -253,7 +258,7 @@ fun CampusCardSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // 账户卡（DESIGN §3.3）：与教务账户页**同一形态**——同样一句「我是谁」，
@@ -278,53 +283,74 @@ fun CampusCardSettingsScreen(
                 },
                 statusState = yktState,
             )
-            SettingsCard(
-                title = "水宝宝一卡通",
-                content = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                if (enabled) "已开启" else "未开启",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                            Text(
-                                if (enabled) {
-                                    "生活页可用付款码、钱包与电费"
-                                } else {
-                                    "在下方填入学号与查询密码，保存并验证成功后即开启"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            )
-                        }
-                        if (enabled) {
-                            TextButton(
-                                onClick = { confirmDisable = true },
-                                enabled = !busy,
-                            ) { Text("关闭并清除") }
-                        }
+
+            // 开启状态（DESIGN §3.10）：状态行置顶说清「现在能不能用」，尾行安全说明不变
+            SettingsSection(
+                title = "校园卡账号",
+                subtitle = "账号为学号，默认密码通常为身份证后六位（仅支持数字密码）",
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (enabled) "已开启" else "未开启",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            if (enabled) {
+                                "生活页可用付款码、钱包与电费"
+                            } else {
+                                "在下方填入学号与查询密码，保存并验证成功后即开启"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        )
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "付款码等同现金，会随时变更，请勿截图或分享给他人，否则可能被盗刷。" +
-                            "学号与密码仅保存在本机（Android Keystore 加密存储），不进入云备份、" +
-                            "不发送到任何第三方服务器；可随时关闭本功能，关闭即清除已保存的凭证。" +
-                            "若因启用本功能造成损失，开发者概不负责。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                },
-            )
+                    if (enabled) {
+                        TextButton(
+                            onClick = { confirmDisable = true },
+                            enabled = !busy,
+                        ) { Text("关闭并清除") }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "付款码等同现金，会随时变更，请勿截图或分享给他人，否则可能被盗刷。" +
+                        "学号与密码仅保存在本机（Android Keystore 加密存储），不进入云备份、" +
+                        "不发送到任何第三方服务器；可随时关闭本功能，关闭即清除已保存的凭证。" +
+                        "若因启用本功能造成损失，开发者概不负责。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
 
             // 余额状态区（DESIGN §4.19 B5）：开启即显示（骨架占位避免进页跳动），点击跳流水页
             val balanceSnapshot = balance
             if (enabled) {
-                SettingsCard(
+                SettingsSection(
                     title = "余额",
-                    content = {
+                    subtitle = "充值后回到本页，余额与流水会自动刷新",
+                ) {
+                    // 余额区可点重拉（2026-10-07 补重试出路）：进页只拉一次、失败静默，
+                    // 失败后原先永远停在「获取中…」，只能重进页面。快趣资产同场景给了
+                    // 「刷新」，这里对齐——余额行整块可点，拉取中不重复发起
+                    val balanceRefreshing by viewModel.balanceRefreshing.collectAsStateWithLifecycle()
+                    val canRetry = balanceSnapshot == null && !balanceRefreshing
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (canRetry) {
+                                    Modifier.clickable(
+                                        onClickLabel = "重新获取余额",
+                                    ) { viewModel.refreshBalance(force = true) }
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                    ) {
                         if (balanceSnapshot != null) {
                             Text(
                                 "正式卡 ¥%.2f".format(balanceSnapshot.cardFen / 100.0) +
@@ -334,74 +360,72 @@ fun CampusCardSettingsScreen(
                             )
                         } else {
                             // 骨架：进页拉余额的 1–3 秒内占位，数据到达平滑填充
-                            Text(
-                                "卡余额 获取中…",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "充值后回到本页，余额与流水会自动刷新",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        // 到账等待状态行（Watching 时替换按钮区上方，格式与余额一致不跳动）
-                        val watching = arrivalState as? CampusCardViewModel.ArrivalState.Watching
-                        if (watching != null) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp,
+                                Text(
+                                    "卡余额 获取中…",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Text(
-                                    ("正在等待充值到账（¥%.2f）· 约 %d 秒检测一次".format(
-                                        watching.orderFen / 100.0,
-                                        YktArrival.arrivalPollIntervalMs(System.currentTimeMillis() - watching.startedAt) / 1000,
-                                    )),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
+                                if (canRetry) {
+                                    Text(
+                                        "点此重新获取",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
-                            Spacer(Modifier.height(8.dp))
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = onOpenStatement,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("消费流水") }
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    if (RechargeDisclaimer.isSuppressed(
-                                            disclaimerSuppressUntil,
-                                            System.currentTimeMillis(),
-                                        )
-                                    ) {
-                                        showRechargeSheet = true
-                                    } else {
-                                        showRechargeDisclaimer = true
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                                enabled = watching == null,
-                            ) { Text("充值") }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    // 到账等待状态行（Watching 时替换按钮区上方，格式与余额一致不跳动）
+                    val watching = arrivalState as? CampusCardViewModel.ArrivalState.Watching
+                    if (watching != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                ("正在等待充值到账（¥%.2f）· 约 %d 秒检测一次".format(
+                                    watching.orderFen / 100.0,
+                                    YktArrival.arrivalPollIntervalMs(System.currentTimeMillis() - watching.startedAt) / 1000,
+                                )),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
-                    },
-                )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = onOpenStatement,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("消费流水") }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                if (RechargeDisclaimer.isSuppressed(
+                                        disclaimerSuppressUntil,
+                                        System.currentTimeMillis(),
+                                    )
+                                ) {
+                                    showRechargeSheet = true
+                                } else {
+                                    showRechargeDisclaimer = true
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            enabled = watching == null,
+                        ) { Text("充值") }
+                    }
+                }
             }
 
-            SettingsCard(
-                title = "校园卡账号",
+            SettingsSection(
+                title = "账号凭证",
                 content = {
-                    Text(
-                        "账号为学号，默认密码通常为身份证后六位（仅支持数字密码）",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it.filter { c -> c.isDigit() } },
@@ -431,7 +455,7 @@ fun CampusCardSettingsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     // 保存即开启（2026-09-28 改）：填完学号密码点这一颗，先真实登录验证一次，
-                    // 成功才落库并置开启；已开启时按钮只作「覆盖更新凭证」用，关闭走上方那张卡。
+                    // 成功才落库并置开启；已开启时按钮只作「覆盖更新凭证」用，关闭走上面那张卡。
                     Button(
                         onClick = {
                             if (busy) return@Button
@@ -439,7 +463,7 @@ fun CampusCardSettingsScreen(
                             viewModel.saveAndEnable(username, password, ::feedback)
                         },
                         enabled = !busy,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                     ) {
                         if (busy) {
                             // size 而非 height：height-only 约束下 40×40 的圆环被画成 40×24 椭圆
@@ -455,28 +479,41 @@ fun CampusCardSettingsScreen(
                 },
             )
 
-            // 余额提醒（DESIGN §3.13）：两个来源各一张卡，都需要上面那份凭证
-            AlertCard(
-                title = "寝室电费提醒",
-                switchTitle = "电费低于阈值时提醒",
-                subtitle = "每天检查一次，低于设定金额时发一条通知",
-                checked = powerAlertEnabled,
-                thresholdLabel = BalanceAlert.powerLabel(powerAlertYuan),
-                onToggle = { want -> toggleAlert(want) { viewModel.setPowerAlertEnabled(it) } },
-                onPickThreshold = { showPowerPicker = true },
-            )
+            // 余额提醒（DESIGN §3.13）：两个来源共用上面那份凭证，收成一张卡两行——
+            // 开关行 + 各自的阈值行（开关关闭时阈值行置灰但值照旧显示）。
+            SettingsSection(
+                title = "余额提醒",
+                subtitle = "两个提醒共用这份凭证；关闭凭证时会一并关掉",
+            ) {
+                SettingSwitchRow(
+                    title = "寝室电费提醒",
+                    subtitle = "每天检查一次，低于设定金额时发通知",
+                    icon = HugeIcons.Home01,
+                    checked = powerAlertEnabled,
+                    onCheckedChange = { want -> toggleAlert(want) { viewModel.setPowerAlertEnabled(it) } },
+                )
+                SettingValueRow(
+                    title = "电费提醒阈值",
+                    value = BalanceAlert.powerLabel(powerAlertYuan),
+                    enabled = powerAlertEnabled,
+                    onClick = { showPowerPicker = true },
+                )
+                SettingSwitchRow(
+                    title = "一卡通余额提醒",
+                    subtitle = "只算正式卡余额（付款码扣款的那个钱包）",
+                    icon = HugeIcons.CreditCard,
+                    checked = yktAlertEnabled,
+                    onCheckedChange = { want -> toggleAlert(want) { viewModel.setYktAlertEnabled(it) } },
+                )
+                SettingValueRow(
+                    title = "余额提醒阈值",
+                    value = BalanceAlert.yktLabel(yktAlertYuan),
+                    enabled = yktAlertEnabled,
+                    onClick = { showYktPicker = true },
+                )
+            }
 
-            AlertCard(
-                title = "一卡通余额提醒",
-                switchTitle = "余额低于阈值时提醒",
-                subtitle = "只算正式卡余额（付款码扣款的那个钱包）",
-                checked = yktAlertEnabled,
-                thresholdLabel = BalanceAlert.yktLabel(yktAlertYuan),
-                onToggle = { want -> toggleAlert(want) { viewModel.setYktAlertEnabled(it) } },
-                onPickThreshold = { showYktPicker = true },
-            )
-
-            SettingsCard(title = "关于余额提醒") {
+            SettingsSection(title = "关于余额提醒") {
                 Text(
                     "· 检查在后台进行，每天一次（约 09:00），可能被系统省电策略推迟；打开 App 时若当天还没查过会补查一次；\n" +
                         "· 同一天最多提醒一条：余额一直偏低也不会反复打扰，充值回到阈值以上即自然停止；\n" +
@@ -516,6 +553,7 @@ fun CampusCardSettingsScreen(
     }
 
     if (confirmDisable) {
+        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmDisable = false },
             title = { Text("关闭并清除凭证？") },
@@ -644,82 +682,54 @@ fun CampusCardSettingsScreen(
 }
 
 
-@Composable
-private fun SettingsCard(
-    title: String,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            content()
-        }
-    }
-}
-
 /**
- * 余额提醒卡片（DESIGN §3.13）：开关行 + 阈值行。
- *
- * 阈值行在开关关闭时**置灰且点不动**，但值照旧显示（用户能看见上次设的是多少，
- * 重新打开时不用重设）。卡片容器沿用本页私有的 [SettingsCard]，与上面三张卡同一观感。
+ * 阈值行（提醒卡的值行）：标题 + 右侧当前值，可点换值。
+ * 开关关闭时置灰不可点，但值照旧显示（用户能看见上次设的是多少，重新打开时不用重设）。
  */
 @Composable
-private fun AlertCard(
+private fun SettingValueRow(
     title: String,
-    switchTitle: String,
-    subtitle: String,
-    checked: Boolean,
-    thresholdLabel: String,
-    onToggle: (Boolean) -> Unit,
-    onPickThreshold: () -> Unit,
+    value: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
 ) {
-    SettingsCard(title = title) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(switchTitle, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Switch(checked = checked, onCheckedChange = onToggle)
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = checked) { onPickThreshold() }
-                .padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "提醒阈值",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (checked) {
-                    MaterialTheme.colorScheme.onSurface
+    val haptics = rememberAppHaptics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .then(
+                if (enabled) {
+                    Modifier.clickable {
+                        haptics.tap()
+                        onClick()
+                    }
                 } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                },
+                    Modifier
+                }
             )
-            Spacer(Modifier.weight(1f))
-            Text(
-                thresholdLabel,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (checked) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                },
-            )
-        }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            },
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            },
+        )
     }
 }
 

@@ -1754,4 +1754,11 @@ busy 不重入、还车出结果卡并记账……）。改这块先跑那组测
 `KqcxAuthTest`（24 例）+ `BikeNearbyTest`（39 例）+ `KvcxRideControllerTest`（24 例）全绿 +
 `assembleDebug`；响铃寻车 / 锁状态查询 / 单车详情 / 资产区已装真机（2026-09-30），点验由用户执行。
 
+**账号页排版统一（2026-10-07）**：① 「账号」区原是身份行下面全宽堆两颗 OutlinedButton——
+「打开快趣出行」是主去向、「退出登录」是低频破坏性动作，两者并列等重不合理；现改为
+主去向独占一行 OutlinedButton、退出收进右侧 error 色文字按钮，身份行补图标底座
+（`SettingItem(icon)`）。② 「快趣资产」的余额原把金额塞进 `SettingItem` 标题位、与副行
+「充值余额与赠送余额」大小倒挂；现改为 titleMedium 加重大字独立一行。③ 页尾免责走共享
+`FooterDisclaimer`；返回箭头统一 `AutoMirrored.ArrowBack`。登录 / 记录 / 资产三区结构不变。
+
 ---

@@ -3,6 +3,7 @@ package edu.jxslu.schedule.ui.common
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -238,6 +239,47 @@ fun InlineNoticeRow(
             text = message,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+        )
+    }
+}
+
+/**
+ * 页尾免责声明（2026-10-07 统一）。
+ *
+ * 第三方账号五个页（一卡通 / 胖乖 / 趣智 / 快趣账号 / U净）原先各写一份裸 Text
+ * （透明度 0.45 与 0.5、带不带标题行、缩进都各不相同）。这里收成一份：
+ * 可选标题行（信息图标 + 标题）+ 正文，统一 55% / 50% 两档透明度与间距；
+ * 改观感只动这里。文案语义仍归调用方——免责正文是逐字斟酌过的，不在此处改写。
+ */
+@Composable
+fun FooterDisclaimer(
+    body: String,
+    modifier: Modifier = Modifier,
+    title: String? = null,
+) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (title != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = HugeIcons.InformationCircle,
+                    contentDescription = null,
+                    tint = onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.7f),
+                )
+            }
+        }
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodySmall,
+            color = onSurface.copy(alpha = 0.5f),
+            modifier = Modifier.padding(top = if (title != null) 4.dp else 0.dp),
         )
     }
 }
