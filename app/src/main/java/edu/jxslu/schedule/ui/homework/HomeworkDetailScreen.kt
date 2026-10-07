@@ -85,7 +85,8 @@ import java.time.ZoneId
  *
  * 无标题——列表行与提醒文案取正文第一行摘要（`homeworkDisplayTitle`），进页直接写正文。
  * 编辑态 = 截止日期 + 完成勾选 + 附件条 + 编辑器；预览态 = 截止日期 + 完成勾选 + MarkdownView
- * 渲染（与笔记详情同一套）。保存是显式动作，返回有未保存修改给确认弹窗。
+ * 渲染（与笔记详情同一套）。默认态：新建进编辑、已有作业进预览（与笔记详情一致）。
+ * 保存是显式动作，返回有未保存修改给确认弹窗。
  * 编辑器区域自己滚（外层不滚），工具条固定在底部——正文再长工具条也够得着。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -123,7 +124,16 @@ fun HomeworkDetailScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     var showDiscard by remember { mutableStateOf(false) }
-    var editing by rememberSaveable { mutableStateOf(true) }
+    // 默认态：新建（id=0）直接进编辑；已有作业进预览（2026-10-07），想改点右上角铅笔。
+    var editing by rememberSaveable { mutableStateOf(homeworkId == 0L) }
+    // 从预览点铅笔进编辑后主动聚焦正文（光标在末尾），省一次点击
+    val editorFocus = remember { FocusRequester() }
+    LaunchedEffect(editing) {
+        if (editing) {
+            editorFocus.requestFocus()
+            detail = detail.copy(selection = TextRange(detail.text.length))
+        }
+    }
 
     LaunchedEffect(homeworkId) {
         if (homeworkId > 0) {
@@ -168,10 +178,12 @@ fun HomeworkDetailScreen(
         )
         val newDetail = detail.text
         val due = dueDate
+        // 与 repo.save 的 createdAt 戳记条件保持一致：已有行保旧值、新行盖「现在」
+        val now = System.currentTimeMillis()
         busy = true
         scope.launch {
             try {
-                repo.save(
+                val id = repo.save(
                     base.copy(
                         detail = newDetail,
                         dueDate = due,
@@ -183,6 +195,17 @@ fun HomeworkDetailScreen(
                     val referenced = store.referencedNames(noteRepo.allBodies() + repo.allDetails())
                     store.deleteIfUnreferenced(removed, referenced)
                 }
+                // 回写基线与首存 id/创建时间（与笔记详情同口径）：保存后若留在本页再存，
+                // 走更新同一行而不是拿 original==null / savedId==0 再插一条
+                original = base.copy(
+                    id = if (base.id > 0) base.id else id,
+                    detail = newDetail,
+                    dueDate = due,
+                    done = done,
+                    createdAt = if (base.id > 0 && base.createdAt > 0) base.createdAt else now,
+                )
+                savedId = original!!.id
+                createdAt = original!!.createdAt
                 // 作业落库会改变"下一个提醒点"：立即重排（与设置变更同口径）
                 ClassReminder.enqueueCheck(context)
                 onSaved()
@@ -212,7 +235,8 @@ fun HomeworkDetailScreen(
         }
     }
 
-    BackHandler(enabled = dirty && original != null) { showDiscard = true }
+    // 与笔记详情同口径：dirty 已把空表单挡掉，新建写完按返回也要弹确认（防静默丢内容）
+    BackHandler(enabled = dirty) { showDiscard = true }
 
     Scaffold(
         snackbarHost = { AppSnackbarHost(snackbar) },
@@ -222,7 +246,7 @@ fun HomeworkDetailScreen(
                 title = { Text(if (original != null) "作业" else "新建作业") },
                 navigationIcon = {
                     IconButton(
-                        onClick = { if (dirty && original != null) showDiscard = true else onBack() },
+                        onClick = { if (dirty) showDiscard = true else onBack() },
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
@@ -360,6 +384,7 @@ fun HomeworkDetailScreen(
                     placeholder = "作业要求、要提交的题号…（支持 Markdown 与 \$ 公式）",
                     minHeight = 240.dp,
                     onPickImages = pickImages,
+                    focusRequester = editorFocus,
                 )
             } else {
                 if (detail.text.isBlank()) {
