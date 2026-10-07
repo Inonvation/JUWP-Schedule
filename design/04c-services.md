@@ -387,17 +387,21 @@ token，只有请求头 UA 不同：
    `PowerPayChallenge.cipherOf`，2026-09-24 修正方向反了导致密码正确也报错的 bug）；
 3. 再次 `POST /blade-pay/pay`（同上 + `password=<6位密文>`、`uuid`、`ccctype`）
    → `code=200` 即支付成功；
-4. `GET /charge/pay/getpayinfo?orderid=` → `order.status=1` 后启动到账轮询
-   （复用 `PendingRecharge` 状态机，基线 = 电子账户余额，到账判定与一卡通同款）。
+4. `GET /charge/pay/getpayinfo?orderid=` → `order.status=1` 即「已扣款」（2026-10-07
+   订正与实现不符的旧口径：电费充值**不走** `PendingRecharge` 状态机与余额基线轮询，
+   支付确认成功后由 `LifeViewModel.confirmPowerPaid` **有限次查单**确认扣款与入账位
+   （`order.flag`），扣款与入账分开报告——见本节「入账修复」；余额基线那一套只属于
+   一卡通充值 §4.19）。
 
 **电子账户充值（充电子账户的钱包）与正式卡同链路「立即支付」**（2026-09-24 修正）：
 两条路统一走 **thirdOrder 下单（302 收银台）**，`yktcard` 属于下单表单（正式卡=6位卡号，
 电子账户=accinfo type `<account>-000`）——上一版「电子账户改走 blade-pay」是误诊，见下。
 支付一步两条路相同：`paystep=2 + CAMPUSCARD` **不带任何账户字段**（带 `yktcard` 反而报
-「未获取到要充值的卡号」，2×2 实测矩阵）。到账轮询、`PendingRecharge` 状态机两条路
-共用（基线 = 付款前该目标账户余额）。
+「未获取到要充值的卡号」，2×2 实测矩阵）。**到账轮询与 `PendingRecharge` 状态机是一卡通
+（§4.19）独有**（基线 = 付款前该目标账户余额），电费充值不共用（见上第 4 步订正）。
 
-**到账判定按目标分两路**（2026-09-24 用户实测「电子账户已到账仍显示确认中」修复）：
+**到账判定按目标分两路**（2026-09-24 用户实测「电子账户已到账仍显示确认中」修复；
+**一卡通 §4.19**，2026-10-07 补「基线以 pending 为准整体覆盖」，见 §4.19）：
 充电子账户后**卡余额不动**（钱进 `accinfo` 钱包），旧逻辑只比卡余额 → 永远不成立。
 现在：`PendingRecharge` 落库 `targetAccount`（`<account>-000`）与钱包基线
 `walletBalanceBeforeFen`；判定走 `domain/YktArrival.walletArrival`（目标钱包当前余额
