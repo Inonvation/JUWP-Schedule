@@ -71,9 +71,7 @@ import edu.jxslu.schedule.domain.RechargeDisclaimer
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.campus.CampusArrivalDialog
 import edu.jxslu.schedule.ui.campus.CampusCardViewModel
-import edu.jxslu.schedule.ui.campus.CampusPaymentDialog
 import edu.jxslu.schedule.ui.campus.CampusPendingConfirmDialog
-import edu.jxslu.schedule.ui.campus.PayCodeResultBus
 import edu.jxslu.schedule.ui.campus.PayCodeViewModel
 import edu.jxslu.schedule.ui.campus.RechargeSheet
 import edu.jxslu.schedule.ui.common.AppCard
@@ -453,19 +451,9 @@ fun LifeScreen(
         )
     }
 
-    // 「支付成功」：全屏付款码页检测到扣款会自行退出，结果经 PayCodeResultBus 落到本页
-    // （取值即消费，与今日页同口径）。
-    val payResult by PayCodeResultBus.result.collectAsStateWithLifecycle()
-    var paidPayment by remember { mutableStateOf<edu.jxslu.schedule.domain.YktPayment?>(null) }
-    LaunchedEffect(payResult) {
-        payResult?.let {
-            paidPayment = it
-            PayCodeResultBus.consume()
-        }
-    }
-    paidPayment?.let { paid ->
-        CampusPaymentDialog(payment = paid, onDismiss = { paidPayment = null })
-    }
+    // 「支付成功」弹窗不在这里自持（2026-10-07 起）：宿主 `CampusPayResultDialogHost` 挂在
+    // MainActivity 根层，四个 Tab 共用一份——此前只挂在生活页，从今日页「+ → 付款码」出码
+    // 付款后没人消费结果，弹窗会一直挂着、直到下次打开生活页才迟到弹出。
 }
 
 /** 打开站外链接（缴费平台网页）；失败给一次性提示。同包内（缴费账单页页脚）共用。 */

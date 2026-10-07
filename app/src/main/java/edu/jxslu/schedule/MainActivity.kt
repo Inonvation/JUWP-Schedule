@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -775,6 +776,14 @@ internal fun JuwApp(
             },
         )
     }
+
+    // 「支付成功」弹窗（DESIGN §3.10）：付款码页检测到扣款会自行退出，结果经
+    // PayCodeResultBus 落到这里（取值即消费）。挂在根层、四个 Tab 之上——
+    // 今日页「+ → 付款码」与生活页付款码条两条出码路径共用这一个宿主
+    // （此前只有生活页自己弹，从今日页出码付款后没人消费结果，弹窗会一直挂着、
+    // 直到下次打开生活页才迟到弹出；2026-10-07 补齐）。校园卡设置页是独立窗口，
+    // 那份宿主在那边的页面里。
+    CampusPayResultDialogHost()
 
     // 「我的 → 显示设置」跨 Tab 触发已于 2026-09-20 删除（DESIGN §3.1）：
     // 显示设置唯一入口 = 课表页顶栏眼睛图标，「我的」侧属重复入口，

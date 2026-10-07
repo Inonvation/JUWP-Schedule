@@ -1,6 +1,6 @@
 # 爬虫脚本说明
 
-江西水利电力大学教务（强智科技）的**课表 / 考试 / 成绩抓取脚本**说明，覆盖理论课表、实验课表、考试安排、课程成绩四条链路；
+江西水利电力大学教务（强智科技）的**课表 / 考试 / 成绩 / 教材 / 选课 / 培养方案抓取脚本**说明，覆盖理论课表、实验课表、考试安排、课程成绩、教材、选课、培养方案课程设置等教务数据；
 另附寝室电费（新开普缴费平台，**不在教务域**，2026-09-23 打通，见 §5.5）。
 
 爬虫只在本机调试用，**App 端不跑 Python**——App 走 WebView + 注入 JS（见 [§5.3](#53-app-端-webview-注入实现要点)）。
@@ -27,6 +27,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 .\.venv-scraper\Scripts\python.exe scripts\fetch_scores.py        # 课程成绩（缺省全部学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_textbooks.py     # 学生教材确认（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_selections.py    # 选课记录 + 选课轮次（缺省当前学期 + 下一学期）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_curriculum.py    # 培养方案课程设置总表（全量，按开设学期 1–8 整理）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py         # 寝室电费（非教务，无 --term；本人绑定房间剩余电量）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_power.py --history   # 追加电费充值流水
 .\.venv-scraper\Scripts\python.exe scripts\fetch_transcript.py    # 教务处盖章成绩单 PDF（非强智教务，见 §5.6）
@@ -45,6 +46,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `scripts/out/scores.json` | 课程成绩（`term` + `terms` 双口径；`pendingReview` 标记评教锁定） |
 | `scripts/out/textbooks.json` | 学生教材确认书目（课程名与课表课名逐字一致，可直接关联） |
 | `scripts/out/selections.json` | 选课记录（按学期）+ 选课轮次 + 学期下拉全量（`rounds` 非选课期为空属正常） |
+| `scripts/out/curriculum.json` | 培养方案「课程设置总表」（全量清单，每门带开设学期 1–8 与体系/学分/学时；`curriculum.md` 为按学年可读版） |
 | `scripts/out/xskb_vt0.html` | 理论课表页快照 |
 | `scripts/out/syxkb.html` | 实验课表页快照 |
 | `scripts/out/*_raw.json` / `exams_raw.json` / `scores_raw.json` | 解析中间产物（含原始文本，排错用） |
@@ -66,6 +68,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | `fetch_scores.py` | 课程成绩 → JSON | 同上；`--term` 缺省查全部学期 |
 | `fetch_textbooks.py` | 学生教材确认 → JSON | layui JSON 接口；`--term` 缺省当前学期；学期校验用行内 `xnxq01id`，见 §5.7 |
 | `fetch_selections.py` | 选课记录 + 选课轮次 → JSON | layui JSON 接口；默认抓「当前学期 + 下一学期」，`--term` 可重复，见 §5.8 |
+| `fetch_curriculum.py` | 培养方案「课程设置总表」→ JSON（+ 按学年 Markdown） | 服务端渲染 HTML；全量抓取、不随学期，见 §5.10 |
 | `fetch_power.py` | 寝室电费 → JSON | 新开普缴费平台，学号 + 查询密码；**与教务链路无关** |
 | `fetch_transcript.py` | 教务处盖章成绩单 → PDF | 金格签章系统（`jwxyxx`）；共用 CAS，但**不经过强智教务**，见 §5.6 |
 | `sync_calendar.py` | 校历镜像同步：教务处官网（免登录公网）→ `docs-public/calendar/` | 与其他脚本不同：产物进**仓库镜像**（App 端读它）；发现新学年才落盘并自动 commit & push，详见 §5.9 |
@@ -453,11 +456,14 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
 
 ### 5.9 校历同步（教务处官网，2026-10-07 实测）
 
-**背景**：校历在学校侧查过三条入口——智慧校园移动端 `m.juwp.edu.cn`（发现链路绑微信
-一次性 JWT + 出口 IP 校验，走不通）、PC 门户 `portal.juwp.edu.cn`（`/calendar_portal/
-getCalendar` 是**个人日历**，实测返回空 `cals`）、**教务处官网 `jw.juwp.edu.cn`
-（免登录公网，发布高清原图）**。App 端只读仓库镜像 `docs-public/calendar/`，
-`sync_calendar.py` 负责把镜像维护自动化，**无需任何凭证**。
+**现状（2026-10-07 后）**：App 已改为**直取教务处官网为主源**
+（`domain/CampusCalendarSchoolRules`），本脚本降级为**应急工具**（官网改版时用
+`--from-file` 顶镜像）——**不需要日常计划任务**。背景：校历在学校侧查过三条入口——
+智慧校园移动端 `m.juwp.edu.cn`（发现链路绑微信一次性 JWT + 出口 IP 校验，走不通）、
+PC 门户 `portal.juwp.edu.cn`（`/calendar_portal/getCalendar` 是**个人日历**，实测
+返回空 `cals`）、**教务处官网 `jw.juwp.edu.cn`（免登录公网，发布高清原图）**。
+另排查：强智教务有「教学周历查看」（需登录、非海报），不采用（App 端 2026-10-07 起
+用它「导入课表后校准开学日」，脚本未接入，见 DESIGN §4.42）。
 
 **页面结构**（泛微 CMS）：
 - 通知公告列表：`/xxgk/tzgg.htm`（首页），翻页 `/xxgk/tzgg/N.htm`（约 7 页）；条目
@@ -473,7 +479,7 @@ index.json + `git add/commit/push`（只动 `docs-public/calendar/`；分支非 
 `--dry-run` 完全只读；`--no-push` 只提交不推；`--from-file 图 --year 20XX-20XX` 是
 栏目改版时的救急通道。
 
-**计划任务**（可选，每周一次足够——校历一年一更；`-StartWhenAvailable` 保证错过补跑）：
+**计划任务（已不需要，留档；`-StartWhenAvailable` 保证错过补跑）**：
 
 ```powershell
 $a = New-ScheduledTaskAction -Execute "cmd.exe" -Argument '/c "cd /d F:\JUWP-schedule && .venv-scraper\Scripts\python.exe scripts\sync_calendar.py >> scripts\out\sync_calendar.log 2>&1"'
@@ -481,6 +487,28 @@ $t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 20:00
 Register-ScheduledTask -TaskName "JUWP-Schedule-校历同步" -Action $a -Trigger $t `
   -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
 ```
+
+### 5.10 培养方案课程设置总表（2026-10-07 实测）
+
+教务「培养方案」明细页——手机端 `jiaowuh5.juwp.edu.cn`「标准版」「课程设置总表」的
+同源 PC 版本：
+
+```
+页面  GET /jsxsd/pyfa/topyfamx     （无参数；服务端渲染整页 HTML，由会话决定学生与方案）
+```
+
+- 结构：正文从「X、课程设置总表」起——数个体系块（`div.body-table-tr`，内含
+  `div.tixi-cell-text` 体系名，如通识限选课 / 通识必修课 / 学科基础课 / 专业课），
+  每块内课程行为 `div.son-table-tr`；方案名在页首「一、培养目标」区的
+  `p.item-area-content-inner`（**在正文切片之外**，要全页搜）。
+- 列（逐列）：体系 / 选课组 / 课程编号 / 课程名称 / 课程性质 / 课程属性 / 学分 /
+  理论·实践·讲座·实验·总学时 / 开设学期。
+- **坑**：学时 5 个子列的 DOM class 全同（`table-td-cell cols-9-2-1`），只能按
+  行内出现顺序区分（理论/实践/讲座/实验/总）；值可能是「2(周)」文本，原样保留。
+- 「开设学期」= 培养方案**建议修读学期**（1–8，大一上…大四下，计划口径），
+  不等于实际开课/选课安排——选修课可能弹性。
+- 与移动端 `jiaowuh5` 的关系：那套 H5 是同级展示层（443 直连不通、数据接口在
+  登录后），**不要走它**；PC 端带账密会话直取本页即可，无需任何额外凭证。
 
 ---
 
@@ -496,6 +524,7 @@ Register-ScheduledTask -TaskName "JUWP-Schedule-校历同步" -Action $a -Trigge
 | 考试/成绩接口返回空但 len 也异常小 | 分页参数用了 `page/limit` | 改成 `pageNum` / `pageSize`（§5.4） |
 | 教材接口行内 `xnxq01id` 与请求学期不一致 | 教务没按参数过滤 / 学期号写错 | 脚本会直接报错；核对 `--term` 取值（§5.7） |
 | 选课轮次接口报 `code` 不为 0 | 该接口的 `code` 是**字符串** `"0"`，按数字判等会误报 | 统一按字符串判等（§5.8） |
+| 旧会话复用「成功」但业务页全退登录页（80KB、title「登录」） | 新版登录页不含「用户没有登录」、体积也超 20000 阈值，旧判据假阳性 | 2026-10-07 已修（`verify`/`get_html` 加「请先登录系统」判据）；正常重跑即自动重登 |
 | 选课记录为空 / 轮次为 0 | 非选课期轮次为空属正常；预选当前无数据 | 选课季再看；选课日志全年有数据（§5.8） |
 | 课程全部堆在周一 | 用了 `qz-hasCourse-N` 当星期 | 改回按 `<td>` 列序 + carry |
 | 周次解析为空 | 详情文本格式变化 | 看 `out/*_raw.json` 里的 `detail_raw` / `weeks_raw` |

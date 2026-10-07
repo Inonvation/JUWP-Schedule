@@ -23,6 +23,7 @@ import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.domain.YktTurnoverRow
 import edu.jxslu.schedule.ui.common.CodeBitmaps
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.reminder.ReminderVibration
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -307,6 +308,11 @@ class PayCodeViewModel(
                         if (payment != null) {
                             _payment.value = payment
                             PayCodeResultBus.publish(payment)
+                            // 命中一刻直接震（2026-10-07）：轮询特意不跟页面可见性，付款码页
+                            // 可能锁屏停留，用户不一定在看手机；页面里的 LaunchedEffect 会被
+                            // collectAsStateWithLifecycle 的 STARTED 闸门挂起、晚到亮屏才响，
+                            // 放这里才是「钱刚动」的那一刻。震不出来不算错（同 ReminderVibration）。
+                            ReminderVibration.vibrate(appContext)
                             return@launch
                         }
                     }

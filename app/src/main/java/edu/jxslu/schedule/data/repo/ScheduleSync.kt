@@ -75,8 +75,12 @@ class ScheduleSync(
     }
 
     sealed interface AutoImportResult {
-        /** [count] 是写库条数，[term] 是数据学期（空 = 页面没给）。 */
-        data class Imported(val count: Int, val term: String) : AutoImportResult
+        /**
+         * [count] 是写库条数，[term] 是数据学期（空 = 页面没给）。
+         * [timetableId] 是**实际写入的目标课表**——开学日校准等钩子按它落库，别让调用方用
+         * 「apply 时刻的当前课表」近似（中间隔着抓日历的一跳，用户切了课表会写错表）。
+         */
+        data class Imported(val count: Int, val term: String, val timetableId: Long) : AutoImportResult
 
         /** 目标课表非空。首启之外的情形一律让位，绝不静默覆盖。 */
         data object Skipped : AutoImportResult
@@ -193,7 +197,7 @@ class ScheduleSync(
             timetableId = ttId,
             term = ok.term,
         )
-        return AutoImportResult.Imported(count = count, term = ok.term)
+        return AutoImportResult.Imported(count = count, term = ok.term, timetableId = ttId)
     }
 
     /**

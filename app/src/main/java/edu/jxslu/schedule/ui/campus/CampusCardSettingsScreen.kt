@@ -65,7 +65,6 @@ import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.RechargeDisclaimer
 import edu.jxslu.schedule.domain.YktArrival
-import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.data.ykt.YktCard
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
@@ -639,19 +638,9 @@ fun CampusCardSettingsScreen(
         )
     }
 
-    // 「支付成功」：付款码页检测到扣款会自己退出，弹窗落在退回来的这一页
-    // （今日页也有同一份，DESIGN §3.10）。取值即消费，避免被压在后头的页面再弹一次
-    val payResult by PayCodeResultBus.result.collectAsStateWithLifecycle()
-    var paidPayment by remember { mutableStateOf<YktPayment?>(null) }
-    androidx.compose.runtime.LaunchedEffect(payResult) {
-        payResult?.let {
-            paidPayment = it
-            PayCodeResultBus.consume()
-        }
-    }
-    paidPayment?.let { paid ->
-        CampusPaymentDialog(payment = paid, onDismiss = { paidPayment = null })
-    }
+    // 「支付成功」：付款码页检测到扣款会自己退出，由共享宿主弹在退回来的这一页
+    // （`CampusPayResultDialogHost`，2026-10-07 起本页与 MainActivity 根层共用一份实现）
+    CampusPayResultDialogHost()
 }
 
 

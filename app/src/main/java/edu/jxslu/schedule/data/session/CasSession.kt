@@ -2,6 +2,7 @@ package edu.jxslu.schedule.data.session
 
 import edu.jxslu.schedule.data.jw.JwHttpSession
 import edu.jxslu.schedule.data.jw.JwHttpSession.JwHttpException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -71,7 +72,10 @@ class CasSession(
      * 返回 [CasEnsureResult.Ready] 即可以放心发业务请求；其余分支由调用方决定
      * 是转 WebView、提示更新密码，还是稍后重试。
      */
-    suspend fun ensureValid(): CasEnsureResult = loginMutex.withLock {
+    suspend fun ensureValid(): CasEnsureResult = loginMutex.withLock { ensureValidLocked() }
+
+    /** [ensureValid] 的实现体；调用方必须已经持有 [loginMutex]（Mutex 不可重入）。 */
+    private suspend fun ensureValidLocked(): CasEnsureResult {
         if (isProxyActive()) return CasEnsureResult.Failed(PROXY_HINT)
         val now = clock()
         var gate = vault.readGate(LoginTarget.Jw)
@@ -200,10 +204,51 @@ class CasSession(
      *
      * 给「我的」页补抓班级用（DESIGN §3.3）：抓不到就维持现状（只显示学号），
      * 一个锦上添花的字段不该把页面弄成错误态，也不该打断任何主流程。
+     *
+     * **会话被别处登录顶掉时会作废本地会话并重试一次**（2026-10-06）：强智是单会话，
+     * 而信任期内 [ensureValid] 不会去验会话，于是一份已经作废的会话会被一路用下去，
+     * 表现成「导入成功但教材 / 学籍卡静默缺失」。只对
+     * [JwHttpException.SessionInvalid] 重试——5xx / 页面结构变化重试没有意义；
+     * 重试也**只做一次**（失败不重试的纪律不变）。作废的是会话不是凭证，
+     * 所以不动闸门里的失败计数（那是「防锁号」的计数器）。
      */
     suspend fun fetchHtml(url: String): String? {
         if (ensureValid() !is CasEnsureResult.Ready) return null
-        return runCatching { http.fetchHtml(url) }.getOrNull()
+        val first = runCatchingCancellable { http.fetchHtml(url) }
+        first.getOrNull()?.let { return it }
+        if (first.exceptionOrNull() !is JwHttpException.SessionInvalid) return null
+        // 重登要过一道**独立窗口**：一次同步里多个 URL 各自都能触发重登，
+        // 而每次重登都会把对方顶掉（强智单会话），不加冷却就是登录乒乓
+        if (!SessionStatus.tryAcquireRelogin(clock())) return null
+        if (relogin() !is CasEnsureResult.Ready) return null
+        return runCatchingCancellable { http.fetchHtml(url) }.getOrNull()
+    }
+
+    /**
+     * 作废本地会话后重走一次 [ensureValid]：有凭证就真登一次，没凭证就回灌 WebView 那份。
+     *
+     * **清 cookie 与重登必须在同一把锁里**（与 [logout] 同一条纪律）：否则与在途登录并发时，
+     * `clearCookies` 会落在别人登录链路的中途，把那次登录打成「取不到 SSO ticket」，
+     * 或者落在它刚成功之后，让它的取数拿到登录页再触发一次重登。
+     */
+    private suspend fun relogin(): CasEnsureResult = loginMutex.withLock {
+        http.clearCookies()
+        ensureValidLocked()
+    }
+
+    /**
+     * 与 `runCatching` 同形，但让 [CancellationException] 穿透。
+     *
+     * 吞掉它会把「协程被取消」变成一次静默的取数失败：调用方继续往下走，
+     * 期间可能再发一次请求（WorkManager worker 被停时尤其）。
+     * 与项目 2026-10-02 体检批的「CancellationException 穿透」同口径。
+     */
+    private inline fun <T> runCatchingCancellable(block: () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     /**

@@ -5,7 +5,7 @@ import edu.jxslu.schedule.data.session.NetworkHint
 /**
  * 教务导入失败诊断（WebView 侧）。
  *
- * 根因（2026-09-18 真机截图定位）：教务链路上的失败有三种**完全不同的表现**，
+ * 根因（2026-09-18 真机截图定位）：教务链路上的失败有**四种完全不同的表现**，
  * 而旧实现只处理了一种，另外两种都被错误地呈现成别的样子：
  *
  * 1. **HTTP 5xx**：服务端吐「500 error System Error.Please Wait…」错误页，
@@ -17,6 +17,9 @@ import edu.jxslu.schedule.data.session.NetworkHint
  *    → 错误浮层被覆盖，只剩浏览器原生页 +「页面已加载但内容为空」的探针提示。
  * 3. **会话失效**：强智回退到 860 字节「用户没有登录」页，HTTP 200、URL 正常，
  *    只能按页面正文识别（旧实现同样走成「已登录教务…」）。
+ * 4. **会话被顶**（2026-10-06 用户实测）：同一学号在别处登录后，强智对业务请求直接回
+ *    `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`——HTTP 200、URL 正常，
+ *    **既不是登录页也不是数据**，于是被当页面数据一路放行（见 [sessionConflict]）。
  *
  * 1、2 有一个共同诱因：**学校对直连出口与代理出口区别对待**。移动端开着第三方
  * VPN/代理时，统一认证超时、SSO 落点 500；关闭后立即恢复。脚本侧同一现象
@@ -151,6 +154,29 @@ object JwImportDiagnosis {
     )
 
     /**
+     * 账号在别处登录（强智**单会话**，2026-10-06 用户实测）。
+     *
+     * 同一学号在另一处（另一台设备 / 另一个 App 窗口）登录后，先前那份会话对业务请求
+     * 不再回页面，而是回一段 JSON `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`
+     * ——HTTP 200、URL 正常，**既不是登录页也不是数据**，所以登录页判据放它过去，
+     * 用户只能盯着这段裸 JSON（旧实现就是这样）。
+     *
+     * 出口与 [sessionLost] 相同：回 [JwUrls.SSO_WARMUP] 重走认证 = 用本机重新登录一次，
+     * 反过来把别处那份顶掉。区别只在文案——要把「为什么会这样」讲清楚，
+     * 否则用户会以为 App 坏了（当时的原话就是「还是我 release 包的问题？」）。
+     */
+    fun sessionConflict(vpnActive: Boolean): Diagnosis = Diagnosis(
+        title = "账号已在其它地方登录",
+        body = bodyText(
+            "教务是单会话：这个学号在别处登录后，先前那份会话就作废了。" +
+                "在本机重新登录一次即可（会把别处那份顶掉）。",
+            null,
+            vpnActive,
+        ),
+        retryUrl = JwUrls.SSO_WARMUP,
+    )
+
+    /**
      * 加载完成但页面为空。
      *
      * 一律回入口：空页没有可重放的内容（`about:blank` 重放还是空），
@@ -184,6 +210,33 @@ object JwImportDiagnosis {
         val t = probeText ?: return false
         return "loginDiv" in t && "password" in t
     }
+
+    /**
+     * 探针输出里是不是「账号在别处登录」（[sessionConflict]）。
+     *
+     * 判据必须与 `SESSION_PROBE_JS` 输出的 token **逐字对齐**——同一个坑
+     * [looksLikeLoginPage] 的注释里记过：两边对不上时判定恒 false 且不报错（静默失效）。
+     */
+    fun looksLikeSessionConflict(probeText: String?): Boolean =
+        SESSION_CONFLICT_TOKEN in (probeText ?: "")
+
+    /**
+     * **WebView 内同源 fetch 拿到的 JSON** 是不是「会话被顶」的应答（2026-10-06 复核补）。
+     *
+     * 与 `JwHttpSession.looksLikeSessionConflict` 同一判据（业务文案 + `flag1` 键双命中），
+     * 但那条只在 OkHttp 路径上生效：考试 / 成绩是在**已加载页面里再发 fetch**，
+     * 被顶时 layui 接口回的就是那段 JSON，落到解析器手里只会变成
+     * 「教务返回 code=-1，msg=」——既没说出真实原因，也没走 [sessionConflict] 诊断。
+     *
+     * 文案用**短串**「其它地方登录」（与注入 JS 的探针同源）：教务回「您的账号已在其它
+     * 地方登录」这类变体时，长串匹配不上而短串能命中。
+     */
+    fun looksLikeSessionConflictBody(body: String?): Boolean =
+        body != null && SESSION_CONFLICT_BODY_TEXT in body && SESSION_CONFLICT_BODY_FLAG in body
+
+    /** 与 [looksLikeSessionConflictBody] 配对的子串；改一处必须改另一处。 */
+    const val SESSION_CONFLICT_BODY_TEXT: String = "其它地方登录"
+    const val SESSION_CONFLICT_BODY_FLAG: String = "flag1"
 
     /**
      * 是否值得自动重试一次（UI 层负责「只重试一次」的闸门）。
@@ -224,7 +277,9 @@ object JwImportDiagnosis {
         }
         if (!url.isNullOrBlank()) {
             append("\n")
-            append(url)
+            // 防线收口（2026-10-07 复查）：评教平台域 URL 带 token（DESIGN §4.44），
+            // 不管调用方传什么，进正文前统一脱敏一遍——只影响平台域，教务 URL 原样
+            append(JwTeachingEval.redactForLog(url))
         }
         append("\n")
         append(NetworkHint.of(vpnActive))
@@ -236,6 +291,12 @@ object JwImportDiagnosis {
         if (url.isNullOrBlank()) return ""
         return url.substringAfter("://", url).substringBefore('/')
     }
+
+    /**
+     * 探针输出里的会话冲突 token（`SESSION_PROBE_JS` 与 [looksLikeSessionConflict] 的唯一口径）。
+     * 两边改一处必须改另一处——对不上时判定恒 false，且不报错。
+     */
+    const val SESSION_CONFLICT_TOKEN: String = "conflict"
 
     const val RETRY_HINT: String = "这类失败多为瞬时，点「重试」会重新走一次认证。"
 }

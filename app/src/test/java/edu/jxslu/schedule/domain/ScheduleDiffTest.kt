@@ -184,4 +184,62 @@ class ScheduleDiffTest {
             ),
         )
     }
+
+    /**
+     * 合并路径的基线推进（2026-10-07 复核补）：**只在旧基线上套用已应用的改动**。
+     *
+     * 契约：基线只装教务口径的条目——本机条目（手动添加 / AI 调课）永远进不去。
+     * 此前合并后用整张课表重建基线，本机条目会被下一次检查报成「教务删除」，
+     * 勾选合并即把用户自己的课删掉。
+     */
+    @Test
+    fun `基线推进只套用已应用的改动`() {
+        val base = listOf(course(), course(name = "大学英语", day = 4))
+        val entries = listOf(
+            AppliedEntry(ScheduleDiff.ChangeKind.REMOVED, before = course(name = "大学英语", day = 4)),
+            AppliedEntry(
+                ScheduleDiff.ChangeKind.MODIFIED,
+                before = course(day = 3),
+                after = course(day = 5),
+            ),
+            AppliedEntry(ScheduleDiff.ChangeKind.ADDED, after = course(name = "大学物理", day = 2)),
+        )
+        val after = ScheduleDiff.baselineAfter(base, entries)
+        assertEquals(setOf("高等数学", "大学物理"), after.map { it.name }.toSet())
+        assertEquals(5, after.first { it.name == "高等数学" }.day)
+    }
+
+    @Test
+    fun `基线推进匹配不上就跳过且不叠加重复新增`() {
+        val base = listOf(course())
+        // before 在基线里查无此课：跳过，不硬套
+        val dirty = listOf(
+            AppliedEntry(ScheduleDiff.ChangeKind.REMOVED, before = course(name = "查无此课")),
+        )
+        assertEquals(base, ScheduleDiff.baselineAfter(base, dirty))
+        // ADDED 的指纹已在基线里（脏数据）：不叠加出第二行
+        val dup = listOf(AppliedEntry(ScheduleDiff.ChangeKind.ADDED, after = course()))
+        assertEquals(base, ScheduleDiff.baselineAfter(base, dup))
+    }
+
+    /** 合并完成后的新基线必须与教务抓取「无差异」——否则下一次检查会重复报刚合并的条目。 */
+    @Test
+    fun `合并完成后的新基线与教务比对无差异`() {
+        val base = listOf(course(), course(name = "大学英语", day = 4))
+        val remote = listOf(course(day = 5), course(name = "大学物理", day = 2))
+        val changes = ScheduleDiff.detect(base, remote)
+        // 用户全部勾选：逐条落库后由 AppliedEntry 构造新基线
+        val entries = changes.map { change ->
+            when (change.kind) {
+                ScheduleDiff.ChangeKind.REMOVED ->
+                    AppliedEntry(change.kind, before = change.old)
+                ScheduleDiff.ChangeKind.MODIFIED ->
+                    AppliedEntry(change.kind, before = change.old, after = change.new)
+                ScheduleDiff.ChangeKind.ADDED ->
+                    AppliedEntry(change.kind, after = change.new)
+            }
+        }
+        val advanced = ScheduleDiff.baselineAfter(base, entries)
+        assertTrue(ScheduleDiff.detect(advanced, remote).isEmpty())
+    }
 }

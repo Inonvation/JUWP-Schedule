@@ -51,6 +51,16 @@ class JwHttpSession private constructor(
         class Protocol(message: String) : JwHttpException(message)
 
         /**
+         * 会话在服务端已经作废（2026-10-06 用户实测的强智**单会话**形态）。
+         *
+         * 两种表现都归这里：业务页面退回登录页，或直接回一段
+         * `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`。
+         * **与 [Protocol] 分开**是因为调用方要据此作废本地会话再重登一次
+         * （`CasSession.fetchHtml` 的重试）——5xx / 页面结构变化那些 Protocol 重试没有意义。
+         */
+        class SessionInvalid(message: String) : JwHttpException(message)
+
+        /**
          * 需要人工在网页里登录：命中验证码特征，或 CAS 返回了认不出的页面（§4.27）。
          *
          * **不计入失败计数**——成因不在密码上，计数只会把对的密码记成错的，
@@ -101,6 +111,24 @@ class JwHttpSession private constructor(
          */
         internal fun looksLikeLoginPage(html: String): Boolean =
             NOT_LOGGED in html || LOGIN_PAGE_MARKERS.any { it in html }
+
+        /**
+         * 强智的「账号在别处登录」应答（2026-10-06 用户实测）。
+         *
+         * 教务是**单会话**：同一学号在另一处登录后，先前那份会话对业务请求不再回数据，
+         * 而是回一段 HTTP 200 的 JSON `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`
+         * （URL 不变、也不是登录页形态）。不认它的话 [fetchHtml] 会把这段 JSON 当页面数据
+         * 交给解析器，最后表现成「导入成功，但某些数据静默缺失」——教材抓取就是这么丢的。
+         *
+         * 判据要**同时**命中业务文案与 `flag1` 键：单看 `flag1` 会把正常的 layui 应答
+         * 误判成会话失效（误判的代价是清 cookie + 白登一次 + 这次数据拿不回来），
+         * 单看文案则可能被任意页面正文撞上。两者齐备在教务应答里是唯一的。
+         */
+        internal fun looksLikeSessionConflict(body: String): Boolean =
+            SESSION_CONFLICT_MESSAGE in body && SESSION_CONFLICT_KEY in body
+
+        private const val SESSION_CONFLICT_MESSAGE = "您的账号在其它地方登录"
+        private const val SESSION_CONFLICT_KEY = "flag1"
 
         private const val MAX_REDIRECTS = 15
 
@@ -265,13 +293,18 @@ class JwHttpSession private constructor(
      * 带会话取任意教务页面（DESIGN §3.3）。
      *
      * 给学籍卡这类「一个 GET 就够」的页面用——不必为它开一个 WebView 走注入 fetch。
-     * 会话失效仍按 `Protocol` 抛（页面里出现未登录文案），网络层失败抛 `Network`。
+     * **会话失效抛 [JwHttpException.SessionInvalid]**（页面里出现登录页，或账号被别处
+     * 登录顶掉的那段 JSON），网络层失败抛 [JwHttpException.Network]。调用方据此决定
+     * 要不要作废会话重登一次（见 `CasSession.fetchHtml`）。
      */
     override suspend fun fetchHtml(url: String): String = withContext(Dispatchers.IO) {
         try {
             val html = getFollowRedirects(url)
             if (looksLikeLoginPage(html)) {
-                throw JwHttpException.Protocol("教务会话已失效（页面退回登录页）")
+                throw JwHttpException.SessionInvalid("教务会话已失效（页面退回登录页）")
+            }
+            if (looksLikeSessionConflict(html)) {
+                throw JwHttpException.SessionInvalid("教务会话已被顶掉（账号在其它地方登录）")
             }
             html
         } catch (e: IOException) {

@@ -12,6 +12,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,7 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.domain.YktPayment
+import edu.jxslu.schedule.ui.common.AmountHeroText
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 
 /**
@@ -36,7 +39,8 @@ import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
  *
  * 设置页与生活页弹窗共用：[RechargeSheet]（金额弹层+二次确认）与
  * [CampusArrivalDialog]（到账成功弹窗）都是无状态组件，下单/到账逻辑在
- * [CampusCardViewModel]；[CampusEntrySheet] 是历史遗留的功能入口弹层
+ * [CampusCardViewModel]；付款码扣款结果由 [CampusPayResultDialogHost] 一处收尾
+ * （MainActivity 根层 + 校园卡设置页两个挂点）；[CampusEntrySheet] 是历史遗留的功能入口弹层
  * （今日页一卡通卡已移除，仅保留组件待后续删除）。
  *
  * **弹层输入框的键盘遮挡与退场时序见 [ImeAwareModalBottomSheet]**（`skipPartiallyExpanded`
@@ -222,20 +226,32 @@ fun CampusArrivalDialog(
     onDismiss: () -> Unit,
     onOpenPayCode: (() -> Unit)? = null,
 ) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("充值成功") },
         text = {
-            Text(
-                buildString {
-                    append("¥%.2f 已到账".format(arrived.orderFen / 100.0))
-                    arrived.newBalanceFen?.let {
-                        append("，当前卡余额 ¥%.2f".format(it / 100.0))
-                    }
-                    append("。")
-                    append("\n\n本次交易已同步至「消费流水」。")
-                },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AmountHeroText("¥%.2f".format(arrived.orderFen / 100.0))
+                Text(
+                    text = "已到账",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = onSurface.copy(alpha = 0.75f),
+                )
+                arrived.newBalanceFen?.let {
+                    Text(
+                        text = "当前卡余额 ¥%.2f".format(it / 100.0),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = onSurface.copy(alpha = 0.75f),
+                    )
+                }
+                Text(
+                    text = "本次交易已同步至「消费流水」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = {
@@ -252,7 +268,7 @@ fun CampusArrivalDialog(
 /**
  * 「正在确认到账」弹窗（DESIGN §4.19「充值」）：微信支付完成返回后、余额尚未更新时给出
  * 反馈——说明在自动检测（刚充完时最密，之后自动放慢，到账后立即提示），确认到账后会
- * 再弹成功弹窗；用户关闭**不影响**后台轮询。
+ * 再弹成功弹窗；用户关闭**不影响**后台轮询。金额同样是大字主角（2026-10-07）。
  */
 @Composable
 fun CampusPendingConfirmDialog(
@@ -261,16 +277,26 @@ fun CampusPendingConfirmDialog(
     /** 用户声明「我没有付款」：清等待态与轮询（未支付订单 30 分钟自动失效）。 */
     onNotPaid: (() -> Unit)? = null,
 ) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("正在确认充值结果") },
         text = {
-            Text(
-                "已发起 ¥%.2f 的充值订单。若你已在微信完成支付，余额更新常有数分钟延迟，".format(orderFen / 100.0) +
-                    "App 正在自动检测，确认到账后立即提示。\n\n" +
-                    "如果你没有付款（在微信里取消或直接返回），点「我没有付款」，" +
-                    "未支付订单 30 分钟后自动失效，不会扣款。",
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AmountHeroText("¥%.2f".format(orderFen / 100.0))
+                Text(
+                    text = "已发起充值订单。若你已在微信完成支付，余额更新常有数分钟延迟，" +
+                        "App 正在自动检测，确认到账后立即提示。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = onSurface.copy(alpha = 0.75f),
+                )
+                Text(
+                    text = "如果你没有付款（在微信里取消或直接返回），点「我没有付款」，" +
+                        "未支付订单 30 分钟后自动失效，不会扣款。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("我已付款，等通知") }
@@ -287,35 +313,77 @@ fun CampusPendingConfirmDialog(
  * 「支付成功」弹窗（DESIGN §3.10）：付款码页检测到扣款后自动退出，由退出后的页面弹这一张，
  * 金额取流水里的扣款额，另附商户、时间、交易后余额。
  *
- * 依据是消费流水，所以文案不写「实时」「立即」——服务端落账有延迟，
- * 这笔消费的确切时间以流水为准（[payment] 的 timeText 就是服务端原文）。
+ * **金额是这张弹窗唯一的主角**（2026-10-07 用户要求）：大字单行「¥xx.xx」，商户 · 时间
+ * 与卡余额退成次级小字，同步说明再低一档。依据是消费流水，所以文案不写「实时」「立即」
+ * ——服务端落账有延迟，这笔消费的确切时间以流水为准（[payment] 的 timeText 就是服务端原文）。
  */
 @Composable
 fun CampusPaymentDialog(
     payment: YktPayment,
     onDismiss: () -> Unit,
 ) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    // 商户 · 时间：时间缺失时兜底类型名（旧口径保留）；两者都没有就不占这一行
+    val detail = listOfNotNull(
+        payment.merchant?.takeIf { it.isNotBlank() },
+        payment.timeText.ifBlank { payment.typeText }.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("支付成功") },
         text = {
-            Text(
-                buildString {
-                    append("扣款 ¥%.2f".format(payment.amountFen / 100.0))
-                    payment.merchant?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
-                    append("\n")
-                    append(payment.timeText.ifBlank { payment.typeText })
-                    payment.balanceAfterFen?.let {
-                        append("\n卡余额 ¥%.2f".format(it / 100.0))
-                    }
-                    append("\n\n本次交易已同步至「消费流水」。")
-                },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                // 大字金额：与趣智/骑行页的大号数字同族（AmountHeroText 唯一口径）
+                AmountHeroText("¥%.2f".format(payment.amountFen / 100.0))
+                if (detail.isNotEmpty()) {
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = onSurface.copy(alpha = 0.75f),
+                    )
+                }
+                payment.balanceAfterFen?.let {
+                    Text(
+                        text = "卡余额 ¥%.2f".format(it / 100.0),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = onSurface.copy(alpha = 0.75f),
+                    )
+                }
+                Text(
+                    text = "本次交易已同步至「消费流水」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("知道了") }
         },
     )
+}
+
+/**
+ * 「支付成功」弹窗宿主（2026-10-07）：付款码页检测到扣款后自动退出，由它收尾——
+ * 订阅 [PayCodeResultBus]（取值即消费），弹 [CampusPaymentDialog]。
+ *
+ * 挂点两处，覆盖全部出码入口：
+ * - `MainActivity` 根层（四个 Tab 之上）：今日页「+ → 付款码」与生活页付款码条两条路径
+ *   共用这一个宿主——此前只有生活页自己弹，从今日页出码付款后没人消费结果，
+ *   弹窗会一直挂着、直到下次打开生活页才迟到弹出；
+ * - `CampusCardSettingsScreen`（独立 Activity，「我的 → 校园卡」出码）。
+ */
+@Composable
+fun CampusPayResultDialogHost() {
+    val payResult by PayCodeResultBus.result.collectAsStateWithLifecycle()
+    var paid by remember { mutableStateOf<YktPayment?>(null) }
+    LaunchedEffect(payResult) {
+        payResult?.let {
+            paid = it
+            PayCodeResultBus.consume()
+        }
+    }
+    paid?.let { CampusPaymentDialog(payment = it, onDismiss = { paid = null }) }
 }
 
 /**

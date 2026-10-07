@@ -114,15 +114,26 @@ class JuwApplication : Application() {
                 // （`score_check_millis`），关着走 7 天日期闸门，所以这里不必判开关。
                 // 通知的发出在 ScoreAlertReminder 的 worker 里，不走这条路——
                 // 这只是「打开应用后台查一次」的那一次（用户要求的口径）。
-                // 三条 sync 彼此隔着随机小间隔（AutoSyncRules.interRequestDelayMs）：
+                // 几条 sync 彼此隔着随机小间隔（AutoSyncRules.interRequestDelayMs）：
                 // 各自内部还有闸门，多数时候是零网络空跑；真都到期时也不再是
-                // 「成绩→考试→学业」背靠背连发。delay 放在 runCatching 外内皆可，
+                // 「成绩→考试→学业→培养方案→教材」背靠背连发。delay 放在 runCatching 外内皆可，
                 // 这里选内：某条失败不影响后续。
                 runCatching { Graph.scoreSync(this@JuwApplication).sync() }
                 delay(AutoSyncRules.interRequestDelayMs())
                 runCatching { Graph.examSync(this@JuwApplication).sync() }
                 delay(AutoSyncRules.interRequestDelayMs())
                 runCatching { Graph.scholarProgressSync(this@JuwApplication).sync() }
+                // 培养方案（DESIGN §4.41）：首次（库里没数据）立即抓，之后 7 天一次；
+                // 与学业共用同一把日期闸门，不满足时零网络空跑
+                delay(AutoSyncRules.interRequestDelayMs())
+                runCatching { Graph.curriculumSync(this@JuwApplication).sync() }
+                // 教材补抓（DESIGN §4.31，2026-10-06）：当前课表有学期号、但该学期一条教材
+                // 都没有时补抓一次。教材原本只跟「导入课表」抓那一次，而那次会因为会话被
+                // 别处登录顶掉（强智单会话）静默失败——导入成功、详情里就是没有教材。
+                // 这一步把「一次性失败」变成可恢复：还空着就下次冷启动再试（6 小时闸门在
+                // AutoSyncRules）。教材非空 / 闸门未到 / 课表没学期号都是零网络的空跑。
+                delay(AutoSyncRules.interRequestDelayMs())
+                runCatching { Graph.textbookSync(this@JuwApplication).backfillIfMissing() }
             }
         }
         // 校历镜像（DESIGN §4.34）：冷启动静默刷一次，7 天闸门在 store 内部——

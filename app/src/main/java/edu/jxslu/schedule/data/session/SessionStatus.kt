@@ -35,6 +35,10 @@ object SessionStatus {
 
     fun isSuspended(target: LoginTarget): Boolean = target in _suspended.value
 
+    /** 上一次「会话作废后重登」的时刻（进程内，不落盘）。 */
+    @Volatile
+    private var lastReloginMs = 0L
+
     /** 按布尔值同步——`CasSession` 从持久闸门恢复状态时用。 */
     fun syncSuspended(target: LoginTarget, suspended: Boolean) {
         if (suspended) markSuspended(target) else clearSuspended(target)
@@ -60,8 +64,29 @@ object SessionStatus {
         return true
     }
 
+    /**
+     * 取一次「会话被顶掉后重登」的许可；窗口内返回 false（2026-10-06 复核补）。
+     *
+     * 与 [tryAcquireAutoLogin] 分开：那条管「用户主动触发的一次登录」，这条管
+     * **取数途中发现会话作废**。一次同步里有多个 URL（学业四个维度、选课三个 URL、
+     * 成绩按翻页数），每个都能各自触发一次重登——而每次重登都会把对方顶掉
+     * （强智单会话；PC 上跑脚本时尤其明显），不设窗口就是登录乒乓。
+     */
+    fun tryAcquireRelogin(nowMs: Long, windowMs: Long = RELOGIN_WINDOW_MS): Boolean {
+        if (isSuspended(LoginTarget.Jw)) return false
+        // 时钟回拨（last 在未来）不放行，等它自然走到区间内，与其它闸门同口径
+        if (lastReloginMs > nowMs) return false
+        if (lastReloginMs != 0L && nowMs - lastReloginMs < windowMs) return false
+        lastReloginMs = nowMs
+        return true
+    }
+
     /** 用户手动登录成功、或测试里复位时调用。 */
     fun clearAutoLoginThrottle() {
         lastAutoLoginMs = 0L
+        lastReloginMs = 0L
     }
+
+    /** 两次「发现会话作废 → 重登」之间的最小间隔。 */
+    const val RELOGIN_WINDOW_MS: Long = 60_000L
 }

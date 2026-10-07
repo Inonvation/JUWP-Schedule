@@ -122,8 +122,9 @@ class JwImportDiagnosisTest {
         )
         val http500 = JwImportDiagnosis.httpFailure(500, JwUrls.ENTRY, vpnActive = true)
         val session = JwImportDiagnosis.sessionLost(vpnActive = true)
+        val conflict = JwImportDiagnosis.sessionConflict(vpnActive = true)
         val blank = JwImportDiagnosis.blankPage(vpnActive = true)
-        for (d in listOf(timeout, http500, session, blank)) {
+        for (d in listOf(timeout, http500, session, conflict, blank)) {
             assertTrue("VPN 开启时必须点名关代理：${d.title}", d.body.contains(NetworkHint.VPN))
         }
     }
@@ -176,6 +177,36 @@ class JwImportDiagnosisTest {
             "登录页特征不来自文案，改回文案判定会破坏该契约",
             JwImportDiagnosis.looksLikeLoginPage("用户没有登录"),
         )
+    }
+
+    // ---- 账号在别处登录（强智单会话，2026-10-06 用户实测）----
+
+    @Test
+    fun sessionConflict_isRecognizedFromProbeToken() {
+        // 探针输出形如 "conflict title="（SESSION_PROBE_JS 里 conflict 排在最前）
+        assertTrue(JwImportDiagnosis.looksLikeSessionConflict("conflict title="))
+        assertFalse(JwImportDiagnosis.looksLikeSessionConflict(null))
+        assertFalse(JwImportDiagnosis.looksLikeSessionConflict(""))
+    }
+
+    /**
+     * token 必须与探针逐字对齐：对不上就是**静默失效**（同一个坑
+     * [looksLikeLoginPage] 的注释里记过），所以登录页形态不能被误认成会话冲突。
+     */
+    @Test
+    fun sessionConflict_isNotTheLoginPageShape() {
+        assertFalse(JwImportDiagnosis.looksLikeSessionConflict("loginDiv password title=登录"))
+        assertFalse(JwImportDiagnosis.looksLikeSessionConflict("title=个人课表信息"))
+    }
+
+    @Test
+    fun sessionConflict_goesBackToEntryAndNamesTheReason() {
+        val d = JwImportDiagnosis.sessionConflict(vpnActive = false)
+        assertEquals(JwUrls.SSO_WARMUP, d.retryUrl)
+        // 用户当时的原话是「还是我 release 包的问题？」——正文要把「单会话被顶」讲明白，
+        // 否则会被当成 App 坏了
+        assertTrue("要讲清是单会话被顶", d.body.contains("单会话"))
+        assertTrue(d.body.contains("重新登录"))
     }
 
     // ---- 自动重试策略（sso.jsp 500 是自愈型）----

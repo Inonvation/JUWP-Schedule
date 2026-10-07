@@ -89,6 +89,8 @@ class AutoSyncRulesTest {
 
     // ---- 毫秒级间隔闸门（成绩/考试变动提醒，DESIGN §4.33）----
 
+    private val TERM = "2026-2027-1"
+
     private val now = 1_800_000_000_000L
 
     @Test
@@ -178,5 +180,43 @@ class AutoSyncRulesTest {
             val delay = AutoSyncRules.interRequestDelayMs()
             assertTrue(delay in 200L until 600L)
         }
+    }
+
+    // ---- 教材补抓闸门（DESIGN §4.31，2026-10-06）----
+
+    @Test
+    fun `教材补抓_有教材就不抓`() {
+        assertFalse(AutoSyncRules.textbookBackfillDue(true, null, TERM, null, now))
+        assertFalse(AutoSyncRules.textbookBackfillDue(true, null, TERM, 0L, now))
+    }
+
+    @Test
+    fun `教材补抓_空且没试过就抓`() {
+        assertTrue(AutoSyncRules.textbookBackfillDue(false, null, TERM, null, now))
+        assertTrue(AutoSyncRules.textbookBackfillDue(false, null, TERM, 0L, now))
+    }
+
+    @Test
+    fun `教材补抓_间隔内不再打教务`() {
+        // 失败会一直保持「空」，没有这道闸门就成了每次冷启动都打一次教务
+        val interval = AutoSyncRules.TEXTBOOK_BACKFILL_INTERVAL_MS
+        assertFalse(AutoSyncRules.textbookBackfillDue(false, null, TERM, now, now))
+        assertFalse(AutoSyncRules.textbookBackfillDue(false, null, TERM, now, now + interval - 1))
+        assertTrue(AutoSyncRules.textbookBackfillDue(false, null, TERM, now, now + interval))
+    }
+
+    @Test
+    fun `教材补抓_时钟回拨不抓`() {
+        assertFalse(AutoSyncRules.textbookBackfillDue(false, null, TERM, now + 60_000L, now))
+    }
+
+    @Test
+    fun `教材补抓_该学期抓成功过就不再重试`() {
+        // 「成功但 0 条」（下学期没征订 / 实习毕设本来没教材）必须收闸，
+        // 否则教材表永远是空的，闸门永远满足 → 每 6 小时打一次教务、永不停止
+        val interval = AutoSyncRules.TEXTBOOK_BACKFILL_INTERVAL_MS
+        assertFalse(AutoSyncRules.textbookBackfillDue(false, TERM, TERM, now - interval * 10, now))
+        // 换学期自动重新开闸
+        assertTrue(AutoSyncRules.textbookBackfillDue(false, TERM, "2027-2028-1", now - interval * 10, now))
     }
 }

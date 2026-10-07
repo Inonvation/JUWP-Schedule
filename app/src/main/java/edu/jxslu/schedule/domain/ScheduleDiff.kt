@@ -104,6 +104,47 @@ object ScheduleDiff {
     }
 
     /**
+     * **合并路径的基线推进**（DESIGN §4.17，2026-10-07 复核补）：在旧基线上套用
+     * **已应用的改动**（`AppliedEntry`，来自 `applyChangeSet`），返回新基线。
+     *
+     * 根因：此前合并成功后直接用「写库后的整张课表」重建基线，会把手动添加 /
+     * AI 调课加进来的**本机条目**一起塞进基线——它们不在教务课表里，下一次检查
+     * 全被报成「教务删除」，勾选合并就把用户自己的课删了。基线的语义是
+     * 「上次与教务达成一致的状态」，**只装教务口径的条目**（与 AI 改动
+     * 「不推基线」是同一条纪律的两面）。
+     *
+     * 匹配同样用[指纹]；匹配不上就跳过（基线是近似状态，宁可留旧也不硬套）。
+     * 未勾选的条目不在 [entries] 里，自然不进入新基线——下次检查仍以剩余差异报出。
+     */
+    fun baselineAfter(baseline: List<Course>, entries: List<AppliedEntry>): List<Course> {
+        var current = baseline
+        entries.forEach { entry ->
+            when (entry.kind) {
+                ChangeKind.REMOVED -> {
+                    val before = entry.before ?: return@forEach
+                    val fp = fingerprint(before)
+                    current = current.filterNot { fingerprint(it) == fp }
+                }
+
+                ChangeKind.MODIFIED -> {
+                    val before = entry.before ?: return@forEach
+                    val after = entry.after ?: return@forEach
+                    val fp = fingerprint(before)
+                    current = current.map { if (fingerprint(it) == fp) after else it }
+                }
+
+                ChangeKind.ADDED -> {
+                    val after = entry.after ?: return@forEach
+                    if (current.none { fingerprint(it) == fingerprint(after) }) {
+                        current = current + after
+                    }
+                }
+            }
+        }
+        return current
+    }
+
+    /**
      * 一组差异的稳定指纹（已阅记录用）：把每条变更序列化后排序拼接。
      * 「忽略」写它，「合并」也写（本次展示过即算阅）；下次检查的指纹与之相同
      * 就不再重复提醒，教务再出新差异才会重新弹。

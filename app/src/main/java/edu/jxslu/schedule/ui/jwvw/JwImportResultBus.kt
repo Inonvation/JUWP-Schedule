@@ -41,15 +41,66 @@ data class JwImportOutcome(
 
 object JwImportResultBus {
 
+    /**
+     * 「入队 + 发布」要是一个原子动作：`publish` 可能来自后台协程（如教材补抓的失败提示），
+     * 而 `consume` 在主线程，分开做会出现「刚消费掉的消息又被写回去」。
+     */
+    private val lock = Any()
+    private val queue = OutcomeQueue<JwImportOutcome>()
     private val _outcome = MutableStateFlow<JwImportOutcome?>(null)
     val outcome: StateFlow<JwImportOutcome?> = _outcome.asStateFlow()
 
-    fun publish(text: String, tone: NoticeTone = NoticeTone.Success) {
-        _outcome.value = JwImportOutcome(text = text, publishedAtMs = SystemClock.elapsedRealtime(), tone = tone)
+    /**
+     * 发一条消息。**前一条还没消费时排队**（见 [OutcomeQueue]），不再把它顶掉——
+     * 「导入完成」与「教材未同步」是同一次导入的两条结果，两条都该看得到（2026-10-06）。
+     */
+    fun publish(text: String, tone: NoticeTone = NoticeTone.Success) = synchronized(lock) {
+        _outcome.value = queue.push(
+            JwImportOutcome(text = text, publishedAtMs = SystemClock.elapsedRealtime(), tone = tone),
+        )
     }
 
-    fun consume() {
-        _outcome.value = null
+    fun consume(shown: JwImportOutcome?) = synchronized(lock) {
+        _outcome.value = queue.consume(shown)
+    }
+}
+
+/**
+ * 「一条在屏 + 后续排队」的一次性消息队列。
+ *
+ * 为什么需要它：[JwImportResultBus] 原本是单值 StateFlow，后一条 `publish` 直接覆盖前一条
+ * 还没消费的消息。2026-10-06 给教材抓取补失败提示时正好踩上——「导入完成」的气泡还在屏上，
+ * 教材那条就把它顶掉了，而失败完全可能是即时的（凭证已停用时 `ensureValid` 一个包都不发）。
+ *
+ * 抽成独立的泛型类是为了能在 JVM 单测里钉住顺序：bus 本身要 `SystemClock`，测不了。
+ */
+internal class OutcomeQueue<T> {
+
+    private val lock = Any()
+    private val pending = ArrayDeque<T>()
+    private var current: T? = null
+
+    /** 入队并返回**当前该在屏上**的那条：空闲时就是刚进来的这条，否则还是原来那条。 */
+    fun push(value: T): T? = synchronized(lock) {
+        if (current == null) current = value else pending.addLast(value)
+        current
+    }
+
+    /**
+     * 消费当前这条并返回下一条（没有排队的就返回 null）。
+     *
+     * [shown] 是调用方**当前正在显示**的值，只有它确实就是 `current` 时才推进队列。
+     * 不做这个校验的话，两个消费者（分屏双窗口；或转场期间两个落点页同时在组合里）
+     * 各 consume 一次，第二次会把队列里**还没上屏**的那条一起顶掉——
+     * 结果是**丢消息**，而不是重复消费。
+     *
+     * 首次调用传 null（还没有任何东西在屏上）：此时不推进，原样返回 current。
+     */
+    fun consume(shown: T?): T? = synchronized(lock) {
+        if (current != null && shown === current) {
+            current = pending.removeFirstOrNull()
+        }
+        current
     }
 }
 
@@ -60,10 +111,11 @@ object JwImportResultBus {
  * 「订阅 + 消费 + 判新鲜」容易写岔，收成一个调用。
  *
  * 清通道的时机要紧（2026-09-30 修正，此前「先 consume 再 show」五处落点全都不显示）：
- * [JwImportResultBus.consume] 把 flow 置 null 后，`LaunchedEffect(outcome)` 会在下一帧以 null
- * 重启、取消还挂在 `showSnackbar` 上的这个协程——M3 的契约是「caller cancelled → snackbar
- * removed from display」，气泡刚挂上去就被撤掉。所以过期消息在**进 show 之前**丢（防止它在
- * 后续组合里反复触发），新鲜消息**等 `showSnackbar` 返回后**才清。
+ * [JwImportResultBus.consume] 把 flow 换成下一条（没有排队的就是 null）后，`LaunchedEffect(outcome)`
+ * 会在下一帧重启、取消还挂在 `showSnackbar` 上的这个协程——M3 的契约是「caller cancelled →
+ * snackbar removed from display」，气泡刚挂上去就被撤掉。所以过期消息在**进 show 之前**丢（防止它在
+ * 后续组合里反复触发），新鲜消息**等 `showSnackbar` 返回后**才清（返回即上一条已下场，
+ * 排队中的下一条这时才顶上来）。
  */
 @Composable
 fun JwImportOutcomeEffect(snackbar: SnackbarHostState) {
@@ -71,10 +123,10 @@ fun JwImportOutcomeEffect(snackbar: SnackbarHostState) {
     LaunchedEffect(outcome) {
         val pending = outcome ?: return@LaunchedEffect
         if (!pending.isFresh()) {
-            JwImportResultBus.consume()
+            JwImportResultBus.consume(pending)
             return@LaunchedEffect
         }
         snackbar.showSnackbar(AppNoticeVisuals(pending.text, tone = pending.tone))
-        JwImportResultBus.consume()
+        JwImportResultBus.consume(pending)
     }
 }

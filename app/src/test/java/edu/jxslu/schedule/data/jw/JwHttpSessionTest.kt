@@ -7,6 +7,7 @@ import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -133,6 +134,36 @@ class JwHttpSessionTest {
             </body></html>
         """.trimIndent()
         assertTrue("含 LoginToXk 退出表单的主页不是登录页", !JwHttpSession.looksLikeLoginPage(home))
+    }
+
+    /**
+     * 会话被别处登录顶掉（2026-10-06 用户实测）：强智对业务请求回一段**裸 JSON**
+     * `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`——HTTP 200、URL 不变，
+     * 既不是登录页也不是数据。不认它就会被当页面数据交给解析器，
+     * 最后表现成「导入成功但教材静默缺失」。
+     */
+    @Test
+    fun sessionConflict_isRecognized() {
+        assertTrue(
+            JwHttpSession.looksLikeSessionConflict("""{"flag1":3,"msgContent":"您的账号在其它地方登录"}"""),
+        )
+    }
+
+    /** 两个标记缺一不可：误报的代价是清 cookie + 白登一次 + 这次数据拿不回来。 */
+    @Test
+    fun sessionConflict_requiresBothMarkers() {
+        // 单看 flag1：正常 layui 应答里也可能有这个键
+        assertFalse(JwHttpSession.looksLikeSessionConflict("""{"flag1":0,"count":0,"data":[]}"""))
+        // 单看文案：任意页面正文都可能撞上
+        assertFalse(JwHttpSession.looksLikeSessionConflict("<p>您的账号在其它地方登录</p>"))
+    }
+
+    @Test
+    fun sessionConflict_notForNormalPages() {
+        assertFalse(JwHttpSession.looksLikeSessionConflict(""))
+        assertFalse(JwHttpSession.looksLikeSessionConflict("<html><body>课表</body></html>"))
+        // 登录页是另一条判据（looksLikeLoginPage），别混进来
+        assertFalse(JwHttpSession.looksLikeSessionConflict("<input id='userPassword'>"))
     }
 
     private fun String.toHttpUrlForTest(): HttpUrl = toHttpUrl()

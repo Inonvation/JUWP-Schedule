@@ -81,6 +81,11 @@ UA = (
 
 _REDIRECTS = (301, 302, 303, 307, 308)
 _NOT_LOGGED = "用户没有登录"
+# 新版登录页（80KB，title「登录」，正文「请先登录系统」，form action=LoginToXk）不含
+# 「用户没有登录」、体积也超过 _HOME_MIN_BYTES——2026-10-07 实测：旧会话失效后连
+# xsMainV 都退这个页面，只按 _NOT_LOGGED + 长度判会假阳性（脚本把登录页当业务页，
+# 误报「页面结构可能已变」）。两处判定都要带上这个标记。
+_LOGIN_PAGE = "请先登录系统"
 _HOME_MIN_BYTES = 20000  # 正常主页 ~150KB；退回登录提示时仅 860B
 
 # 缴费平台 token 服务端 3599 秒，本地按 3000 秒回收，避免拿临期 token 撞 401
@@ -248,7 +253,11 @@ def sso_jiaowu(cas: requests.Session) -> requests.Session:
 def verify(jw: requests.Session) -> None:
     """确认会话真的进了教务，而不是"看着成功、其实掉回登录页"。"""
     r = jw.get(STUDENT_HOME, timeout=25)
-    if _NOT_LOGGED in r.text or len(r.content) < _HOME_MIN_BYTES:
+    if (
+        _NOT_LOGGED in r.text
+        or _LOGIN_PAGE in r.text
+        or len(r.content) < _HOME_MIN_BYTES
+    ):
         raise JwLoginError(
             "教务会话无效（已退回登录页）。\n"
             "若本机设置了 HTTP_PROXY / HTTPS_PROXY，请确认 Session 的 trust_env 为 False。"
@@ -393,9 +402,9 @@ def get_html(
     r = jw.get(url, timeout=30)
     if r.status_code != 200:
         raise JwLoginError(f"{url} 返回 HTTP {r.status_code}")
-    if _NOT_LOGGED in r.text:
+    if _NOT_LOGGED in r.text or _LOGIN_PAGE in r.text:
         raise JwLoginError(
-            "教务会话已失效（页面退回登录提示）。重跑脚本即可——"
+            "教务会话已失效（页面退回登录页）。重跑脚本即可——"
             "load_or_login 的探针会识别失效并自动重新登录。"
         )
     if must_contain and must_contain not in r.text:

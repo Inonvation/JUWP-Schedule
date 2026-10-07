@@ -274,6 +274,42 @@ class CasSessionTest {
         store.cas = SessionCredentials("1", "p")
         http.fetchHtmlError = JwHttpException.Protocol("页面结构变了")
         assertEquals(null, newSession().fetchHtml("http://jiaowu/xsxx"))
+        // 只有「会话被顶掉」才值得重试：5xx / 结构变化重试没有意义
+        assertEquals(1, http.fetchHtmlCalls)
+    }
+
+    /**
+     * 会话在**信任期内**被别处登录顶掉（2026-10-06 用户实测的教材丢失根因）：
+     * 业务请求回登录页 / 冲突 JSON → 作废本地会话、重登一次、再取一次。
+     *
+     * 信任期内 `ensureValid` 不会去验会话，所以不作废就会一路用一份死会话——
+     * 表现就是「导入成功但教材静默缺失」。
+     */
+    @Test
+    fun fetchHtml_reloginsOnceWhenSessionInvalid() = runBlocking {
+        store.cas = SessionCredentials("1", "p")
+        val session = newSession()
+        session.ensureValid()                                   // 建会话（信任期已点起来）
+        val loginsBefore = http.loginCalls
+        http.fetchHtmlErrorOnce = JwHttpException.SessionInvalid("账号在其它地方登录")
+        http.fetchHtmlResult = "<html>教材</html>"
+
+        assertEquals("<html>教材</html>", session.fetchHtml("http://jiaowu/xsjcqr"))
+        assertEquals("必须重登一次", loginsBefore + 1, http.loginCalls)
+        assertEquals("必须重取一次", 2, http.fetchHtmlCalls)
+    }
+
+    /** 重登没成功就不再打第二次取数——失败不重试的纪律不变。 */
+    @Test
+    fun fetchHtml_sessionInvalid_doesNotRefetchWhenReloginFails() = runBlocking {
+        store.cas = SessionCredentials("1", "p")
+        val session = newSession()
+        session.ensureValid()
+        http.loginError = JwHttpException.Network(IOException("net"))   // 之后重登失败
+        http.fetchHtmlErrorOnce = JwHttpException.SessionInvalid("被顶")
+
+        assertEquals(null, session.fetchHtml("http://jiaowu/xsjcqr"))
+        assertEquals(1, http.fetchHtmlCalls)
     }
 
     /** 刚失败过：窗口内连请求都不发。 */
@@ -373,6 +409,9 @@ private class FakeCasTransport : CasTransport {
     var loginError: Throwable? = null
     var verifyError: Throwable? = null
     var fetchHtmlError: Throwable? = null
+
+    /** 只在**第一次**取页面时抛，之后恢复正常——用来造「会话被顶掉后重登再取」的场景。 */
+    var fetchHtmlErrorOnce: Throwable? = null
     var verifyResult = false
     var fetchHtmlResult = ""
     var cookiePresent = false
@@ -393,6 +432,10 @@ private class FakeCasTransport : CasTransport {
 
     override suspend fun fetchHtml(url: String): String {
         fetchHtmlCalls++
+        fetchHtmlErrorOnce?.let {
+            fetchHtmlErrorOnce = null
+            throw it
+        }
         fetchHtmlError?.let { throw it }
         return fetchHtmlResult
     }

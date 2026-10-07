@@ -473,6 +473,34 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_SCHOLAR_SYNC_DATE] = dateKey }
     }
 
+    /**
+     * 培养方案的方案名（DESIGN §4.41），如「2022 xxx专业培养方案」。
+     *
+     * 只作展示用；解析没拿到时留空，UI 不显示这一行——它不是判断"有没有数据"的依据，
+     * 那个看 `CurriculumRepository.hasData`。
+     */
+    val curriculumPlanName: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_CURRICULUM_PLAN_NAME].orEmpty()
+    }
+
+    suspend fun setCurriculumPlanName(value: String) {
+        context.displayDataStore.edit { it[KEY_CURRICULUM_PLAN_NAME] = value.trim() }
+    }
+
+    /**
+     * 培养方案的上次成功导入日期（ISO `2026-10-07`）。空 = 从没成功过。
+     *
+     * 与学业的 [scholarSyncDate] 共用 `AutoSyncRules.shouldAttempt` 的 7 天口径——
+     * 培养方案几年才动一次，每次冷启动都抓是白撞教务风控。
+     */
+    val curriculumSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_CURRICULUM_SYNC_DATE].orEmpty()
+    }
+
+    suspend fun setCurriculumSyncDate(dateKey: String) {
+        context.displayDataStore.edit { it[KEY_CURRICULUM_SYNC_DATE] = dateKey }
+    }
+
     /** 成绩的上次成功导入日期（ISO）。空 = 从没成功过。口径同 [scholarSyncDate]。 */
     val scoreSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
         p[KEY_SCORE_SYNC_DATE].orEmpty()
@@ -773,6 +801,35 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setTextbookSyncDate(dateKey: String) {
         context.displayDataStore.edit { it[KEY_TEXTBOOK_SYNC_DATE] = dateKey }
+    }
+
+    /**
+     * 教材冷启动补抓的上次**尝试**时刻（epoch millis，2026-10-06）。0 = 没试过。
+     *
+     * 与 [textbookSyncDate]（成功才写、只做记录）刻意不同：那道记录是「什么时候抓成功过」，
+     * 这一道挡的是「该学期教材为空时别每次冷启动都打教务」——记尝试才挡得住。
+     * 闸门判据在 `AutoSyncRules.textbookBackfillDue`。
+     */
+    suspend fun textbookBackfillAttempt(): Long =
+        context.displayDataStore.data.first()[KEY_TEXTBOOK_BACKFILL_MILLIS] ?: 0L
+
+    suspend fun setTextbookBackfillAttempt(millis: Long) {
+        context.displayDataStore.edit { it[KEY_TEXTBOOK_BACKFILL_MILLIS] = millis }
+    }
+
+    /**
+     * 教材**抓成功过**的学期号（2026-10-06 复核补）。空 = 没成功过。
+     *
+     * 为什么不能只看「该学期有没有教材」：下学期还没征订、或实习/毕设这类本来就没教材的
+     * 学期，接口回的是**成功且 0 条**——那种情况教材表永远是空的，闸门就永远满足，
+     * 变成每 6 小时打一次教务、永不停止。记下「抓过哪个学期」才收得住。
+     * 换学期自动重新开闸（学期号不等即可再抓）。
+     */
+    suspend fun textbookFetchedTerm(): String =
+        context.displayDataStore.data.first()[KEY_TEXTBOOK_FETCHED_TERM].orEmpty()
+
+    suspend fun setTextbookFetchedTerm(term: String) {
+        context.displayDataStore.edit { it[KEY_TEXTBOOK_FETCHED_TERM] = term }
     }
 
     /** 开水双击确认。全局项，默认双击防误触。 */
@@ -1820,8 +1877,14 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_ONBOARDING_SEEN = booleanPreferencesKey("onboarding_seen")
         val KEY_SCHOLAR_PLAN_NAME = stringPreferencesKey("scholar_plan_name")
         val KEY_SCHOLAR_SYNC_DATE = stringPreferencesKey("scholar_sync_date")
+        val KEY_CURRICULUM_PLAN_NAME = stringPreferencesKey("curriculum_plan_name")
+        val KEY_CURRICULUM_SYNC_DATE = stringPreferencesKey("curriculum_sync_date")
         val KEY_SCORE_SYNC_DATE = stringPreferencesKey("score_sync_date")
         val KEY_TEXTBOOK_SYNC_DATE = stringPreferencesKey("textbook_sync_date")
+        // 抓成功过的学期号（含「成功但 0 条」）：见 textbookFetchedTerm
+        val KEY_TEXTBOOK_FETCHED_TERM = stringPreferencesKey("textbook_fetched_term")
+        // 教材补抓的上次尝试时刻（2026-10-06）：挡「教材为空时每次冷启动都打教务」
+        val KEY_TEXTBOOK_BACKFILL_MILLIS = longPreferencesKey("textbook_backfill_millis")
 
         // 成绩/考试变动提醒（DESIGN §4.33）：两开关 + 间隔 + 各自上次成功检查时刻
         val KEY_SCORE_ALERT_ENABLED = booleanPreferencesKey("score_alert_enabled")

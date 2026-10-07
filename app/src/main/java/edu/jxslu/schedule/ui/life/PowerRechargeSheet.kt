@@ -53,6 +53,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.data.power.PowerEntryState
+import edu.jxslu.schedule.ui.common.AmountHeroText
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowRight01
@@ -192,6 +193,7 @@ fun PowerRechargeSheet(
                 )
 
                 LifeViewModel.PowerRechargeUi.Step.Accepted -> AcceptedStep(
+                    amountYuan = state.amountYuan,
                     paidStatus = state.paidStatus,
                     entryStatus = state.entryStatus,
                     onDismiss = onDismiss,
@@ -569,7 +571,21 @@ private fun PasswordStep(
 private const val PASSWORD_LENGTH = 6
 
 @Composable
-private fun AcceptedStep(paidStatus: Int?, entryStatus: PowerEntryState?, onDismiss: () -> Unit) {
+private fun AcceptedStep(
+    amountYuan: String?,
+    paidStatus: Int?,
+    entryStatus: PowerEntryState?,
+    onDismiss: () -> Unit,
+) {
+    // 金额大字（2026-10-07）：钱已动的这一屏必须能看到扣了多少——此前金额只在密码步
+    // 与农行等待步出现，出结果的一步反而没有。样式走 AmountHeroText 唯一口径。
+    amountYuan?.takeIf { it.isNotBlank() }?.let {
+        AmountHeroText(
+            text = "¥$it",
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center,
+        )
+    }
     Text(
         // 查单确认过才敢说「已扣款」；没确认到就如实说「已受理」（不编）
         text = if (paidStatus == 1) "支付成功，已确认扣款" else "支付已受理，正在确认到账",

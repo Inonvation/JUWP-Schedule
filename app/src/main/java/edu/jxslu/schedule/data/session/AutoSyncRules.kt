@@ -61,6 +61,39 @@ object AutoSyncRules {
     }
 
     /**
+     * 教材补抓闸门（2026-10-06）。
+     *
+     * 教材原本只跟「导入课表」抓那一次，而那次会因为会话被别处登录顶掉（强智单会话）
+     * 静默失败——导入成功、详情里就是没有教材。补抓的条件是「**该学期教材为空**」：
+     * 抓成功过就不再打扰教务；但失败会一直保持「空」，所以还要一道时间闸门，
+     * 否则每次冷启动都打一次教务。
+     *
+     * 与 [shouldAttempt] 的差别：那个记的是**成功**日期（一次网络抖动不该顶掉 7 天），
+     * 这里的 [lastAttemptMillis] 记的是**尝试**时刻——它挡的是「反复打」，
+     * 「还该不该重试」由 [hasTextbooks] 判定。
+     *
+     * 时钟被回拨（last 在未来）→ 不抓，等它自然走到区间内，与另外两条闸门同口径。
+     */
+    fun textbookBackfillDue(
+        hasTextbooks: Boolean,
+        fetchedTerm: String?,
+        currentTerm: String,
+        lastAttemptMillis: Long?,
+        nowMillis: Long,
+    ): Boolean {
+        if (hasTextbooks) return false
+        // 「抓成功但 0 条」也要收闸：下学期没征订 / 实习毕设本来没教材时，
+        // 只看「表里有没有行」会永远满足，变成每 6 小时打一次教务、永不停止
+        if (fetchedTerm != null && fetchedTerm == currentTerm) return false
+        val last = lastAttemptMillis?.takeIf { it > 0 } ?: return true
+        if (last > nowMillis) return false
+        return nowMillis - last >= TEXTBOOK_BACKFILL_INTERVAL_MS
+    }
+
+    /** 教材补抓的最小间隔。改它等于改「教材缺失时多久自动打一次教务」。 */
+    const val TEXTBOOK_BACKFILL_INTERVAL_MS: Long = 6L * 60L * 60L * 1000L
+
+    /**
      * 壳页学期缓存是否可用（考试/选课同步共用，2026-10-04 风控优化）。
      *
      * 考试与选课的同步每次都先 GET 壳页读「教务当前学期」，而学期下拉一学期才变一次。

@@ -9,10 +9,11 @@
   .venv-scraper/Scripts/python.exe scripts/fetch_all.py [--with-power]
 
 顺序与口径:
-  courses → lab_courses → exams → scores → textbooks → selections
+  courses → lab_courses → exams → scores → textbooks → selections → curriculum
   （--with-power 追加电费；电费凭证独立，token 走同一文件的本地缓存）
 
-学期口径都是「教务当前学期」；要指定学期请单独跑对应脚本。
+学期口径都是「教务当前学期」（curriculum 为培养方案全量，无学期参数）；
+要指定学期请单独跑对应脚本。
 某一项失败不中断后续，结尾按退出码汇总——全部成功返回 0，否则 1。
 脚本之间留 1–2 秒间隔，别让六份抓取挤在一个瞬间。
 """
@@ -35,6 +36,7 @@ STEPS = [
     ("课程成绩", "fetch_scores.py"),
     ("学生教材", "fetch_textbooks.py"),
     ("选课记录", "fetch_selections.py"),
+    ("培养方案", "fetch_curriculum.py"),
 ]
 POWER_STEP = ("寝室电费", "fetch_power.py")
 
