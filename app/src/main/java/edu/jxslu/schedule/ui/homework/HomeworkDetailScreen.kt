@@ -44,7 +44,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -126,10 +128,11 @@ fun HomeworkDetailScreen(
     var showDiscard by remember { mutableStateOf(false) }
     // 默认态：新建（id=0）直接进编辑；已有作业进预览（2026-10-07），想改点右上角铅笔。
     var editing by rememberSaveable { mutableStateOf(homeworkId == 0L) }
-    // 从预览点铅笔进编辑后主动聚焦正文（光标在末尾），省一次点击
+    // 从预览点铅笔进编辑后主动聚焦正文（光标在末尾），省一次点击；
+    // loaded 守卫：载入中编辑器还没组合，requestFocus 会抛 FocusRequester not initialized
     val editorFocus = remember { FocusRequester() }
-    LaunchedEffect(editing) {
-        if (editing) {
+    LaunchedEffect(editing, loaded) {
+        if (editing && loaded) {
             editorFocus.requestFocus()
             detail = detail.copy(selection = TextRange(detail.text.length))
         }

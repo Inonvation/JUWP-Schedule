@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +64,8 @@ fun MarkdownEditor(
     placeholder: String = "写点什么…支持 Markdown 与 $ 公式",
     minHeight: Dp = 220.dp,
     onPickImages: (() -> Unit)? = null,
+    /** 外部要主动聚焦编辑器时传入（如预览点铅笔进编辑）；不传则等用户自己点正文。 */
+    focusRequester: FocusRequester? = null,
 ) {
     Column(modifier) {
         Box(
@@ -93,7 +97,9 @@ fun MarkdownEditor(
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
             )
         }
         EditorToolbar(
@@ -121,6 +127,8 @@ fun TitleTextField(
     onValueChange: (TextFieldValue) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    /** 外部要主动聚焦标题时传入（如查看态点铅笔进编辑）；不传则等用户自己点。 */
+    focusRequester: FocusRequester? = null,
 ) {
     Box(modifier.fillMaxWidth()) {
         if (value.text.isEmpty()) {
@@ -140,7 +148,9 @@ fun TitleTextField(
             // 单行：标题里换行会让它变成两行大字把表单顶下去，旧的 OutlinedTextField 也是
             // singleLine——这条口径不能因为换控件而丢
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
         )
     }
 }

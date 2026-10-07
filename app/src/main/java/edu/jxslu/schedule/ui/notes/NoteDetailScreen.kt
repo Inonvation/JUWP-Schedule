@@ -31,7 +31,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
@@ -99,6 +101,15 @@ fun NoteDetailScreen(
     var editing by rememberSaveable { mutableStateOf(noteId == 0L) }
     var loadedFromDb by rememberSaveable { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(noteId == 0L) }
+    // 从查看态点铅笔进编辑后主动聚焦标题（光标在末尾），省一次点击；
+    // loaded 守卫：载入中标题框还没组合，requestFocus 会抛 FocusRequester not initialized
+    val titleFocus = remember { FocusRequester() }
+    LaunchedEffect(editing, loaded) {
+        if (editing && loaded) {
+            titleFocus.requestFocus()
+            title = title.copy(selection = TextRange(title.text.length))
+        }
+    }
     var viewer by remember { mutableStateOf<String?>(null) }
     var showDelete by remember { mutableStateOf(false) }
     var showDiscard by remember { mutableStateOf(false) }
@@ -271,6 +282,7 @@ fun NoteDetailScreen(
                         value = title,
                         onValueChange = { title = it },
                         placeholder = "标题（可空）",
+                        focusRequester = titleFocus,
                     )
                 } else {
                     Text(
