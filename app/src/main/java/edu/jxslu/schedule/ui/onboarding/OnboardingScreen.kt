@@ -107,6 +107,7 @@ import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.data.repo.ScheduleSync
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.ScoreSync
+import edu.jxslu.schedule.data.repo.TeachingCalendarSync
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.data.session.CredentialVault
@@ -119,6 +120,7 @@ import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeDialog
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.jwvw.JwImportResultBus
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -285,6 +287,18 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                 Graph.appScope.launch {
                     runCatching { Graph.textbookSync(appContext).syncForTerm(imported.term) }
                 }
+                // 开学日校准（DESIGN §4.42）：与教材同一个触发点（写库成功才跑），教务为准。
+                // 目标课表用导入结果携带的 id（不是「apply 时的当前课表」——中间隔着数秒抓取，
+                // 用户切了课表就会写错表）；失败静默，气泡只在值变化时发（60 秒新鲜期窗口）。
+                Graph.appScope.launch {
+                    val result = runCatching {
+                        Graph.teachingCalendarSync(appContext)
+                            .applyAfterImport(imported.term, imported.timetableId)
+                    }.getOrNull()
+                    if (result is TeachingCalendarSync.Result.Applied && result.changed) {
+                        JwImportResultBus.publish("开学日已按教务教学日历设为 ${result.startDate}")
+                    }
+                }
             }
             val okScore = score.getOrNull()?.let { it !is ScoreSync.Result.Failed } == true
             val okScholar = scholar.getOrNull()?.let { it !is ScholarProgressSync.Result.Failed } == true
@@ -314,6 +328,10 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                     )
                 }
             }
+            // 培养方案（DESIGN §4.41）：静默抓一次；**不进「同步完成」结果弹窗**——
+            // 它是低频清单（几年才变一次），失败只影响「培养方案」页自己的空态/重试，
+            // 不值得在首启结果里多一行。放在结果落盘之后，不拖慢引导完成页。
+            runCatching { Graph.curriculumSync(appContext).sync(force = true) }
         }
     }
 

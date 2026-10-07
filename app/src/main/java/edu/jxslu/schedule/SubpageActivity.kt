@@ -25,6 +25,7 @@ import edu.jxslu.schedule.ui.campus.CampusCalendarScreen
 import edu.jxslu.schedule.ui.campus.CampusCardSettingsScreen
 import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
+import edu.jxslu.schedule.ui.curriculum.CurriculumScreen
 import edu.jxslu.schedule.ui.ebike.KvcxScreen
 import edu.jxslu.schedule.ui.ebike.RideScreen
 import edu.jxslu.schedule.ui.exam.ExamScreen
@@ -34,6 +35,8 @@ import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
 import edu.jxslu.schedule.ui.homework.HomeworkLibraryScreen
 import edu.jxslu.schedule.ui.homework.HomeworkTodoScreen
 import edu.jxslu.schedule.ui.inbox.InboxScreen
+import edu.jxslu.schedule.ui.internship.InternshipBasesScreen
+import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.notes.NoteCourseScreen
 import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
@@ -93,6 +96,10 @@ enum class SubpageScreen {
     EXAMS,
     /** 我的 → 学习 → 学业完成情况（培养方案达成度，DESIGN §3.17 / §4.29） */
     SCHOLAR,
+    /** 我的 → 学习 → 培养方案（课程设置总表 · 按学年/学期看计划课，DESIGN §3.26 / §4.41） */
+    CURRICULUM,
+    /** 我的 → 学习 → 实习基地查看（教务基地清单，DESIGN §3.27 / §4.43） */
+    INTERNSHIP_BASES,
     /** 我的 → 学习 → 选课（选课记录 · 轮次 · 进入选课，DESIGN §3.19 / §4.35） */
     SELECTIONS,
     /** 选课 → 应用内选课中心（课程列表 · 筛选 · 选课/退课，DESIGN §3.22 / §4.36） */
@@ -289,6 +296,8 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SCORE_SETTINGS -> ScoreSettingsScreen(onBack = onBack)
             SubpageScreen.EXAMS -> ExamScreen(onBack = onBack)
             SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)
+            SubpageScreen.CURRICULUM -> CurriculumScreen(onBack = onBack)
+            SubpageScreen.INTERNSHIP_BASES -> InternshipBasesScreen(onBack = onBack)
             SubpageScreen.SELECTIONS -> SelectionScreen(onBack = onBack)
             // focusItemId 对 SELECTION_CENTER 复用为「直达轮次 id」（选课页点轮次行）
             SubpageScreen.SELECTION_CENTER ->
@@ -312,8 +321,17 @@ class SubpageActivity : ComponentActivity() {
                 onOpenHomework = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
                 onOpenScores = { SubpageActivity.start(this, SubpageScreen.SCORES) },
                 onOpenScholar = { SubpageActivity.start(this, SubpageScreen.SCHOLAR) },
+                onOpenCurriculum = { SubpageActivity.start(this, SubpageScreen.CURRICULUM) },
                 onOpenExam = { SubpageActivity.start(this, SubpageScreen.EXAMS) },
                 onOpenSelection = { SubpageActivity.start(this, SubpageScreen.SELECTIONS) },
+                // 学生评教（DESIGN §4.44）：复用教务 WebView 窗口的 TeachingEval 模式，
+                // 自动登录后直达评教平台；评教操作由用户在平台页面上自己完成
+                onOpenTeachingEval = {
+                    JwImportActivity.start(this, JwImportMode.TeachingEval)
+                },
+                onOpenInternshipBases = {
+                    SubpageActivity.start(this, SubpageScreen.INTERNSHIP_BASES)
+                },
             )
             SubpageScreen.TIMETABLE_HUB -> TimetableHubScreen(
                 onBack = onBack,

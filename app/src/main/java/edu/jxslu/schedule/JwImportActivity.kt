@@ -17,7 +17,8 @@ import edu.jxslu.schedule.ui.jwvw.JwImportScreen
  * 新窗口直接覆盖，底层课表的布局完全不动；导入写库走 Graph 单例 + 响应式流，
  * 返回后课表自动刷新。Cookie 在 CookieManager 全局生效，登录会话不受影响。
  *
- * [EXTRA_MODE] 决定导入对象：课表（默认）或成绩（DESIGN §4.15）。
+ * [EXTRA_MODE] 决定窗口模式：课表（默认，DESIGN §4.4）/ 成绩（§4.15）/ 选课（§4.35，
+ * 只当浏览器用）/ 学生评教（§4.44，只导航不导入——各档说明见 JwImportMode 枚举）。
  * [EXTRA_START_EXAM] 只对课表模式有意义：**开在考试安排查询页**而不是理论课表页
  * （DESIGN §4.33 考试页的导入入口、考试变动通知的确认口）。
  * [EXTRA_ROUND_ID] 只对选课模式有意义：登录后直达该轮次的「进入选课」页

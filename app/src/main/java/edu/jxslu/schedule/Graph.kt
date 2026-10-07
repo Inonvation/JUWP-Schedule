@@ -39,6 +39,8 @@ import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
 import edu.jxslu.schedule.data.repo.ExamSync
 import edu.jxslu.schedule.data.repo.InboxRepository
+import edu.jxslu.schedule.data.repo.InternshipBasesLoader
+import edu.jxslu.schedule.data.repo.InternshipSnapshotStore
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
@@ -50,6 +52,8 @@ import edu.jxslu.schedule.data.repo.ScheduleSync
 import kotlinx.coroutines.sync.Mutex
 import edu.jxslu.schedule.data.repo.ScholarProgressRepository
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
+import edu.jxslu.schedule.data.repo.CurriculumRepository
+import edu.jxslu.schedule.data.repo.CurriculumSync
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.data.repo.SelectionRepository
@@ -57,6 +61,7 @@ import edu.jxslu.schedule.data.repo.SelectionCenterClient
 import edu.jxslu.schedule.data.repo.SelectionRoundsStore
 import edu.jxslu.schedule.data.repo.SelectionSync
 import edu.jxslu.schedule.data.repo.UnconfiguredSelectionCenterClient
+import edu.jxslu.schedule.data.repo.TeachingCalendarSync
 import edu.jxslu.schedule.data.repo.TextbookSync
 import edu.jxslu.schedule.data.jw.TranscriptClient
 import edu.jxslu.schedule.data.jw.JwVpnDetector
@@ -160,6 +165,12 @@ object Graph {
     private var scholarProgressSync: ScholarProgressSync? = null
 
     @Volatile
+    private var curriculumRepository: CurriculumRepository? = null
+
+    @Volatile
+    private var curriculumSync: CurriculumSync? = null
+
+    @Volatile
     private var scoreSync: ScoreSync? = null
 
     @Volatile
@@ -171,6 +182,12 @@ object Graph {
 
     @Volatile
     private var textbookSync: TextbookSync? = null
+
+    @Volatile
+    private var teachingCalendarSync: TeachingCalendarSync? = null
+
+    @Volatile
+    private var internshipBasesLoader: InternshipBasesLoader? = null
 
     @Volatile
     private var selectionRepository: SelectionRepository? = null
@@ -306,6 +323,27 @@ object Graph {
             ).also { scholarProgressSync = it }
         }
 
+    /** 培养方案仓库单例（DESIGN §4.41）：与课表共用数据库，整体替换。 */
+    fun curriculumRepository(context: Context): CurriculumRepository =
+        curriculumRepository ?: synchronized(this) {
+            curriculumRepository ?: CurriculumRepository(JuwDatabase.get(context))
+                .also { curriculumRepository = it }
+        }
+
+    /**
+     * 培养方案抓取单例（DESIGN §4.41）：复用 CAS 会话与同一份仓库/偏好。
+     *
+     * 无状态，做成单例只是省一次构造——它会被引导页、冷启动、页面刷新三处同时持有。
+     */
+    fun curriculumSync(context: Context): CurriculumSync =
+        curriculumSync ?: synchronized(this) {
+            curriculumSync ?: CurriculumSync(
+                cas = casSession(context),
+                repo = curriculumRepository(context),
+                prefs = displayPrefs(context),
+            ).also { curriculumSync = it }
+        }
+
     /** 成绩自动导入单例（DESIGN §4.29）：与成绩页共用同一份解析与仓库。 */
     fun scoreSync(context: Context): ScoreSync =
         scoreSync ?: synchronized(this) {
@@ -343,6 +381,24 @@ object Graph {
                 repo = repository(context),
                 prefs = displayPrefs(context),
             ).also { textbookSync = it }
+        }
+
+    /** 开学日校准单例（DESIGN §4.42）：导入课表成功后按学期抓教学日历，写目标课表的开学日。 */
+    fun teachingCalendarSync(context: Context): TeachingCalendarSync =
+        teachingCalendarSync ?: synchronized(this) {
+            teachingCalendarSync ?: TeachingCalendarSync(
+                cas = casSession(context),
+                repo = repository(context),
+            ).also { teachingCalendarSync = it }
+        }
+
+    /** 实习基地装载单例（DESIGN §4.43）：OkHttp 直取 + 12 小时快照缓存，进页默认零网络。 */
+    fun internshipBasesLoader(context: Context): InternshipBasesLoader =
+        internshipBasesLoader ?: synchronized(this) {
+            internshipBasesLoader ?: InternshipBasesLoader(
+                cas = casSession(context),
+                store = InternshipSnapshotStore(context),
+            ).also { internshipBasesLoader = it }
         }
 
     /** 选课记录仓库单例（DESIGN §4.35）：与课表共用数据库，按学期整体替换。 */

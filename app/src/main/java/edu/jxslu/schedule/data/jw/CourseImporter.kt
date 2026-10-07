@@ -261,6 +261,40 @@ object JwUrls {
     }
 
     /**
+     * 培养方案「课程设置总表」（培养方案 → 明细页，DESIGN §4.41）。
+     *
+     * 无参数；服务端渲染整页 HTML（课程行在 `div.son-table-tr`），由会话决定学生与方案。
+     * 解析见 [CurriculumParser]。手机端 `jiaowuh5`「标准版」的「课程设置总表」是同一份
+     * 数据的展示层——那条链路（移动端 H5）443 直连不通、不必也不应走它。
+     */
+    const val CURRICULUM = "$XSD_BASE/jsxsd/pyfa/topyfamx"
+
+    /**
+     * 教学日历（教学日历查询 → `/jsxsd/jxzl/jxzl_query`，DESIGN §4.42）。
+     *
+     * 服务端渲染整页；`xnxq01id` 学期参数**真实生效**（下拉列 24 个学期，不带参按
+     * 教务当前学期渲染）。第 1 周周一 = 开学日，解析见 [TeachingCalendarParser]。
+     */
+    const val JXZL_QUERY = "$XSD_BASE/jsxsd/jxzl/jxzl_query"
+
+    /**
+     * 指定学期的教学日历 URL；学期先过 [TERM_PATTERN] 白名单（会拼进 URL），脏值返回 null。
+     * 与 [labScheduleUrl] 同口径：宁可什么都不抓，也不拼一个可能出错的地址。
+     */
+    fun teachingCalendarUrl(term: String): String? =
+        if (TERM_PATTERN.matches(term)) "$JXZL_QUERY?xnxq01id=$term" else null
+
+    /**
+     * 实习基地数据接口（实习实训管理 → 实习基地查看，DESIGN §4.43）。
+     *
+     * 壳页 `/jsxsd/sxsxgl/sxjdcx.do` 只是 layui 前端壳，数据在这里：
+     * layui JSON（`code=0` + `count` + `data[]`）。**该接口忽略一切分页参数、
+     * 固定只回前 10 条**（实测记录见 `InternshipBaseParser.listUrl`）——单次抓取，
+     * 差额界面注明；按页循环只会拿回重复页。
+     */
+    const val INTERNSHIP_BASES_API = "$XSD_BASE/jsxsd/sxsxgl/sxjd.do"
+
+    /**
      * 学籍卡片查看（学籍毕业 → 学籍管理 → 学籍卡片查看）。
      * 正文有「姓名 / 班级 / 学号」明文标签与结构化 form，可正则直读；
      * 个人资料头像不落盘——「我的」账号条只用向量图标。

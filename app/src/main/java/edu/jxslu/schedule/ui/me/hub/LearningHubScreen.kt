@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.CourseSelection
+import edu.jxslu.schedule.domain.CurriculumCourse
+import edu.jxslu.schedule.domain.CurriculumRules
 import edu.jxslu.schedule.domain.ScholarDimension
 import edu.jxslu.schedule.domain.ScholarProgressRules
 import edu.jxslu.schedule.domain.SelectionRound
@@ -34,18 +36,25 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Building03
 import me.rerere.hugeicons.stroke.CheckList
 import me.rerere.hugeicons.stroke.ClipboardPen
 import me.rerere.hugeicons.stroke.GraduationScroll
+import me.rerere.hugeicons.stroke.ListTree
 import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Task01
 import me.rerere.hugeicons.stroke.Target01
+import me.rerere.hugeicons.stroke.Teacher
 
 /** 我的 → 学习（DESIGN §3.11 / §4.15）：笔记·课件、作业、成绩与考试，副标题实时计数。
  * 成绩查询 2026-09-24 自课表汇总挪入（用户要求：成绩属学习内容，不该藏在课表配置流里）。
  * 考试 2026-09-30 同理由课表 hub 挪入——考试安排与成绩同属「教务给的学习数据」，
  * 入口放在成绩旁边比放在课表配置流里更符合找它的路径。
- * 选课 2026-09-30 新增（DESIGN §3.19）：选课记录 + 选课轮次 + 进入选课，与成绩/考试同属教务数据；入口显示名「选课（beta）」。 */
+ * 选课 2026-09-30 新增（DESIGN §3.19）：选课记录 + 选课轮次 + 进入选课，与成绩/考试同属教务数据；入口显示名「选课（beta）」。
+ * 培养方案 2026-10-07 新增（DESIGN §3.26 / §4.41）：课程设置总表（按学年/学期看计划课），
+ * 与学业完成情况同族（一个看计划、一个看达成），排序挨着放。
+ * 教务服务 2026-10-07 新增（DESIGN §3.27）：学生评教（教务 WebView 直达平台）+
+ * 实习基地查看（原生只读页）——两个「直连教务」的功能，不属于已导入的数据。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LearningHubScreen(
@@ -56,6 +65,9 @@ fun LearningHubScreen(
     onOpenScholar: () -> Unit,
     onOpenExam: () -> Unit,
     onOpenSelection: () -> Unit,
+    onOpenCurriculum: () -> Unit,
+    onOpenTeachingEval: () -> Unit,
+    onOpenInternshipBases: () -> Unit,
 ) {
     val context = LocalContext.current
     val noteGroups by remember { Graph.noteRepository(context) }.observeGroups()
@@ -67,6 +79,9 @@ fun LearningHubScreen(
     val scholarGroups by remember { Graph.scholarProgressRepository(context) }.groups
         .collectAsStateWithLifecycle(initialValue = null)
     val scholarCourses by remember { Graph.scholarProgressRepository(context) }.courses
+        .collectAsStateWithLifecycle(initialValue = null)
+    // 培养方案课程设置（DESIGN §4.41）：读全量行算规模，副标题用
+    val curriculumCourses by remember { Graph.curriculumRepository(context) }.courses
         .collectAsStateWithLifecycle(initialValue = null)
     val scholarTotals = remember(scholarGroups, scholarCourses) {
         val systemGroups = scholarGroups?.filter { it.dimension == ScholarDimension.System.id }
@@ -145,6 +160,12 @@ fun LearningHubScreen(
                     icon = HugeIcons.Target01,
                     onClick = onOpenScholar,
                 )
+                SettingItem(
+                    title = "培养方案",
+                    subtitle = curriculumSubtitle(curriculumCourses),
+                    icon = HugeIcons.ListTree,
+                    onClick = onOpenCurriculum,
+                )
             }
 
             SettingsSection(title = "选课") {
@@ -154,6 +175,21 @@ fun LearningHubScreen(
                     subtitle = selectionSubtitle(rounds, selectionRows),
                     icon = HugeIcons.CheckList,
                     onClick = onOpenSelection,
+                )
+            }
+
+            SettingsSection(title = "教务服务") {
+                SettingItem(
+                    title = "学生评教",
+                    subtitle = "直达教务评教平台 · 评完解锁成绩",
+                    icon = HugeIcons.Teacher,
+                    onClick = onOpenTeachingEval,
+                )
+                SettingItem(
+                    title = "实习基地查看",
+                    subtitle = "校内外实习基地 · 从教务查询",
+                    icon = HugeIcons.Building03,
+                    onClick = onOpenInternshipBases,
                 )
             }
         }
@@ -191,6 +227,12 @@ private fun scholarSubtitle(totals: edu.jxslu.schedule.domain.ScholarTotals?): S
     if (totals.required <= 0.0) return "培养方案达成度 · 已修 ${trimCredit(totals.earned)} 学分"
     val line = "已修 ${trimCredit(totals.earned)} / ${trimCredit(totals.required)} 学分"
     return if (totals.remaining > 0.0) "$line · 还需 ${trimCredit(totals.remaining)}" else "$line · 已达成"
+}
+
+/** 培养方案的副标题：有数据报规模（门数 · 学分），没数据说明来源。 */
+private fun curriculumSubtitle(courses: List<CurriculumCourse>?): String {
+    if (courses.isNullOrEmpty()) return "课程设置总表 · 从教务导入"
+    return "${courses.size} 门课 · 共 ${trimCredit(CurriculumRules.totalCredit(courses))} 学分"
 }
 
 /** 学分展示：整数不带小数点（79.0 → 79），小数最多两位。 */
