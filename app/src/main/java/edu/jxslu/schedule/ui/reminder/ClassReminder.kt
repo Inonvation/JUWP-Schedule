@@ -81,6 +81,9 @@ object ClassReminder {
                 val semester = repo.semester.first()
                 val slots = repo.timeSlots.first()
                 val courses = repo.courses.first()
+                // 日期覆盖（调休 / 停课，§4.40）：放假那天不排上课提醒，
+                // 补课那天按借来的课排——与今日页同一口径
+                val overrides = repo.overridesFor()
                 // 上课提醒现在有两个触发点（DESIGN §3.7）：提前量与上课时刻，
                 // 都开着时取更早的排闹钟；核对 Worker 会先补发窗口内的、再重排
                 listOfNotNull(
@@ -90,12 +93,14 @@ object ClassReminder {
                         courses = courses,
                         now = now,
                         leadMinutes = repo.reminderLeadMinutes.first(),
+                        overrides = overrides,
                     )?.triggerAt,
                     nextClassStartPlan(
                         semester = semester,
                         slots = slots,
                         courses = courses,
                         now = now,
+                        overrides = overrides,
                     )?.startAt,
                 ).minOrNull()
             } else null

@@ -33,6 +33,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -80,6 +81,7 @@ import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.GridFont
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.ScheduleOverrides
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TimetablePrefs
@@ -87,6 +89,7 @@ import edu.jxslu.schedule.ui.common.CourseDetailSheet
 import edu.jxslu.schedule.ui.common.CourseEditSheet
 import edu.jxslu.schedule.ui.common.ResumedTickerEffect
 import edu.jxslu.schedule.ui.common.DeleteConfirmDialog
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.GhostCourseCard
 import edu.jxslu.schedule.ui.common.GridCellStyle
 import edu.jxslu.schedule.ui.common.GridCourseCard
@@ -158,6 +161,8 @@ fun WeekScreen(
     var displaySheetOpen by remember { mutableStateOf(false) }
     var shareOpen by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Course?>(null) }
+    // 点「放假 / 补课」表头弹的覆盖详情（DESIGN §4.40）；(week, day)
+    var overrideInfo by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // JSON 文件导入（弹层入口）：读文件 → preview → 目标课表选择弹窗 → importJson，
     // 结果走 Snackbar。目标选择与教务导入共用 ImportTargetDialogHost，语义两处一致。
@@ -459,6 +464,7 @@ fun WeekScreen(
                             allCourses = state.allCourses,
                             slots = state.slots,
                             semester = state.semester,
+                            overrides = state.overrides,
                             isTodayWeek = week == state.todayWeek,
                             todayDay = todayDay,
                             now = state.now,
@@ -478,6 +484,7 @@ fun WeekScreen(
                             showGridLines = state.showGridLines,
                             dateFontSp = dateFontSp,
                             tapBlankToAdd = state.tapBlankToAdd,
+                            onOpenOverrideInfo = { w, d -> overrideInfo = w to d },
                             onAddEmpty = { day, section ->
                                 editing = Course(
                                     id = 0,
@@ -736,7 +743,123 @@ fun WeekScreen(
             onDismiss = { pendingDelete = null },
         )
     }
+
+    // 点「放假 / 补课」表头 → 该日覆盖详情（原有安排 / 借了谁的课 / 日期 / 说明）
+    overrideInfo?.let { (week, day) ->
+        val detail = ScheduleOverrides.detail(
+            week = week,
+            day = day,
+            overrides = state.overrides,
+            courses = state.allCourses,
+            semester = state.semester,
+        )
+        if (detail == null) {
+            overrideInfo = null
+        } else {
+            OverrideInfoDialog(detail = detail, onDismiss = { overrideInfo = null })
+        }
+    }
 }
+
+/** 覆盖详情弹窗：日期 + 类型 + 原有安排 + 实际安排 + 说明（DESIGN §4.40）。 */
+@Composable
+private fun OverrideInfoDialog(detail: ScheduleOverrides.Detail, onDismiss: () -> Unit) {
+    DialogWindowFadeEffect()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                buildString {
+                    val date = detail.date
+                    if (date != null) {
+                        append(date.monthValue).append("月").append(date.dayOfMonth).append("日 ")
+                    }
+                    append("周").append(DAY_NAMES.getOrNull(detail.day - 1) ?: detail.day.toString())
+                    append(" · 第 ").append(detail.week).append(" 周")
+                },
+            )
+        },
+        text = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    if (detail.suspended) "放假 · 教学活动暂停" else "补课 · 按别天的课表上课",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (detail.suspended) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+                detail.source?.let { source ->
+                    Text(
+                        "照搬 第 ${source.week} 周" +
+                            (DAY_NAMES.getOrNull(source.day - 1)?.let { "周$it" } ?: "") +
+                            " 的教学安排",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                OverrideCourseGroup(
+                    label = "原有安排",
+                    courses = detail.originalCourses,
+                    emptyText = "这天本来没有课",
+                )
+                OverrideCourseGroup(
+                    label = "实际安排",
+                    courses = detail.effectiveCourses,
+                    emptyText = "这天不上课",
+                )
+                if (detail.note.isNotBlank()) {
+                    Text(
+                        detail.note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("知道了") }
+        },
+    )
+}
+
+@Composable
+private fun OverrideCourseGroup(label: String, courses: List<Course>, emptyText: String) {
+    Column {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+        if (courses.isEmpty()) {
+            Text(
+                emptyText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
+        } else {
+            courses.forEach { course ->
+                Text(
+                    buildString {
+                        append("· ").append(course.name)
+                        append("　第").append(course.startSection).append('-')
+                        append(course.endSection).append("节")
+                        if (course.position.isNotBlank()) append("　").append(course.position)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+private val DAY_NAMES = listOf("一", "二", "三", "四", "五", "六", "日")
 
 /**
  * 把网格区域的字号倍率收进可排版区间。

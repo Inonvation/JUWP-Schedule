@@ -127,6 +127,8 @@ internal object WidgetSnapshotStore {
         val semester = repo.semester.first()
         val slots = repo.timeSlots.first()
         val courses = repo.courses.first()
+        // 日期覆盖（调休 / 停课，§4.40）：小组件与今日页必须同一口径
+        val overrides = repo.overridesFor()
         val prefs = repo.displayPrefs.first()
         val today = LocalDate.now()
         val now = LocalTimeLike.now()
@@ -137,6 +139,7 @@ internal object WidgetSnapshotStore {
             courses = courses,
             today = today,
             now = now,
+            overrides = overrides,
         )
         // 周网格按当前周次构建；不在学期内时用第 1 周兜底——网格至少给出星期表头与
         // 节次结构，比一整块空白强（课表为空时同样只有骨架，不额外解释）
@@ -153,6 +156,8 @@ internal object WidgetSnapshotStore {
             highlightDay = highlightDay,
             slots = slots,
             now = now,
+            semester = semester,
+            overrides = overrides,
             // 「现在在第几节」只在今天还有课可上时标（焦点课与远课都算——时刻线表示
             // 现在几点，与焦点卡是否显示无关）；今天上完/没课时高亮列已是明天，
             // 在今天画「现在」没意义（也与高亮列语义一致）

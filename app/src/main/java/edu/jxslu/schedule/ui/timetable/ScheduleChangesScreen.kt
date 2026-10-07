@@ -9,15 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -52,10 +49,10 @@ import edu.jxslu.schedule.domain.SchedulePendingChanges
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.ScheduleChangeCard
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
-import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -275,13 +272,19 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     changes.forEachIndexed { index, change ->
-                        ChangeCard(
+                        ScheduleChangeCard(
                             change = change,
                             conflicted = conflicts[index],
                             checked = index in effectiveSelection,
                             onCheckedChange = { checked ->
                                 selected = effectiveSelection.toMutableSet().apply {
                                     if (checked) add(index) else remove(index)
+                                }
+                            },
+                            // 整卡可点切换勾选（与勾选框同一状态，勾选框自身不冒泡）
+                            onRowToggle = {
+                                selected = effectiveSelection.toMutableSet().apply {
+                                    if (!add(index)) remove(index)
                                 }
                             },
                         )
@@ -399,109 +402,5 @@ private fun AlertSwitchRow(
     }
 }
 
-/** 一条差异的卡片：类型徽章 + 课程名 + 变化明细 + 勾选框。 */
-@Composable
-private fun ChangeCard(
-    change: ScheduleDiff.Change,
-    conflicted: Boolean,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    AppCard(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    KindBadge(change.kind)
-                    Spacer(Modifier.size(8.dp))
-                    Text(
-                        text = (change.new ?: change.old)?.name.orEmpty(),
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.size(6.dp))
-                when (change.kind) {
-                    ScheduleDiff.ChangeKind.MODIFIED -> {
-                        ChangeDetail("原", change.old)
-                        ChangeDetail("新", change.new)
-                    }
-                    ScheduleDiff.ChangeKind.ADDED -> ChangeDetail("教务新增", change.new)
-                    ScheduleDiff.ChangeKind.REMOVED -> ChangeDetail("教务已无此课", change.old)
-                }
-                if (conflicted) {
-                    Spacer(Modifier.size(6.dp))
-                    Text(
-                        "与你修改过的课冲突，采纳会覆盖你的修改",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                }
-            }
-            Checkbox(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                colors = CheckboxDefaults.colors(
-                    disabledCheckedColor = MaterialTheme.colorScheme.outlineVariant,
-                ),
-            )
-        }
-    }
-}
+/** 一条差异的卡片已抽到 [edu.jxslu.schedule.ui.common.ScheduleChangeCard] 共用（2026-10-06）。 */
 
-@Composable
-private fun KindBadge(kind: ScheduleDiff.ChangeKind) {
-    val (text, color) = when (kind) {
-        ScheduleDiff.ChangeKind.MODIFIED -> "调整" to MaterialTheme.colorScheme.primary
-        ScheduleDiff.ChangeKind.ADDED -> "新增" to MaterialTheme.semanticColors.success
-        ScheduleDiff.ChangeKind.REMOVED -> "删除" to MaterialTheme.colorScheme.error
-    }
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = color,
-    )
-}
-
-/** 一行课程明细：标签 + 星期节次 / 教师 / 地点 / 周次。 */
-@Composable
-private fun ChangeDetail(label: String, course: Course?) {
-    if (course == null) return
-    Text(
-        text = buildString {
-            append(label).append('：')
-            append("周").append(dayName(course.day))
-            append(" 第${course.startSection}-${course.endSection}节")
-            if (course.position.isNotBlank()) append(" · ").append(course.position)
-            if (course.teacher.isNotBlank()) append(" · ").append(course.teacher)
-            append(" · ").append(weeksText(course.weeks))
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
-
-private fun dayName(day: Int): String =
-    listOf("一", "二", "三", "四", "五", "六", "日").getOrNull(day - 1) ?: day.toString()
-
-/** 周次集合压缩成「1-3,5,8-16」的紧凑写法；连续段才合并，超过 30 周截断为「…」。 */
-private fun weeksText(weeks: Set<Int>): String {
-    if (weeks.isEmpty()) return "无周次"
-    val sorted = weeks.sorted()
-    val parts = mutableListOf<String>()
-    var start = sorted.first()
-    var prev = start
-    for (w in sorted.drop(1)) {
-        if (w == prev + 1) {
-            prev = w
-        } else {
-            parts += if (start == prev) "$start" else "$start-$prev"
-            start = w
-            prev = w
-        }
-    }
-    parts += if (start == prev) "$start" else "$start-$prev"
-    return "第${parts.joinToString(",")}周"
-}

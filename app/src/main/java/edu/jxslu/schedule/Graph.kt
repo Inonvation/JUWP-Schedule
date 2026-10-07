@@ -3,6 +3,8 @@ package edu.jxslu.schedule
 import android.content.Context
 import java.io.File
 import edu.jxslu.schedule.data.local.JuwDatabase
+import edu.jxslu.schedule.data.ai.AiCredentialStore
+import edu.jxslu.schedule.data.ai.AiScheduleClient
 import edu.jxslu.schedule.data.kqcx.KqcxAuthClient
 import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
 import edu.jxslu.schedule.data.kqcx.KqxCredentialStore
@@ -29,6 +31,8 @@ import edu.jxslu.schedule.data.ujing.UjingRepository
 import edu.jxslu.schedule.data.ujing.UjingSessionStore
 import edu.jxslu.schedule.data.ujing.UjingDraftStore
 import edu.jxslu.schedule.data.ujing.UjingHistoryStore
+import edu.jxslu.schedule.data.repo.AiApplyHistoryStore
+import edu.jxslu.schedule.data.repo.AiImageStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
 import edu.jxslu.schedule.data.repo.CampusCalendarStore
 import edu.jxslu.schedule.data.repo.CrashReporter
@@ -112,6 +116,15 @@ object Graph {
     private var kqcxSession: KqcxSessionRepository? = null
 
     @Volatile
+    private var aiCredentialStore: AiCredentialStore? = null
+
+    @Volatile
+    private var aiScheduleClient: AiScheduleClient? = null
+
+    @Volatile
+    private var aiApplyHistoryStore: AiApplyHistoryStore? = null
+
+    @Volatile
     private var zoneCacheStore: ZoneCacheStore? = null
     @Volatile
     private var qzxyDeviceStore: QzxyDeviceStore? = null
@@ -175,6 +188,9 @@ object Graph {
 
     @Volatile
     private var attachmentStore: AttachmentStore? = null
+
+    @Volatile
+    private var aiImageStore: AiImageStore? = null
 
     @Volatile
     private var scheduleBackgroundStore: ScheduleBackgroundStore? = null
@@ -379,6 +395,16 @@ object Graph {
     fun attachmentStore(context: Context): AttachmentStore =
         attachmentStore ?: synchronized(this) {
             attachmentStore ?: AttachmentStore(context.applicationContext).also { attachmentStore = it }
+        }
+
+    /**
+     * AI 调课的图片附件存储单例（DESIGN §4.39）：应用私有目录 ai_img，**会话级**。
+     * 与 [attachmentStore] 分开：生命周期完全不同（这个不做引用追踪，新会话/冷启动即清），
+     * 压缩口径也不同（base64 进请求体，要更紧）。无网络出口。
+     */
+    fun aiImageStore(context: Context): AiImageStore =
+        aiImageStore ?: synchronized(this) {
+            aiImageStore ?: AiImageStore(context.applicationContext).also { aiImageStore = it }
         }
 
     /**
@@ -590,6 +616,35 @@ object Graph {
     fun zoneCacheStore(context: Context): ZoneCacheStore =
         zoneCacheStore ?: synchronized(this) {
             zoneCacheStore ?: ZoneCacheStore(context.applicationContext).also { zoneCacheStore = it }
+        }
+
+    /**
+     * AI 调课的 API Key 加密存储单例（DESIGN §4.39，2026-10-06）。
+     *
+     * **必须单例**：EncryptedSharedPreferences 首次解密要几十毫秒，配置页与主页面
+     * 各持一份实例会各建一次、各自缓存，出现「一处写另一处读不到」（与
+     * [credentialVault] 同一口径）。
+     */
+    fun aiCredentialStore(context: Context): AiCredentialStore =
+        aiCredentialStore ?: synchronized(this) {
+            aiCredentialStore ?: AiCredentialStore(context.applicationContext)
+                .also { aiCredentialStore = it }
+        }
+
+    /** AI 调课服务客户端单例（DESIGN §4.39）：OkHttp 连接池只建一次；无日志拦截器。 */
+    fun aiScheduleClient(context: Context): AiScheduleClient =
+        aiScheduleClient ?: synchronized(this) {
+            aiScheduleClient ?: AiScheduleClient.create().also { aiScheduleClient = it }
+        }
+
+    /**
+     * AI 调课的应用留痕单例（DESIGN §4.39，2026-10-07）：filesDir 一份 JSON。
+     * 主页面与「调课记录」页共用——两处都要看「这条记录是否已被撤销」，两份实例会分叉。
+     */
+    fun aiApplyHistoryStore(context: Context): AiApplyHistoryStore =
+        aiApplyHistoryStore ?: synchronized(this) {
+            aiApplyHistoryStore ?: AiApplyHistoryStore(context.applicationContext)
+                .also { aiApplyHistoryStore = it }
         }
 
     /**

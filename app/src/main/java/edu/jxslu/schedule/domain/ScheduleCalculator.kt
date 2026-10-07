@@ -119,8 +119,44 @@ object ScheduleCalculator {
                 .minByOrNull { it.number }
     }
 
-    fun coursesOnDay(courses: List<Course>, week: Int, day: Int): List<Course> =
-        courses.filter { it.day == day && week in it.weeks }.sortedBy { it.startSection }
+    /**
+     * 某 (周次, 星期) 槽位的课。**这是「(周次, 星期) → 课程」的唯一入口**——
+     * 今日页 / 小组件 / 提醒 / 边界闹钟 / 周次网格全部走它，日期覆盖
+     * （调休 · 停课，[ScheduleOverrides]）只在这一处生效，避免各页口径分叉。
+     *
+     * [plan] 为 [ScheduleOverrides.plan] 的产物：
+     * - 空表 = 无覆盖，行为与旧版逐字一致；
+     * - `Suspended` = 该槽位没有课；
+     * - `Follow(week, weekday)` = 借源槽位的课。**不递归**：源槽位自己的覆盖不参与，
+     *   否则「第 5 周周一停课 + 第 4 周周日上第 5 周周一的课」会把借来的课一起清空。
+     */
+    fun coursesOnDay(
+        courses: List<Course>,
+        week: Int,
+        day: Int,
+        plan: Map<ScheduleOverrides.Slot, ScheduleOverrides.Directive> = emptyMap(),
+    ): List<Course> = when (val directive = plan[ScheduleOverrides.Slot(week, day)]) {
+        null -> courses.filter { it.day == day && week in it.weeks }.sortedBy { it.startSection }
+
+        ScheduleOverrides.Directive.Suspended -> emptyList()
+
+        is ScheduleOverrides.Directive.Follow ->
+            courses.filter { it.day == directive.weekday && directive.week in it.weeks }
+                .sortedBy { it.startSection }
+    }
+
+    /**
+     * 周次网格用：本页每一列该画的课，`day` 是**列**（可能与该课自己的 `day` 不同
+     * ——调休借来的课画在目标列上）。逐列走 [coursesOnDay]，与今日页同源。
+     */
+    fun weekColumns(
+        courses: List<Course>,
+        week: Int,
+        visibleDays: List<Int>,
+        plan: Map<ScheduleOverrides.Slot, ScheduleOverrides.Directive> = emptyMap(),
+    ): List<Pair<Int, Course>> = visibleDays.flatMap { day ->
+        coursesOnDay(courses, week, day, plan).map { day to it }
+    }
 
     /**
      * 可见的星期列，按显示顺序（1=周一 … 7=周日）。

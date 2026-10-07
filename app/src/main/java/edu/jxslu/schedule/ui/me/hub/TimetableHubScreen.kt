@@ -47,6 +47,7 @@ import edu.jxslu.schedule.ui.common.SettingsTag
 import edu.jxslu.schedule.ui.me.MeViewModel
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.Alert02
 import me.rerere.hugeicons.stroke.CalendarSync
 import me.rerere.hugeicons.stroke.Clock01
@@ -77,6 +78,8 @@ fun TimetableHubScreen(
     onOpenDataSettings: () -> Unit,
     onOpenCourseTweak: () -> Unit,
     onOpenScheduleChanges: () -> Unit,
+    /** AI 调课（DESIGN §4.39）：粘贴调课通知 → 模型给结构化建议 → 勾选落库。 */
+    onOpenAiSchedule: () -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -146,6 +149,12 @@ fun TimetableHubScreen(
                     subtitle = "与教务最新课表比对，发现变动提醒并可选合并",
                     icon = HugeIcons.Alert02,
                     onClick = onOpenScheduleChanges,
+                )
+                SettingItem(
+                    title = "AI 调课",
+                    subtitle = "粘贴调课通知，由 AI 给出改动建议 · 需自备 API Key",
+                    icon = HugeIcons.AiBrain01,
+                    onClick = onOpenAiSchedule,
                 )
             }
 

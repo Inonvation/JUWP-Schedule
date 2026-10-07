@@ -26,8 +26,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         RideRecordEntity::class,
         CourseSelectionEntity::class,
         InboxMessageEntity::class,
+        DateOverrideEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -46,6 +47,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun rideRecordDao(): RideRecordDao
     abstract fun courseSelectionDao(): CourseSelectionDao
     abstract fun inboxDao(): InboxDao
+    abstract fun dateOverrideDao(): DateOverrideDao
 
     companion object {
 
@@ -550,6 +552,36 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v18 → v19（2026-10-06）：新表 `date_overrides`（日期覆盖：调休 / 停课，
+         * DESIGN §4.40）。非 destructive 的 CREATE TABLE / CREATE INDEX。
+         *
+         * `sourceWeek` / `sourceWeekday` 可空、实体无 Kotlin 默认值 → 预期 schema 不带
+         * DEFAULT，建表照写裸 `INTEGER`；`note` 非空且**实体特意不给默认值**，所以也是
+         * 裸 `TEXT NOT NULL`——给 Kotlin 默认值就必须写 `DEFAULT ''`，否则校验崩溃
+         * （v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列三处老坑）。
+         * 索引名与实体 `@Index("timetableId")` 逐字对齐，漏声明同样校验崩溃。
+         */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS date_overrides (" +
+                        "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, " +
+                        "timetableId INTEGER NOT NULL, " +
+                        "fromDate TEXT NOT NULL, " +
+                        "toDate TEXT NOT NULL, " +
+                        "kind TEXT NOT NULL, " +
+                        "sourceWeek INTEGER, " +
+                        "sourceWeekday INTEGER, " +
+                        "note TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_date_overrides_timetableId " +
+                        "ON date_overrides (timetableId)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -578,6 +610,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_15_16,
                         MIGRATION_16_17,
                         MIGRATION_17_18,
+                        MIGRATION_18_19,
                     )
                     .build()
                     .also { instance = it }

@@ -4,6 +4,9 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.ScheduleOverride
+import edu.jxslu.schedule.domain.ScheduleOverrides
+import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
@@ -170,6 +173,10 @@ fun buildWidgetWeek(
     highlightDay: Int?,
     slots: List<TimeSlot>,
     now: LocalTimeLike,
+    /** 日期覆盖摊平要用的学期配置（§4.40）；null = 不应用覆盖。 */
+    semester: SemesterConfig? = null,
+    /** 日期覆盖（调休 / 停课，§4.40）：与今日页 / 周网格同一个 coursesOnDay 口径。 */
+    overrides: List<ScheduleOverride> = emptyList(),
     /** 是否标记「此刻在第几节」；今天还有课可上才传 true（见 [WidgetWeek.nowSection]）。 */
     markNow: Boolean = true,
     /** 「现在」落在哪一天；默认与 [highlightDay] 同源（今天还有课 → 今天）。 */
@@ -177,11 +184,14 @@ fun buildWidgetWeek(
 ): WidgetWeek {
     val sectionCount = maxOf(DefaultSectionCount, slots.maxOfOrNull { it.number } ?: 0)
     val days = ScheduleCalculator.visibleDays(showSaturday, showSunday)
-    val inWeek = courses.filter { week in it.weeks && filter.matches(it.kind) }
+    // 逐列走覆盖感知的 coursesOnDay：桌面小组件不能另算一套「周次 × 星期」过滤，
+    // 否则调休那天小组件与今日页会给出不同的课（§4.40）
+    val plan = ScheduleOverrides.plan(overrides, semester)
 
     val blocks = days.flatMap { day ->
         var lastEnd = 0
-        inWeek.filter { it.day == day }
+        ScheduleCalculator.coursesOnDay(courses, week, day, plan)
+            .filter { filter.matches(it.kind) }
             .sortedWith(compareBy({ it.startSection }, { it.endSection }))
             .mapNotNull { course ->
                 val start = course.startSection.coerceIn(1, sectionCount)

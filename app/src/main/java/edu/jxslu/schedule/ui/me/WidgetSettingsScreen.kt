@@ -572,10 +572,11 @@ private fun rememberPreviewSnapshot(): WidgetSnapshot? {
             val semester = repo.semester.first()
             val slots = repo.timeSlots.first()
             val courses = repo.courses.first()
+            val overrides = repo.overridesFor()
             val prefs = repo.displayPrefs.first()
             val today = LocalDate.now()
             val now = LocalTimeLike.now()
-            val state = buildTodayState(semester, slots, courses, today, now)
+            val state = buildTodayState(semester, slots, courses, today, now, overrides)
             val week = if (state.inTerm) state.week else 1
             val highlight = state.focus?.day
                 ?: state.tomorrowDay.takeIf { state.tomorrowVisible }
@@ -589,6 +590,8 @@ private fun rememberPreviewSnapshot(): WidgetSnapshot? {
                     filter = prefs.courseFilter,
                     highlightDay = highlight,
                     slots = slots,
+                    semester = semester,
+                    overrides = overrides,
                     now = now,
                     markNow = state.focus != null || state.remaining.isNotEmpty(),
                     nowDay = state.day,

@@ -91,12 +91,14 @@ internal object TodayWidgetRefresh {
         val semester = repo.semester.first()
         val slots = repo.timeSlots.first()
         val courses = repo.courses.first()
+        // 日期覆盖（调休 / 停课，§4.40）：放假当天没有边界点，顺延到次日
+        val overrides = repo.overridesFor()
         val today = LocalDate.now()
         val now = LocalTimeLike.now()
 
         val zone = ZoneId.systemDefault()
         val triggerAtMillis: Long
-        val boundary = nextTodayBoundaryMinutes(semester, slots, courses, today, now)
+        val boundary = nextTodayBoundaryMinutes(semester, slots, courses, today, now, overrides)
         if (boundary != null) {
             triggerAtMillis = today.atStartOfDay(zone).plusMinutes(boundary.toLong()).toInstant().toEpochMilli()
         } else {

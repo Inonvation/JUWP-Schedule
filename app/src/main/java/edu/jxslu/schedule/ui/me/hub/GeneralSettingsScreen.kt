@@ -60,6 +60,7 @@ import edu.jxslu.schedule.ui.me.MeViewModel
 import edu.jxslu.schedule.ui.theme.paletteSwatch
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.Blur
 import me.rerere.hugeicons.stroke.ColorPicker
 import me.rerere.hugeicons.stroke.Droplet
@@ -103,6 +104,8 @@ fun GeneralSettingsScreen(
     onBack: () -> Unit,
     /** 功能开关节 → 快捷方式编辑页（原扩展服务入口迁入）。 */
     onOpenShortcuts: () -> Unit,
+    /** AI 服务配置页（DESIGN §4.39）：地址 · 模型 · API Key · 教师名脱敏。 */
+    onOpenAiSettings: () -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -235,6 +238,20 @@ fun GeneralSettingsScreen(
                     checked = strongReminderVibration,
                     onCheckedChange = viewModel::setStrongReminderVibration,
                     icon = HugeIcons.Notification03,
+                )
+            }
+
+            // AI 调课服务（DESIGN §4.39，2026-10-06）：地址 / 模型 / API Key / 教师名脱敏。
+            // 入口行而不是开关行——配置项多，收进独立二级页；API Key 落加密存储不进 DataStore
+            SettingsSection(
+                title = "AI",
+                subtitle = "AI 调课的服务与隐私设置",
+            ) {
+                SettingItem(
+                    title = "AI 调课服务",
+                    subtitle = "服务地址 · 模型 · API Key · 教师名脱敏",
+                    icon = HugeIcons.AiBrain01,
+                    onClick = onOpenAiSettings,
                 )
             }
 

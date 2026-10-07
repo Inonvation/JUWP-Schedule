@@ -26,11 +26,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +41,8 @@ import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.GridFont
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.ScheduleOverride
+import edu.jxslu.schedule.domain.ScheduleOverrides
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.ui.common.GhostCourseCard
@@ -144,6 +148,7 @@ internal fun WeekPage(
     allCourses: List<Course>,
     slots: List<TimeSlot>,
     semester: SemesterConfig?,
+    overrides: List<ScheduleOverride>,
     isTodayWeek: Boolean,
     todayDay: Int,
     now: LocalTimeLike,
@@ -155,6 +160,8 @@ internal fun WeekPage(
     tapBlankToAdd: Boolean,
     onAddEmpty: (day: Int, section: Int) -> Unit,
     onOpenCourse: (Course) -> Unit,
+    /** 点「放假 / 补课」表头：弹该日的覆盖详情（DESIGN §4.40）。 */
+    onOpenOverrideInfo: (week: Int, day: Int) -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val primary = MaterialTheme.colorScheme.primary
@@ -164,20 +171,31 @@ internal fun WeekPage(
     // 列号一律由 visibleDays 的下标决定，不能用 day-1：
     // 单独隐藏周六后，周日在可见序列里是第 6 列（下标 5）而不是第 7 列。
     val days = visibleDays.size
-    val weekCourses = remember(week, allCourses) {
-        ScheduleCalculator.coursesInWeek(allCourses, week)
+    // 日期覆盖（调休 / 停课，§4.40）：摊平成 plan 后逐列走 coursesOnDay——
+    // 与今日页 / 小组件同一个入口，**不要**在这里另写一套 `week in it.weeks` 过滤
+    val plan = remember(semester, overrides) { ScheduleOverrides.plan(overrides, semester) }
+    val cells = remember(week, allCourses, visibleDays, plan) {
+        ScheduleCalculator.weekColumns(allCourses, week, visibleDays, plan)
     }
-    val otherWeekCourses = remember(week, allCourses) {
-        allCourses.filter { week !in it.weeks }
+    // 本页实际画出来的课（含调休借来的）：配色去重与时刻线收口都按它算
+    val cellCourses = remember(cells) { cells.map { it.second }.distinctBy { it.id } }
+    // 非本周灰态：调休借来的课已经画在目标列上了，不能再作为「非本周」灰态出现一次
+    val otherWeekCourses = remember(week, allCourses, cells) {
+        val pulledIn = cells.map { it.second }.filter { week !in it.weeks }.toSet()
+        allCourses.filter { week !in it.weeks && it !in pulledIn }
     }
-    val occupied = remember(weekCourses) {
-        weekCourses.map { it.day to it.startSection }.toSet()
+    val occupied = remember(cells) {
+        cells.map { (day, course) -> day to course.startSection }.toSet()
     }
     val todayVisible = isTodayWeek && todayDay in visibleDays
 
     Column(Modifier.fillMaxSize()) {
-        // ---- 星期表头（WakeUp 式：周几取单字，下挂日期；今日整列加粗深色，不做圆底徽章——
-        //      7 列窄列里徽章会把日期挤出对齐，今日列已有时刻线定位，不缺这一处强调）
+        // ---- 星期表头（WakeUp 式：周几取单字，下挂日期；今日整列加粗深色 + 一块底色，
+        //      不做圆底徽章——7 列窄列里徽章会把日期挤出对齐，底色不改文字度量，安全）
+        //
+        // **日期永远不被「放假 / 补课」顶掉**（2026-10-06 用户实测）：今天正好落在停课区间里时，
+        // 表头只剩「放假」、今日强调又被压到 alpha 0.25，于是「今天」和「几号」同时消失。
+        // 现在第二行恒为「日期 + 单字标记」（10/6假 / 10/6补），今日的加粗与满不透明度优先于覆盖态。
         Row(
             Modifier
                 .height(layout.dayHeaderHeight)
@@ -187,24 +205,60 @@ internal fun WeekPage(
                 val label = dayLabels[day - 1]
                 val isToday = todayVisible && day == todayDay
                 val date = weekDate(semester, week, day)
+                // 日期覆盖的两种标记（§4.40）：放假 = 这天没课；补课 = 这天上了别天的课
+                val suspended = ScheduleOverrides.isSuspended(plan, week, day)
+                val followed = ScheduleOverrides.followedFrom(plan, week, day) != null
                 Column(
                     Modifier
                         .width(layout.dayWidth)
-                        .height(layout.dayHeaderHeight),
+                        .height(layout.dayHeaderHeight)
+                        .padding(horizontal = 1.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(
+                            if (isToday) primary.copy(alpha = 0.14f) else Color.Transparent,
+                        )
+                        // 有覆盖的那天表头可点：弹「原有安排 / 借了谁的课 / 日期」详情
+                        .then(
+                            if (suspended || followed) {
+                                Modifier.clickable { onOpenOverrideInfo(week, day) }
+                            } else {
+                                Modifier
+                            },
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
                         text = label.removePrefix("周"),
                         fontSize = (dateFontSp ?: 12f).sp,
+                        maxLines = 1,
                         fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isToday) onSurface else onSurface.copy(alpha = 0.5f),
+                        color = when {
+                            // 今日的强调优先于覆盖态：不然放假那天看不出是今天
+                            isToday -> onSurface
+                            suspended -> onSurface.copy(alpha = 0.35f)
+                            else -> onSurface.copy(alpha = 0.5f)
+                        },
                     )
                     Text(
-                        text = date?.format(SHORT_DAY_FORMAT) ?: "—",
+                        // 日期恒在；放假 / 补课降级成不占位的单字标记（详情在点开的弹窗里）
+                        text = buildString {
+                            append(date?.format(SHORT_DAY_FORMAT) ?: "—")
+                            when {
+                                suspended -> append("假")
+                                followed -> append("补")
+                            }
+                        },
                         fontSize = (dateFontSp?.let { it * 0.92f } ?: 11f).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
                         fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isToday) onSurface else onSurface.copy(alpha = 0.4f),
+                        color = when {
+                            isToday -> onSurface
+                            suspended -> MaterialTheme.colorScheme.error.copy(alpha = 0.75f)
+                            followed -> primary
+                            else -> onSurface.copy(alpha = 0.4f)
+                        },
                     )
                 }
             }
@@ -296,13 +350,13 @@ internal fun WeekPage(
             // ---- 本周课程
             // 周内撞色兜底：学期级 16 色不够分时（理论 + 实验课混排），同一周里不同课名可能共用颜色，
             // 渲染时就地换成当周空闲色；onOpenCourse 仍传原始 course——存储色才是权威，避免编辑时把周内替色写回库
-            val colorOverrides = remember(weekCourses) {
-                ScheduleCalculator.weekColorOverrides(weekCourses)
+            val colorOverrides = remember(cellCourses) {
+                ScheduleCalculator.weekColorOverrides(cellCourses)
             }
-            weekCourses
-                .sortedWith(compareBy({ it.day }, { it.startSection }))
-                .forEach { course ->
-                    val column = ScheduleCalculator.columnOf(visibleDays, course.day)
+            cells
+                .sortedWith(compareBy({ it.first }, { it.second.startSection }))
+                .forEach { (columnDay, course) ->
+                    val column = ScheduleCalculator.columnOf(visibleDays, columnDay)
                         ?: return@forEach
                     val override = colorOverrides[course.name]
                     val display = if (override != null) course.copy(colorIndex = override) else course
@@ -343,10 +397,14 @@ internal fun WeekPage(
             // ---- 当前时刻线（显示设置可关）。列号同样走 visibleDays 下标。
             if (todayVisible && showNowLine) {
                 val todayColumn = ScheduleCalculator.columnOf(visibleDays, todayDay) ?: 0
-                // 终点收口到今日最后一节课：weekCourses 已是当前筛选口径，
-                // 被筛掉的课不参与收口，避免「线还挂着、课却看不见」的错位
-                val dayEnd = remember(weekCourses, slots, todayDay) {
-                    ScheduleCalculator.dayLastEndMinutes(weekCourses, slots, todayDay)
+                // 终点收口到今日最后一节课：cells 已是覆盖 + 筛选后的口径，
+                // 被筛掉的课不参与收口，避免「线还挂着、课却看不见」的错位。
+                // 按**列**取课（不用 dayLastEndMinutes 的 `it.day == day`）——调休那天
+                // 画的是借来的课，它们自己的 day 不是今天
+                val dayEnd = remember(cells, slots, todayDay) {
+                    cells.filter { it.first == todayDay }
+                        .mapNotNull { ScheduleCalculator.courseEndMinutes(slots, it.second) }
+                        .maxOrNull()
                 }
                 nowMarker(slots, layout, now, dayEnd)?.let { marker ->
                     Box(

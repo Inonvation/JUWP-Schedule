@@ -1,8 +1,8 @@
-# DESIGN §4.33–§4.38 · 技术架构：提醒 · 校历 · 选课 · U净 · 收件箱
+# DESIGN §4.33–§4.40 · 技术架构：提醒 · 校历 · 选课 · U净 · 收件箱 · AI 调课
 
 > 本文档是 [DESIGN.md](../DESIGN.md) 的拆分件。代码注释里的「DESIGN §x.y」章节号一字未改，索引见 DESIGN.md 的映射表。
 
-## 4. 技术架构（续 · §4.33–§4.38）
+## 4. 技术架构（续 · §4.33–§4.40）
 
 ### 4.33 成绩/考试变动提醒（2026-09-30，P6；成绩侧设置入口在成绩页齿轮、考试侧在考试页）
 
@@ -406,5 +406,212 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 过期即无用，留痕只堆垃圾；收件箱只收「可回查的事实」。教务通知公告没有抓取链路，
 不收。本机 Room 存储、不云同步、随重装清零。开关语义：各链自己的运行开关关了 →
 链不跑 → 不入箱；链在跑但系统通知关了 → 照常入箱（这正是收件箱相对通知的增量价值）。
+
+---
+
+### 4.39 AI 调课（2026-10-06，P6；UI 见 §3.25）
+
+用户自备 OpenAI 兼容服务的「调课通知 → 结构化改动 → 勾选落库」链路，**单页工作单**
+（不做对话，2026-10-07 口径）。红线与口径见 `.agents/rules/ai-schedule.md`，这里只列结构。
+
+> **参考来源的许可证边界**：界面形态参考了 rikkahub，但它是 **AGPL-3.0**、本项目是 MIT。
+> 只借鉴交互形态与结构思路，**代码一律自己写**（与项目对 NcepuJw 的既有口径一致）。
+
+**分层**：
+
+| 件 | 职责 |
+|----|------|
+| `domain/AiSchedulePrompt` | system 提示（**禁客套**）+ **编号清单**（1 起始）+ 学期日历 + 教师名脱敏 + `overridesBrief`（已生效的日期安排）。纯 JVM |
+| `domain/AiScheduleTool` | 工具 JSON Schema（`PARAMETERS_JSON`，含 `readback`）+ `tool_calls[].function.arguments` → `ScheduleDiff.Change` + `parsePartial`（流式增量）。纯 JVM |
+| `domain/AiScheduleConfig` | 默认地址 / 默认模型 / 备选模型 / `looksVisionModel`（视觉模型**关键字建议**） |
+| `domain/ScheduleUndo` | 撤销的反向规划（纯函数，JVM 可测）+ `AppliedEntry` |
+| `data/ai/AiScheduleClient` | `/chat/completions`（流式，支持 `images` → 多模态 `content` 数组）与 `/models`；**无日志拦截器** |
+| `data/ai/AiCredentialStore` | API Key 加密存储（`secure_ai`） |
+| `data/repo/AiImageStore` | AI 图片（`filesDir/ai_img/`，**会话级**，口径 1600 / q80 / 强制 JPEG / 上限 4 张） |
+| `data/repo/AiApplyHistoryStore` | AI 调课应用留痕（`filesDir/ai_apply_history.json`，CAP 50、新在前；栈式撤销判据 `latestUndoable`；存档行 = `ScheduleCourseRow`，带行 id 与自定义时间） |
+| `ui/ai/AiChatViewModel` + `AiChatScreen` + `AiNoticeCard` + `AiProposalCard` | 单页工作单主页面（2026-10-07 v2：通知卡 + 上次应用条 + 结果区 + 贴底动作条；壳与两张卡拆三个文件） |
+| `ui/ai/AiChatModels` | 工作单状态（`AiWorkState` / `AiPhase` / `AiAppliedReceipt` / `aiBarSpec` / `noticeDirty` / `aiHistorySummary`；回执跨轮保留，`proposalSeq` 判归属，`historyId` 对留痕） |
+| `ui/ai/AiHistoryViewModel` + `AiHistoryScreen` | 「调课记录」页（`SubpageScreen.AI_HISTORY`）：跨会话撤销，只允许撤最新一条未撤销 |
+| `ui/ai/AiThumb` | AI 图片缩略图 + LRU 缓存；全屏看大图走 `ImageViewerDialog`（`ImageSource.AiNotice`） |
+| `ui/ai/SchedulePreviewGrid` | 预览网格（纯渲染；`changedCellSet` + `previewWeeksOf` 两个伴生纯函数） |
+| `ui/ai/AiSettingsViewModel` + `AiSettingsScreen` | 配置页（含「能力 · 支持图片识别」） |
+
+**工具调用**：工具名 `propose_schedule_changes`，请求体带 `tools` +
+**指定函数名的 `tool_choice`**（强制调用）。`modify` / `remove` 只认编号
+（`existingIndex`），`old` 由 App 从本机课表取——**不采信模型回抄的旧字段**，
+否则 `ScheduleDiff.fingerprint` 匹配不上就静默跳过。编号基准与发给模型的清单同源同序
+（当前课表的**非考试**条目）。`readback` 是**给 UI 用**的字段，不参与落库；
+`suggestions` / 追问链（`previousJson`、`requirement` 诉求段）已随对话式**整链删除**
+（2026-10-07 简化）。
+
+**DeepSeek 专有**：`thinking` 默认开，而指定函数名的 `tool_choice` 在思考模式下返回
+**400**——档位关闭时请求体带 `thinking: {"type": "disabled"}` + 指定函数名；档位开启时
+退 `tool_choice: auto` + prompt 要求调工具 + `extractJson` 正文兜底。这两个字段
+**只对 `baseUrl` 含 `deepseek` 的端点发**（其它 OpenAI 兼容服务不认识该字段）。
+默认 `baseUrl` `https://api.deepseek.com/v1`、默认模型 `deepseek-flash`（现行官方名 = V4.1-Flash，2026-09-10 发布、官方多模态；`deepseek-v4-flash` 是 legacy 别名，落盘旧值读取时迁回现行默认），均可改。
+
+**解析防御**：模型幻觉逐条丢弃而不是整批失败——越界编号 / 缺必填字段 / 非法取值 /
+修改前后指纹一致 / 与已生效的日期安排等价 → 进 `Result.rejected`；模型没走工具调用时
+先从正文 `extractJson` 抽配对完整的 JSON 再解析，再不行把原文放进 `message`，**永不空屏**。
+上限：节次 1–11、周次 1–30、星期 1–7。
+
+**落库**：`ScheduleRepository.applyLocalChanges`——2026-10-06 从 `applyScheduleChanges`
+拆出**唯一写实现** `applyChangeSet`（事务内逐条删/改/增，不碰基线），
+`applyScheduleChanges` = 它 + `refreshBaselineFromDb`（调课检测合并语义，行为不变）；
+`applyLocalChanges` = 它 + 同事务内写日期覆盖，返回 `LocalApplyResult(report, overrideIds)`
+（**不推基线、不清已阅指纹**）。每条真正落库的改动记成 `AppliedEntry`（`before` / `after`），
+撤销走 `ScheduleUndo.plan` 的**倒序**反向事务（`undoLocalChanges`，课表 + 覆盖同一事务）。
+
+**图片**（2026-10-06）：选图 / 剪贴板 → `AiImageStore`（`ImageImport` 加 `forceJpeg`
+与 **EXIF 方向转正**——后者一并修好了笔记附件与课表背景图的横拍问题）→ 发送时 base64 成
+`data:image/jpeg;base64,…` → `content` 升成 `[{type:"text"},{type:"image_url"}]`
+（纯文本时仍是字符串）。能力判定探测不了（模型名用户手填、上游不给标记），
+所以是**默认关**的显式开关 `ai_supports_image` + `looksVisionModel` 打勾建议。
+
+**凭证与隐私**：API Key 落 `secure_ai`（EncryptedSharedPreferences + Keystore 自愈），
+不进 DataStore；`secure_ai.xml` 已登记进 `backup_rules.xml` 与 `data_extraction_rules.xml`
+的 cloud / device-transfer 三段。首次使用先弹隐私确认（`ai_privacy_ack`，声明类
+`AlertDialog`）；教师名脱敏默认开。**会话与图片都不落盘**。
+
+**偏好键**（DataStore，各自单流、不进 `baseDisplayPrefs`）：`ai_base_url` / `ai_model` /
+`ai_mask_teacher` / `ai_privacy_ack` / `ai_thinking_effort` / `ai_show_reasoning` /
+`ai_supports_image`。
+
+**测试**：`AiScheduleToolTest` 17 例（编号越界、缺字段、非法取值、前后一致、未知类型、
+非 JSON 整批拒、`extractJson`、overrides 解析与被拒）+ `AiSchedulePromptTest` 8 例
++ `ScheduleOverridesTest` 18 例 + `ScheduleDiffPreviewTest` 6 例 +
+**`AiScheduleChatTest` 26 例**（readback、流式不取半截、视觉预判、图片类失败判定、
+schema 声明、勾选默认全勾与撤销态、空串字段当未提供、已生效安排的去重与 prompt 段）+
+**`ScheduleUndoTest` 11 例**（倒序、逐类型反向、脏条目跳过、状态闸、REMOVED 的 mergeKey 闸）+
+**`AiWorkflowTest` 7 例**（底栏动作映射、空结果换主按钮、FAILED 次按钮、
+`noticeDirty`、`previewWeeksOf`、回执跨轮归属、记录摘要）+ **`AiApplyHistoryStoreTest`
+8 例**（列表维护 / 栈式判据 / 已删课表不挡栈 / JSON 往返保真：行 id 与自定义时间不许丢）。
+
+**2026-10-06 二轮**（用户实测「校历调休通知答出『不做改动』」）：见 §4.40。
+**2026-10-06 三轮**（用户实测「不是流式」「看不出课表会变成什么样」「思考顶掉结果」）：
+改对话式（§3.25）、`parsePartial` 增量解析、结果卡 + 迷你课表、思考限高、
+点表头看覆盖详情。
+
+**2026-10-06 四轮**（三路独立复查 + 逐条修）：改动集中在「承诺了却没接线 / 会静默毁数据」
+两类，逐条口径见 `.agents/rules/ai-schedule.md`「复核修复」节。结构上的净增：
+
+- `AiTurn`（`ui/ai/AiChatModels.kt`）：本轮请求快照（文本 / 图片 / previous / 是否追问）。
+  重试原样复用并**原位替换**，不再靠列表位置反推。
+- `AiScheduleTool.parse/parsePartial` 收 `maskedTeacherNames`：等于脱敏占位名的 teacher
+  当未提供（**不许回写本机真实姓名**）；周次上限只约束模型给的值，本机旧值原样保留。
+- `ScheduleDiff.appliedCopy(new, target)`：预览与真应用**共用同一份收口**，清自定义时间的
+  条件收窄成「时间真的变了」。
+- `ScheduleUndo.plan(entries, current)` 加**状态闸**：应用后被用户改过的行不撤，条数报给 UI；
+  撤销按回执里记的 `timetableId` 落库。
+- `AiScheduleClient.chatStream` 改 `callbackFlow` + `enqueue`：`awaitClose` 里 `call.cancel()`，
+  点「停止」能立刻关 socket；同时拦三类「静默成功」（非 SSE 响应体 / 流中 error 块 /
+  `finish_reason` 截断），`tool_calls` 只认 0 号且名字对得上，`callTimeout` 放宽到 600s。
+- `ai_img/` 与各 store 的 `.fallback.xml` 进备份排除；`AiImageStore` 加 `Mutex` 串行化，
+  `AiChatViewModel.onCleared` 补第三条清理路径。
+
+**2026-10-07 v2 重构**（用户反馈「太乱、不统一、排版丑、交互怪」）：形态仍是单页工作单，
+做的是收口与修根——视觉全部走项目统一件（`AppCard` / M3 按钮与分段控件 / 16dp 横距 /
+一套徽章色映射 / 软底块 / `AlertDialog` 声明弹层 / `ImageViewerDialog` 看图）；交互修复
+四个根因：① 结果就绪**不再自动折叠**（首版把勾选主战场藏了；折叠只在 APPLIED）；
+② 补「重新分析」次按钮（首版 READY 只有「应用所选」，重来回路是断的）；③ **回执跨轮
+保留**（`proposalSeq` 判归属，撤销入口不随新分析消失）；④ 去重去假动作（清空 / 重试 /
+撤销各留一处；删「微调」假按钮与「已发送的通知」双份展示；预览改全宽单栏前/后切换，
+周次 = 改动涉及周 ∪ 覆盖周）。`ui/ai` 拆成 Screen / NoticeCard / ProposalCard 三件；
+配置页「能力」区文案墙收短。
+
+**2026-10-07 记录与动效补轮**（用户实测反馈「新增历史记录及撤销」「配置说明啰嗦」
+「结果卡突然出现、思考展开没动画」）：① **「调课记录」页**（`SubpageScreen.AI_HISTORY`，
+AI 页顶栏历史图标进）——每次**真正落库**向 `AiApplyHistoryStore` 追加留痕（filesDir JSON，
+CAP 50，新在前），**栈式撤销**：只允许撤最新一条未撤销（`latestUndoable`，UI 与 VM
+双处校验）；`ScheduleCourseRow` 补 `id` 与自定义时间三件套（**不进差异指纹**，撤销按 id
+删 / 覆盖并原样还原）；主页回执带 `historyId`，与留痕互相同步（`refreshHistoryUndo`
+在 resume 时核对）。② **动效补齐**：结果区逐段淡入展开（骨架 / 统计 / 明细 / 预览，
+`AnimatedVisibility` 统一时序）、折叠摘要 ↔ 展开体、思考过程展开、回执条出现、失败卡 ↔
+提案卡 Crossfade。③ 细节：**一处都没落库的应用不算成功**（留待确认 + `AiNothingApplied`
+报条数，不再折叠成「已应用 0 处」）；配置页文案收短；勾选行整卡可点（共享
+`ScheduleChangeCard` 加 `onRowToggle`，调课检测页同享）；AI 页提示条垫开贴底动作条
+（实测高度）。
+
+**2026-10-07 复查轮**（两路独立复查后逐条修；复核依据 = 用户「审查代码及功能完整性、
+健壮性」）：① **课表删除后的撤销防护**（两面）——`undoApplied` 入口对已删课表整批按
+跳过兜底（反向写会向不存在的 timetableId 塞孤儿行）；两处 VM 撤销前用 `repo.timetableIds()`
+先拒绝并说清；`latestUndoable(list, aliveIds)` 让已删课表的记录**不挡栈**（行上标
+「课表已删除」）。② **APPLYING 相位接线**——apply 进事务即 `phase = APPLYING`
+（底栏「应用中…」不可点），`analyze/retry` 被相位挡住；出口恢复 READY/APPLIED。
+③ **撤销防重入**：`undoing` 闸（**先扣闸再进第一个挂起点**，否则双击第二下挤进来
+再跑一遍事务、把假 skipped 写进回执行）；两处 VM 同改。④ **`imagesDisabled` 死代码
+收编**：「去掉图片重发」改为把输入区截图一并移除（本会话不再自动带）。⑤ **REMOVED
+撤销补 `mergeKey` 闸**（用户把课加回来后不再插成两行，与写路径 ADDED 同钥匙）。
+⑥ 细节：模型回 `""` 的 position 当未提供（原先会静默清地点）；失败卡补「已解析 N 处」
+一行；统计条改 `FlowRow` 防大字体裁 chip；折叠/展开退场期交互禁点（防「弹回」）；
+命中区补齐 44dp；留痕写盘失败落日志；`addImage` 补 CE 穿透。
+
+**2026-10-07 复查二轮**（用户报「同一通知应用完再发，仍然报差异；『应用前』还是调课前的」）：
+根因三件、逐条修——① **模型看不见已生效的日期安排**（课表清单只有课程行）→ `userMessage`
+补【已生效的日期安排】段（`AiSchedulePrompt.overridesBrief`，空写「无」）+ `parse/parsePartial`
+对等价提议确定性去重（`ScheduleOverrides.sameEffect`，进 `rejected` 注明「已生效，无需重复」，
+**不静默吞**）+ `addOverrides` 写入侧幂等——三处同一判据；② **预览两栏都没算已生效覆盖**
+（「应用前」看着像调课前）→「应用前」= 课程行 + 已生效安排、「应用后」= 现状 + 本轮勾选
+（同一天本轮为准）；③ **同槽位胜负被 DAO 排序破坏**（`fromDate` 排序让「后应用的赢」变成
+「日期晚的赢」）→ 改 `ORDER BY id ASC`（写入顺序），撤销删行后旧覆盖自动复活。
+
+**2026-10-07 简化轮**（用户质疑「会不会想得太复杂」后的需求定位复盘；规则新增
+「三层防线总览」节）——形态与红线不变，做的是**减脂**：① 删对话式时代的两件死能力——
+`suggestions`（schema / `sanitizeSuggestions` / `Result` 字段 / SYSTEM 文案 / 测试整链）
+与追问链（`previousJson` / `userMessage` 的 `previous` / SYSTEM「追问轮」段 /
+`requirement` 诉求段）；`userMessage` 收成**只放事实四段**（课表清单 / 学期日历 /
+已生效的日期安排 / 调课通知）；`courseJson` / `indexOf` 两个无调用者的私有件一并清。
+② 需求定位写死：模型是翻译器、App 是编辑器、用户是审批人；**不采纳**「模型直接输出
+整份课表、App 做 diff」——复述未改动的行必然产生假差异/静默删除，引用式协议保留。
+判定新功能加不加，看是否落在三条公理（模型不可信 / 双语言换算 / 写入需确认可撤销）内。
+
+### 4.40 日期覆盖：调休 / 停课（2026-10-06；UI 见 §3.25）
+
+课表是「周次 × 星期」两维的，学校的放假 / 调休通知却按**具体日期**发
+（「9月20日(星期日)按照9月28日(第五周周一)的教学安排进行」「9月25日-10月7日放假，
+教学活动暂停」）。这两类事实用 `Course` 的 `weeks` / `day` 表达不了：把课挪走只能切碎
+`weeks`（破坏性、不可撤销），停课更是无处可写。日期覆盖就是补这一维。
+
+**模型**（`domain/ScheduleOverride.kt`，纯逻辑 JVM 可测）：
+
+```kotlin
+data class ScheduleOverride(fromDate, toDate, kind, sourceWeek?, sourceWeekday?, note)
+enum class OverrideKind { FOLLOW, SUSPENDED }
+```
+
+- `SUSPENDED`：日期区间内没有课；`FOLLOW`：该日期上**另一个 (周次, 星期) 槽位**的课（单日）。
+- `ScheduleOverrides.plan(overrides, semester)` 摊平成 `Slot(week, day) → Directive`
+  （`Suspended` / `Follow(week, weekday)`）。键统一是 (周次, 星期)，因为网格、今日页、
+  小组件、提醒全部按它索引；日期 → 槽位走 `slotOf`（周一为首日，与 `weekNumberOf` 同口径），
+  槽位 → 日期走 `dateOf`（`ui/week/WeekGrid.weekDate` 的 domain 版，新调用方一律用这个）。
+- 学期缺失 / 日期不合法 / 周次落在学期外 / follow 缺源槽位 → **跳过**（宁可少覆盖）。
+  `MAX_RANGE_DAYS = 400` 防脏区间把摊平循环拖死。
+
+**存储**：Room v19 新表 `date_overrides`（`timetableId` / `fromDate` / `toDate` / `kind` /
+`sourceWeek?` / `sourceWeekday?` / `note`，`@Index("timetableId")`）。`note` **特意不给
+Kotlin 默认值**——给了就必须在迁移建表里写 `DEFAULT ''`，不给就写裸 `TEXT NOT NULL`
+（v7→v8 / v11→v12 / v13→v14 三处老坑的绕法）。删课表与清空课程时同步清覆盖。
+
+**渲染接入（唯一入口）**：`ScheduleCalculator.coursesOnDay(courses, week, day, plan)` 是
+「(周次, 星期) → 课程」的**唯一入口**，覆盖只在这里生效：
+
+| 消费方 | 接入方式 |
+|--------|----------|
+| 今日页 / 小组件「今天·明天」 | `TodayState.buildTodayState(..., overrides)`，多 `todaySuspended` / `followedFrom` / `tomorrowSuspended` |
+| 周次网格 | `ScheduleCalculator.weekColumns(courses, week, visibleDays, plan)` 逐列取课，`day` = **列**（借来的课画在目标列上）；表头第二行恒为「日期 + 单字标记」（`10/6假` / `10/6补`），**日期不被覆盖态顶掉**、今日强调优先——见 §3.3「星期表头」 |
+| 桌面小组件迷你网格 | `buildWidgetWeek(..., semester, overrides)` 逐列走 `coursesOnDay` |
+| 上课提醒 / 小组件边界闹钟 | `ReminderPlanner` 四个公开函数与 `nextTodayBoundaryMinutes` 各加 `overrides` |
+| 日历导出 | `ScheduleExporter.expandEvents(..., overrides)`：被覆盖的槽位不按常规导出，补课另起一路导到目标日期 |
+
+**FOLLOW 不递归**：借来的那天取源槽位的**原始**课，源槽位自己停课不影响它——
+「第 5 周周一停课 + 第 4 周周日上第 5 周周一的课」是两件事，互相抵消就全空了。
+
+**测试**：`ScheduleOverridesTest` 18 例（日期↔槽位互逆、区间摊平、补课借课、停课为空、
+不递归、非法与学期外跳过、`coursesOnDay` 无覆盖时行为不变、文案、`sameEffect` 等价判定）。
+
+**写入顺序 = 胜负顺序（2026-10-07 修）**：同一槽位出现多条覆盖时，`plan` 摊平是
+「后写的覆盖前面的」，因此 `DateOverrideDao` 两个查询都必须 `ORDER BY id ASC`
+（**别改回 `fromDate`**——按日期排会让后应用的更早 / 更宽区间输给旧覆盖，胜负语义反转）。
+撤销删掉新行后旧覆盖自动复活，这套「覆盖 + 栈式撤销」才闭合。
 
 ---

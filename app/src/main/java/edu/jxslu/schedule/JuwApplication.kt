@@ -167,6 +167,13 @@ class JuwApplication : Application() {
                 store.sweep(referenced)
             }.onFailure { android.util.Log.w("JuwApplication", "attachment sweep failed", it) }
         }
+        // AI 调课的图片（DESIGN §4.39）：**会话级**，AI 会话本身不落盘，图片也不留痕。
+        // 目录里任何残留都是上一次进程没清干净的（杀进程走不到 onCleared），冷启动直接清空。
+        // 与笔记附件不同：这里不做引用追踪，也没有频次闸门——目录通常就是空的。
+        appScope.launch {
+            runCatching { Graph.aiImageStore(this@JuwApplication).sweep() }
+                .onFailure { android.util.Log.w("JuwApplication", "ai image sweep failed", it) }
+        }
         // 课表页背景图（DESIGN §4.21）：先清掉目录里多余的旧图，再把当前这张解进内存缓存。
         //
         // 预热是为了首帧：不预热的话，切到课表 Tab 时网格先出、背景晚几十毫秒补上，

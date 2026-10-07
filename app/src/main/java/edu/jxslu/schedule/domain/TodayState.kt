@@ -68,6 +68,10 @@ data class TodayState(
     val todayEmpty: Boolean = false,
     /** 今天一共几节（含已结束） */
     val todayTotal: Int = 0,
+    /** 今天放假 / 停课（日期覆盖 §4.40）——[todayEmpty] 的成因之一，界面文案不同 */
+    val todaySuspended: Boolean = false,
+    /** 今天的课是从哪个槽位借来的（调休补课，§4.40）；null = 常规 */
+    val followedFrom: ScheduleOverrides.Slot? = null,
 
     /** 明天 */
     val tomorrowDay: Int = 1,
@@ -76,6 +80,8 @@ data class TodayState(
     /** 只有今天没有待上课程（上完 / 没课 / 不在上课）才让明天上桌，今天的信息优先 */
     val tomorrowVisible: Boolean = false,
     val tomorrowCourses: List<Course> = emptyList(),
+    /** 明天放假 / 停课（§4.40） */
+    val tomorrowSuspended: Boolean = false,
 ) {
     /**
      * 焦点课：正在上课优先，否则 60 分钟窗口内的下一节。
@@ -94,13 +100,16 @@ fun buildTodayState(
     courses: List<Course>,
     today: LocalDate,
     now: LocalTimeLike,
+    overrides: List<ScheduleOverride> = emptyList(),
 ): TodayState {
+    // 日期覆盖（调休 / 停课，§4.40）在这里摊平一次，今天与明天共用同一张表
+    val plan = ScheduleOverrides.plan(overrides, semester)
     val day = today.dayOfWeek.value
     val week = semester?.let { ScheduleCalculator.weekNumberOf(it, today) } ?: 0
     val inTerm = semester != null && week in 1..semester.totalWeeks
 
     val dayCourses = if (inTerm) {
-        ScheduleCalculator.coursesOnDay(courses, week, day)
+        ScheduleCalculator.coursesOnDay(courses, week, day, plan)
     } else {
         emptyList()
     }
@@ -143,6 +152,8 @@ fun buildTodayState(
         todayAllDone = dayCourses.isNotEmpty() && dayCourses.all { phases[it.id] == CoursePhase.Ended },
         todayEmpty = dayCourses.isEmpty(),
         todayTotal = dayCourses.size,
+        todaySuspended = inTerm && ScheduleOverrides.isSuspended(plan, week, day),
+        followedFrom = ScheduleOverrides.followedFrom(plan, week, day),
         tomorrowDay = tomorrowDay,
         tomorrowWeek = tomorrowWeek,
         tomorrowInTerm = tomorrowInTerm,
@@ -150,11 +161,13 @@ fun buildTodayState(
         // 远课时（下一节在 60 分钟窗口外）焦点为空但今天有课，明天不得提前上桌
         tomorrowVisible = tomorrowInTerm && ongoing == null && remaining.isEmpty(),
         tomorrowCourses = if (tomorrowInTerm) {
-            ScheduleCalculator.coursesOnDay(courses, tomorrowWeek, tomorrowDay)
+            ScheduleCalculator.coursesOnDay(courses, tomorrowWeek, tomorrowDay, plan)
                 .sortedBy { startKey(slots, it) }
         } else {
             emptyList()
         },
+        tomorrowSuspended = tomorrowInTerm &&
+            ScheduleOverrides.isSuspended(plan, tomorrowWeek, tomorrowDay),
     )
 }
 

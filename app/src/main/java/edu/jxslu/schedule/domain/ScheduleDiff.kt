@@ -143,14 +143,87 @@ object ScheduleDiff {
     /** 一批差异里有多少条与本地修改冲突（处置页汇总文案用）。 */
     fun countConflicts(changes: List<Change>, current: List<Course>): Int =
         changes.count { isConflicted(it, current) }
+
+    /**
+     * **预览用**（DESIGN §3.25 方案 B）：把勾选的改动套到课程列表上，返回「应用后」的列表，
+     * **不落库**。匹配口径与 `ScheduleRepository.applyChangeSet` 完全一致（按指纹），
+     * 匹配不上的条目跳过——预览必须如实反映「应用会发生什么」，不能比真应用更乐观。
+     *
+     * 本机字段（配色 / 备注）与写库同样保留原行；新增条目用负数 id 占位（预览不落库，
+     * 真应用时才由 Room 分配 id 与配色）。
+     */
+    /**
+     * 真应用时对 `new` 的收口：保留本机字段（id / 配色 / 备注），并按需清掉自定义时间。
+     *
+     * **预览与真应用必须共用这一份**（2026-10-06 复核发现）：两边各写一套时，
+     * `preview` 保留了自定义时间而落库把它清了 —— 用户批准的预览与实际结果不一致。
+     *
+     * 清自定义时间的条件收窄成「**时间真的变了**」：只改教室 / 教师时，
+     * 那门课的自定义上下课时间仍然有效，不该被顺手抹掉。
+     */
+    fun appliedCopy(new: Course, target: Course): Course {
+        val timeChanged = new.day != target.day ||
+            new.startSection != target.startSection ||
+            new.endSection != target.endSection
+        return new.copy(
+            id = target.id,
+            colorIndex = target.colorIndex,
+            remark = target.remark,
+            isCustomTime = if (timeChanged) false else target.isCustomTime,
+            customStartTime = if (timeChanged) null else target.customStartTime,
+            customEndTime = if (timeChanged) null else target.customEndTime,
+        )
+    }
+
+    fun preview(
+        courses: List<Course>,
+        changes: List<Change>,
+        accepted: Set<Int>,
+    ): List<Course> {
+        var current = courses
+        accepted.sorted().forEach { index ->
+            val change = changes.getOrNull(index) ?: return@forEach
+            when (change.kind) {
+                ChangeKind.REMOVED -> {
+                    val old = change.old ?: return@forEach
+                    val target = current.firstOrNull { fingerprint(it) == fingerprint(old) }
+                        ?: return@forEach
+                    current = current.filterNot { it.id == target.id }
+                }
+
+                ChangeKind.MODIFIED -> {
+                    val old = change.old ?: return@forEach
+                    val new = change.new ?: return@forEach
+                    val target = current.firstOrNull { fingerprint(it) == fingerprint(old) }
+                        ?: return@forEach
+                    current = current.map {
+                        if (it.id == target.id) appliedCopy(new, target) else it
+                    }
+                }
+
+                ChangeKind.ADDED -> {
+                    val course = change.new ?: return@forEach
+                    if (current.any { it.mergeKey() == course.mergeKey() }) return@forEach
+                    current = current + course.copy(id = Long.MIN_VALUE + index)
+                }
+            }
+        }
+        return current
+    }
 }
 
 /**
- * [Course] 的可序列化影子：基线快照（filesDir JSON）与待处置差异（DataStore JSON）
- * 共用这一套，字段一一对应、全带默认值——旧文件缺字段时降级而不是解码失败。
+ * [Course] 的可序列化影子：基线快照（filesDir JSON）、待处置差异（DataStore JSON）
+ * 与 AI 调课的应用留痕（§4.39 `AiApplyHistoryStore`）共用这一套，字段一一对应、
+ * 全带默认值——旧文件缺字段时降级而不是解码失败。
  */
 @Serializable
 data class ScheduleCourseRow(
+    /**
+     * 行 id：差异比对走 [ScheduleDiff.fingerprint]（不含 id），但 AI 调课留痕的**撤销**
+     * 要按 id 删 / 覆盖（`ScheduleUndo.Action`），少了它就撤不回正确的行。
+     */
+    val id: Long = 0,
     val name: String = "",
     val teacher: String = "",
     val position: String = "",
@@ -161,9 +234,13 @@ data class ScheduleCourseRow(
     val kind: String = "theory",
     val colorIndex: Int = 0,
     val remark: String = "",
+    /** 自定义时间三件套：本机字段、不进指纹，但撤销必须原样还原（否则撤完时间被清）。 */
+    val isCustomTime: Boolean = false,
+    val customStartTime: String? = null,
+    val customEndTime: String? = null,
 ) {
     fun toCourse(): Course = Course(
-        id = 0,
+        id = id,
         name = name,
         teacher = teacher,
         position = position,
@@ -171,6 +248,9 @@ data class ScheduleCourseRow(
         startSection = startSection,
         endSection = endSection,
         weeks = weeks.toSet(),
+        isCustomTime = isCustomTime,
+        customStartTime = customStartTime,
+        customEndTime = customEndTime,
         colorIndex = colorIndex,
         kind = runCatching { CourseKind.valueOf(kind) }.getOrDefault(CourseKind.Theory),
         remark = remark,
@@ -178,6 +258,7 @@ data class ScheduleCourseRow(
 
     companion object {
         fun of(course: Course) = ScheduleCourseRow(
+            id = course.id,
             name = course.name,
             teacher = course.teacher,
             position = course.position,
@@ -188,6 +269,9 @@ data class ScheduleCourseRow(
             kind = course.kind.name,
             colorIndex = course.colorIndex,
             remark = course.remark,
+            isCustomTime = course.isCustomTime,
+            customStartTime = course.customStartTime,
+            customEndTime = course.customEndTime,
         )
     }
 }

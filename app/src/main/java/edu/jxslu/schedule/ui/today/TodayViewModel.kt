@@ -63,14 +63,18 @@ class TodayViewModel(
                 repo.semester,
                 repo.timeSlots,
                 repo.courses,
+                // 日期覆盖（调休 / 停课，§4.40）随课表一起进 combine：改一条覆盖整页重算，
+                // 与网格、小组件走同一个 coursesOnDay 口径
+                repo.overrides,
                 tick,
-            ) { semester, slots, courses, _ ->
+            ) { semester, slots, courses, overrides, _ ->
                 buildTodayState(
                     semester = semester,
                     slots = slots,
                     courses = courses,
                     today = todayProvider(),
                     now = LocalTimeLike.now(),
+                    overrides = overrides,
                 )
             }
         }

@@ -18,13 +18,19 @@ fun nextTodayBoundaryMinutes(
     courses: List<Course>,
     today: LocalDate,
     now: LocalTimeLike,
+    overrides: List<ScheduleOverride> = emptyList(),
 ): Int? {
     if (semester == null) return null
     val week = ScheduleCalculator.weekNumberOf(semester, today)
     if (week !in 1..semester.totalWeeks) return null
     val day = today.dayOfWeek.value
     val nowMinutes = now.toMinutes()
-    return ScheduleCalculator.coursesOnDay(courses, week, day)
+    return ScheduleCalculator.coursesOnDay(
+        courses,
+        week,
+        day,
+        ScheduleOverrides.plan(overrides, semester),
+    )
         .flatMap { course ->
             listOfNotNull(
                 ScheduleCalculator.courseStartMinutes(slots, course),

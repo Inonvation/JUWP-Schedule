@@ -53,14 +53,17 @@ private fun upcomingPlans(
     maxDaysAhead: Int,
     /** 允许「已开始但未超过该分钟数」的课进入结果（0 = 维持只看未来的口径）。 */
     gracePastMinutes: Long = 0L,
+    /** 日期覆盖（调休 / 停课，§4.40）：放假那天不排提醒，补课那天按借来的课排。 */
+    overrides: List<ScheduleOverride> = emptyList(),
 ): List<ReminderPlan> {
     if (semester == null) return emptyList()
+    val plan = ScheduleOverrides.plan(overrides, semester)
     val result = mutableListOf<ReminderPlan>()
     var date = now.toLocalDate()
     repeat(maxDaysAhead) {
         val week = ScheduleCalculator.weekNumberOf(semester, date)
         if (week in 1..semester.totalWeeks) {
-            for (course in ScheduleCalculator.coursesOnDay(courses, week, date.dayOfWeek.value)) {
+            for (course in ScheduleCalculator.coursesOnDay(courses, week, date.dayOfWeek.value, plan)) {
                 val start = ScheduleCalculator.courseStartMinutes(slots, course) ?: continue
                 val startAt = date.atStartOfDay().plusMinutes(start.toLong())
                 val withinGrace = gracePastMinutes > 0L && !startAt.isBefore(
@@ -91,8 +94,10 @@ fun dueReminderPlan(
     courses: List<Course>,
     now: LocalDateTime,
     leadMinutes: Int,
-): ReminderPlan? = upcomingPlans(semester, slots, courses, now, leadMinutes, maxDaysAhead = 1)
-    .firstOrNull { it.startAt <= now.plusMinutes(leadMinutes.toLong()) }
+    overrides: List<ScheduleOverride> = emptyList(),
+): ReminderPlan? = upcomingPlans(
+    semester, slots, courses, now, leadMinutes, maxDaysAhead = 1, overrides = overrides,
+).firstOrNull { it.startAt <= now.plusMinutes(leadMinutes.toLong()) }
 
 /**
  * 「现在就该提醒上课开始了」的课：上课时刻已到（含整点）、还没越过上课后
@@ -104,6 +109,7 @@ fun dueClassStartPlan(
     slots: List<TimeSlot>,
     courses: List<Course>,
     now: LocalDateTime,
+    overrides: List<ScheduleOverride> = emptyList(),
 ): ReminderPlan? = upcomingPlans(
     semester = semester,
     slots = slots,
@@ -112,6 +118,7 @@ fun dueClassStartPlan(
     leadMinutes = 0,
     maxDaysAhead = 1,
     gracePastMinutes = CLASS_START_WINDOW_MINUTES,
+    overrides = overrides,
 ).firstOrNull {
     it.startAt <= now && now < it.startAt.plusMinutes(CLASS_START_WINDOW_MINUTES)
 }
@@ -128,7 +135,8 @@ fun nextReminderPlan(
     now: LocalDateTime,
     leadMinutes: Int,
     maxDaysAhead: Int = 14,
-): ReminderPlan? = upcomingPlans(semester, slots, courses, now, leadMinutes, maxDaysAhead)
+    overrides: List<ScheduleOverride> = emptyList(),
+): ReminderPlan? = upcomingPlans(semester, slots, courses, now, leadMinutes, maxDaysAhead, overrides = overrides)
     .firstOrNull { it.triggerAt.isAfter(now) }
 
 /** 「开始上课」提醒的有效期窗口（上课后多少分钟内仍发），越过即跳过不补。 */
@@ -144,8 +152,10 @@ fun nextClassStartPlan(
     courses: List<Course>,
     now: LocalDateTime,
     maxDaysAhead: Int = 14,
-): ReminderPlan? = upcomingPlans(semester, slots, courses, now, leadMinutes = 0, maxDaysAhead)
-    .firstOrNull { it.startAt.isAfter(now) }
+    overrides: List<ScheduleOverride> = emptyList(),
+): ReminderPlan? = upcomingPlans(
+    semester, slots, courses, now, leadMinutes = 0, maxDaysAhead, overrides = overrides,
+).firstOrNull { it.startAt.isAfter(now) }
 
 /** 作业提醒的固定触发时刻（时）：两个提醒点都在 20:00（DESIGN §3.11）。 */
 private const val HOMEWORK_REMIND_HOUR = 20

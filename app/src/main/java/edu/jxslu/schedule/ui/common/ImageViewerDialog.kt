@@ -51,6 +51,9 @@ enum class ImageSource {
 
     /** 校历镜像图（DESIGN §4.34），目录 `campus_calendar/`；图缺失时 UI 兜内置资源图。 */
     CampusCalendar,
+
+    /** AI 调课通知截图（DESIGN §3.25），目录 `ai_img/`；会话级，冷启动即清。 */
+    AiNotice,
 }
 
 /**
@@ -81,6 +84,11 @@ fun ImageViewerDialog(
                 val bitmap = file?.let { decodeFileSampled(it, targetLongSidePx = 2048) }
                     ?: BitmapFactory.decodeResource(context.resources, R.drawable.ic_campus_calendar)
                 bitmap?.asImageBitmap()
+            }
+            // AI 调课通知截图（DESIGN §3.25）：压缩口径就是长边 1600，看大图按原尺寸解
+            ImageSource.AiNotice -> withContext(Dispatchers.IO) {
+                val file = Graph.aiImageStore(context).fileFor(fileName)
+                decodeFileSampled(file, targetLongSidePx = 1600)?.asImageBitmap()
             }
         }
     }

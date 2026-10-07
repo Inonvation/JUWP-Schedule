@@ -42,10 +42,30 @@ object ScheduleExporter {
         courses: List<Course>,
         slots: List<TimeSlot>,
         semester: SemesterConfig,
+        overrides: List<ScheduleOverride> = emptyList(),
     ): Expansion {
         val termStart = runCatching {
             ScheduleCalculator.startOfWeek(ScheduleCalculator.parseDate(semester.startDate))
         }.getOrNull() ?: return Expansion()
+        val plan = ScheduleOverrides.plan(overrides, semester)
+
+        fun dateOf(week: Int, day: Int) = termStart
+            .plusWeeks((week - 1).toLong())
+            .plusDays((day - 1).toLong())
+
+        fun eventOf(course: Course, date: LocalDate, startMinutes: Int, endMinutes: Int) =
+            CourseEvent(
+                name = if (course.kind == CourseKind.Exam) {
+                    "${course.name}（考试）"
+                } else {
+                    course.name
+                },
+                teacher = course.teacher,
+                position = course.position,
+                date = date,
+                start = date.atTime(startMinutes / 60, startMinutes % 60),
+                end = date.atTime(endMinutes / 60, endMinutes % 60),
+            )
 
         val events = buildList {
             for (course in courses) {
@@ -53,23 +73,21 @@ object ScheduleExporter {
                 val endMinutes = ScheduleCalculator.courseEndMinutes(slots, course) ?: continue
                 for (week in course.weeks) {
                     if (week < 1 || week > semester.totalWeeks) continue
-                    val date = termStart
-                        .plusWeeks((week - 1).toLong())
-                        .plusDays((course.day - 1).toLong())
-                    add(
-                        CourseEvent(
-                            name = if (course.kind == CourseKind.Exam) {
-                                "${course.name}（考试）"
-                            } else {
-                                course.name
-                            },
-                            teacher = course.teacher,
-                            position = course.position,
-                            date = date,
-                            start = date.atTime(startMinutes / 60, startMinutes % 60),
-                            end = date.atTime(endMinutes / 60, endMinutes % 60),
-                        ),
-                    )
+                    // 被覆盖的槽位不按常规导出：放假不导出、补课那天由下面那一路单独展开
+                    if (plan.containsKey(ScheduleOverrides.Slot(week, course.day))) continue
+                    add(eventOf(course, dateOf(week, course.day), startMinutes, endMinutes))
+                }
+            }
+            // 调休补课（§4.40）：把源槽位的课导到目标日期上
+            plan.forEach { (slot, directive) ->
+                if (directive !is ScheduleOverrides.Directive.Follow) return@forEach
+                if (slot.week < 1 || slot.week > semester.totalWeeks) return@forEach
+                val date = dateOf(slot.week, slot.day)
+                for (course in courses) {
+                    if (course.day != directive.weekday || directive.week !in course.weeks) continue
+                    val startMinutes = ScheduleCalculator.courseStartMinutes(slots, course) ?: continue
+                    val endMinutes = ScheduleCalculator.courseEndMinutes(slots, course) ?: continue
+                    add(eventOf(course, date, startMinutes, endMinutes))
                 }
             }
         }.sortedWith(compareBy({ it.date }, { it.start }, { it.name }))

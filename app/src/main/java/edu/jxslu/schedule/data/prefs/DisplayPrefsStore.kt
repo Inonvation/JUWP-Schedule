@@ -11,6 +11,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import edu.jxslu.schedule.data.ai.AiScheduleClient
+import edu.jxslu.schedule.domain.AiScheduleConfig
 import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
@@ -816,6 +818,52 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_STRONG_REMINDER_VIBRATION] ?: false
     }
 
+    // ---- AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 脱敏 / 隐私确认。
+    // API Key **不在 DataStore**——它是账号凭据，走 AiCredentialStore 加密存储。
+    // 四条都单独成流，不进 baseDisplayPrefs 合并模型（combine 已满员）。
+
+    /** 服务地址。默认 [AiScheduleConfig.DEFAULT_BASE_URL]；用户清空后读到空串，配置页要求重填。 */
+    val aiBaseUrl: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_AI_BASE_URL] ?: AiScheduleConfig.DEFAULT_BASE_URL
+    }
+
+    /** 模型名。默认 [AiScheduleConfig.DEFAULT_MODEL]；可手输或从上游 `/models` 选。
+     *  legacy 别名（`deepseek-v4-flash` 等已退役名）读取时迁到现行默认。 */
+    val aiModel: Flow<String> = context.displayDataStore.data.map { p ->
+        AiScheduleConfig.normalizeModel(p[KEY_AI_MODEL])
+    }
+
+    /** 教师名脱敏开关，默认**开**：发给第三方前把教师名换成「教师N」。 */
+    val aiMaskTeacher: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_AI_MASK_TEACHER] ?: true
+    }
+
+    /** 首次隐私确认是否已完成（未确认前不允许发请求）。 */
+    val aiPrivacyAcknowledged: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_AI_PRIVACY_ACK] ?: false
+    }
+
+    /** 思考档位（none / low / high / max）。默认 none：非思考模式才能强制命名工具调用。 */
+    val aiThinkingEffort: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_AI_THINKING_EFFORT] ?: AiScheduleClient.Effort.NONE.wire
+    }
+
+    /** 是否在页面上显示模型的思考过程，默认关（思考文本长，默认收起）。 */
+    val aiShowReasoning: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_AI_SHOW_REASONING] ?: false
+    }
+
+    /**
+     * 该模型是否支持图片识别，**默认关**。
+     *
+     * 为什么不自动探测：模型名是用户手填的（DeepSeek 官方对话模型是否支持视觉没有实测过），
+     * 上游 `/models` 只回 id 与名称、不给能力标记。所以只能显式声明；
+     * 关键字预判（[AiScheduleConfig.looksVisionModel]）只用来**建议打勾**，不自动开。
+     */
+    val aiSupportsImage: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_AI_SUPPORTS_IMAGE] ?: false
+    }
+
     /** 共享单车免费时长提醒提前量（分钟）。读路径吸附 1~5。 */
     val ebikeFreeLeadMinutes: Flow<Int> = context.displayDataStore.data.map { p ->
         EbikeFreeRide.coerceLead(p[KEY_EBIKE_FREE_LEAD] ?: EbikeFreeRide.DEFAULT_LEAD_MINUTES)
@@ -1265,6 +1313,43 @@ class DisplayPrefsStore(private val context: Context) {
     /** 通知强提醒开关（DESIGN §3.3 通用设置；语义见 [strongReminderVibration]）。 */
     suspend fun setStrongReminderVibration(value: Boolean) {
         context.displayDataStore.edit { it[KEY_STRONG_REMINDER_VIBRATION] = value }
+    }
+
+    /** AI 调课服务地址（DESIGN §4.39）。存 trim 后的原文，允许空串（= 用户清空待重填）。 */
+    suspend fun setAiBaseUrl(value: String) {
+        context.displayDataStore.edit { it[KEY_AI_BASE_URL] = value.trim() }
+    }
+
+    /** AI 调课模型名（DESIGN §4.39）。 */
+    suspend fun setAiModel(value: String) {
+        context.displayDataStore.edit { it[KEY_AI_MODEL] = value.trim() }
+    }
+
+    /** AI 调课教师名脱敏开关（DESIGN §4.39）。 */
+    suspend fun setAiMaskTeacher(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_AI_MASK_TEACHER] = value }
+    }
+
+    /** 首次隐私确认（DESIGN §4.39）。确认后不再弹。 */
+    suspend fun setAiPrivacyAcknowledged(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_AI_PRIVACY_ACK] = value }
+    }
+
+    /** AI 调课思考档位（DESIGN §4.39）。传 [AiScheduleClient.Effort.wire]。 */
+    suspend fun setAiThinkingEffort(value: String) {
+        context.displayDataStore.edit {
+            it[KEY_AI_THINKING_EFFORT] = AiScheduleClient.Effort.fromWire(value).wire
+        }
+    }
+
+    /** 是否显示思考过程（DESIGN §4.39）。 */
+    suspend fun setAiShowReasoning(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_AI_SHOW_REASONING] = value }
+    }
+
+    /** 该模型是否支持图片识别（DESIGN §4.39）。见 [aiSupportsImage] 的口径。 */
+    suspend fun setAiSupportsImage(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_AI_SUPPORTS_IMAGE] = value }
     }
 
     /** 共享单车免费时长提醒提前量（分钟，1~5）。 */
@@ -1771,6 +1856,19 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCHEDULE_CHECK_MILLIS = longPreferencesKey("schedule_check_millis")
         val KEY_SCHEDULE_IGNORED_FP = stringPreferencesKey("schedule_ignored_fingerprint")
         val KEY_SCHEDULE_PENDING_JSON = stringPreferencesKey("schedule_pending_changes_json")
+
+        // AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 教师名脱敏 / 首次隐私确认。
+        // API Key **不在这里**——它是账号凭据，走 AiCredentialStore 加密存储（secure_ai.xml）。
+        val KEY_AI_BASE_URL = stringPreferencesKey("ai_base_url")
+        val KEY_AI_MODEL = stringPreferencesKey("ai_model")
+        val KEY_AI_MASK_TEACHER = booleanPreferencesKey("ai_mask_teacher")
+        val KEY_AI_PRIVACY_ACK = booleanPreferencesKey("ai_privacy_ack")
+        // 思考档位（none/low/high/max）+ 是否显示思考过程（DESIGN §4.39）
+        val KEY_AI_THINKING_EFFORT = stringPreferencesKey("ai_thinking_effort")
+        val KEY_AI_SHOW_REASONING = booleanPreferencesKey("ai_show_reasoning")
+        // 该模型是否支持图片识别（DESIGN §4.39）。**默认关**：模型名是用户手填的，
+        // 上游 /models 也不给能力标记，探测不了——只能让用户显式声明，我们只做打勾建议。
+        val KEY_AI_SUPPORTS_IMAGE = booleanPreferencesKey("ai_supports_image")
 
         // 首启引导后台同步结果（课表/成绩/学业），主界面弹结果弹窗后消费
         val KEY_ONBOARDING_SYNC_JSON = stringPreferencesKey("onboarding_sync_outcome_json")

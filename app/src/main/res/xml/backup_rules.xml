@@ -8,7 +8,16 @@
       secure_qzxy.xml     趣智校园登录会话（§4.30）
       secure_kqcx.xml     快趣出行账号凭证（手机号 + 密码，§4.32）
       secure_ujing.xml    U净（美的校园洗衣）登录会话（§4.36）
+      secure_ai.xml       AI 调课服务的 API Key（§4.39）
     其余（Room 课表、DataStore 偏好）保持默认可备份。
+
+    **`.fallback` 也要排**（2026-10-06 复核补）：Keystore 连续两次损坏时，
+    各 store 会退回**明文** SharedPreferences，文件名是 `<原名>.fallback.xml`。
+    只排原名等于把明文那份漏在备份里——8 个 store 一个都不能少。
+
+    文件目录：crash/（崩溃堆栈不出本机）、ujing_debug/（debug 包协议样本）；
+    ai_img/（AI 调课的通知截图，**会话级**，退出页面就清，本来就不该上云）。
+
     说明：jw_credentials.xml 的排除原先是为已移除的调课检测留的，2026-09-24 起这个文件
     重新被用作 CAS 凭证存储（§4.27），排除项因此继续有效。
 -->
@@ -20,6 +29,16 @@
     <exclude domain="sharedpref" path="ykt_tokens.xml" />
     <exclude domain="sharedpref" path="secure_kqcx.xml" />
     <exclude domain="sharedpref" path="secure_ujing.xml" />
+    <exclude domain="sharedpref" path="secure_ai.xml" />
+    <exclude domain="sharedpref" path="secure_token.fallback.xml" />
+    <exclude domain="sharedpref" path="secure_qzxy.fallback.xml" />
+    <exclude domain="sharedpref" path="jw_credentials.fallback.xml" />
+    <exclude domain="sharedpref" path="ykt_credentials.fallback.xml" />
+    <exclude domain="sharedpref" path="ykt_tokens.fallback.xml" />
+    <exclude domain="sharedpref" path="secure_kqcx.fallback.xml" />
+    <exclude domain="sharedpref" path="secure_ujing.fallback.xml" />
+    <exclude domain="sharedpref" path="secure_ai.fallback.xml" />
     <exclude domain="file" path="crash/" />
     <exclude domain="file" path="ujing_debug/" />
+    <exclude domain="file" path="ai_img/" />
 </full-backup-content>

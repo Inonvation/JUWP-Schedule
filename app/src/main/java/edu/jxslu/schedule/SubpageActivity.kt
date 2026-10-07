@@ -48,6 +48,9 @@ import edu.jxslu.schedule.ui.selection.SelectionGrabScreen
 import edu.jxslu.schedule.ui.selection.SelectionRecordsScreen
 import edu.jxslu.schedule.ui.selection.SelectionScreen
 import edu.jxslu.schedule.ui.selection.SelectionWishesScreen
+import edu.jxslu.schedule.ui.ai.AiChatScreen
+import edu.jxslu.schedule.ui.ai.AiHistoryScreen
+import edu.jxslu.schedule.ui.ai.AiSettingsScreen
 import edu.jxslu.schedule.ui.timetable.ScheduleChangesScreen
 import edu.jxslu.schedule.ui.timetable.TimetableManageScreen
 import edu.jxslu.schedule.ui.tweak.CourseTweakScreen
@@ -152,6 +155,12 @@ enum class SubpageScreen {
     UJING_HISTORY,
     /** 调课检测处置页（差异列表 · 勾选合并 · 忽略，DESIGN §4.17，2026-10-04 重立） */
     SCHEDULE_CHANGES,
+    /** AI 调课（粘贴调课通知 → 模型给结构化建议 → 勾选落库，DESIGN §4.39，2026-10-06） */
+    AI_SCHEDULE,
+    /** AI 调课的服务配置（地址 · 模型 · API Key · 脱敏，DESIGN §4.39） */
+    AI_SETTINGS,
+    /** AI 调课的应用记录与撤回（本机留痕，跨会话，DESIGN §3.25 / §4.39，2026-10-07） */
+    AI_HISTORY,
     /** 今日页「+」→ 收件箱（考试/成绩/调课/轮次/余额的留痕，DESIGN §3.24 / §4.38） */
     INBOX,
 }
@@ -320,13 +329,25 @@ class SubpageActivity : ComponentActivity() {
                 onOpenScheduleChanges = {
                     SubpageActivity.start(this, SubpageScreen.SCHEDULE_CHANGES)
                 },
+                onOpenAiSchedule = {
+                    SubpageActivity.start(this, SubpageScreen.AI_SCHEDULE)
+                },
             )
             SubpageScreen.SCHEDULE_CHANGES -> ScheduleChangesScreen(onBack = onBack)
+            SubpageScreen.AI_SCHEDULE -> AiChatScreen(
+                onBack = onBack,
+                onOpenSettings = { SubpageActivity.start(this, SubpageScreen.AI_SETTINGS) },
+                onOpenHistory = { SubpageActivity.start(this, SubpageScreen.AI_HISTORY) },
+            )
+            SubpageScreen.AI_SETTINGS -> AiSettingsScreen(onBack = onBack)
+            SubpageScreen.AI_HISTORY -> AiHistoryScreen(onBack = onBack)
             SubpageScreen.INBOX -> InboxScreen(onBack = onBack)
             SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(
                 onBack = onBack,
                 // 功能开关节 → 快捷方式编辑页（2026-09-28 自扩展服务迁入）
                 onOpenShortcuts = { SubpageActivity.start(this, SubpageScreen.SHORTCUTS) },
+                // AI 调课服务配置（DESIGN §4.39）
+                onOpenAiSettings = { SubpageActivity.start(this, SubpageScreen.AI_SETTINGS) },
             )
             SubpageScreen.WIDGET_CALENDAR_HUB -> WidgetCalendarHubScreen(
                 onBack = onBack,

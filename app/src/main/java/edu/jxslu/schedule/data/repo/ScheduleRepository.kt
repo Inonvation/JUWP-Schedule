@@ -3,6 +3,7 @@ package edu.jxslu.schedule.data.repo
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
+import edu.jxslu.schedule.data.local.DateOverrideEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.ScoreEntity
 import edu.jxslu.schedule.data.local.ScholarCourseEntity
@@ -15,6 +16,7 @@ import edu.jxslu.schedule.data.local.courseKindFromName
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.prefs.ReminderKeyKind
+import edu.jxslu.schedule.domain.AiScheduleConfig
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
@@ -23,7 +25,11 @@ import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
+import edu.jxslu.schedule.domain.AppliedEntry
 import edu.jxslu.schedule.domain.ScheduleDiff
+import edu.jxslu.schedule.domain.ScheduleUndo
+import edu.jxslu.schedule.domain.ScheduleOverride
+import edu.jxslu.schedule.domain.ScheduleOverrides
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.BgScale
@@ -775,6 +781,45 @@ class ScheduleRepository(
     suspend fun setStrongReminderVibration(value: Boolean) =
         prefs.setStrongReminderVibration(value)
 
+    // ---- AI 调课（DESIGN §4.39，2026-10-06）----
+    // 四条偏好各自单独成流，不进 baseDisplayPrefs（combine 已满员）。
+    // API Key 不在 Repository 暴露：它走 AiCredentialStore，只由 AI 页面/配置页直接读。
+
+    /** 服务地址（默认 DeepSeek 兼容端点；空串 = 用户清空待重填）。 */
+    val aiBaseUrl: Flow<String> = prefs.aiBaseUrl
+
+    /** 模型名（默认 [AiScheduleConfig.DEFAULT_MODEL]，旧预填名在 prefs 读取处已归一）。 */
+    val aiModel: Flow<String> = prefs.aiModel
+
+    /** 教师名脱敏开关，默认开。 */
+    val aiMaskTeacher: Flow<Boolean> = prefs.aiMaskTeacher
+
+    /** 首次隐私确认是否已完成。 */
+    val aiPrivacyAcknowledged: Flow<Boolean> = prefs.aiPrivacyAcknowledged
+
+    suspend fun setAiBaseUrl(value: String) = prefs.setAiBaseUrl(value)
+
+    suspend fun setAiModel(value: String) = prefs.setAiModel(value)
+
+    suspend fun setAiMaskTeacher(value: Boolean) = prefs.setAiMaskTeacher(value)
+
+    suspend fun setAiPrivacyAcknowledged(value: Boolean) = prefs.setAiPrivacyAcknowledged(value)
+
+    /** 思考档位（none / low / high / max，§4.39）。 */
+    val aiThinkingEffort: Flow<String> = prefs.aiThinkingEffort
+
+    /** 是否在页面上显示思考过程（§4.39）。 */
+    val aiShowReasoning: Flow<Boolean> = prefs.aiShowReasoning
+
+    suspend fun setAiThinkingEffort(value: String) = prefs.setAiThinkingEffort(value)
+
+    suspend fun setAiShowReasoning(value: Boolean) = prefs.setAiShowReasoning(value)
+
+    /** 该模型是否支持图片识别（§4.39），默认关。见 `DisplayPrefsStore.aiSupportsImage`。 */
+    val aiSupportsImage: Flow<Boolean> = prefs.aiSupportsImage
+
+    suspend fun setAiSupportsImage(value: Boolean) = prefs.setAiSupportsImage(value)
+
     suspend fun setReminderLeadMinutes(value: Int) = prefs.setReminderLeadMinutes(value)
 
     suspend fun reminderLastKey(kind: ReminderKeyKind): String? = prefs.reminderLastKey(kind)
@@ -864,6 +909,13 @@ class ScheduleRepository(
         db.courseDao().insertAll(
             courses.map { CourseEntity.fromDomain(it).copy(id = 0, timetableId = newId) },
         )
+        // 日期覆盖（调休 / 停课）也要跟着复制：漏了它，副本在调休日照常显示课
+        val overrides = db.dateOverrideDao().getForTimetable(id)
+        if (overrides.isNotEmpty()) {
+            db.dateOverrideDao().insertAll(
+                overrides.map { it.copy(id = 0, timetableId = newId) },
+            )
+        }
         return newId
     }
 
@@ -913,6 +965,8 @@ class ScheduleRepository(
         db.courseDao().clearForTimetable(id)
         db.timeSlotDao().clearForTimetable(id)
         db.semesterConfigDao().deleteForTimetable(id)
+        // 日期覆盖跟着课表走：课表没了，挂在它上面的调休/停课一起清（§4.40）
+        db.dateOverrideDao().deleteForTimetable(id)
         db.timetableDao().delete(id)
         clearScheduleBaseline(id)
         if (prefs.defaultConfigSourceId.first() == id) {
@@ -1054,6 +1108,8 @@ class ScheduleRepository(
     suspend fun clearCourses() {
         val ttId = currentTimetableId.first()
         db.courseDao().clearForTimetable(ttId)
+        // 课都没了，挂在日期上的调休/停课也没有意义（§4.40）
+        db.dateOverrideDao().deleteForTimetable(ttId)
         // 用户主动清空 = 与教务的一致状态也被清掉：基线一并清，检查链下次按首跑重建
         clearScheduleBaseline(ttId)
     }
@@ -1132,6 +1188,11 @@ class ScheduleRepository(
             }
         }
         val result = if (merge) mergeCourses(courses, ttId) else {
+            // 覆盖导入 = 课表回到教务口径：挂在旧课表上的**日期覆盖**（调休 / 停课，§4.40）
+            // 一并清掉。它们是 AI 从通知里落下的本机安排、按旧课表算出来的，
+            // 整表重建后已无对应关系；留着就会出现「重导了但课表还是调休后的样子」
+            // ——2026-10-06 用户实测报的就是这个。合并导入不清：那条路不重置课表。
+            db.dateOverrideDao().deleteForTimetable(ttId)
             replaceAllCourses(courses, ttId)
             courses.size
         }
@@ -1168,6 +1229,57 @@ class ScheduleRepository(
                 }
             }
         }
+
+    // ------------------------------------------------------------------
+    // 日期覆盖（调休 / 停课，DESIGN §4.40，2026-10-06）
+    // 渲染层叠加，**不写 courses 表**：网格 / 今日页 / 小组件 / 提醒都拿它摊平后
+    // 走 ScheduleCalculator.coursesOnDay，口径只有一处。
+    // ------------------------------------------------------------------
+
+    /** 当前课表的覆盖流（Room 表 `date_overrides`）。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val overrides: Flow<List<ScheduleOverride>> = currentTimetableId.flatMapLatest { id ->
+        db.dateOverrideDao().observeForTimetable(id).map { list -> list.map { it.toDomain() } }
+    }
+
+    /** 非 Flow 读（导出、提醒排期这类一次性快照）。 */
+    suspend fun overridesFor(timetableId: Long? = null): List<ScheduleOverride> {
+        val ttId = timetableId ?: currentTimetableId.first()
+        return db.dateOverrideDao().getForTimetable(ttId).map { it.toDomain() }
+    }
+
+    /**
+     * 写入日期覆盖，返回**实际插入**各行的自增 id（AI 调课的「撤销」按 id 删回）。
+     *
+     * 幂等兜底：与已生效安排**等价**（[ScheduleOverrides.sameEffect]）的条目不重复插入，
+     * 列表内部重复也只留一条——同一通知被应用两遍时不再留同指令的脏行
+     * （解析层已挡一道，这里是写入侧的第二道）。全部重复时返回空列表。
+     */
+    suspend fun addOverrides(list: List<ScheduleOverride>, timetableId: Long? = null): List<Long> {
+        if (list.isEmpty()) return emptyList()
+        val ttId = timetableId ?: currentTimetableId.first()
+        val existing = db.dateOverrideDao().getForTimetable(ttId).map { it.toDomain() }
+        val accepted = mutableListOf<ScheduleOverride>()
+        list.forEach { candidate ->
+            val duplicate = existing.any { ScheduleOverrides.sameEffect(it, candidate) } ||
+                accepted.any { ScheduleOverrides.sameEffect(it, candidate) }
+            if (!duplicate) accepted += candidate
+        }
+        if (accepted.isEmpty()) return emptyList()
+        return db.dateOverrideDao().insertAll(accepted.map { DateOverrideEntity.of(it.copy(id = 0), ttId) })
+    }
+
+    /** 删掉指定的覆盖（覆盖清单里逐条撤销）。 */
+    suspend fun removeOverrides(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        db.dateOverrideDao().deleteByIds(ids)
+    }
+
+    /** 清空某张课表的全部覆盖（删课表 / 清空课程时同步调）。 */
+    suspend fun clearOverrides(timetableId: Long? = null) {
+        val ttId = timetableId ?: currentTimetableId.first()
+        db.dateOverrideDao().deleteForTimetable(ttId)
+    }
 
     // ------------------------------------------------------------------
     // 调课检测基线（DESIGN §4.17，2026-10-04 重立；旧 detect_baselines/detect_reports
@@ -1207,25 +1319,93 @@ class ScheduleRepository(
         }
     }
 
-    /** [applyScheduleChanges] 的结果：applied 实际应用条数；skipped 匹配不上而跳过（防重复导入）。 */
-    data class ApplyReport(val applied: Int, val skipped: Int)
+    /**
+     * [applyScheduleChanges] / [applyLocalChanges] 的结果：
+     * [applied] 实际应用条数；[skipped] 匹配不上而跳过（防重复导入）；
+     * [entries] 实际生效的条目（按执行顺序），撤销时**倒序**反向操作。
+     */
+    data class ApplyReport(
+        val applied: Int,
+        val skipped: Int,
+        val entries: List<AppliedEntry> = emptyList(),
+    )
 
     /**
-     * 把用户勾选的调课差异应用到**当前课表**（事务内逐条删/改/增），成功后把基线推进为
-     * 应用完的实际全量（含未勾的本地内容——那部分差异下次检查仍会如实报出）。
+     * 把用户勾选的调课差异应用到**当前课表**（事务内逐条删/改/增），成功后把基线
+     * 推进为应用完的实际全量（含未勾的本地内容——那部分差异下次检查仍会如实报出）。
+     *
+     * 这是「与教务达成一致」的合并路径（调课检测处置页）。AI 调课 / 其它本机改动走
+     * [applyLocalChanges]：共用同一套写实现，但**完全不碰基线**。
+     */
+    suspend fun applyScheduleChanges(
+        changes: List<ScheduleDiff.Change>,
+        acceptedIndexes: Set<Int>,
+    ): ApplyReport {
+        val (report, ttId) = applyChangeSet(changes, acceptedIndexes)
+        refreshBaselineFromDb(ttId)
+        return report
+    }
+
+    /**
+     * AI 调课（或其它本机改动）的**一次落库**：课表改动 + 日期覆盖在**同一个事务**里，
+     * 要么全成要么全不动（DESIGN §4.39）。语义**与用户手动改课一致**：
+     * 不推进调课检测基线、不清已阅指纹。基线的语义是「上次与教务达成一致的状态」，
+     * 本机改动不是与教务的一致——推进它等于把 AI 改动当成教务现状，之后
+     * `ScheduleSync.check` 反而报不出教务那边的真实变动。
+     *
+     * 写实现与 [applyScheduleChanges] 共用 [applyChangeSet]：「合并是唯一的写路径」
+     * 指的是不另造写库逻辑，不是不允许两种基线语义。
+     *
+     * 返回写入的覆盖行 id —— 撤销要按 id 删回去。
+     */
+    suspend fun applyLocalChanges(
+        changes: List<ScheduleDiff.Change>,
+        acceptedIndexes: Set<Int>,
+        overrides: List<ScheduleOverride> = emptyList(),
+        acceptedOverrides: Set<Int> = emptySet(),
+    ): LocalApplyResult = db.withTransaction {
+        val (report, ttId) = applyChangeSet(changes, acceptedIndexes)
+        // 去重：同一条覆盖被勾两次（模型重复给 / 用户手滑）不该写两行——
+        // `date_overrides` 没有唯一索引，裸插就是两份，撤销还只删得掉一份
+        val picked = overrides.filterIndexed { index, _ -> index in acceptedOverrides }
+            .distinctBy { listOf(it.fromDate, it.toDate, it.kind, it.sourceWeek, it.sourceWeekday) }
+        val overrideIds = if (picked.isEmpty()) {
+            emptyList()
+        } else {
+            db.dateOverrideDao().insertAll(picked.map { DateOverrideEntity.of(it.copy(id = 0), ttId) })
+        }
+        LocalApplyResult(report, overrideIds, ttId)
+    }
+
+    /**
+     * [applyLocalChanges] 的结果：课表部分 + 写入的日期覆盖行 id + **落库时的课表 id**。
+     *
+     * 记 `timetableId` 是必须的：撤销可能发生在用户切换当前课表之后，
+     * 那时再按「当前课表」落库会把课插进**另一张表**。
+     */
+    data class LocalApplyResult(
+        val report: ApplyReport,
+        val overrideIds: List<Long>,
+        val timetableId: Long,
+    )
+
+    /**
+     * 唯一写实现：事务内逐条删/改/增，**不碰基线**。返回 (report, timetableId)，
+     * 由调用方决定要不要推进基线。
      *
      * 逐条匹配用 [edu.jxslu.schedule.domain.ScheduleDiff.fingerprint]：当前课表里找不到
      * 指纹一致的条目（用户又改过）就跳过而不是硬套，`skipped` 计数交给 UI 汇报。
      * 新增课程带 `id=0` 走 Room 自增并取下一个未用配色；修改课程保留原行 id、配色与备注。
      */
-    suspend fun applyScheduleChanges(
-        changes: List<edu.jxslu.schedule.domain.ScheduleDiff.Change>,
+    private suspend fun applyChangeSet(
+        changes: List<ScheduleDiff.Change>,
         acceptedIndexes: Set<Int>,
-    ): ApplyReport = db.withTransaction {
+    ): Pair<ApplyReport, Long> = db.withTransaction {
         val ttId = currentTimetableId.first()
         var current = getTimetableCourses(ttId)
         var applied = 0
         var skipped = 0
+        val entries = mutableListOf<AppliedEntry>()
         acceptedIndexes.sorted().forEach { index ->
             val change = changes.getOrNull(index) ?: run { skipped++; return@forEach }
             when (change.kind) {
@@ -1237,6 +1417,10 @@ class ScheduleRepository(
                     db.courseDao().deleteByIds(listOf(target.id))
                     current = current.filterNot { it.id == target.id }
                     applied++
+                    entries += AppliedEntry(
+                        kind = edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.REMOVED,
+                        before = target,
+                    )
                 }
 
                 edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.MODIFIED -> {
@@ -1245,17 +1429,17 @@ class ScheduleRepository(
                     val target = current.firstOrNull {
                         ScheduleDiff.fingerprint(it) == ScheduleDiff.fingerprint(old)
                     } ?: run { skipped++; return@forEach }
-                    val merged = new.copy(
-                        id = target.id,
-                        colorIndex = target.colorIndex,
-                        remark = target.remark,
-                        isCustomTime = false,
-                        customStartTime = null,
-                        customEndTime = null,
-                    )
+                    // 与预览共用同一份收口（ScheduleDiff.appliedCopy），
+                    // 否则「批准的预览」与「落库结果」会不一致
+                    val merged = ScheduleDiff.appliedCopy(new, target)
                     db.courseDao().upsert(CourseEntity.fromDomain(merged).copy(timetableId = ttId))
                     current = current.map { if (it.id == target.id) merged else it }
                     applied++
+                    entries += AppliedEntry(
+                        kind = edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.MODIFIED,
+                        before = target,
+                        after = merged,
+                    )
                 }
 
                 edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.ADDED -> {
@@ -1271,12 +1455,67 @@ class ScheduleRepository(
                         val id = db.courseDao().upsert(CourseEntity.fromDomain(colored).copy(timetableId = ttId))
                         current = current + colored.copy(id = id)
                         applied++
+                        entries += AppliedEntry(
+                            kind = edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.ADDED,
+                            after = colored.copy(id = id),
+                        )
                     }
                 }
             }
         }
-        refreshBaselineFromDb(ttId)
-        ApplyReport(applied = applied, skipped = skipped)
+        ApplyReport(applied = applied, skipped = skipped, entries = entries) to ttId
+    }
+
+    /**
+     * 撤销一次 [applyLocalChanges] / [applyScheduleChanges] 的**课表部分**（DESIGN §4.39）。
+     *
+     * 倒序反向执行（后落库的先撤，避免同门课被改两次时撤错行）：
+     * - ADDED → 删掉写入的那一行（按 [AppliedEntry.after] 的 id）；
+     * - MODIFIED → 用 [AppliedEntry.before] 覆盖回去（带原 id）；
+     * - REMOVED → 把 [AppliedEntry.before] 原样插回（带原 id，此时 id 已空出来）。
+     *
+     * 单个事务：要么全撤回来，要么一行不动。**不碰基线**——与写入同语义
+     * （AI 改动与手动改课同类，基线是「与教务一致的状态」）。
+     */
+    suspend fun undoApplied(entries: List<AppliedEntry>, timetableId: Long? = null): Int {
+        if (entries.isEmpty()) return 0
+        return db.withTransaction {
+            val ttId = timetableId ?: currentTimetableId.first()
+            // 目标课表已删除（用户先删了课表再撤销）：反向写会向不存在的 timetableId
+            // 塞孤儿行——任何界面都查不到、也没有清理路径。整批按「跳过」处理，
+            // 正常路径由调用方（AI 页 / 记录页）先一步拒绝并说清。
+            if (db.timetableDao().getById(ttId) == null) return@withTransaction entries.size
+            val current = getTimetableCourses(ttId)
+            val plan = ScheduleUndo.plan(entries, current)
+            plan.actions.forEach { action ->
+                when (action) {
+                    is ScheduleUndo.Action.Delete -> db.courseDao().deleteByIds(listOf(action.id))
+                    is ScheduleUndo.Action.Upsert ->
+                        db.courseDao().upsert(CourseEntity.fromDomain(action.course).copy(timetableId = ttId))
+                }
+            }
+            plan.skipped
+        }
+    }
+
+    /** 现存课表 id 集合：撤销前核对目标课表是否还在（AI 调课页与「调课记录」页共用）。 */
+    suspend fun timetableIds(): Set<Long> = db.timetableDao().getAll().map { it.id }.toSet()
+
+    /**
+     * 撤销一次 [applyLocalChanges]：课表反向 + 删掉那次写入的日期覆盖行，**同一个事务**。
+     * 与写入同语义，**不碰基线**。
+     */
+    suspend fun undoLocalChanges(
+        entries: List<AppliedEntry>,
+        overrideIds: List<Long>,
+        timetableId: Long? = null,
+    ): Int {
+        if (entries.isEmpty() && overrideIds.isEmpty()) return 0
+        return db.withTransaction {
+            val skipped = undoApplied(entries, timetableId)
+            if (overrideIds.isNotEmpty()) db.dateOverrideDao().deleteByIds(overrideIds)
+            skipped
+        }
     }
 
     /**
@@ -1438,7 +1677,8 @@ class ScheduleRepository(
         val slots = timeSlots.first()
         val courses = courses.first()
         if (courses.isEmpty()) return null
-        return ScheduleExporter.expandEvents(courses, slots, semester).ok
+        // 日期覆盖（§4.40）：放假不导出、补课按借来的课导到目标日期
+        return ScheduleExporter.expandEvents(courses, slots, semester, overridesFor()).ok
     }
 
     /**
@@ -1584,6 +1824,9 @@ class ScheduleRepository(
                 restoredSlots = restoredSlots,
             )
         } else {
+            // 恢复式导入同理（§4.40）：备份 JSON 里不带日期覆盖，整表恢复后旧覆盖已无
+            // 对应关系，留着会让「恢复成备份的样子」变成一句空话
+            db.dateOverrideDao().deleteForTimetable(ttId)
             replaceAllCourses(domain, timetableId)
             ImportResult.Success(
                 added = domain.size,

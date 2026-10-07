@@ -15,6 +15,7 @@ import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ScheduleExporter
+import edu.jxslu.schedule.domain.ScheduleOverride
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.Timetable
@@ -46,6 +47,8 @@ data class WeekUiState(
     val courses: List<Course> = emptyList(),
     /** 全量课程，供 Pager 邻页即时过滤，也用来算非本周灰态 */
     val allCourses: List<Course> = emptyList(),
+    /** 日期覆盖（调休 / 停课，§4.40）；网格渲染时摊平成 plan 再查课 */
+    val overrides: List<ScheduleOverride> = emptyList(),
     val totalCourseCount: Int = 0,
     /**
      * 可见的星期列（1=周一 … 7=周日），按显示顺序排列。
@@ -165,9 +168,10 @@ class WeekViewModel(
             combine(
                 weekFlow,
                 repo.courses,
+                repo.overrides,
                 configFlow,
                 nowFlow,
-            ) { week, loaded, config, now ->
+            ) { week, loaded, overrides, config, now ->
                 val semester = config.semester
                 val slots = config.slots
                 val prefs = config.prefs
@@ -181,6 +185,8 @@ class WeekViewModel(
                     slots = slots,
                     courses = ScheduleCalculator.coursesInWeek(visible, week),
                     allCourses = visible,
+                    // 日期覆盖（调休 / 停课，§4.40）：网格渲染用，摊平后走 coursesOnDay
+                    overrides = overrides,
                     totalCourseCount = visible.size,
                     showSaturday = prefs.showSaturday,
                     showSunday = prefs.showSunday,

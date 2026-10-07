@@ -316,11 +316,14 @@ class CalendarSettingsViewModel(
         repo.semester,
         repo.courses,
         repo.timeSlots,
-    ) { semester, courses, slots ->
+        repo.overrides,
+    ) { semester, courses, slots, overrides ->
         when {
             semester == null -> SyncReadiness.NoSemester
             courses.isEmpty() -> SyncReadiness.Empty
-            else -> SyncReadiness.Ready(ScheduleExporter.expandEvents(courses, slots, semester).ok.size)
+            else -> SyncReadiness.Ready(
+                ScheduleExporter.expandEvents(courses, slots, semester, overrides).ok.size,
+            )
         }
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
