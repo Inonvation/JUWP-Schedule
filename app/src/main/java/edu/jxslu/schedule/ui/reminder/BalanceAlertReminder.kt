@@ -25,6 +25,9 @@ import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.power.PowerReadingSource
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
+import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
@@ -32,9 +35,6 @@ import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.flow.first
-import java.time.Duration
-import java.time.LocalDate
-import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 /**
@@ -68,12 +68,6 @@ object BalanceAlertReminder {
     /** 即时评估（冷启动 / 开关与阈值变更）。 */
     private const val ONE_SHOT_WORK = "balance_alert_check"
 
-    /**
-     * 每日核对时刻（本地时区整点）。排在早上，用户起床后能看到；
-     * WorkManager 周期任务在省电模式下可能被推迟，这只是「尽量」。
-     */
-    private const val CHECK_HOUR = 9
-
     private const val CHANNEL_ID = "balance_alert"
 
     /** 寝室电费通知：固定 id/tag/requestCode，与一卡通那条及上课/作业通知互不覆盖。 */
@@ -94,9 +88,14 @@ object BalanceAlertReminder {
     private const val YKT_REQUEST_CODE = 3006
 
     /**
-     * 周期核对：两个开关都关时**撤销**任务而不是留着空跑——它每天都会唤醒设备一次，
+     * 周期核对：两个开关都关时**撤销**任务而不是留着空跑——它每隔一段就会唤醒设备一次，
      * 能省就省（`ClassReminder` 那种「排着空跑」是因为它还要重排闹钟，这里没有这个负担）。
-     * 幂等（KEEP）：周期与首次延迟已排过就不重排，免得每次冷启动都把相位推后。
+     *
+     * 周期 = **两条链检查间隔的最小档**（2026-10-07 起间隔各自独立，用户拍板）；
+     * 周期任务只负责「按最勤的那条叫醒」，各路 check 里的 `AutoSyncRules.shouldAttemptAt`
+     * 用各自的间隔与上次成功时刻决定真抓还是跳过。幂等策略同 [ScoreAlertReminder]：
+     * **间隔档位没变时 KEEP** 保相位；变了用 REPLACE 换周期（2.7.1 没有 UPDATE 策略），
+     * 已排档位记在 DataStore（`balance_periodic_interval`），进程重启后也能比对。
      */
     suspend fun ensurePeriodicWork(context: Context) {
         runCatching {
@@ -104,13 +103,22 @@ object BalanceAlertReminder {
             val workManager = WorkManager.getInstance(context)
             if (!prefs.powerAlertEnabled.first() && !prefs.yktAlertEnabled.first()) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
+                prefs.setBalancePeriodicInterval(0)
                 return
             }
-            val request = PeriodicWorkRequestBuilder<BalanceAlertCheckWorker>(1, TimeUnit.DAYS)
-                .setInitialDelay(millisUntilNextCheck(), TimeUnit.MILLISECONDS)
+            val intervalHours = minOf(
+                BalanceAlert.coerceIntervalHours(prefs.powerAlertIntervalHours.first()),
+                BalanceAlert.coerceIntervalHours(prefs.yktAlertIntervalHours.first()),
+            )
+            val request = PeriodicWorkRequestBuilder<BalanceAlertCheckWorker>(intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(connectedConstraint())
                 .build()
-            workManager.enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, request)
+            if (prefs.balancePeriodicInterval() == intervalHours) {
+                workManager.enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, request)
+            } else {
+                workManager.enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.REPLACE, request)
+                prefs.setBalancePeriodicInterval(intervalHours)
+            }
         }.onFailure { Log.w(TAG, "ensurePeriodicWork failed", it) }
     }
 
@@ -126,14 +134,18 @@ object BalanceAlertReminder {
     }
 
     /**
-     * 设置变更（开关或阈值）后的统一入口：**清掉该来源的当日节奏**再排一次即时评估。
+     * 设置变更（开关 / 阈值 / 检查间隔）后的统一入口：**清掉该来源的检查时刻与
+     * 「已提醒未回升」标记**再排一次即时评估。
      *
-     * 清日期的理由是语义而非省事：用户刚把提醒线从 ¥20 调到 ¥50，就是想按新规则立刻评估一次；
-     * 若沿用「今天已检查过」的闸门，新阈值当天不会生效，用户会以为功能坏了。
+     * 清两个键的理由是语义而非省事：用户刚把提醒线从 ¥20 调到 ¥50（或改了检查间隔），
+     * 就是要按新规则立刻评估一次；沿用旧时刻的话新规则要等下一个周期才生效，
+     * 用户会以为改错了地方。清 notified 标记则让「刚调高的阈值」当场能再提醒一次。
      */
     suspend fun onSettingsChanged(context: Context, source: BalanceAlertSource) {
         runCatching {
-            Graph.displayPrefs(context).clearAlertLastCheckDate(source)
+            val prefs = Graph.displayPrefs(context)
+            prefs.clearBalanceAlertCheckMillis(source)
+            prefs.clearBalanceAlertNotified(source)
             ensurePeriodicWork(context)
         }.onFailure { Log.w(TAG, "onSettingsChanged failed", it) }
         enqueueCheck(context)
@@ -150,14 +162,14 @@ object BalanceAlertReminder {
             val yktOn = prefs.yktAlertEnabled.first()
             if (!powerOn && !yktOn) return
             val credentials = Graph.yktCredentialStore(context).read() ?: return
-            val today = LocalDate.now()
+            val nowMillis = System.currentTimeMillis()
             // 通知落点：生活页开关关掉时不给 extra（落今日页），免得落在一个不存在的 Tab 上
             val toLife = prefs.lifeTabEnabled.first()
             // 通知总开关只拦「发通知」，不拦核对本身（2026-10-06 收件箱 §4.38）：
             // 状态消解（回升移除消息）与入箱都靠这条核对链，通知全关也得照跑。
             val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
-            if (powerOn) checkPower(context, prefs, credentials, today, toLife, notificationsEnabled)
-            if (yktOn) checkYkt(context, prefs, credentials, today, toLife, notificationsEnabled)
+            if (powerOn) checkPower(context, prefs, credentials, nowMillis, toLife, notificationsEnabled)
+            if (yktOn) checkYkt(context, prefs, credentials, nowMillis, toLife, notificationsEnabled)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 
@@ -169,11 +181,19 @@ object BalanceAlertReminder {
         context: Context,
         prefs: DisplayPrefsStore,
         credentials: YktCredentialStore.Credentials,
-        today: LocalDate,
+        nowMillis: Long,
         toLife: Boolean,
         notificationsEnabled: Boolean,
     ) {
-        if (!BalanceAlert.isDueToday(prefs.alertLastCheckDate(BalanceAlertSource.Power), today)) return
+        val intervalHours = BalanceAlert.coerceIntervalHours(prefs.powerAlertIntervalHours.first())
+        if (!AutoSyncRules.shouldAttemptAt(
+                prefs.balanceAlertCheckMillis(BalanceAlertSource.Power),
+                intervalHours,
+                nowMillis,
+            )
+        ) {
+            return
+        }
         val snapshot = runCatching {
             Graph.powerRepository(context).snapshot(
                 credentials.username,
@@ -181,8 +201,8 @@ object BalanceAlertReminder {
                 // 这一条读数是「用电统计」最稳定的采样点（每天一次，与开关联动）
                 source = PowerReadingSource.ALERT,
             )
-        }.getOrNull() ?: return // 失败不落日期：当天还能补查
-        prefs.setAlertLastCheckDate(BalanceAlertSource.Power, BalanceAlert.dateKey(today))
+        }.getOrNull() ?: return // 失败不落时刻：间隔闸门保持开着，下一轮还有补查机会
+        prefs.setBalanceAlertCheckMillis(BalanceAlertSource.Power, nowMillis)
         // 桌面生活小组件的电费副行（DESIGN §3.6 二条目改版）：读数已落 Room，
         // 顺手镜像一次（零网络）
         runCatching { LifeWidgetSync.refreshLifeWidgets(context) }
@@ -192,11 +212,15 @@ object BalanceAlertReminder {
         val threshold = prefs.powerAlertYuan.first()
         val room = meter.room.room?.takeIf { it.isNotBlank() } ?: snapshot.feeItem.room?.name
         if (!BalanceAlert.isLow(yuan, threshold)) {
-            // 状态消解（收件箱 §4.38）：回升了就把「电费偏低」那条撤掉。
-            // 走到这里说明取数成功，不存在「失败误删」。
+            // 状态消解（收件箱 §4.38）：回升了就把「电费偏低」那条撤掉，并重置提醒标记
+            //（下次再降才重新提醒）。走到这里说明取数成功，不存在「失败误删」。
             Graph.inboxRepository(context).clearState(InboxKeys.POWER_LOW)
+            prefs.clearBalanceAlertNotified(BalanceAlertSource.Power)
             return
         }
+        // 「偏低期间只提醒一次」（2026-10-07 间隔改小时级后重立）：标记亮着说明上一轮
+        // 已经提醒过且一直没回升，这轮照常取数（小组件照刷）但不再打扰。
+        if (prefs.balanceAlertNotified(BalanceAlertSource.Power)) return
         val text = buildString {
             if (!room.isNullOrBlank()) append("$room ")
             append("剩余 ¥%.2f".format(yuan))
@@ -212,15 +236,41 @@ object BalanceAlertReminder {
             body = text,
             route = SubpageScreen.POWER_BILL.name,
         )
-        if (notificationsEnabled) post(
-            context = context,
-            channelTag = POWER_NOTIFICATION_TAG,
-            notificationId = POWER_NOTIFICATION_ID,
-            title = "寝室电费偏低",
-            text = text,
-            toLife = toLife,
+        // 免扰时段（DESIGN §3.7）：余额偏低是事实型通知（状态型——明天复核回升即消解），
+        // 拦下入队待时段结束后补发，不丢弃。入箱与状态消解都已完成，不受此影响
+        val held = notificationsEnabled && QuietHoursGate.intercept(
+            context,
+            PendingNotification(
+                tag = POWER_NOTIFICATION_TAG,
+                notificationId = POWER_NOTIFICATION_ID,
+                channelId = CHANNEL_ID,
+                category = NotificationCompat.CATEGORY_REMINDER,
+                title = "寝室电费偏低",
+                text = text,
+                enqueuedAt = System.currentTimeMillis(),
+                launch = PendingLaunch(
+                    kind = PendingLaunch.Kind.MAIN_ROUTE,
+                    requestCode = POWER_REQUEST_CODE,
+                    route = if (toLife) ROUTE_LIFE else null,
+                ),
+            ),
         )
+        // 「偏低期间只提醒一次」的置位点：通知真发出去（或拦下入队待补发）就算这条
+        // 提醒已送达，标记亮住直到回升清除——不置位的话小时级周期核对每一轮都重发
+        if (held || (notificationsEnabled && postedPower(context, text, toLife))) {
+            prefs.setBalanceAlertNotified(BalanceAlertSource.Power, true)
+        }
     }
+
+    /** 电费通知的即时发送（返回是否成功），与置位判断拆开保持原来 post 的吞错口径。 */
+    private fun postedPower(context: Context, text: String, toLife: Boolean): Boolean = post(
+        context = context,
+        channelTag = POWER_NOTIFICATION_TAG,
+        notificationId = POWER_NOTIFICATION_ID,
+        title = "寝室电费偏低",
+        text = text,
+        toLife = toLife,
+    )
 
     // ------------------------------------------------------------------
     // 一卡通余额
@@ -230,15 +280,23 @@ object BalanceAlertReminder {
         context: Context,
         prefs: DisplayPrefsStore,
         credentials: YktCredentialStore.Credentials,
-        today: LocalDate,
+        nowMillis: Long,
         toLife: Boolean,
         notificationsEnabled: Boolean,
     ) {
-        if (!BalanceAlert.isDueToday(prefs.alertLastCheckDate(BalanceAlertSource.Ykt), today)) return
+        val intervalHours = BalanceAlert.coerceIntervalHours(prefs.yktAlertIntervalHours.first())
+        if (!AutoSyncRules.shouldAttemptAt(
+                prefs.balanceAlertCheckMillis(BalanceAlertSource.Ykt),
+                intervalHours,
+                nowMillis,
+            )
+        ) {
+            return
+        }
         val cards = runCatching {
             Graph.yktRepository(context).cards(credentials.username, credentials.password)
-        }.getOrNull() ?: return // 失败不落日期：当天还能补查
-        prefs.setAlertLastCheckDate(BalanceAlertSource.Ykt, BalanceAlert.dateKey(today))
+        }.getOrNull() ?: return // 失败不落时刻：间隔闸门保持开着，下一轮还有补查机会
+        prefs.setBalanceAlertCheckMillis(BalanceAlertSource.Ykt, nowMillis)
 
         // 口径 = **正式卡**余额（付款码实际扣款的那个钱包）。电子账户是线上缴费用的
         // 独立钱包（DESIGN §3.10 账户口径），混进同一个阈值会让「还剩多少能刷」失去意义。
@@ -249,10 +307,13 @@ object BalanceAlertReminder {
         val cardYuan = cards.sumOf { it.cardBalanceFen } / 100.0
         val threshold = prefs.yktAlertYuan.first()
         if (!BalanceAlert.isLow(cardYuan, threshold)) {
-            // 状态消解（收件箱 §4.38）：同电费——取数成功且不再偏低才撤消息。
+            // 状态消解（收件箱 §4.38）：同电费——取数成功且不再偏低才撤消息，并重置提醒标记。
             Graph.inboxRepository(context).clearState(InboxKeys.YKT_LOW)
+            prefs.clearBalanceAlertNotified(BalanceAlertSource.Ykt)
             return
         }
+        // 「偏低期间只提醒一次」（同电费口径）
+        if (prefs.balanceAlertNotified(BalanceAlertSource.Ykt)) return
         val text = "正式卡余额 ¥%.2f，低于提醒线 ¥$threshold，记得充值".format(cardYuan)
         Graph.inboxRepository(context).post(
             kind = InboxKind.YKT_LOW,
@@ -261,21 +322,48 @@ object BalanceAlertReminder {
             body = text,
             route = SubpageScreen.CAMPUS_CARD_SETTINGS.name,
         )
-        if (notificationsEnabled) post(
-            context = context,
-            channelTag = YKT_NOTIFICATION_TAG,
-            notificationId = YKT_NOTIFICATION_ID,
-            title = "校园卡余额偏低",
-            text = text,
-            toLife = toLife,
+        // 免扰时段（DESIGN §3.7）：同电费口径，拦下入队待时段结束后补发
+        val held = notificationsEnabled && QuietHoursGate.intercept(
+            context,
+            PendingNotification(
+                tag = YKT_NOTIFICATION_TAG,
+                notificationId = YKT_NOTIFICATION_ID,
+                channelId = CHANNEL_ID,
+                category = NotificationCompat.CATEGORY_REMINDER,
+                title = "校园卡余额偏低",
+                text = text,
+                enqueuedAt = System.currentTimeMillis(),
+                launch = PendingLaunch(
+                    kind = PendingLaunch.Kind.MAIN_ROUTE,
+                    requestCode = YKT_REQUEST_CODE,
+                    route = if (toLife) ROUTE_LIFE else null,
+                ),
+            ),
         )
+        // 「偏低期间只提醒一次」的置位点（同电费）
+        if (held || (notificationsEnabled && postedYkt(context, text, toLife))) {
+            prefs.setBalanceAlertNotified(BalanceAlertSource.Ykt, true)
+        }
     }
+
+    /** 一卡通通知的即时发送（返回是否成功），口径同 [postedPower]。 */
+    private fun postedYkt(context: Context, text: String, toLife: Boolean): Boolean = post(
+        context = context,
+        channelTag = YKT_NOTIFICATION_TAG,
+        notificationId = YKT_NOTIFICATION_ID,
+        title = "校园卡余额偏低",
+        text = text,
+        toLife = toLife,
+    )
 
     // ------------------------------------------------------------------
     // 通知
     // ------------------------------------------------------------------
 
-    /** 发一条余额提醒。无权限/被系统拒绝时静默失败（写不出去不该把核对链路搞崩）。 */
+    /**
+     * 发一条余额提醒。无权限/被系统拒绝时静默失败（写不出去不该把核对链路搞崩）；
+     * 返回系统是否真收下——调用方（标记置位）需要这个区分。
+     */
     private fun post(
         context: Context,
         channelTag: String,
@@ -283,7 +371,7 @@ object BalanceAlertReminder {
         title: String,
         text: String,
         toLife: Boolean,
-    ) {
+    ): Boolean {
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
@@ -300,10 +388,10 @@ object BalanceAlertReminder {
                 ),
             )
             .build()
-        runCatching {
+        return runCatching {
             NotificationManagerCompat.from(context)
                 .notify(channelTag, notificationId, notification)
-        }.onFailure { Log.w(TAG, "notify failed", it) }
+        }.onFailure { Log.w(TAG, "notify failed", it) }.isSuccess
     }
 
     /**
@@ -345,13 +433,6 @@ object BalanceAlertReminder {
 
     private fun connectedConstraint(): Constraints =
         Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-
-    /** 距下一个 [CHECK_HOUR] 点的毫秒数（已过则取明天同一时刻）。 */
-    internal fun millisUntilNextCheck(now: ZonedDateTime = ZonedDateTime.now()): Long {
-        val todayTarget = now.withHour(CHECK_HOUR).withMinute(0).withSecond(0).withNano(0)
-        val target = if (todayTarget.isAfter(now)) todayTarget else todayTarget.plusDays(1)
-        return Duration.between(now, target).toMillis()
-    }
 }
 
 /**

@@ -19,6 +19,7 @@ import edu.jxslu.schedule.ui.me.hub.AboutScreen
 import edu.jxslu.schedule.ui.me.hub.ExtensionServicesHubScreen
 import edu.jxslu.schedule.ui.me.hub.GeneralSettingsScreen
 import edu.jxslu.schedule.ui.me.hub.LearningHubScreen
+import edu.jxslu.schedule.ui.me.hub.QuietHoursScreen
 import edu.jxslu.schedule.ui.me.hub.TimetableHubScreen
 import edu.jxslu.schedule.ui.me.hub.WidgetCalendarHubScreen
 import edu.jxslu.schedule.ui.campus.CampusCalendarScreen
@@ -126,6 +127,8 @@ enum class SubpageScreen {
     LEARNING_HUB,
     /** 我的 → 提醒与桌面汇总页（2026-09-28 自「小组件与日历」改名，DESIGN §3.3） */
     WIDGET_CALENDAR_HUB,
+    /** 提醒与桌面 → 免扰时段（预置夜间/午休 · 可编辑，时段内通知推迟补发，DESIGN §3.7，2026-10-07） */
+    QUIET_HOURS,
     /** 我的 → 校园服务汇总页（2026-09-28 自「扩展服务」改名瘦身，DESIGN §3.3） */
     EXT_SERVICES_HUB,
     /** 我的 → 关于页（版本 · 免责 · 仓库 · 权限入口，DESIGN §3.3） */
@@ -382,7 +385,12 @@ class SubpageActivity : ComponentActivity() {
                 onOpenPermissionSettings = {
                     SubpageActivity.start(this, SubpageScreen.PERMISSION_SETTINGS)
                 },
+                // 免扰时段（DESIGN §3.7，2026-10-07）：提醒区入口
+                onOpenQuietHours = {
+                    SubpageActivity.start(this, SubpageScreen.QUIET_HOURS)
+                },
             )
+            SubpageScreen.QUIET_HOURS -> QuietHoursScreen(onBack = onBack)
             SubpageScreen.EXT_SERVICES_HUB -> ExtensionServicesHubScreen(
                 onBack = onBack,
                 onOpenCampusCard = {

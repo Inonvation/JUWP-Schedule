@@ -27,7 +27,11 @@ import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.subpageLaunchIntent
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.prefs.ReminderKeyKind
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.domain.ReminderDefaults
+import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.dueReminderPlan
 import edu.jxslu.schedule.domain.homeworkReminderPlan
 import edu.jxslu.schedule.domain.dueClassStartPlan
@@ -38,6 +42,7 @@ import edu.jxslu.schedule.domain.homeworkReminderGroup
 import edu.jxslu.schedule.domain.homeworkDisplayTitle
 import edu.jxslu.schedule.domain.nextClassStartPlan
 import edu.jxslu.schedule.domain.nextReminderPlan
+import edu.jxslu.schedule.domain.remarkPreview
 import kotlinx.coroutines.flow.first
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -282,12 +287,35 @@ internal object ReminderNotifications {
         val startKey = startDue?.dedupKey
         // 通知强提醒（2026-10-06，通用设置）：默认关，开了才在发出后直接震动
         val strongVibration = repo.strongReminderVibration.first()
+        // 免扰拦截描述要存 epoch 毫秒（eventAt），LocalDateTime → Instant 需要时区
+        val zone = ZoneId.systemDefault()
         if (startKey != null && repo.reminderLastKey(ReminderKeyKind.Start) != startKey) {
+            // 免扰时段（DESIGN §3.7）：拦下入队待补发，拦截 = 已处理（照常落去重键），
+            // 否则 15 分钟周期核对会在免扰期内反复入队
+            val held = QuietHoursGate.intercept(
+                context,
+                PendingNotification(
+                    tag = NOTIFICATION_TAG,
+                    notificationId = CLASS_START_NOTIFICATION_ID,
+                    channelId = CHANNEL_ID,
+                    category = NotificationCompat.CATEGORY_EVENT,
+                    title = "上课 · ${startDue.course.name}",
+                    text = notificationLine(slots, startDue.course),
+                    eventAt = startDue.startAt.atZone(zone).toInstant().toEpochMilli(),
+                    enqueuedAt = System.currentTimeMillis(),
+                    vibrate = strongVibration,
+                    launch = PendingLaunch(kind = PendingLaunch.Kind.MAIN_PLAIN, requestCode = 0),
+                ),
+            )
+            if (held) {
+                repo.setReminderLastKey(ReminderKeyKind.Start, startKey)
+                return
+            }
             val posted = postClassNotification(
                 context,
                 id = CLASS_START_NOTIFICATION_ID,
                 title = "上课 · ${startDue.course.name}",
-                text = metaLine(slots, startDue.course),
+                text = notificationLine(slots, startDue.course),
                 strongVibration = strongVibration,
             )
             if (posted) repo.setReminderLastKey(ReminderKeyKind.Start, startKey)
@@ -296,15 +324,45 @@ internal object ReminderNotifications {
         val due = dueReminderPlan(semester, slots, courses, now, leadMinutes = lead, overrides = overrides)
         val key = due?.dedupKey
         if (key != null && repo.reminderLastKey(ReminderKeyKind.Before) != key) {
+            val held = QuietHoursGate.intercept(
+                context,
+                PendingNotification(
+                    tag = NOTIFICATION_TAG,
+                    notificationId = NOTIFICATION_ID,
+                    channelId = CHANNEL_ID,
+                    category = NotificationCompat.CATEGORY_EVENT,
+                    title = "${ReminderDefaults.leadLabel(lead)}后上课 · ${due.course.name}",
+                    text = notificationLine(slots, due.course),
+                    eventAt = due.startAt.atZone(zone).toInstant().toEpochMilli(),
+                    enqueuedAt = System.currentTimeMillis(),
+                    vibrate = strongVibration,
+                    launch = PendingLaunch(kind = PendingLaunch.Kind.MAIN_PLAIN, requestCode = 0),
+                ),
+            )
+            if (held) {
+                repo.setReminderLastKey(ReminderKeyKind.Before, key)
+                return
+            }
             val posted = postClassNotification(
                 context,
                 id = NOTIFICATION_ID,
                 title = "${ReminderDefaults.leadLabel(lead)}后上课 · ${due.course.name}",
-                text = metaLine(slots, due.course),
+                text = notificationLine(slots, due.course),
                 strongVibration = strongVibration,
             )
             if (posted) repo.setReminderLastKey(ReminderKeyKind.Before, key)
         }
+    }
+
+    /**
+     * 上课类通知正文（2026-10-08）：`metaLine`（时刻 · @地点 · 教师）+ 备注
+     * （有备注才换行追加，无备注维持原样）；备注过 [remarkPreview] 截断，
+     * 通知 BigText 能放多行但用户手写的备注长短不受控，与卡片共用一个上限。
+     */
+    private fun notificationLine(slots: List<TimeSlot>, course: Course): String {
+        val meta = metaLine(slots, course)
+        val remark = remarkPreview(course.remark) ?: return meta
+        return "$meta\n$remark"
     }
 
     /** 上课类通知的共用构建（提前量与上课开始两处共用，标题与 id 不同）。 */
@@ -362,6 +420,63 @@ internal object ReminderNotifications {
         ensureChannels(context, homework = true)
         // 口径同上课提醒：开了「通知强提醒」才直接震动（默认关）
         val strongVibration = repo.strongReminderVibration.first()
+        // 免扰时段（DESIGN §3.7）：整组拦下入队待补发。汇总与单条的描述在此时就定稿
+        // （标题/正文/落点/去重键），补发时按描述重建；拦截 = 已处理，照常落全组去重键
+        val zone = ZoneId.systemDefault()
+        val held = if (fresh.size == 1) {
+            val plan = fresh.single()
+            QuietHoursGate.intercept(
+                context,
+                PendingNotification(
+                    tag = HOMEWORK_NOTIFICATION_TAG,
+                    notificationId = HOMEWORK_NOTIFICATION_ID,
+                    channelId = HOMEWORK_CHANNEL_ID,
+                    category = NotificationCompat.CATEGORY_REMINDER,
+                    title = "${plan.kind.label} · ${plan.homework.courseName}",
+                    text = homeworkDisplayTitle(plan.homework.detail),
+                    eventAt = plan.triggerAt.atZone(zone).toInstant().toEpochMilli(),
+                    enqueuedAt = System.currentTimeMillis(),
+                    vibrate = strongVibration,
+                    launch = PendingLaunch(
+                        kind = PendingLaunch.Kind.SUBPAGE,
+                        requestCode = HOMEWORK_CONTENT_REQUEST_CODE,
+                        screen = SubpageScreen.HOMEWORK_DETAIL.name,
+                        courseName = plan.homework.courseName,
+                        itemId = plan.homework.id.toString(),
+                    ),
+                ),
+            )
+        } else {
+            val kindLabel = fresh.first().kind.label
+            val titles = fresh.map { homeworkDisplayTitle(it.homework.detail) }
+            val body = buildString {
+                append(titles.take(SUMMARY_TITLE_LIMIT).joinToString(" · "))
+                if (titles.size > SUMMARY_TITLE_LIMIT) append(" 等 ${titles.size} 项")
+            }
+            QuietHoursGate.intercept(
+                context,
+                PendingNotification(
+                    tag = HOMEWORK_SUMMARY_TAG,
+                    notificationId = HOMEWORK_SUMMARY_ID,
+                    channelId = HOMEWORK_CHANNEL_ID,
+                    category = NotificationCompat.CATEGORY_REMINDER,
+                    title = "${fresh.size} 项作业$kindLabel",
+                    text = body,
+                    eventAt = fresh.minOf { it.triggerAt }.atZone(zone).toInstant().toEpochMilli(),
+                    enqueuedAt = System.currentTimeMillis(),
+                    vibrate = strongVibration,
+                    launch = PendingLaunch(
+                        kind = PendingLaunch.Kind.SUBPAGE,
+                        requestCode = HOMEWORK_SUMMARY_REQUEST_CODE,
+                        screen = SubpageScreen.HOMEWORK_TODO.name,
+                    ),
+                ),
+            )
+        }
+        if (held) {
+            fresh.forEach { repo.addHomeworkRemindedKey(it.dedupKey) }
+            return
+        }
         val posted = if (fresh.size == 1) {
             postSingleHomework(context, fresh.single())
         } else {

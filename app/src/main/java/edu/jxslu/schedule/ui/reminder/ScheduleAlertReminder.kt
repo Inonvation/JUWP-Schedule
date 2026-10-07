@@ -12,6 +12,8 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.data.repo.ScheduleSync
 import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.subpageLaunchIntent
@@ -59,14 +61,35 @@ object ScheduleAlertReminder {
         when (val result = Graph.scheduleSync(context).check()) {
             is ScheduleSync.CheckResult.Ok -> {
                 if (result.repeated || result.changes.isEmpty()) return
-                post(context, result.changes)
+                // 免扰时段（DESIGN §3.7）：调课差异是事实型通知（eventAt=null），
+                // 拦下入队待时段结束后补发。入箱在 ScheduleSync 内已完成
+                val held = QuietHoursGate.intercept(
+                    context,
+                    PendingNotification(
+                        tag = NOTIFICATION_TAG,
+                        notificationId = NOTIFICATION_ID,
+                        channelId = CHANNEL_ID,
+                        category = NotificationCompat.CATEGORY_REMINDER,
+                        title = if (result.changes.size == 1) "课程安排有变动"
+                        else "有 ${result.changes.size} 处课程变动",
+                        text = changesText(result.changes),
+                        enqueuedAt = System.currentTimeMillis(),
+                        launch = PendingLaunch(
+                            kind = PendingLaunch.Kind.SUBPAGE,
+                            requestCode = REQUEST_CODE,
+                            screen = SubpageScreen.SCHEDULE_CHANGES.name,
+                            clearTask = true,
+                        ),
+                    ),
+                )
+                if (!held) post(context, result.changes)
             }
             else -> Unit // Skipped / Failed 一律静默，失败闸门不落时刻
         }
     }
 
-    /** 通知：正文列「调整/新增/删除：课程 摘要」，超出 [MAX_LINES] 折叠。点击落处置页。 */
-    private fun post(context: Context, changes: List<ScheduleDiff.Change>) {
+    /** 通知正文（拦截入队与即时发送共用；超出 [MAX_LINES] 折叠）。 */
+    private fun changesText(changes: List<ScheduleDiff.Change>): String {
         val lines = changes.take(MAX_LINES).map { change ->
             val course = change.new ?: change.old
             val prefix = when (change.kind) {
@@ -87,15 +110,20 @@ object ScheduleAlertReminder {
             }
         }
         val rest = changes.size - lines.size
-        val text = buildString {
+        return buildString {
             append(lines.joinToString("\n"))
             if (rest > 0) append("\n等 $rest 条")
         }
+    }
+
+    /** 通知：正文列「调整/新增/删除：课程 摘要」，超出 [MAX_LINES] 折叠。点击落处置页。 */
+    private fun post(context: Context, changes: List<ScheduleDiff.Change>) {
+        val text = changesText(changes)
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle(if (changes.size == 1) "课程安排有变动" else "有 ${changes.size} 处课程变动")
-            .setContentText(lines.firstOrNull().orEmpty())
+            .setContentText(text.lines().firstOrNull().orEmpty())
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)

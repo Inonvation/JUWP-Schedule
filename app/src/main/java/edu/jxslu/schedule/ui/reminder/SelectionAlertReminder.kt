@@ -20,6 +20,8 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.SelectionRounds
@@ -152,12 +154,32 @@ object SelectionAlertReminder {
                     body = text,
                     route = SubpageScreen.SELECTIONS.name,
                 )
-                // 已发键落两种情况：通知真发出去；或通知被系统整体关闭——后者事实已进
-                // 收件箱，重试没有意义，且不落键会让 scheduleNext 把这个已过去的点
-                // 反复排成立即触发的闹钟空转。只有「通知开着但发送异常」才留给下一轮。
+                // 已发键落三种情况：通知真发出去；或通知被系统整体关闭；或免扰时段
+                // 拦下入队待补发（2026-10-07，DESIGN §3.7）——后两者事实已进收件箱
+                // （免扰下静默丢的时刻型提醒也不该让 scheduleNext 把这个已过去的点
+                // 反复排成立即触发的闹钟空转）。只有「通知开着但发送异常」才留给下一轮。
                 val notificationsEnabled =
                     NotificationManagerCompat.from(context).areNotificationsEnabled()
-                if (!notificationsEnabled || postNotification(context, due, now)) {
+                val held = notificationsEnabled && QuietHoursGate.intercept(
+                    context,
+                    PendingNotification(
+                        tag = NOTIFICATION_TAG,
+                        notificationId = NOTIFICATION_ID,
+                        channelId = CHANNEL_ID,
+                        category = NotificationCompat.CATEGORY_REMINDER,
+                        title = title,
+                        text = text,
+                        eventAt = due.eventAt,
+                        enqueuedAt = now,
+                        launch = PendingLaunch(
+                            kind = PendingLaunch.Kind.SUBPAGE,
+                            requestCode = CONTENT_REQUEST_CODE,
+                            screen = SubpageScreen.SELECTIONS.name,
+                            clearTask = true,
+                        ),
+                    ),
+                )
+                if (!notificationsEnabled || held || postNotification(context, due, now)) {
                     prefs.addSelectionRemindedKey(due.key)
                 }
             }

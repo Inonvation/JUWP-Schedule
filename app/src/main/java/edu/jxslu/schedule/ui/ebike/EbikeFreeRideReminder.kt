@@ -8,13 +8,18 @@ import android.content.Context
 import android.content.Intent
 import android.provider.AlarmClock
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.domain.EbikeFreeRide
+import edu.jxslu.schedule.ui.reminder.QuietHoursGate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -168,16 +173,62 @@ object EbikeFreeRideReminder {
         // 3) 该发的提醒（各自去重）。发失败不落键，下一轮还有机会
         if (EbikeFreeRide.isLeadDue(startAt, lead, now)) {
             val key = EbikeFreeRide.leadDedupKey(startAt)
-            if (key !in sent &&
-                EbikeFreeRideNotifier.postLeadReminder(context, startAt, now, strongVibration)
-            ) {
-                sent += key
+            if (key !in sent) {
+                // 免扰时段（DESIGN §3.7）：拦下入队待补发（eventAt = 免费结束时刻，
+                // 补发时免费时段已过、文案失真 → 按时刻型过期口径丢弃）；
+                // 拦截 = 已处理，照常落去重键，否则周期核对反复入队
+                val held = QuietHoursGate.intercept(
+                    context,
+                    PendingNotification(
+                        tag = null,
+                        notificationId = EbikeFreeRide.NotificationIds.LEAD,
+                        channelId = EbikeFreeRide.NotificationIds.ALERT_CHANNEL,
+                        category = NotificationCompat.CATEGORY_EVENT,
+                        title = EbikeFreeRide.LEAD_TITLE,
+                        text = EbikeFreeRide.leadText(startAt, now),
+                        eventAt = EbikeFreeRide.freeEndMillis(startAt),
+                        enqueuedAt = now,
+                        vibrate = strongVibration,
+                        launch = PendingLaunch(
+                            kind = PendingLaunch.Kind.SUBPAGE,
+                            requestCode = EbikeFreeRideNotifier.LEAD_REQUEST_CODE,
+                            screen = SubpageScreen.RIDE.name,
+                        ),
+                    ),
+                )
+                if (held) sent += key
+                else if (EbikeFreeRideNotifier.postLeadReminder(context, startAt, now, strongVibration)) {
+                    sent += key
+                }
             }
         }
         if (endDue) {
             val key = EbikeFreeRide.endDedupKey(startAt)
-            if (key !in sent && EbikeFreeRideNotifier.postEndReminder(context, strongVibration)) {
-                sent += key
+            if (key !in sent) {
+                val held = QuietHoursGate.intercept(
+                    context,
+                    PendingNotification(
+                        tag = null,
+                        notificationId = EbikeFreeRide.NotificationIds.END,
+                        channelId = EbikeFreeRide.NotificationIds.ALERT_CHANNEL,
+                        category = NotificationCompat.CATEGORY_EVENT,
+                        title = EbikeFreeRide.END_TITLE,
+                        text = EbikeFreeRide.END_TEXT,
+                        eventAt = EbikeFreeRide.freeEndMillis(startAt),
+                        enqueuedAt = now,
+                        vibrate = strongVibration,
+                        launch = PendingLaunch(
+                            kind = PendingLaunch.Kind.SUBPAGE,
+                            requestCode = EbikeFreeRideNotifier.END_REQUEST_CODE,
+                            screen = SubpageScreen.RIDE.name,
+                        ),
+                    ),
+                )
+                if (held) {
+                    sent += key
+                } else if (EbikeFreeRideNotifier.postEndReminder(context, strongVibration)) {
+                    sent += key
+                }
             }
             // 免费时长已结束（结束提醒窗口内）：扫完即焚的码此刻删除。
             // 删除跟计时段落走、不跟提醒发没发成功走；正常时序下免费结束闹钟到点

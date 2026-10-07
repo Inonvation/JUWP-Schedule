@@ -9,6 +9,7 @@ import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
+import edu.jxslu.schedule.ui.reminder.QuietHoursGate
 import edu.jxslu.schedule.ui.reminder.UjingDoneReminder
 import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
@@ -94,6 +95,10 @@ class JuwApplication : Application() {
             // 冷启动裁一次。量级很小，廉价；失败不挡后面的启动协程。
             runCatching { Graph.inboxRepository(this@JuwApplication).purge() }
                 .onFailure { CrashReporter.logCoroutine(this@JuwApplication, "inboxPurge", it) }
+            // 免扰时段补发（DESIGN §3.7，2026-10-07）：兜住关机/重启丢掉的补发闹钟
+            // ——免扰期间积下的通知在启动时放行。队列为空 / 不在免扰出口点时是空跑，
+            // 纯本地 IO 无网络；失败不挡启动链。
+            QuietHoursGate.flushIfDue(this@JuwApplication, appScope)
         }
         // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
         // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链

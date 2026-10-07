@@ -34,7 +34,7 @@ import edu.jxslu.schedule.ui.reminder.ReminderVibration
  * 三个通知的落点都是「骑行」页（[SubpageScreen.RIDE]，2026-09-29 结构重构后出码页与地图页
  * 已合并成一个页面）：提醒响的时候用户要么在微信里扫码、要么刚还完车，点通知回到
  * 「能看倒计时、能结束计时 / 还车」的那一页最直接。
- * 每个通知的 requestCode 各不相同（[REQUEST_LEAD] / [REQUEST_END] / [REQUEST_COUNTDOWN]）
+ * 每个通知的 requestCode 各不相同（[LEAD_REQUEST_CODE] / [END_REQUEST_CODE] / REQUEST_COUNTDOWN）
  * ——PendingIntent 的身份是「requestCode + filterEquals」，共用 requestCode 会让落点
  * 互相改写。**requestCode 不能复用通知 id**：余额提醒（`BalanceAlertReminder`）的
  * 通知 id 也是 1005/1006，且它的落点 intent 同样指向 MainActivity、无 action——
@@ -46,8 +46,13 @@ internal object EbikeFreeRideNotifier {
 
     /** 通知点击落点的 requestCode：与通知 id（1000/1005/1006）和余额提醒（3005/3006）都错开。 */
     private const val REQUEST_COUNTDOWN = 2000
-    private const val REQUEST_LEAD = 2005
-    private const val REQUEST_END = 2006
+
+    /**
+     * 提前量 / 结束两条提醒的落点 requestCode。internal：免扰时段拦下入队时
+     * 要按原值存档，补发重建落点必须同 requestCode（身份纪律见类头 KDoc）。
+     */
+    internal const val LEAD_REQUEST_CODE = 2005
+    internal const val END_REQUEST_CODE = 2006
 
     /** 点通知的落点：出码页（不是今日页——用户此刻的诉求是看码或结束计时）。 */
     private fun contentIntent(context: Context, requestCode: Int): PendingIntent =
@@ -160,7 +165,7 @@ internal object EbikeFreeRideNotifier {
             // 两个同类提醒用同一个值最不容易出意外。
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .setAutoCancel(true)
-            .setContentIntent(contentIntent(context, REQUEST_LEAD))
+            .setContentIntent(contentIntent(context, LEAD_REQUEST_CODE))
             .build()
         val posted = post(context, EbikeFreeRide.NotificationIds.LEAD, notification)
         if (strongVibration) ReminderVibration.vibrate(context)
@@ -178,7 +183,7 @@ internal object EbikeFreeRideNotifier {
             // 与提前量那条同一分类（见 postLeadReminder 的说明）
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .setAutoCancel(true)
-            .setContentIntent(contentIntent(context, REQUEST_END))
+            .setContentIntent(contentIntent(context, END_REQUEST_CODE))
             .build()
         val posted = post(context, EbikeFreeRide.NotificationIds.END, notification)
         if (strongVibration) ReminderVibration.vibrate(context)

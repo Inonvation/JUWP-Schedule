@@ -46,6 +46,7 @@ import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.CalendarSetting01
 import me.rerere.hugeicons.stroke.GridView
 import me.rerere.hugeicons.stroke.Notification03
+import me.rerere.hugeicons.stroke.NotificationSnooze02
 import me.rerere.hugeicons.stroke.Shield01
 
 /**
@@ -72,6 +73,7 @@ fun WidgetCalendarHubScreen(
     onOpenCalendarSettings: () -> Unit,
     onOpenReminderSettings: () -> Unit,
     onOpenPermissionSettings: () -> Unit,
+    onOpenQuietHours: () -> Unit = {},
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -87,6 +89,16 @@ fun WidgetCalendarHubScreen(
     }.collectAsStateWithLifecycle(
         initialValue = remember { runBlocking { Graph.repository(context).reminderEnabled.first() } },
     )
+    // 免扰时段行右侧状态：总开关 + 启用窗口数（单流首帧阻塞读，口径同提醒开关）
+    val quietHoursEnabled by remember {
+        Graph.repository(context).quietHoursEnabled
+    }.collectAsStateWithLifecycle(
+        initialValue = remember { runBlocking { Graph.repository(context).quietHoursEnabled.first() } },
+    )
+    val quietWindows by remember {
+        Graph.repository(context).quietHoursWindows
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val quietCount = quietWindows.count { it.enabled }
 
     Scaffold(
         topBar = {
@@ -124,6 +136,14 @@ fun WidgetCalendarHubScreen(
                     checked = strongReminderVibration,
                     onCheckedChange = viewModel::setStrongReminderVibration,
                     icon = HugeIcons.Notification03,
+                )
+                // 免扰时段（DESIGN §3.7，2026-10-07）：预置夜间/午休，时段内通知推迟补发
+                SettingItem(
+                    title = "免扰时段",
+                    subtitle = "睡眠与午休时段内通知推迟到时段结束补发 · 可自定义",
+                    icon = HugeIcons.NotificationSnooze02,
+                    value = if (!quietHoursEnabled) "已关闭" else "${quietCount} 个时段",
+                    onClick = onOpenQuietHours,
                 )
             }
             SettingsSection(title = "桌面与日历", subtitle = "课表落到 App 外的出口") {

@@ -20,7 +20,10 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.subpageLaunchIntent
+import edu.jxslu.schedule.ui.reminder.QuietHoursGate
 
 /**
  * 洗衣完成提醒（DESIGN §3.23 / §4.37 P4）：订单进入洗涤中（status 40）时按
@@ -56,9 +59,14 @@ object UjingDoneReminder {
 
     /**
      * 通知点击落点的 requestCode。不能复用通知 id（PendingIntent 身份纪律，
-     * 与既有落点 0/1002/3008/3009/3010 错开）。
+     * 与既有落点 0/1002/3008/3009/3010/3011 错开）。
+     *
+     * **3012 而非 3011**（2026-10-07 顺手修）：此前与调课检测（ScheduleAlertReminder）
+     * 同用 3011——两条落点 intent 都是显式 MainActivity、无 action/data，
+     * filterEquals 判成同一个，FLAG_UPDATE_CURRENT 下发过调课通知后再收 U净 通知，
+     * 点 U净 会落调课处置页（互相改写）。
      */
-    private const val CONTENT_REQUEST_CODE = 3011
+    private const val CONTENT_REQUEST_CODE = 3012
 
     /**
      * 排 / 重排完成闹钟（幂等）：同一 PendingIntent，后一次落点覆盖前一次。
@@ -114,7 +122,29 @@ object UjingDoneReminder {
             }
             val refreshed = repo.refreshOrder(order.orderId)
             when {
-                refreshed.status == "50" -> postNotification(context, refreshed.deviceName)
+                // 免扰时段（DESIGN §3.7）：完成提醒是事实型（衣服不会因为睡觉洗完而
+                // 不算数），拦下入队待时段结束后补发
+                refreshed.status == "50" -> {
+                    val held = QuietHoursGate.intercept(
+                        context,
+                        PendingNotification(
+                            tag = TAG,
+                            notificationId = NOTIFICATION_ID,
+                            channelId = CHANNEL_ID,
+                            category = NotificationCompat.CATEGORY_REMINDER,
+                            title = "衣服洗好了",
+                            text = completedText(refreshed.deviceName),
+                            enqueuedAt = System.currentTimeMillis(),
+                            launch = PendingLaunch(
+                                kind = PendingLaunch.Kind.SUBPAGE,
+                                requestCode = CONTENT_REQUEST_CODE,
+                                screen = SubpageScreen.UJING.name,
+                                clearTask = true,
+                            ),
+                        ),
+                    )
+                    if (!held) postNotification(context, refreshed.deviceName)
+                }
                 // 还在跑：按新剩余时间重排
                 refreshed.status == "40" && refreshed.remainSeconds > 0 ->
                     schedule(
@@ -142,13 +172,16 @@ object UjingDoneReminder {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+    /** 完成提醒正文（拦截入队与即时发送共用同一份）。 */
+    private fun completedText(deviceName: String): String = buildString {
+        append("「")
+        append(deviceName.ifBlank { "洗衣机" })
+        append("」的洗衣已结束，记得取衣服。")
+    }
+
     private fun postNotification(context: Context, deviceName: String) {
         ensureChannel(context)
-        val text = buildString {
-            append("「")
-            append(deviceName.ifBlank { "洗衣机" })
-            append("」的洗衣已结束，记得取衣服。")
-        }
+        val text = completedText(deviceName)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle("衣服洗好了")

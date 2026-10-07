@@ -23,6 +23,8 @@ import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.FirstRunNotice
+import edu.jxslu.schedule.domain.QuietWindow
+import edu.jxslu.schedule.domain.QuietWindows
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.domain.SelectionGrabPolicy
 import edu.jxslu.schedule.domain.SelectionWish
@@ -43,6 +45,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * 显示偏好（对 UI 的合并视图）。
@@ -875,6 +879,26 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_STRONG_REMINDER_VIBRATION] ?: false
     }
 
+    // ---- 免扰时段（DESIGN §3.7，quiet hours）：两条独立单流，不进合并模型
+    // （baseDisplayPrefs combine 已满员，口径同 [strongReminderVibration]）。
+
+    /**
+     * 免扰总开关，**默认开**：预置的夜间/午休时段是「睡觉别打扰」这类普遍作息，
+     * 默认就该生效；不想要的用户显式关（成绩/考试变动提醒默认开的同一口径）。
+     * 关 = 所有通知回到立即发送，时段配置保留不清。
+     */
+    val quietHoursEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_QUIET_HOURS_ENABLED] ?: true
+    }
+
+    /**
+     * 免扰时段全表（含停用的窗口）。缺键 / 坏 JSON 回 [QuietWindows.DEFAULT]
+     * ——预置时段「默认存在」，用户改过才落盘；存储损坏退预置比全放行安全。
+     */
+    val quietHoursWindows: Flow<List<QuietWindow>> = context.displayDataStore.data.map { p ->
+        QuietWindows.decode(p[KEY_QUIET_HOURS_JSON])
+    }
+
     // ---- AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 脱敏 / 隐私确认。
     // API Key **不在 DataStore**——它是账号凭据，走 AiCredentialStore 加密存储。
     // 四条都单独成流，不进 baseDisplayPrefs 合并模型（combine 已满员）。
@@ -973,6 +997,22 @@ class DisplayPrefsStore(private val context: Context) {
     /** 一卡通余额提醒阈值（元）。 */
     val yktAlertYuan: Flow<Int> = context.displayDataStore.data.map { p ->
         BalanceAlert.coerceYktYuan(p[KEY_YKT_ALERT_YUAN] ?: BalanceAlert.DEFAULT_YKT_YUAN)
+    }
+
+    /**
+     * 检查间隔（小时）。**两个来源各自独立**（2026-10-07 用户拍板），读路径吸附到
+     * 档位表（同阈值的防线口径）；余额链没有旧共用键的迁移史，默认值直取 [BalanceAlert]。
+     */
+    val powerAlertIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        BalanceAlert.coerceIntervalHours(
+            p[KEY_POWER_ALERT_INTERVAL_HOURS] ?: BalanceAlert.INTERVAL_DEFAULT_HOURS,
+        )
+    }
+
+    val yktAlertIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        BalanceAlert.coerceIntervalHours(
+            p[KEY_YKT_ALERT_INTERVAL_HOURS] ?: BalanceAlert.INTERVAL_DEFAULT_HOURS,
+        )
     }
 
     /** 今日页快捷方式开关（DESIGN §3.8）。全局项，默认开：这是展示型入口，不打扰人。 */
@@ -1373,6 +1413,16 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_STRONG_REMINDER_VIBRATION] = value }
     }
 
+    /** 免扰总开关（语义见 [quietHoursEnabled]）。 */
+    suspend fun setQuietHoursEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_QUIET_HOURS_ENABLED] = value }
+    }
+
+    /** 免扰时段全表（语义见 [quietHoursWindows]）。 */
+    suspend fun setQuietHoursWindows(windows: List<QuietWindow>) {
+        context.displayDataStore.edit { it[KEY_QUIET_HOURS_JSON] = QuietWindows.encode(windows) }
+    }
+
     /** AI 调课服务地址（DESIGN §4.39）。存 trim 后的原文，允许空串（= 用户清空待重填）。 */
     suspend fun setAiBaseUrl(value: String) {
         context.displayDataStore.edit { it[KEY_AI_BASE_URL] = value.trim() }
@@ -1507,22 +1557,83 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
-     * 余额提醒的「上次**成功**检查日期」（DESIGN §3.10 / §3.13）：ISO `yyyy-MM-dd`，
-     * null = 从未成功过。
+     * 余额提醒的「上次**成功**检查时刻」（epoch millis，DESIGN §3.10 / §3.13）：
+     * 0 = 从未成功过。取数失败**不落时刻**，所以闸门过期前还有补查机会。
      *
-     * 它是两道闸门：当天的通知闸门（每天最多一条）与冷启动补查的闸门
-     * （今天查过就不重复打第三方接口）。取数失败**不落日期**，所以当天还有补查机会。
+     * 它是小时级间隔的闸门（判据 `AutoSyncRules.shouldAttemptAt`，同成绩/考试链）。
+     * 读取回退：millis 键没写过（2026-10-07 前的老用户）时看旧日期键——旧日期是
+     * **今天** 就按今天零点算（升级当轮不会立刻重打第三方平台），否则按没查过；
+     * 只读不写，下次成功检查自然落新键。旧键无一次性迁移、不再写入。
      */
-    suspend fun alertLastCheckDate(source: BalanceAlertSource): String? =
-        context.displayDataStore.data.first()[alertLastCheckKey(source)]
-
-    suspend fun setAlertLastCheckDate(source: BalanceAlertSource, date: String) {
-        context.displayDataStore.edit { it[alertLastCheckKey(source)] = date }
+    suspend fun balanceAlertCheckMillis(source: BalanceAlertSource): Long {
+        val snapshot = context.displayDataStore.data.first()
+        val millis = snapshot[balanceAlertCheckMillisKey(source)] ?: 0L
+        if (millis > 0L) return millis
+        val legacyDate = snapshot[alertLastCheckKey(source)] ?: return 0L
+        return if (legacyDate == LocalDate.now().toString()) {
+            LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } else 0L
     }
 
-    /** 清掉某来源的当日节奏（开关打开 / 阈值变更时调用）：新规则立即重新评估一次。 */
-    suspend fun clearAlertLastCheckDate(source: BalanceAlertSource) {
-        context.displayDataStore.edit { it.remove(alertLastCheckKey(source)) }
+    suspend fun setBalanceAlertCheckMillis(source: BalanceAlertSource, millis: Long) {
+        context.displayDataStore.edit { it[balanceAlertCheckMillisKey(source)] = millis }
+    }
+
+    /** 清掉某来源的检查时刻（开关 / 阈值 / 间隔变更时调用）：新规则立即重新评估一次。 */
+    suspend fun clearBalanceAlertCheckMillis(source: BalanceAlertSource) {
+        context.displayDataStore.edit { it.remove(balanceAlertCheckMillisKey(source)) }
+    }
+
+    /**
+     * 「偏低已提醒、尚未回升」标记（2026-10-07 加，按来源分键）：余额持续偏低期间
+     * 只提醒一次（同日多次核对不重复打扰），回升时随收件箱状态消解一并清除，
+     * 再次下降才会重新提醒。改设置（开关 / 阈值 / 间隔）也会清——改了规则就该重新评估。
+     */
+    suspend fun balanceAlertNotified(source: BalanceAlertSource): Boolean =
+        context.displayDataStore.data.first()[balanceAlertNotifiedKey(source)] ?: false
+
+    suspend fun setBalanceAlertNotified(source: BalanceAlertSource, value: Boolean) {
+        context.displayDataStore.edit { it[balanceAlertNotifiedKey(source)] = value }
+    }
+
+    suspend fun clearBalanceAlertNotified(source: BalanceAlertSource) {
+        context.displayDataStore.edit { it.remove(balanceAlertNotifiedKey(source)) }
+    }
+
+    // ---- 余额提醒检查间隔（小时，两链各自独立，2026-10-07）----
+
+    suspend fun setPowerAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_POWER_ALERT_INTERVAL_HOURS] = BalanceAlert.coerceIntervalHours(value)
+        }
+    }
+
+    suspend fun setYktAlertIntervalHours(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_YKT_ALERT_INTERVAL_HOURS] = BalanceAlert.coerceIntervalHours(value)
+        }
+    }
+
+    /**
+     * 已排的周期核对档位（小时，[edu.jxslu.schedule.ui.reminder.BalanceAlertReminder] 用）。
+     * 0 = 当前没有在排的周期任务。用途同 `alertPeriodicInterval`：WorkManager 2.7 没有
+     * UPDATE 策略，只在「间隔档位变了」时 REPLACE，否则 KEEP 保相位。
+     */
+    suspend fun balancePeriodicInterval(): Int =
+        context.displayDataStore.data.first()[KEY_BALANCE_PERIODIC_INTERVAL] ?: 0
+
+    suspend fun setBalancePeriodicInterval(value: Int) {
+        context.displayDataStore.edit { it[KEY_BALANCE_PERIODIC_INTERVAL] = value }
+    }
+
+    private fun balanceAlertCheckMillisKey(source: BalanceAlertSource) = when (source) {
+        BalanceAlertSource.Power -> KEY_POWER_ALERT_CHECK_MILLIS
+        BalanceAlertSource.Ykt -> KEY_YKT_ALERT_CHECK_MILLIS
+    }
+
+    private fun balanceAlertNotifiedKey(source: BalanceAlertSource) = when (source) {
+        BalanceAlertSource.Power -> KEY_POWER_ALERT_NOTIFIED
+        BalanceAlertSource.Ykt -> KEY_YKT_ALERT_NOTIFIED
     }
 
     private fun alertLastCheckKey(source: BalanceAlertSource) = when (source) {
@@ -1807,6 +1918,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_HOMEWORK_REMINDED_KEYS = stringSetPreferencesKey("homework_reminded_keys")
         val KEY_EBIKE_FREE_REMINDER_ENABLED = booleanPreferencesKey("ebike_free_reminder_enabled")
         val KEY_STRONG_REMINDER_VIBRATION = booleanPreferencesKey("strong_reminder_vibration")
+        val KEY_QUIET_HOURS_ENABLED = booleanPreferencesKey("quiet_hours_enabled")
+        val KEY_QUIET_HOURS_JSON = stringPreferencesKey("quiet_hours_json")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
 
@@ -1844,13 +1957,23 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_EBIKE_PENDING_DELETE = stringSetPreferencesKey("ebike_pending_delete")
         val KEY_EBIKE_RECENT_IDS = stringPreferencesKey("ebike_recent_ids")
         val KEY_CAMPUS_CARD_ENABLED = booleanPreferencesKey("campus_card_enabled")
-        // 余额提醒（DESIGN §3.10 / §3.13）：两个来源各一套开关 / 阈值 / 上次成功检查日期
+        // 余额提醒（DESIGN §3.10 / §3.13）：两个来源各一套开关 / 阈值 / 检查间隔 /
+        // 上次成功检查时刻 / 偏低已提醒标记。*_LAST_CHECK 是 2026-10-07 前的日期级旧键，
+        // 只作 millis 键缺省时的读取回退，不再写入（无一次性迁移）。
         val KEY_POWER_ALERT_ENABLED = booleanPreferencesKey("power_alert_enabled")
         val KEY_POWER_ALERT_YUAN = intPreferencesKey("power_alert_yuan")
         val KEY_POWER_ALERT_LAST_CHECK = stringPreferencesKey("power_alert_last_check")
         val KEY_YKT_ALERT_ENABLED = booleanPreferencesKey("ykt_alert_enabled")
         val KEY_YKT_ALERT_YUAN = intPreferencesKey("ykt_alert_yuan")
         val KEY_YKT_ALERT_LAST_CHECK = stringPreferencesKey("ykt_alert_last_check")
+        // 检查间隔（小时，两链各自独立）+ 已排周期档（0 = 没在排）+ 闸门与提醒标记
+        val KEY_POWER_ALERT_INTERVAL_HOURS = intPreferencesKey("power_alert_interval_hours")
+        val KEY_YKT_ALERT_INTERVAL_HOURS = intPreferencesKey("ykt_alert_interval_hours")
+        val KEY_POWER_ALERT_CHECK_MILLIS = longPreferencesKey("power_alert_check_millis")
+        val KEY_YKT_ALERT_CHECK_MILLIS = longPreferencesKey("ykt_alert_check_millis")
+        val KEY_POWER_ALERT_NOTIFIED = booleanPreferencesKey("power_alert_notified")
+        val KEY_YKT_ALERT_NOTIFIED = booleanPreferencesKey("ykt_alert_notified")
+        val KEY_BALANCE_PERIODIC_INTERVAL = intPreferencesKey("balance_periodic_interval")
         val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
         val KEY_RECHARGE_DISCLAIMER_SUPPRESS_UNTIL = longPreferencesKey("recharge_disclaimer_suppress_until")
         val KEY_RECHARGE_DISCLAIMER_SEEN_AT = longPreferencesKey("recharge_disclaimer_seen_at")

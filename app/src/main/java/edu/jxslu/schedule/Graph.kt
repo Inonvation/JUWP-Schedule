@@ -44,6 +44,7 @@ import edu.jxslu.schedule.data.repo.InternshipSnapshotStore
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ProfileSync
 import edu.jxslu.schedule.data.repo.NoteRepository
+import edu.jxslu.schedule.data.repo.QuietHoursQueue
 import edu.jxslu.schedule.data.repo.RideRecordStore
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleBaselineStore
@@ -128,6 +129,9 @@ object Graph {
 
     @Volatile
     private var aiApplyHistoryStore: AiApplyHistoryStore? = null
+
+    @Volatile
+    private var quietHoursQueue: QuietHoursQueue? = null
 
     @Volatile
     private var zoneCacheStore: ZoneCacheStore? = null
@@ -701,6 +705,17 @@ object Graph {
         aiApplyHistoryStore ?: synchronized(this) {
             aiApplyHistoryStore ?: AiApplyHistoryStore(context.applicationContext)
                 .also { aiApplyHistoryStore = it }
+        }
+
+    /**
+     * 免扰时段的推迟队列单例（DESIGN §3.7，quiet hours）：filesDir 一份 JSON。
+     * 拦截（各 Reminder 发送点）与补发（Gate 的 Receiver / 冷启动）必须看同一份，
+     * 两份实例会分叉丢通知。
+     */
+    fun quietHoursQueue(context: Context): QuietHoursQueue =
+        quietHoursQueue ?: synchronized(this) {
+            quietHoursQueue ?: QuietHoursQueue(context.applicationContext)
+                .also { quietHoursQueue = it }
         }
 
     /**

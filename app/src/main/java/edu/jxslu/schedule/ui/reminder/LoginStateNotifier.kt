@@ -13,6 +13,8 @@ import edu.jxslu.schedule.MainActivity
 import edu.jxslu.schedule.ROUTE_ME
 import edu.jxslu.schedule.data.session.LoginTarget
 import edu.jxslu.schedule.data.session.SessionStatus
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -45,10 +47,40 @@ object LoginStateNotifier {
                 .collect { suspended ->
                     // 恢复成空集（用户更新了密码）不发通知；空集本身也没有内容可写
                     if (suspended.isEmpty()) return@collect
+                    // 免扰时段（DESIGN §3.7）：登录失效是事实型通知（不改密码就一直好不了），
+                    // 拦下入队待时段结束后补发。判定要读 DataStore（挂起），collect 本就是协程
+                    val held = runCatching { holdsLoginNotice(appContext, suspended) }
+                        .getOrDefault(false)
+                    if (held) return@collect
                     runCatching { post(appContext, suspended) }
                         .onFailure { Log.w(TAG, "notify failed", it) }
                 }
         }
+    }
+
+    /**
+     * 免扰判定（供 [observe] 在拦截语境下调用）：在免扰时段内则入队待补发。
+     * 单独成函数是因为拦截描述符在这里组装（title/text 由 targets 渲染）。
+     */
+    internal suspend fun holdsLoginNotice(context: Context, targets: Set<LoginTarget>): Boolean {
+        val names = targets.joinToString("、") { it.displayName() }
+        return QuietHoursGate.intercept(
+            context,
+            PendingNotification(
+                tag = null,
+                notificationId = NOTIFICATION_ID,
+                channelId = CHANNEL_ID,
+                category = NotificationCompat.CATEGORY_ERROR,
+                title = "登录状态已失效",
+                text = "$names 的自动登录已暂停，请在「我的」页更新账号密码",
+                enqueuedAt = System.currentTimeMillis(),
+                launch = PendingLaunch(
+                    kind = PendingLaunch.Kind.MAIN_ROUTE,
+                    requestCode = REQUEST_CODE,
+                    route = ROUTE_ME,
+                ),
+            ),
+        )
     }
 
     private fun post(context: Context, targets: Set<LoginTarget>) {

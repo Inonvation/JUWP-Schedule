@@ -19,8 +19,6 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.prefs.ReminderKeyKind
 import edu.jxslu.schedule.domain.AiScheduleConfig
 import edu.jxslu.schedule.domain.Course
-import edu.jxslu.schedule.domain.BalanceAlert
-import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.courseRemarksCarriedOver
 import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
@@ -32,6 +30,7 @@ import edu.jxslu.schedule.domain.ScheduleUndo
 import edu.jxslu.schedule.domain.ScheduleOverride
 import edu.jxslu.schedule.domain.ScheduleOverrides
 import edu.jxslu.schedule.domain.EbikeUseMode
+import edu.jxslu.schedule.domain.QuietWindow
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.ScheduleBackground
@@ -837,10 +836,24 @@ class ScheduleRepository(
      */
     val strongReminderVibration: Flow<Boolean> = prefs.strongReminderVibration
 
+    // ---- 免扰时段（quiet hours，DESIGN §3.7）：两条独立单流（combine 已满员）。
+    // 消费方是提醒链（Gate 拦截判定）与免扰设置页，各自 first() / collect 即可。
+
+    /** 免扰总开关，默认开。关 = 通知回到立即发送，时段配置保留。 */
+    val quietHoursEnabled: Flow<Boolean> = prefs.quietHoursEnabled
+
+    /** 免扰时段全表（含停用窗口），缺键 / 坏 JSON 回预置两时段。 */
+    val quietHoursWindows: Flow<List<QuietWindow>> = prefs.quietHoursWindows
+
     suspend fun setReminderEnabled(value: Boolean) = prefs.setReminderEnabled(value)
 
     suspend fun setStrongReminderVibration(value: Boolean) =
         prefs.setStrongReminderVibration(value)
+
+    suspend fun setQuietHoursEnabled(value: Boolean) = prefs.setQuietHoursEnabled(value)
+
+    suspend fun setQuietHoursWindows(windows: List<QuietWindow>) =
+        prefs.setQuietHoursWindows(windows)
 
     // ---- AI 调课（DESIGN §4.39，2026-10-06）----
     // 四条偏好各自单独成流，不进 baseDisplayPrefs（combine 已满员）。
@@ -920,16 +933,6 @@ class ScheduleRepository(
 
     suspend fun setYktAlertYuan(value: Int) = prefs.setYktAlertYuan(value)
 
-    /** 上次**成功**检查日期（ISO `yyyy-MM-dd`；null = 从未成功）——每日闸门见 [BalanceAlert]。 */
-    suspend fun alertLastCheckDate(source: BalanceAlertSource): String? =
-        prefs.alertLastCheckDate(source)
-
-    suspend fun setAlertLastCheckDate(source: BalanceAlertSource, date: String) =
-        prefs.setAlertLastCheckDate(source, date)
-
-    /** 清掉某来源的当日节奏（开关打开 / 阈值变更后调用，让新规则立即生效）。 */
-    suspend fun clearAlertLastCheckDate(source: BalanceAlertSource) =
-        prefs.clearAlertLastCheckDate(source)
 
     suspend fun setCurrentTimetable(id: Long) = prefs.setCurrentTimetable(id)
 
@@ -1274,14 +1277,22 @@ class ScheduleRepository(
     }
 
     /**
+     * 当前课表的学期号流（教材查询的钥匙）；没课表 / 没写过 term 时 null。
+     * 教材的两条读路径（[textbooksFor] 按课查 / [textbookTitlesByCourse] 整学期映射）
+     * 共用这一份推导，改学期口径只动这里。
+     */
+    private val currentTermFlow: Flow<String?> =
+        combine(currentTimetableId, db.timetableDao().observeAll()) { id, list ->
+            list.firstOrNull { it.id == id }?.term
+        }.distinctUntilChanged()
+
+    /**
      * 某门课在**当前课表学期**下的教材流。课表没有学期号（旧数据/手工建表）时永远给空——
      * 没有学期钥匙就查教材会串学期（同一门课不同学期教材不同），宁可少显示。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun textbooksFor(courseName: String): Flow<List<Textbook>> =
-        combine(currentTimetableId, db.timetableDao().observeAll()) { id, list ->
-            list.firstOrNull { it.id == id }?.term
-        }.distinctUntilChanged().flatMapLatest { term ->
+        currentTermFlow.flatMapLatest { term ->
             if (term.isNullOrBlank()) {
                 kotlinx.coroutines.flow.flowOf(emptyList())
             } else {
@@ -1292,10 +1303,30 @@ class ScheduleRepository(
         }
 
     /**
-     * 当前课表的学期号（教材查询的钥匙）；没课表 / 没写过 term 时 null。
+     * 当前课表学期下「课程名 → 教材名列表」的映射流（今日页卡片显示教材名的数据源，
+     * 2026-10-07）。与 [textbooksFor] 同一把学期钥匙（[currentTermFlow]），
+     * 课表没有学期号时永远给空映射——宁可少显示，不串学期。
+     * 多本教材按教务清单顺序（id 序）；查询键只认课程名逐字匹配，与详情弹窗同口径。
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val textbookTitlesByCourse: Flow<Map<String, List<String>>> =
+        currentTermFlow.flatMapLatest { term ->
+            if (term.isNullOrBlank()) {
+                flowOf(emptyMap())
+            } else {
+                db.textbookDao().observeForTerm(term).map { list ->
+                    list.map { it.toDomain() }
+                        .groupBy(keySelector = { it.courseName }, valueTransform = { it.title })
+                }
+            }
+        }.distinctUntilChanged()
+
+    /**
+     * 当前课表的学期号（一次性读，教材查询的钥匙）；没课表 / 没写过 term 时 null。
      *
      * 教材原本只在导入路径上用到 term，冷启动补抓（[TextbookSync.backfillIfMissing]，
-     * 2026-10-06）需要在没有导入动作时也拿到它，故从 [textbooksFor] 里抽出来一份。
+     * 2026-10-06）需要在没有导入动作时也拿到它。与流版 [currentTermFlow] 同语义：
+     * 流版给订阅方，这版给挂起调用点，两处别各写一份推导。
      */
     suspend fun currentTerm(): String? =
         db.timetableDao().getById(currentTimetableId.first())?.term?.takeIf { it.isNotBlank() }

@@ -22,6 +22,8 @@ import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.data.repo.ExamSync
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.domain.ExamChangeDetector
 import edu.jxslu.schedule.domain.ScheduleAlertDefaults
@@ -207,7 +209,28 @@ object ScoreAlertReminder {
             is ScoreSync.Result.Updated -> {
                 if (result.firstImport) return // 首次导入是基线，不是变动
                 if (result.changes.isEmpty()) return
-                if (notificationsEnabled) postScores(context, result.changes)
+                // 免扰时段（DESIGN §3.7）：出分是事实型通知（eventAt=null），拦下入队
+                // 待时段结束后补发，不丢弃。入箱在 ScoreSync 已完成，不受此影响
+                val held = notificationsEnabled && QuietHoursGate.intercept(
+                    context,
+                    PendingNotification(
+                        tag = SCORE_NOTIFICATION_TAG,
+                        notificationId = SCORE_NOTIFICATION_ID,
+                        channelId = CHANNEL_ID,
+                        category = NotificationCompat.CATEGORY_REMINDER,
+                        title = if (result.changes.size == 1) "新成绩：${result.changes[0].name}"
+                        else "有 ${result.changes.size} 门新成绩",
+                        text = scoresText(result.changes),
+                        enqueuedAt = System.currentTimeMillis(),
+                        launch = PendingLaunch(
+                            kind = PendingLaunch.Kind.SUBPAGE,
+                            requestCode = SCORE_REQUEST_CODE,
+                            screen = SubpageScreen.SCORES.name,
+                            clearTask = true,
+                        ),
+                    ),
+                )
+                if (notificationsEnabled && !held) postScores(context, result.changes)
             }
             else -> Unit // Skipped / InProgress / Failed 一律静默，失败闸门不落时刻
         }
@@ -221,7 +244,27 @@ object ScoreAlertReminder {
         when (val result = Graph.examSync(context).sync()) {
             is ExamSync.Result.Updated -> {
                 if (result.changes.isEmpty()) return
-                if (notificationsEnabled) postExams(context, result.changes)
+                // 免扰时段（DESIGN §3.7）：考试变动是事实型通知，拦下待补发
+                val held = notificationsEnabled && QuietHoursGate.intercept(
+                    context,
+                    PendingNotification(
+                        tag = EXAM_NOTIFICATION_TAG,
+                        notificationId = EXAM_NOTIFICATION_ID,
+                        channelId = CHANNEL_ID,
+                        category = NotificationCompat.CATEGORY_REMINDER,
+                        title = if (result.changes.size == 1) "考试安排有变动"
+                        else "有 ${result.changes.size} 条考试变动",
+                        text = examsText(result.changes),
+                        enqueuedAt = System.currentTimeMillis(),
+                        launch = PendingLaunch(
+                            kind = PendingLaunch.Kind.SUBPAGE,
+                            requestCode = EXAM_REQUEST_CODE,
+                            screen = SubpageScreen.EXAMS.name,
+                            clearTask = true,
+                        ),
+                    ),
+                )
+                if (notificationsEnabled && !held) postExams(context, result.changes)
             }
             else -> Unit
         }
@@ -231,22 +274,48 @@ object ScoreAlertReminder {
     // 通知
     // ------------------------------------------------------------------
 
+    /** 成绩通知正文（拦截入队与即时发送共用同一份，两处各写迟早漂）。 */
+    private fun scoresText(
+        changes: List<edu.jxslu.schedule.domain.ScoreChangeDetector.Change>,
+    ): String {
+        val lines = changes.take(MAX_LINES).map { "${it.name}：${it.scoreStr}" }
+        val rest = changes.size - lines.size
+        return buildString {
+            append(lines.joinToString("\n"))
+            if (rest > 0) append("\n等 $rest 门")
+        }
+    }
+
+    /** 考试通知正文（共用口径同 [scoresText]）。 */
+    private fun examsText(changes: List<ExamChangeDetector.Change>): String {
+        val lines = changes.take(MAX_LINES).map { change ->
+            val prefix = if (change.kind == ExamChangeDetector.Kind.NEW) "新增" else "调整"
+            val e = change.entry
+            buildString {
+                append(prefix).append("：").append(e.name)
+                if (e.date.isNotBlank()) append(' ').append(e.date)
+                if (e.startTime.isNotBlank()) append(' ').append(e.startTime)
+                if (e.room.isNotBlank()) append(' ').append(e.room)
+            }
+        }
+        val rest = changes.size - lines.size
+        return buildString {
+            append(lines.joinToString("\n"))
+            if (rest > 0) append("\n等 $rest 条")
+        }
+    }
+
     /** 成绩通知：正文列「课程名：分数」，超出 [MAX_LINES] 折叠。点击落成绩页。 */
     private fun postScores(
         context: Context,
         changes: List<edu.jxslu.schedule.domain.ScoreChangeDetector.Change>,
     ) {
-        val lines = changes.take(MAX_LINES).map { "${it.name}：${it.scoreStr}" }
-        val rest = changes.size - lines.size
-        val text = buildString {
-            append(lines.joinToString("\n"))
-            if (rest > 0) append("\n等 $rest 门")
-        }
+        val text = scoresText(changes)
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle(if (changes.size == 1) "新成绩：${changes[0].name}" else "有 ${changes.size} 门新成绩")
-            .setContentText(lines.firstOrNull().orEmpty())
+            .setContentText(text.lines().firstOrNull().orEmpty())
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
@@ -270,26 +339,12 @@ object ScoreAlertReminder {
         context: Context,
         changes: List<ExamChangeDetector.Change>,
     ) {
-        val lines = changes.take(MAX_LINES).map { change ->
-            val prefix = if (change.kind == ExamChangeDetector.Kind.NEW) "新增" else "调整"
-            val e = change.entry
-            buildString {
-                append(prefix).append("：").append(e.name)
-                if (e.date.isNotBlank()) append(' ').append(e.date)
-                if (e.startTime.isNotBlank()) append(' ').append(e.startTime)
-                if (e.room.isNotBlank()) append(' ').append(e.room)
-            }
-        }
-        val rest = changes.size - lines.size
-        val text = buildString {
-            append(lines.joinToString("\n"))
-            if (rest > 0) append("\n等 $rest 条")
-        }
+        val text = examsText(changes)
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle(if (changes.size == 1) "考试安排有变动" else "有 ${changes.size} 条考试变动")
-            .setContentText(lines.firstOrNull().orEmpty())
+            .setContentText(text.lines().firstOrNull().orEmpty())
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)

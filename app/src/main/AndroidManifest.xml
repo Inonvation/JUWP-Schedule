@@ -290,6 +290,12 @@
             android:name=".ui.reminder.UjingDoneReceiver"
             android:exported="false" />
 
+        <!-- 免扰时段补发（DESIGN §3.7，2026-10-07）：免扰结束的补发闹钟落点
+             （goAsync 直跑 flush，纯本地 IO）——显式 PendingIntent，无需 intent-filter -->
+        <receiver
+            android:name=".ui.reminder.QuietHoursFlushReceiver"
+            android:exported="false" />
+
         <!-- 抢课会话（DESIGN §4.36，2026-10-01 规划）：前台服务，只在用户显式开始后存在，
              结束时自停。specialUse 的 use case 必须写在 <property> 里（系统按它审核用途）。 -->
         <service
