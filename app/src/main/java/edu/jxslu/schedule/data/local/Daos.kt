@@ -296,6 +296,10 @@ interface TextbookDao {
     @Query("SELECT * FROM textbooks WHERE term = :term ORDER BY courseName, id")
     suspend fun getForTerm(term: String): List<TextbookEntity>
 
+    /** 整学期教材的订阅流（今日页卡片显示教材名的数据源，按课程名分组后取书名）。 */
+    @Query("SELECT * FROM textbooks WHERE term = :term ORDER BY courseName, id")
+    fun observeForTerm(term: String): Flow<List<TextbookEntity>>
+
     /** 备份导出的来源：全部学期一起带走（与成绩同口径，教材全局归属学生）。 */
     @Query("SELECT * FROM textbooks ORDER BY term, courseName, id")
     suspend fun getAll(): List<TextbookEntity>

@@ -102,6 +102,8 @@ import edu.jxslu.schedule.ui.qzxy.isQzxyWateringExpired
 import edu.jxslu.schedule.ui.qzxy.rememberQzxyWateringClock
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.domain.metaLine
+import edu.jxslu.schedule.domain.remarkPreview
+import edu.jxslu.schedule.domain.textbookTitlesLine
 import edu.jxslu.schedule.domain.sectionRange
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.UnlockFlowState
@@ -224,6 +226,9 @@ fun TodayScreen(
         ?.collectAsStateWithLifecycle()
         ?: remember { mutableStateOf(QzxyUiState()) }
     val homework by viewModel.homeworkPending.collectAsStateWithLifecycle()
+    // 课程卡的教材名行（DESIGN §4.31，2026-10-07）：当前课表学期下「课程名 → 书名列表」，
+    // 单独订阅不掺课表状态（与 homework 同纪律）；空映射 = 无教材数据，卡片不占行
+    val textbookTitles by viewModel.textbookTitles.collectAsStateWithLifecycle()
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
     val qzxyCardEnabled by viewModel.qzxyCardEnabled.collectAsStateWithLifecycle()
@@ -602,6 +607,7 @@ fun TodayScreen(
                 else -> TodayContent(
                     state = state,
                     homework = homework,
+                    textbookTitles = textbookTitles,
                     onOpenCourse = { detailCourse = it },
                     onOpenHomeworkTodo = onOpenHomeworkTodo,
                     bottomDock = bottomDock,
@@ -871,6 +877,7 @@ private fun TodayEmptyContent(
 private fun TodayContent(
     state: TodayState,
     homework: PendingHomework,
+    textbookTitles: Map<String, List<String>>,
     onOpenCourse: (Course) -> Unit,
     onOpenHomeworkTodo: () -> Unit,
     bottomDock: @Composable () -> Unit,
@@ -893,7 +900,7 @@ private fun TodayContent(
                     label = "todayFocus",
                 ) { f ->
                     when {
-                        f != null -> FocusCard(state, f, onOpenCourse)
+                        f != null -> FocusCard(state, f, textbookTitles, onOpenCourse)
                         // 远课态：下一节课在 60 分钟窗口外，不冒充「下一节」；
                         // 给一行轻量提示交代落点（DESIGN §3.3），不弹焦点卡
                         state.remaining.isNotEmpty() -> NextStartHint(state)
@@ -915,6 +922,7 @@ private fun TodayContent(
                     CourseTimelineRow(
                         course = course,
                         slots = state.slots,
+                        textbookTitle = textbookTitles[course.name],
                         onClick = { onOpenCourse(course) },
                         // 删除/新增课程时列表项平滑进出场，不再整列硬跳
                         modifier = Modifier.animateItem(),
@@ -924,7 +932,7 @@ private fun TodayContent(
 
             // 明天只在今天没有待上课程（上完 / 没课）时上桌，今天的信息优先
             if (state.tomorrowVisible) {
-                item(key = "tomorrow") { TomorrowBlock(state, onOpenCourse) }
+                item(key = "tomorrow") { TomorrowBlock(state, textbookTitles, onOpenCourse) }
             }
 
             // 作业卡（DESIGN §3.3/§3.11）：有未完成作业才占位，位置 = **滚动区最后一项**
@@ -961,6 +969,7 @@ private fun TodayContent(
 private fun FocusCard(
     state: TodayState,
     focus: Course,
+    textbookTitles: Map<String, List<String>>,
     onOpenCourse: (Course) -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -1035,6 +1044,34 @@ private fun FocusCard(
                 overflow = TextOverflow.Ellipsis,
                 color = onSurface.copy(alpha = 0.62f),
             )
+            // 教材名行（DESIGN §4.31，2026-10-07）：只显书名（作者/出版社在详情弹窗），
+            // 无教材数据的课程不占行
+            val textbookLine = textbookTitlesLine(textbookTitles[focus.name].orEmpty())
+            if (textbookLine != null) {
+                Text(
+                    text = textbookLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = onSurface.copy(alpha = 0.62f),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            // 备注预览（DESIGN §4.3，2026-10-08）：卡片右下角、比 meta 更弱一级；
+            // 空 / 截断口径在 domain 的 remarkPreview（20 字上限），完整内容在详情面板
+            remarkPreview(focus.remark)?.let { remark ->
+                Text(
+                    text = remark,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = onSurface.copy(alpha = 0.45f),
+                    textAlign = TextAlign.End,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .fillMaxWidth(),
+                )
+            }
             if (ongoing) {
                 val progress = state.ongoingProgress
                 if (progress != null) {
@@ -1160,12 +1197,14 @@ private fun DoneBlock(state: TodayState) {
 private fun CourseTimelineRow(
     course: Course,
     slots: List<TimeSlot>,
+    textbookTitle: List<String>?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val accent = courseColor(course.colorIndex)
     val meta = metaLine(slots, course)
+    val textbook = textbookTitlesLine(textbookTitle.orEmpty())
     val haptics = rememberAppHaptics()
 
     Row(
@@ -1202,6 +1241,32 @@ private fun CourseTimelineRow(
                     color = onSurface.copy(alpha = 0.68f),
                 )
             }
+            // 教材名行（DESIGN §4.31，2026-10-07）：只显书名（作者/出版社在详情弹窗），
+            // 无教材数据的课程不占行
+            if (textbook != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = textbook,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = onSurface.copy(alpha = 0.55f),
+                )
+            }
+            // 备注预览（DESIGN §4.3，2026-10-08）：卡片右下角、比 meta 更弱一级；
+            // 空 / 截断口径在 domain 的 remarkPreview（20 字上限），完整内容在详情面板
+            remarkPreview(course.remark)?.let { remark ->
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = remark,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = onSurface.copy(alpha = 0.45f),
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -1213,6 +1278,7 @@ private fun CourseTimelineRow(
 @Composable
 private fun TomorrowBlock(
     state: TodayState,
+    textbookTitles: Map<String, List<String>>,
     onOpenCourse: (Course) -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -1241,6 +1307,7 @@ private fun TomorrowBlock(
             CourseTimelineRow(
                 course = course,
                 slots = state.slots,
+                textbookTitle = textbookTitles[course.name],
                 onClick = { onOpenCourse(course) },
             )
         }

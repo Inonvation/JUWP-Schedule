@@ -91,3 +91,42 @@ fun compactPosition(position: String): String {
 
     return if (raw.any { it == '(' || it == '（' || it == ')' || it == '）' }) "" else raw
 }
+
+/**
+ * 课程卡的教材名行（2026-10-07；多本「等 N 本」2026-10-08）：只取书名，
+ * 作者 / 出版社 / 版次 / ISBN 不进卡片（用户口径：卡片空间有限，只要教材名称；
+ * 完整书目在课程详情弹窗）。
+ *
+ * 单本直接显示书名；**多本显示「书名1 等 N 本」**——书名可能很长，` / ` 连接时
+ * 第二本起永远被单行省略截掉，用户既看不到也不知道有更多；「等 N 本」把总数
+ * 放进首行，与作业汇总通知的「等 N 项」同一收口形态。
+ * 空 / 空白书名跳过（教务没填书名只剩其他列的行不该占卡面）；全空给 null，
+ * 调用方按「没有教材」处理不占行。
+ */
+fun textbookTitlesLine(titles: List<String>): String? {
+    val cleaned = titles.map { it.trim() }.filter { it.isNotEmpty() }
+    if (cleaned.isEmpty()) return null
+    return if (cleaned.size == 1) {
+        cleaned.single()
+    } else {
+        "${cleaned.first()} 等 ${cleaned.size} 本"
+    }
+}
+
+/**
+ * 课程卡右下角的备注预览（2026-10-08）：备注是用户手写内容，长短不受控，
+ * 卡片上只能给一行——超 [RemarkPreviewLimit] 字截断加省略号，完整内容在详情面板
+ * 「备注」行（§4.3）。空白（含纯空格/换行）给 null，卡片不占位。
+ */
+const val REMARK_PREVIEW_LIMIT = 20
+
+fun remarkPreview(remark: String): String? {
+    val cleaned = remark.trim()
+    if (cleaned.isEmpty()) return null
+    return if (cleaned.length <= REMARK_PREVIEW_LIMIT) {
+        cleaned
+    } else {
+        cleaned.take(REMARK_PREVIEW_LIMIT) + "…"
+    }
+}
+

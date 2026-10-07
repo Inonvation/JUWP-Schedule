@@ -100,6 +100,15 @@ class TodayViewModel(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EMPTY)
 
     /**
+     * 当前课表学期下「课程名 → 教材名」映射（DESIGN §4.31，2026-10-07）：今日页课程卡
+     * 在 meta 行下补一行教材名。与 [homeworkPending] 同纪律**单独订阅**、不并进
+     * [uiState]——教材是另一张表的数据，混进课表状态会让导入教材重算整页课表推导；
+     * 课表没有学期号 / 无教材数据时是空映射，卡片按「无教材」不占行。
+     */
+    val textbookTitles: StateFlow<Map<String, List<String>>> = repo.textbookTitlesByCourse
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    /**
      * 今日页快捷方式（DESIGN §3.8）。不并进 [uiState]：那是课表数据的派生状态，
      * 快捷方式是纯设置值，分开订阅免得改一条快捷方式把整页状态重算一遍。
      * 初值阻塞读真值（见 [initialPrefs]）：否则改过快捷方式的用户首帧先见默认网格。
