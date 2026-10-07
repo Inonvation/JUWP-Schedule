@@ -1,8 +1,8 @@
-# DESIGN §4.33–§4.40 · 技术架构：提醒 · 校历 · 选课 · U净 · 收件箱 · AI 调课
+# DESIGN §4.33–§4.44 · 技术架构：提醒 · 校历 · 选课 · U净 · 收件箱 · AI 调课 · 教学日历/实习基地/评教
 
 > 本文档是 [DESIGN.md](../DESIGN.md) 的拆分件。代码注释里的「DESIGN §x.y」章节号一字未改，索引见 DESIGN.md 的映射表。
 
-## 4. 技术架构（续 · §4.33–§4.40）
+## 4. 技术架构（续 · §4.33–§4.44）
 
 ### 4.33 成绩/考试变动提醒（2026-09-30，P6；成绩侧设置入口在成绩页齿轮、考试侧在考试页）
 
@@ -112,7 +112,7 @@ requestCode = 1008 / `score_alert` / 3008，考试 = 1009 / `exam_alert` / 3009
 
 ---
 
-### 4.34 校历（仓库镜像，2026-09-30，P6；UI 见 §3.3 校园服务）
+### 4.34 校历（App 直取教务处官网，2026-09-30 立 / 2026-10-07 改主源；UI 见 §3.3 校园服务）
 
 **背景与决策**：校历在学校侧不是结构化数据——智慧校园平台 `m.juwp.edu.cn/wxi/calendar/list`
 里就是一张图片，且「发现新图」的链路（应用中心 `appcenter/list` → 校历项的 sibeApp 入口）
@@ -120,38 +120,53 @@ requestCode = 1008 / `score_alert` / 3008，考试 = 1009 / `exam_alert` / 3009
 `/wxi/resource/showImg` 虽然免登录，但 path 每学年变（`/image/20260830/<hash>.png`），
 硬编码活不过一次学年更替。§2.2 旧条目「校历（需额外教务接口）」就此作废，
 **改为免登录的仓库镜像**：开发者每年把新校历图放进公开仓库，App 拉取展示。
+2026-10-07 复核并简化：学校侧三条入口里只有**教务处官网 `jw.juwp.edu.cn` 通知公告**
+免登录公网可取（高清原图 3438×2552）；PC 门户的 `/calendar_portal/getCalendar` 实测是
+空的个人日历；强智教务另有「教学周历查看」（`/jsxsd/jxzl/jxzl_query`，周次 × 日期表，
+需登录、非海报内容）——此处皆不采用（该表 2026-10-07 起改用于「导入课表后校准开学日」，
+见 §4.42）。**定案：App 直接读教务处官网为主源**（免登录、免维护），
+仓库镜像降为兜底，PC 脚本 `sync_calendar.py` 退居应急工具（见文末「更新流程」）。
 
-**数据源三层**（优先级从高到低）：
+**数据源四层**（优先级从高到低）：
 
 | 层 | 内容 | 时机 |
 |----|------|------|
-| 仓库镜像 | `docs-public/calendar/index.json`（`{"year","file"}`）+ 校历图，raw.githubusercontent.com 直链 | 冷启动静默刷（7 天闸门 `AutoSyncRules.shouldAttemptAt`）+ 页内刷新按钮（force） |
-| 本地缓存 | `filesDir/campus_calendar/calendar_<year>.<ext>`（原子落盘：临时文件写完改名；下载后 `inJustDecodeBounds` 探测，坏的当没下） | 有缓存就用，学年没变不重复下载 |
-| 内置兜底 | `res/drawable-nodpi/ic_campus_calendar.jpg`（1375×1020，约 400KB） | 首装/无网/镜像挂了——永不空屏 |
+| 学校官网（主源） | `jw.juwp.edu.cn` 通知公告「20XX-20XX学年校历」文章的高清原图（免登录；`domain/CampusCalendarSchoolRules` 解析） | 冷启动静默刷（7 天闸门 `AutoSyncRules.shouldAttemptAt`）+ 页内刷新按钮（force） |
+| 仓库镜像（兜底） | `docs-public/calendar/index.json`（`{"year","file"}`）+ 校历图，多源直链（`domain/RepoMirror`：gh-proxy 加速 → jsdelivr → raw 兜底）；**已停日常维护** | 官网不可达时逐源尝试 |
+| 本地缓存 | `filesDir/campus_calendar/calendar_<year>.<ext>`（原子落盘：临时文件写完改名；下载后 `inJustDecodeBounds` 探测，坏的当没下） | 有缓存就用，学年 + 文件名没变不重下（`matchesLocal`） |
+| 内置兜底 | `res/drawable-nodpi/ic_campus_calendar.jpg`（1375×1020，约 400KB） | 首装/无网/全部源挂了——永不空屏 |
 
 **规则与校验**（`domain/CampusCalendarRules`，纯 JVM）：index.json 大小上限 4KB；
 学年格式 `\d{4}-\d{4}` 且后段 = 前段 + 1；文件名白名单 `[a-z0-9_-]+\.(png|jpg)`
 （挡路径穿越与怪文件）；测试钉住脏 JSON 拒收 / 白名单 / 闸门边界
-（`CampusCalendarRulesTest` 11 例）。
+（`CampusCalendarRulesTest` 12 例）。2026-10-06 起走 `RepoMirror` 多源（gh-proxy 加速 →
+jsdelivr → raw 兜底）逐源尝试：原实现单源直连 raw（ref 写 `master`，raw 侧按默认分支
+旧名兼容解析、GitHub API 不认），无代理环境经常不可达——可达性全看网络。官网取数规则
+独立在 `domain/CampusCalendarSchoolRules`（纯 JVM：通知公告列表解析 / 文章取图 `orisrc` /
+文件名推导；`CampusCalendarSchoolRulesTest` 5 例）。
 
-**UI**（`ui/campus/CampusCalendarScreen`）：进页即整图（满宽按真实比例，图源 = 已缓存镜像图
+**UI**（`ui/campus/CampusCalendarScreen`）：进页即整图（满宽按真实比例，图源 = 已缓存校历图
 → 内置兜底图），点图开全屏看图（复用 `ImageViewerDialog` + 新 `ImageSource.CampusCalendar`
 分支；**兜底态也照开**——分支解不到文件回退资源图，点击放大永远可用），双指 1f–5f 缩放 +
 拖动。页尾一行「校历内容以学校官方发布为准（非官方整理，可能滞后）」+ 图源说明
-（镜像没下到时只说内置图归属学年，不编造）。刷新失败 snackbar 一条，其余静默
-（校历是锦上添花的信息，不打扰）。
+（图没下到时只说内置图归属学年，不编造）。手动刷新补进度与结果反馈（进度圈 +
+「已更新 / 已是最新 / 失败」提示；成功不再全静默——2026-10-06 用户报「点刷新没有
+反应」）。冷启动仍静默（校历是锦上添花的信息，不打扰）。
 
-**年度更新流程**（开发者，约 2 分钟）：微信/PC 微信打开校历拿新图 → 存
-`docs-public/calendar/` → 改 `index.json` 的 `year` 与 `file` → push。
-所有用户下次冷启动自动换图，**无需发版**。历史图在仓库里天然留存。
+**更新流程（2026-10-07 定案：用户端零维护）**：各端刷新时 App **直取教务处官网**——
+新学年公告一发，各端在下一个刷新周期自动换图，**无任何维护动作**（不用跑脚本、不用
+发版、不用计划任务）。应急通道：万一官网改版导致 App 解析失效，跑一次
+`scripts/sync_calendar.py --from-file 图 --year 20XX-20XX`（或 `--dry-run` 先看）把
+镜像顶上去——镜像兜底链路仍在，各端会经它换图；解析修复随下一次发版。历史图在仓库里
+天然留存（镜像停更不影响主链）。
 
 **明确不做**：不引入图片库（一张图无 LRU 必要）；不做历史校历切换（仓库可看）；
 不做「在浏览器打开」（无独立官方 URL 可分享）；不碰教务/微信 token 链路。
 
-**已验证**：`CampusCalendarRulesTest` 11 例 + 全量 118 类 1164 例 0 失败 +
-`assembleDebug`；模拟器冒烟（2026-09-30，juwptest）：校园服务入口 → 校历页
-（内置兜底图渲染、图源说明与免责一行）→ 点图全屏 → 关闭，全通过；真机点验待用户执行
-（真机重点：冷启动联网后镜像图下载、跨学年自动换图需下学年验证）。
+**已验证**：`CampusCalendarRulesTest` 12 例 + `CampusCalendarSchoolRulesTest` 5 例 +
+全量 1464 例 0 失败 + `assembleDebug`；模拟器冒烟（2026-09-30，juwptest）：校园服务入口
+→ 校历页（内置兜底图渲染、图源说明与免责一行）→ 点图全屏 → 关闭，全通过；真机点验
+待用户执行（刷新直取官网、跨学年自动换图需下学年验证）。
 
 ---
 
@@ -613,5 +628,156 @@ Kotlin 默认值**——给了就必须在迁移建表里写 `DEFAULT ''`，不�
 「后写的覆盖前面的」，因此 `DateOverrideDao` 两个查询都必须 `ORDER BY id ASC`
 （**别改回 `fromDate`**——按日期排会让后应用的更早 / 更宽区间输给旧覆盖，胜负语义反转）。
 撤销删掉新行后旧覆盖自动复活，这套「覆盖 + 栈式撤销」才闭合。
+
+---
+
+### 4.41 培养方案课程设置总表（2026-10-07，P6；UI 见 §3.26）
+
+教务「培养方案」明细页：`GET /jsxsd/pyfa/topyfamx`（无参数；服务端渲染整页 HTML，
+由会话决定学生与方案）。手机端 `jiaowuh5`「标准版」的「课程设置总表」是同一份数据的
+展示层——**不要走它**（443 直连不通、数据接口在登录后），PC 端带账密会话直取即可。
+
+**页面解析**（`CurriculumParser`，与 scripts 侧 `fetch_curriculum.py` 互证过同一条口径）：
+
+- 方案名在页首「一、培养目标」区（`p.item-area-content-inner`），**在「三、课程设置
+  总表」切片之外**，必须全页搜；兜底 `span.header-item-title`（带「培养方案及教学计划」
+  模板后缀）。
+- 正文从「三、课程设置总表」起：体系块（`div.tixi-cell-text`：通识限选课 / 通识必修课 /
+  学科基础课 / 专业课）与课程行（`div.son-table-tr`）按**文档位置归并**——两串节点
+  各自 findAll 会丢归属。
+- 列（逐列）：体系 / 选课组 / 课程编号 / 课程名称 / 课程性质 / 课程属性 / 学分 /
+  理论·实践·讲座·实验·总学时 / 开设学期。
+- **坑**：学时 5 个子列的 DOM class 全同（`table-td-cell cols-9-2-1`），只能按**行内
+  出现顺序**区分（理论/实践/讲座/实验/总），按 class 名找必然错位；值可能是「2(周)」
+  文本，原样保留字符串，不做数字解析。
+- 没有课程名的行（汇总/空行）丢弃；开设学期解析失败归 0（UI 归入「未标注」）。
+- 登录失效（`用户没有登录` / `请先登录系统`）与结构变化都返回 null →
+  `CurriculumSync` 回「本次未更新」。
+
+**存储**：Room v20 新表 `curriculum_courses`（`term` / `sortOrder` / `courseNo` / `name` /
+`kind` / `attr` / `credit?` / 五格学时 / `tixi`）。全局归属学生、**不挂 timetableId**
+（同 `scholar_courses` 的口径）；写入口径 = 整体替换（一次抓取出自同一份教务快照）。
+可空列只有 `credit`（`REAL`），其余 `TEXT NOT NULL`；无 `@Index`，迁移不建索引。
+方案名与同步日期存 DataStore（`curriculum_plan_name` / `curriculum_sync_date`），
+同行 `scholar_plan_name` 模式。
+
+**同步（`CurriculumSync`）**：走 `CasSession.fetchHtml`（OkHttp + 已存凭证），不开 WebView。
+单页抓取；纪律同 `ScholarProgressSync`（§4.29）：mutex 让位（InProgress）、
+`AutoSyncRules.shouldAttempt` 7 天闸门、解析后先 `CurriculumRules.validate` 再写库
+（挡住半张表的残值覆盖）、**失败静默**、成功才记日期。触发点三处：首启引导登录成功
+（force，静默、**不进**「同步完成」结果弹窗）、冷启动链（成绩→考试→学业→**培养方案**→
+教材补抓，各隔随机小间隔）、页面进页自动（过闸门）+ 顶栏手动刷新。不做变更提醒、
+不参与周期任务链。
+
+**备份**（`CourseExport.curriculumCourses`）：换机/重装随课表一起恢复；DTO 字段全带
+默认值，旧版 App 忽略该段、新版读旧文件缺省为空；导入侧「非空才整体替换、缺课程名的行
+整体拒绝」，预览弹窗与导入结果文案各带一条计数。方案名不进备份（展示性字段，恢复后
+下次抓取即补）。
+
+**测试**：`CurriculumParserTest` 8 例（字段落位、学时顺序、「2(周)」、体系切换、汇总行
+丢弃、未登录/结构变 null、非法学期）、`CurriculumRulesTest` 5 例（学年分组、标签、
+学分合计、validate）、`ImportJsonShapeTest` +3 例（备份段往返 / 缺字段降级 / 旧文件空段）。
+
+---
+
+### 4.42 教学日历 → 开学日自动设置（2026-10-07，P6）
+
+**数据源**：教务「教学日历查询」`GET /jsxsd/jxzl/jxzl_query?xnxq01id=<学期>`——服务端渲染
+单表（快照 `scripts/out/jxzl.html`），`xnxq01id` **学期参数真实生效**（下拉列 24 个学期，
+不带参按教务当前学期渲染）。表 = 表头 + 第 1..25 周 + 页脚「周历编制 | <学期>」，
+周行 9 格：周次标签 + 周一..周五（**裸日号**，如 `31`，跨月也不带月份）+ 周六/周日
+（`MM月DD日`）+ 备注——**全表没有年份**。
+
+**解析**（`data/jw/TeachingCalendarParser.kt` + `domain/TeachingCalendarRules.kt`）：
+① 登录页标记 → null；② 响应学期（`select#xnxq01id` 选中项，页脚「周历编制」兜底）
+**必须等于请求学期**，对不上 → null（不猜学期）；③ 周一 = 周六格 `MM月DD日` − 5 天，
+年份由学期号推导（`-1` 落起始年 7–12 月、`-2` 落次年年 1–6 月），且周六格必须真是周六；
+④ 与周一/周二格的裸日号交叉校验，不齐 → null。任一不过宁可不动开学日。
+数据行的属性是单引号（`<tr class='qz-weeklyTable-tr'>`，模板产物），表头行是双引号——
+正则只按 `<tr[^>]*>` 收窄，不假设引号形态。
+
+**写入口**（`data/repo/TeachingCalendarSync.kt`）：教务导入课表**写库成功后**触发——
+与教材同两个触发点（WebView 一键导入 `JwImportScreen`、首启自动导课表 `OnboardingScreen`）；
+`ensureValid → fetchHtml → parse` 后把第 1 周周一写进**目标课表**的
+`semester_config.startDate`（`repo.updateSemesterFor`；没配过学期的课表以
+`DefaultData.defaultSemester` 为底）。四条纪律：没学期钥匙不抓；学期必须自证；
+**失败静默**（只记 `Log.i`——开学日原本就有值，失败是维持现状不是数据丢失，故不补
+失败气泡）；**值没变不写库**、也不弹气泡。用户可见的只有变化时那一条主界面气泡
+「开学日已按教务教学日历设为 yyyy-MM-dd」。
+
+**口径**：「教务为准」——每次导入都重设；用户之后仍可在课表设置（§3.3）手改，
+下一次导入会再校准。**不动总周数**（课程侧口径与日历 25 周的编制口径可能不一，不顺手改）。
+
+**测试**：`TeachingCalendarParserTest` 10 例（秋/春学期年份推导、登录页、响应学期不符、
+选择器缺失时页脚兜底、缺周末日期、交叉校验不过、周六格不是周六、非法学期号、缺第 1 周行）。
+
+### 4.43 实习基地查看（2026-10-07，P6；UI 见 §3.27）
+
+**数据源**：教务「实习基地查看」——壳页 `/jsxsd/sxsxgl/sxjdcx.do` 只是 layui 前端壳，
+数据接口 `GET /jsxsd/sxsxgl/sxjd.do`（layui JSON：`msg/code/count/data[]`）。
+**该接口忽略一切分页参数**（2026-10-07 实测：`page` / `pageNum` / `pageSize` / `limit`
+全形态——GET / POST / 大小写混排 / 浏览器请求头——都返回**同一页前 10 条**，而 `count`
+声明 17；同会话下成绩接口 `cjcx_list` 的 `pageNum=2` 翻页正常（10 → 6 条），说明不是
+参数名问题、是该接口固定只回首页）。所以**单次抓取、不做翻页**，拿到什么展示什么，
+差额在界面如实注明（「教务接口当前只返回前 N 个（标注共 M 个）」）；URL 仍按教务
+qzTable 的口径带 `pageNum` / `pageSize`——哪天教务修好翻页，加回循环即可。
+字段 = 展示表格的 14 列（编号 / 名称 / 类别 / 所属单位 / 负责人 / 地址 / 电话 /
+建成时间 / 挂牌时限 / 容纳人数 / 校内联系人 / 校内电话 / 所属院系 / 简介）+ 内部 id。
+纯只读接口，无写操作。
+
+**链路**：`InternshipBaseParser`（三道检查照 `TextbookParser`；缺「基地名称」的行丢弃；
+JSON null 按空串收——教务对空值可能回 null 而不是缺键；`data` 为 null 不抛）→
+`InternshipBasesLoader`（**12 小时快照缓存**：`InternshipCacheRules.shouldUseCache`
+（纯函数，判定矩阵有测试）——非强刷 + 抓过 + 新鲜才走缓存，页面进页默认零网络；顶栏刷新
+强制重抓；**整个读写收口 `Dispatchers.IO`**（页面从主线程调用）；更新失败**宁旧勿空**
+（抓过就有旧快照带 `updateFailed` 标记展示，从没抓到才报错）。**空结果口径**：`count≤0`
+的权威空也写快照（页面如实显示空态，先例 `SelectionRoundsStore`）；`count>0` 却零行
+按「条目缺名称、结构可能已变」走宁旧勿空，不当「暂无数据」吞掉）→
+`ui/internship/InternshipBasesScreen`。**不落 Room**：低频参考数据（学校级清单，
+短时间几乎不变），快照是 `filesDir` 一份 JSON、**已进两份备份排除 xml**（不上云，
+DESIGN §4.43）。
+
+**测试**：`InternshipBaseParserTest` 9 例（字段落位、缺名字丢弃、code 非 0、非 JSON、
+ERR 前缀、空列表、null 字段、`data:null`、count 缺失按 -1、listUrl 带 pageNum/pageSize）+
+`InternshipBaseRulesTest` 2 例（分组顺序与组内编号排序是 UI 契约）+
+`InternshipCacheRulesTest` 2 例（新鲜期边界、未来时间戳）。
+
+### 4.44 学生评教直达（2026-10-07，P6；UI 见 §3.27）
+
+**为什么没有静态 URL**：教务主页菜单是 `toZlpt_11319('jwxsjdp')`——POST
+`/jsxsd/qzzlpt/getToken_11319` 取 token，返回
+`http://jiaowupj.juwp.edu.cn/api/…/authentication/<JWT>`（跨主机、JWT 约 4 小时），
+拼 `+ '/jwxsjdp'` 302 到平台 `/home?xlgToken=…` 的 SPA（内容全由前端 JS 渲染）。
+
+**实现**：`JwImportMode.TeachingEval`（`ui/jwvw/JwImportScreen.kt`）——复用教务 WebView
+的整套统一认证自动登录，落 xsMainV 后由 `startAutoNav` 的延迟块**注入
+`JwTeachingEval.launchJs()`**：页面自带 jQuery `$.ajax` 取 token → `location.href`
+同窗口跳转（`window.__jwPjStarted` 一次性守卫；`evaluateJavascript` 不 await Promise，
+发起后没有导航由 `AUTO_EVAL_TIMEOUT_MS`（15s）原地看门狗给状态条出路——任何路径不悬
+Loading；顶栏「刷新」放开 `autoNavDone` 即重试）。平台页跳过白屏探针（SPA 空壳会被
+误判「内容为空」）；`checkSessionLost` 对非教务域本来就放行。底部无任何按钮（同选课模式
+的守卫口径扩展）。
+
+**红线**：App 只导航——**评教全部由用户在平台上自己完成，不代评、不提交任何接口**
+（与退课同一纪律）。**token 不落日志**：平台域 URL 在 9 处日志点经
+`JwTeachingEval.redactForLog` 脱敏（`/jwxsjdp` 路径带 JWT、`/home` 查询串带 `xlgToken`）
+——改那些日志点时别把 `$url` 直接插回去。`network_security_config` 已放行 `juwp.edu.cn`
+全子域（含子域），无需改配置。
+
+**2026-10-07 复查修**：① 平台域失败 URL 经 `JwImportDiagnosis` 会**原样进错误浮层**
+（正文拼 url）——`networkFailure` / `httpFailure` 的诊断参数改收 `redactForLog` 的
+脱敏串（`lastFailedUrl` 仍存原文做等值匹配），SSL 日志同样过脱敏（第 10 处）；
+② 15s 看门狗带「尝试代次」（`evalAttempt`）——刷新重试后旧代次看门狗作废，不再补一条
+与事实相反的失败提示；③ 评教模式底部整块不渲染（原先留一条空的高程条）。
+
+**移动端评教页调查（2026-10-07，未接入）**：`http://jiaowupj.juwp.edu.cn:81/#/jspxxsp`
+是「教学质量保障平台」的移动端 SPA（同一平台另一端口）。实测：它的 SPA 启动认证调用
+（`/api/AuthenticationController/user/info`，`Bearer <xlgToken>`）**拒绝教务
+`getToken_11319` 的 JWT（401）**，且其 CAS/OAuth 配置指向外校域名（nit / zhku，
+疑似未配置好）。**暂维持桌面版**；若用户能提供其平时进入该页的方式（移动端教务 App 的
+免登 ticket / 该页自身的登录形态），再评估接入。快照 `scripts/out/pingjiao_81_*`。
+
+**测试**：无独立纯逻辑（注入脚本与导航靠设备点验；`JwImportScreen` 的枚举穷尽 `when`
+由编译器逐个点名）。设备点验清单见 AGENTS.md 待点验表。
 
 ---

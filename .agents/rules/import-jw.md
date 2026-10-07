@@ -54,14 +54,20 @@
 - **导入学期写进目标课表**：`importParsedCourses(..., term)` 会把数据学期写进 `Timetable.term`
   （Room v14）。这列是课程详情查教材的钥匙（DESIGN §4.31）——动导入写库口径时别把它弄丢。
 
-## 教材（2026-09-28）
+## 教材（2026-09-28；触发点与失败可见性 2026-10-06 订正）
 
 - 教材来自「教材管理 → 学生教材确认」：壳页 `/jsxsd/nxsjc/jccx` + 数据接口
   `/jsxsd/nxsjc/xsjcqr`（layui 形态，参数 `xnxqid` + `pageNum/pageSize`，**不带 .do**）。
   解析在 `data/jw/TextbookParser.kt`（照 ScoreParser 的三道检查），同步器 `data/repo/TextbookSync.kt`。
-- **触发点只有一个**：教务/JSON 导入写库成功后 `Graph.appScope.launch { textbookSync().syncForTerm(term) }`
-  （`ui/jwvw/JwImportScreen.kt`）。静默失败、成功才记日期，**没有 7 天闸门**（教材跟导入走，
-  天然低频；`prefs.textbookSyncDate` 只做记录）。
+- **触发点只有两个**：教务导入写库成功后 `Graph.appScope.launch { textbookSync().syncForTerm(term) }`
+  （`ui/jwvw/JwImportScreen.kt`），以及冷启动补抓 `TextbookSync.backfillIfMissing`（`JuwApplication`，
+  搭在 CAS 那组，顺序 成绩→考试→学业→教材）。**「导入 JSON 文件」不抓**——它走 `importJson`，
+  教材从备份自己的 `textbooks` 段恢复（带数据才整体替换）。
+- **失败不再无声**（2026-10-06）：`syncForTerm` 的结果落一条 `Log.i`，导入路径失败另补一条气泡
+  「教材未同步：<原因>」。教材真的丢过，原因是会话被别处登录顶掉（强智单会话，
+  `.agents/rules/login-session.md`），不是教务没数据——别把「详情里没教材」直接当成数据问题。
+- **补抓闸门**（`AutoSyncRules.textbookBackfillDue`）：该学期教材为空 **且** 距上次**尝试** ≥ 6 小时
+  才抓。记的是尝试时刻（失败会一直保持「空」，只记成功就变成每次冷启动都打一次教务）。
 - **`xsjcisxy.do` 是征订确认的写操作（POST），任何路径都不碰**——教材功能只读 `xsjcqr`。
 - 查询口径：详情面板按「当前课表 `Timetable.term` + 课程名」过滤；term 为空（旧课表）不显示。
 
@@ -93,6 +99,23 @@
 - **解析结果先校验再整体替换**（`ScholarProgressRules.validate`）：教务改版时保留旧数据，
   不拿残值覆盖。注意校验里**没有**「要求学分合计 > 0」这条通用闸门——公选课类别维度全是 0.0，
   加了会把整个维度永久判失败；那条检查只在 `validateCreditTotal` 里对课程体系维度用。
+
+## 培养方案（课程设置总表，2026-10-07，DESIGN §3.26 / §4.41）
+
+- 教务「培养方案」明细页 `/jsxsd/pyfa/topyfamx`（无参数；服务端渲染整页 HTML，由会话决定
+  学生与方案），解析在 `data/jw/CurriculumParser.kt`。手机端 `jiaowuh5`「标准版」的
+  「课程设置总表」是同一份数据的展示层——**不要走它**（443 直连不通、数据接口在登录后）。
+- **学时 5 个子列 DOM class 全同**（`table-td-cell cols-9-2-1`），只能按**行内出现顺序**
+  区分（理论/实践/讲座/实验/总），按 class 名找必然错位；「2(周)」这类值原样保留字符串。
+  **方案名在「三、课程设置总表」切片之外**（页首段落），必须全页搜。
+- 同步纪律与学业同一套（`CurriculumSync`）：mutex 让位、7 天闸门（与成绩/学业共用
+  `AutoSyncRules.shouldAttempt`）、先 `CurriculumRules.validate` 再整体替换、失败静默、
+  成功才记日期。
+- 触发点三处：首启引导登录成功（force，静默、**不进**「同步完成」结果弹窗）、冷启动链
+  （成绩→考试→学业→**培养方案**→教材补抓）、页面进页自动 + 顶栏手动刷新。**不做变更提醒**，
+  不参与周期任务链。
+- 备份走 `CourseExport.curriculumCourses` 段：非空才整体替换、缺课程名的行整体拒绝、
+  方案名不进备份（展示性字段，恢复后下次抓取即补）。
 
 ## 成绩/考试变动提醒（2026-09-30，DESIGN §4.33）
 
@@ -165,14 +188,44 @@
   **不要**在这里再写一套解析；学期以理论页 `select#xnxq01id` 选中项为准，带学期请求时
   校验「请求学期 = 返回学期」（同脚本纪律）；实验页结构不可信（无 `qz-weeklyTable`）时
   检查整体放弃——硬比对会把整批实验课报成「教务删除」。
+- **HTML 解析必须与注入脚本逐块对齐**（2026-10-07 修）：一格里的**每个**
+  `li.courselists-item` 都要抽，切法收口在 `CourseBlocks`（两页共用，别再各写一份）。
+  同格多课块是常态（单双周拆块 / 回课时换教室；实测真实理论页 35 个数据格里 9 格是多课块）。
+  只取第一个 = 静默丢课 → 直取结果比基线少几门 → 全被误报「教务删除」，而**重新导入
+  也修不好**（每次检查都重爬重解析）。同一个坑的验证方法：拿 `scripts/fetch_courses.py`
+  / `fetch_lab_courses.py` 的产物（真机口径）与 `parseFromHtml` 逐条对，0 差集才算齐
+  （2026-10-07 复核已在 2025-2026-2 / 2026-2027-1 两个学期对到 0 差集）。
+- **周次解析的三个口径**（`QiangzhiScheduleParser.parseWeeks`，scripts 侧 `parse_weeks` 同口径）：
+  ① 「单周 / 双周」标注（实测 `1,11单周` / `2,6双周`，挂整串末尾）数字照解析、按奇偶过滤——
+  带标注的 token 不许丢（丢了课少排几周）；② 脏 token 抠数字兜底；③ 全空才判失败。
+- **两页学期互校**（2026-10-07 复核补）：实验页也有 `select#xnxq01id`（单引号 + 无值
+  selected 形态），`fetch` 用 `labTermError` 校验它与理论页一致，抽不到下拉同样判不可信
+  ——教务若忽略实验页学期参数，混两个学期比对会刷一屏假差异。
+- **整类课「有 → 零」闸门**（`vanishingKindError`，2026-10-07 复核补）：理论 / 实验一整类
+  解析为 0 条而基线里该类有货 → 判 Failed（不报差异、不落检查时刻，下周期重试）。只守
+  这一侧：基线没有、教务新有的（0 → N）是正常新增，照报。
 - **首启自动导入只此一次**：`importIfEmpty` 对非空课表一律 Skipped。把它的调用点挪到
   周期任务、或放宽成「覆盖合并用户课表」，等于让 App 静默改用户的课表——禁止。
   结果弹窗（`OnboardingSyncOutcome`）消费即清，startAtJw（改密码重进）不写不弹。
+  **实验页结构不可信时按失败报告**（2026-10-07 复核补）：静默导入会把实验课整批漏掉而
+  用户看不到分项条数，报失败让他手动导入一次核对（手动弹窗有分项提示）。
 - **基线语义**：`ScheduleBaselineStore`（filesDir JSON）=「上次与教务达成一致时的课表
   状态」。推进点只有三个：导入写库成功（`importParsedCourses` / `importJson` **收口在
   repo 内**，新导入入口不许绕过）、合并差异成功、检查首跑（不通知）。**检查成功不推进
   基线**——这点与 `ExamSync` 相反（考试基线是「上次抓到什么」，调课基线是「用户认可了
   什么」），照抄考试链会让差异永远消失。基线只存 Theory+Lab（教务抓不到考试）。
+  **基线只装教务口径的条目**（2026-10-07 复核补）：
+  - 合并路径的推进 = 旧基线套用已应用的改动（`ScheduleDiff.baselineAfter`），**不是**
+    拿写库后的课表整体重建——重建会把手动添加 / AI 调课加进来的本机条目塞进基线，
+    下次检查全被报成「教务删除」，勾选合并即删掉用户自己的课；
+  - `importJson` 的推进**必须排在课程写完之后**（此前调用点写得太早，基线存的是恢复前的
+    旧课表，恢复完一查全是假差异）；
+  - 整体覆盖导入（`importParsedCourses(merge=false)`）仍是「课表=教务口径」，走
+    `refreshBaselineFromDb` 整体重建。
+- **待处置缓存的失效口径**（2026-10-07 起）：基线推进（导入写库成功 / 合并差异成功）与
+  「检查成功且无差异」两处都会清掉属于该课表的待处置缓存。缓存是派生数据（拿基线一比
+  就能重算），不这样清，处置页会一直挂着已经不存在的变动，而「合并」会照指纹把它们
+  套到当前课表上——静默删课（用户报障里「重新导入后仍显示有差异」的另一半）。
 - **diff 纪律**（`domain/ScheduleDiff`）：指纹只含教务字段——把 colorIndex/remark/
   自定义时间加进指纹，本机数据一动就报假差异；同名同 kind 恰好一删一增才配「调整」，
   多删多增宁拆开不错配；冲突（用户改过的课）默认不勾。改任何一条都要同步
@@ -182,8 +235,12 @@
   会以剩余差异的新指纹重新报出，这是有意行为。
 - **合并是唯一的写路径**：`applyScheduleChanges` 事务内逐条、指纹匹配不上就跳过不硬套、
   新增防 mergeKey 重复、修改保留原行 id/配色/备注。**后台静默改课表是红线**——
-  `ScheduleAlertReminder` 只发通知，点通知落处置页（`SCHEDULE_CHANGES`，requestCode 3010
+  `ScheduleAlertReminder` 只发通知，点通知落处置页（`SCHEDULE_CHANGES`，requestCode 3011
   与 3008/3009 错开），差异的每一条都要用户勾选。
+  > 2026-10-06 起事务体抽成私有 `applyChangeSet`（唯一实现）；2026-10-07 复核起
+  > `applyScheduleChanges` = 它 + `advanceBaselineFromApplied`（旧基线 + 已应用改动，
+  > 见上「基线只装教务口径的条目」），AI 调课走 `applyLocalChanges`
+  > = 它本身（**不推基线**）。改这条链时两个出口一起想，见 `.agents/rules/ai-schedule.md`。
 - 周期检查搭 `ScoreAlertReminder` **第四路**：`ensurePeriodicWork` 的全关判定、`check` 的
   开关列表、`onSettingsChanged` 的清时刻，三处改任何一处都要四个开关一起想。
 
@@ -243,3 +300,58 @@
   ③ 顶栏刷新与错误浮层重试会把 `autoNavDone` 放开重试一次（看门狗的提示就指向刷新）。
 - `autoNavPending` 是「本轮跳转在途」的闸门：用户在途期间手动发导航（底部按钮/刷新）
   会清掉它，在途的那一跳据此作废（回调里先判 `autoNavPending`）。
+
+## 教学日历 → 开学日（2026-10-07，DESIGN §4.42）
+
+- 数据源 `/jsxsd/jxzl/jxzl_query?xnxq01id=<学期>`（**学期参数真实生效**；不带参按教务
+  当前学期渲染。快照 `scripts/out/jxzl.html`）。解析 `TeachingCalendarParser`、
+  同步 `TeachingCalendarSync`（`data/repo/`）。
+- 两条最容易写错的：**工作日列是裸日号、周末列才是 `MM月DD日`、全表无年份**（年份从学期号
+  推导 + 周六格必须真是周六 + 周一/周二裸日号交叉校验）；**响应学期 ≠ 请求学期一律放弃**
+  （不猜学期——教务没有该学期日历时的回落必须挡住）。
+- 触发点与教材同两个（WebView 导入写库成功 / 首启 `importIfEmpty` 成功），**失败静默只记
+  `Log.i`**、值没变不写库不弹泡（区别于教材的失败气泡：开学日失败 = 维持现状，不是数据
+  丢失，没有「去哪儿看」的问题）。
+- 口径「教务为准」：每次导入重设；用户手改只保证到下一次导入（课表设置照常可改）。
+  **不动总周数**——课程侧口径与日历 25 周编制口径可能不一，不顺手改。
+
+## 学生评教直达（2026-10-07，DESIGN §4.44）
+
+- 评教**没有静态 URL**：`toZlpt_11319('jwxsjdp')` = POST `/jsxsd/qzzlpt/getToken_11319`
+  取 token → `token + '/jwxsjdp'`（跨主机 `jiaowupj.juwp.edu.cn` 的 SPA；HTTP 明文已在
+  `network_security_config` 放行）。窗口形态 = `JwImportMode.TeachingEval` 复用教务
+  WebView（CAS 自动登录 → xsMainV → 注入 `JwTeachingEval.launchJs()`——页面自带 jQuery
+  `$.ajax` 取 token 后 `location.href` **同窗口**跳；不要改成 window.open）。
+- **红线：App 只导航，不代评、不提交任何接口**；注入发起后无导航由 `AUTO_EVAL_TIMEOUT_MS`
+  （15s）原地看门狗给状态条出路，顶栏「刷新」放开 `autoNavDone` 即重试（既有机制，别另造）。
+- **token 不落日志**：平台域 URL 在 9 处日志点经 `JwTeachingEval.redactForLog` 脱敏
+  （`/jwxsjdp` 路径带 JWT、`/home?xlgToken=`）——改这些日志点时别把 `$url` 直接插回去；
+  `checkSessionLost` 对非教务域本来就直接放行，平台页不受会话探针干扰。
+- 平台页跳过白屏探针（SPA 空壳必误判「内容为空」）；底部无按钮（同选课模式的守卫口径扩展，
+  `when (mode)` 四处穷尽分支由编译器点名）。
+- **2026-10-07 复查修**：错误浮层/诊断也会带 URL（`JwImportDiagnosis` 正文拼 url）——
+  `networkFailure`/`httpFailure` 的诊断参数改收 `redactForLog` 脱敏串（原文只留
+  `lastFailedUrl` 做等值匹配）；SSL 日志补脱敏（第 10 处）；15s 看门狗带「尝试代次」
+  （`evalAttempt`），刷新后旧看门狗作废，不再补假告警。
+- **移动端评教页（:81 `/#/jspxxsp`）调查结论（暂不接入）**：其 SPA 启动认证调用
+  `/api/AuthenticationController/user/info` 用 `Bearer <xlgToken>`，**教务
+  `getToken_11319` 的 JWT 实测被拒（401）**；平台 CAS/OAuth 配置指向外校域名
+  （nit / zhku，疑似未配置好）。若拿到其平时进入方式（移动端教务免登 ticket /
+  该页登录形态）再评估。快照 `scripts/out/pingjiao_81_*`。
+
+## 实习基地查看（2026-10-07，DESIGN §4.43）
+
+- 数据接口 `/jsxsd/sxsxgl/sxjd.do`（layui JSON）。**该接口忽略一切分页参数**（实测
+  `page` / `pageNum` / `pageSize` / `limit` 全形态都回同一页前 10 条、`count` 声明 17；
+  同会话成绩接口 `cjcx_list` 的 `pageNum=2` 翻页正常——不是参数名问题）。**单次抓取、
+  不做翻页**，差额界面如实注明；**多翻只会合成重复行**（曾因按页循环拿回两页同样的
+  10 条，真机上表现为「每张卡重复一份」）。
+- **12 小时快照缓存**（`InternshipSnapshotStore`，filesDir JSON、**已进两份备份排除
+  xml**）：新鲜期内进页零网络（`InternshipCacheRules.shouldUseCache` 纯函数判定），
+  顶栏刷新强刷；更新失败**宁旧勿空**（抓过就有旧快照带 `updateFailed` 标记展示）。
+  **整个读写收口 `Dispatchers.IO`**（页面从 `LaunchedEffect` 主线程直接调装载器，
+  2026-10-07 复查修——快照文件与凭证闸门都是阻塞 IO）。**空结果口径**：`count≤0` 的
+  权威空也写快照（页面如实显示，先例 `SelectionRoundsStore`）；`count>0` 却零行按
+  「条目缺名称、结构可能已变」走宁旧勿空。
+- 解析 `InternshipBaseParser`：三道检查照教材；缺「基地名称」的行丢弃；JSON null 按空串
+  收；`data` 为 null 不抛（`as? JsonArray`）；`count` 缺失按 -1（未知）。

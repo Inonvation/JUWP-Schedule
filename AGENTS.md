@@ -24,7 +24,7 @@
 | 收件箱（入箱挂点 · 去重 · 保留策略） | `.agents/rules/inbox.md` |
 | AI 调课（prompt · 工具调用 · API Key · 落库语义） | `.agents/rules/ai-schedule.md` |
 | 桌面小组件 | `.agents/rules/widget.md` |
-| 教务课表导入 / 考试 / 成绩 / 教材 / 选课 | `.agents/rules/import-jw.md` |
+| 教务课表导入 / 考试 / 成绩 / 教材 / 选课 / 教学日历 / 评教 / 实习基地 | `.agents/rules/import-jw.md` |
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 | `.agents/rules/ebike.md` |
@@ -57,7 +57,7 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 | AGP | **8.7.3** |
 | Kotlin | **2.1.21**（compose / serialization 同版本；KSP `2.1.21-2.0.1`） |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
-| Room DB | **v19**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`（v15 起 `fromAccount` / `accType` 记交易账户，消费流水「充值到哪」的钥匙）、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）、`ride_records`（本机骑行记录，v16，只记本机用车那条链路）、`course_selections`（选课记录，v17，按学期替换，DESIGN §4.35）、`inbox_messages`（收件箱，v18，§4.38）、`date_overrides`（日期覆盖：调休 / 停课，v19，§4.40）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑；v19 的 `note` 特意不给 Kotlin 默认值来绕开这条） |
+| Room DB | **v20**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`（v15 起 `fromAccount` / `accType` 记交易账户，消费流水「充值到哪」的钥匙）、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）、`ride_records`（本机骑行记录，v16，只记本机用车那条链路）、`course_selections`（选课记录，v17，按学期替换，DESIGN §4.35）、`inbox_messages`（收件箱，v18，§4.38）、`date_overrides`（日期覆盖：调休 / 停课，v19，§4.40）、`curriculum_courses`（培养方案课程设置，v20，§4.41）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑；v19 的 `note` 特意不给 Kotlin 默认值来绕开这条） |
 | 作息表 | **11 小节**（每节 40 分钟，大节内 5 分钟、大节之间 20 分钟换教室），见 DESIGN §3.5 |
 | 课表网格 | 行号 = **小节号 1–11**（不是大节号）；`Course.startSection/endSection` 也是小节号 |
 | HugeIcons | `com.github.rikkahub:hugeicons-compose:1.4`（**JitPack**，**`isTransitive = false`**）。**不要**写 `me.rerere:hugeicons-compose:1.0.0`（Maven Central 不存在）；不要打开传递依赖（会拉 `androidx.core` 1.17，AGP 8.7 / compileSdk 35 编不过） |
@@ -155,7 +155,7 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
 
 ## 爬虫脚本（scripts/）
 
-正式脚本 9 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 11 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
@@ -166,10 +166,13 @@ adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
 | `fetch_scores.py` | 课程成绩（`--term` 可选，缺省全部学期；JSON 接口） | `scripts/out/scores.json` |
 | `fetch_textbooks.py` | 学生教材确认（`--term` 可选，缺省教务当前学期；JSON 接口 `/jsxsd/nxsjc/xsjcqr`） | `scripts/out/textbooks.json` |
 | `fetch_selections.py` | 选课记录 + 选课轮次（`--term` 可重复，缺省当前学期+下一学期；layui JSON；**只读**，退课接口绝不碰） | `scripts/out/selections.json` |
+| `fetch_curriculum.py` | 培养方案「课程设置总表」（全量 84 门级别，含开设学期 1–8；服务端渲染 HTML，不随学期；另有 `curriculum.md` 按学年可读版） | `scripts/out/curriculum.json` |
 | `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9A101`） | `scripts/out/power.json` |
 | `fetch_transcript.py` | 教务处**盖章成绩单**（金格签章系统 `jwxyxx.juwp.edu.cn`，**非强智教务**；`--list` / `--term` 可多个 / `--out`） | `scripts/out/transcript_<标签>.pdf` |
+| `sync_calendar.py` | 校历镜像同步（教务处官网通知公告 → 抓高清原图 → 学年/文件名/sha256 比对，变更才落盘并自动 commit & push；**免登录免凭证**） | `docs-public/calendar/`（更新仓库镜像）；**2026-10-07 后 App 已直取官网为主，本脚本为应急工具** |
 
-所有脚本输出 JSON 顶层 `term` = **实际爬到的学期**（如 `2026-2027-1`），App 导入确认弹窗据此展示；
+所有脚本输出 JSON 顶层 `term` = **实际爬到的学期**（如 `2026-2027-1`），App 导入确认弹窗据此展示
+（`fetch_curriculum.py` 例外：培养方案全量、不按学期抓取，无 term 口径）；
 带 `--term` 时脚本会校验「请求学期 = 教务返回学期」，不一致直接报错而不是静默爬错学期。
 
 ```powershell
@@ -216,7 +219,9 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
                UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37；
-               调课处置页 SCHEDULE_CHANGES，§4.17；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39）
+               调课处置页 SCHEDULE_CHANGES，§4.17；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
+               培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；学生评教走
+               JwImportActivity 的 TeachingEval 模式（§4.44））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
@@ -232,15 +237,23 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  + ScheduleOverride·ScheduleOverrides（日期覆盖：调休 / 停课，§4.40——`coursesOnDay` 的
  覆盖查表，渲染层叠加不写 courses 表）
  + ScheduleUndo·AppliedEntry（撤销的反向规划，§4.39——纯函数，仓储只按 Action 落库）
-data/local/      Room v19：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
+ + Curriculum·CurriculumRules（培养方案课程设置：全量课程 + 开设学期 1–8 ·
+ 学年分组/校验/标签，§4.41）
+ + TeachingCalendar·TeachingCalendarRules / InternshipBase·InternshipBaseRules（§4.42 / §4.43：
+ 教学日历→第 1 周周一推导 · 实习基地与类别分组）
+data/local/      Room v20：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
                  / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
                  / power_readings（v12 起；房号显示名 roomName）/ textbooks（v14）
                  / ride_records（v16）/ course_selections（v17，选课记录按学期替换，§4.35）
                  / inbox_messages（v18，收件箱，dedupeKey 唯一索引，§4.38）
                  / date_overrides（v19，日期覆盖：调休 / 停课，§4.40）
+                 / curriculum_courses（v20，培养方案课程设置，§4.41）
 data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
                  ScholarProgressRepository；ScoreSync / ScholarProgressSync（自动导入，DESIGN §4.29）
-                 TextbookSync（导入课表后抓教材，§4.31）
+                 CurriculumRepository / CurriculumSync（培养方案课程设置，§4.41——同学业一套纪律）
+                 TeachingCalendarSync（导入课表后按学期校准开学日，§4.42）
+                 TextbookSync（导入课表后抓教材 + 冷启动补抓，§4.31）
+                 InternshipBasesLoader（实习基地直取 + 按页循环，不落库，§4.43）
                  SelectionRepository / SelectionSync / SelectionRoundsStore（选课记录与轮次，§4.35）
                  NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
                  AiImageStore（AI 调课图片，§4.39——filesDir/ai_img/，**会话级**，
@@ -252,8 +265,12 @@ data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
                  + ScholarProgressParser（学业完成情况 = 教务返 HTML，按表头名映射，非 JSON）
+                 + CurriculumParser（培养方案课程设置 = 教务返 HTML 整页，正则抠节点，§4.41）
                  + TextbookParser（教材 = layui JSON 接口，§4.31）
                  + SelectionParser（选课日志与轮次 = layui JSON，§4.35）
+                 + TeachingCalendarParser（教学日历 = 教务返 HTML，只取第 1 周周一，§4.42）
+                 + InternshipBaseParser（实习基地 = layui JSON，§4.43）
+                 + JwTeachingEval（学生评教：token 注入脚本 · 平台域判据 · 日志脱敏，§4.44）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
@@ -273,7 +290,7 @@ data/ai/         AI 调课（DESIGN §4.39；OpenAI 兼容 /chat/completions + /
                  thinking disabled；带图时 content 升多模态数组；**无日志拦截器**）
                  + AiCredentialStore（API Key，secure_ai.xml 已排除备份）
                  规则见 .agents/rules/ai-schedule.md
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|inbox|ai
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|inbox|ai
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -525,6 +542,20 @@ BalanceAlertReminder）全部落在既有结果点上，**收件箱不发任何�
 同改，否则首帧闪一下关态）；显式关过的用户落盘 false，不受默认值影响，无需迁移。
 口径：出分与考试变动是用户要的事实，默认就该收；**选课提醒仍默认关**（通知是打扰型
 能力，两者不同口径，别顺手统一）。全量 **1325 例 0 失败**；随 2.2.0 发版。
+会话被顶与教材丢失（2026-10-06，用户报「从教务导入后课程详情不显示教材，debug 有 release 没有」；
+DESIGN §4.27「会话被别处登录顶掉」/ §4.31）：根因是**强智单会话**——同账号在别处登录后，教务对
+业务请求回一段裸 JSON `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`（HTTP 200、URL 不变），
+而登录页判据只认 `userPassword`，于是它被当页面数据交给解析器；教材抓取因此抛「教务返回 code=-1」
+并被**丢掉**（`syncForTerm` 的 Result 在唯一调用点没人接），表现成「导入成功但没教材」。
+三处落地：① `JwHttpSession` 新增 `looksLikeSessionConflict`（业务文案 + `flag1` 同时命中）与
+`JwHttpException.SessionInvalid`，`CasSession.fetchHtml` 对会话被顶**作废会话重登一次**
+（只重试一次、不动防锁号计数）；② WebView 探针补 `conflict` token +
+`JwImportDiagnosis.sessionConflict`（不再把裸 JSON 摊给用户）；③ 教材链路补可见性与可恢复性——
+`TextbookSync` 结果落 `Log.i`、导入失败补一条气泡「教材未同步」、**冷启动补抓**
+（`backfillIfMissing`：该学期教材为空 + 距上次尝试 ≥6h，闸门 `AutoSyncRules.textbookBackfillDue`）。
+`JwImportResultBus` 顺手从单值 StateFlow 改成排队（`OutcomeQueue`），否则第二条消息会把还没
+消费的导入气泡顶掉。同时订正一处**文档与实现不符**：教材触发点只有「教务导入」与「冷启动补抓」，
+**「导入 JSON 文件」不抓**（它从备份的 `textbooks` 段恢复）。新增 16 例，全量 **1341 例 0 失败**。
 AI 调课（2026-10-06，DESIGN §3.25 / §4.39；规则见 `.agents/rules/ai-schedule.md`）：
 课表 hub「使用」区新入口——粘贴调课通知（可附诉求），模型用 **function calling**
 （工具 `propose_schedule_changes`）返回结构化改动，以**差异卡**呈现（与调课处置页共用
@@ -599,6 +630,38 @@ P1 五条——① 追问文字在「上一轮答空」时被整段丢掉（`isF
 各功能的最新口径见 DESIGN §6；逐条实现史见 `docs/devlog.md`（仅本地）；
 未闭环的点验项见下表。
 
+检查更新（2026-10-06，DESIGN §3.3；发版流程见 `.agents/skills/publish-release/SKILL.md`
+Step 7.5）：关于页「应用」区新增「检查更新」行，**仅手动触发**——拉公开仓库镜像
+`docs-public/update/latest.json`（**不请求 api.github.com**，该域名国内直连经常不通）。
+清单含版本 / APK 资产名 / SHA-256 / 更新日志 / 镜像前缀；版本比对用三段数字（兼容
+debug 后缀），镜像链接 = 前缀 + GitHub 直链。有新版本弹窗：更新日志 + SHA-256（点按
+复制）+「国内镜像下载 / GitHub 下载」双通道（浏览器下载，App 不落 APK）；已最新 / 失败
+走 Snackbar。发版流程新增 Step 7.5：每次发版同步写清单（`mirrorPrefix` 可随时单独改、
+不发版）。同日修两处：① 旧「检查更新」首源 raw（无代理经常不可达）+ 单源网络异常中断
+整轮轮询，表现为「不开代理基本必失败」——源清单收口 `domain/RepoMirror`（gh-proxy 加速 →
+jsdelivr → raw 兜底、逐源容错），**校历镜像同步接入**（原单源直连 raw，可达性全看网络
+脸色）；② ref 统一真实分支 `main`（旧写 `master`：raw/jsdelivr 会按默认分支旧名**兼容
+解析**、GitHub API 不认——不依赖兼容行为）。**同日修校历页手动刷新无反馈**：原设计成功
+全静默（用户点刷新以为没反应），现进度圈 +「已更新 / 已是最新 / 失败」提示，冷启动仍
+静默。新增 `UpdateCheckTest` 10 例 + `RepoMirrorTest` 4 例，全量 **1452 例 0 失败**。
+
+校历自动化（2026-10-07）：复核三条学校侧入口——智慧校园移动端仍是微信一次性 JWT
+（09-30 结论成立）、PC 门户的 `/calendar_portal/getCalendar` 是空的个人日历、
+**教务处官网通知公告公网免登录发布高清原图**（3438×2552 jpg，与镜像现图同内容）。
+新增 `scripts/sync_calendar.py`（第 10 个正式脚本；免登录免凭证：扫 `/xxgk/tzgg.htm`
+及翻页 → 抓文章 `orisrc` 原图 → 学年 + 文件名 + sha256 三者比对 → 变更才落盘 + 改写
+index.json + 自动 commit & push，分支非 main 拒绝；`--dry-run` 完全只读、`--from-file`
+为栏目改版救急通道），镜像由脚本切到教务处高清版（首跑即完成一次全链路：发现 → 下载 →
+提交推送）；客户端补 `CampusCalendarRules.matchesLocal`（学年 + 文件名**都**对上才复用
+缓存——同学年换文件 png→jpg 也会重下）。至此**年度维护全自动**：明年新学年发布后由
+每周计划任务自动上架、全端免发版换图，维护者零手工。全量 **1453 例 0 失败**。
+
+同日再简化（用户拍板「要最方便简单」）：**App 直接读教务处官网为主源**（新
+`domain/CampusCalendarSchoolRules`，免登录直取高清原图；仓库镜像降兜底、
+`sync_calendar.py` 退居应急工具，**计划任务确定不挂了**）。排查过强智教务：有
+「教学周历查看」（`/jsxsd/jxzl/jxzl_query`，周次 × 日期表，需登录、非海报内容），
+不采用。新增 `CampusCalendarSchoolRulesTest` 5 例，全量 **1464 例 0 失败**。
+
 AI 调课界面 v2 重构（2026-10-07，DESIGN §3.25；规则见 `.agents/rules/ai-schedule.md`）：
 用户反馈「太乱、不统一、排版丑、交互怪」后的整页重构——形态仍是单页工作单（不做对话），
 做的是收口与修根：① 视觉全部走项目统一件（`AppCard` 唯一卡片 / M3 按钮与分段控件 /
@@ -660,6 +723,110 @@ App 做 diff」——复述未改动的行必然产生假差异/静默删除。�
 `courseJson` / `indexOf` 无调用者一并清。无用户可见行为变化，全量 **1489 例 0 失败**
 （净减 7 例测试）；新包待设备重连后补装。
 
+培养方案（2026-10-07，DESIGN §3.26 / §4.41；规则见 `.agents/rules/import-jw.md`）：
+我的 → 学习 → 培养方案——教务「培养方案」明细页（`/jsxsd/pyfa/topyfamx`，服务端渲染整页
+HTML）抓**全量课程设置**（84 门级别：编号/名称/性质/属性/学分/五格学时/**开设学期 1–8**），
+按学年（大一~大四）→ 学期铺开，与学业完成情况互补（一个看计划、一个看达成）。Room v20
+新表 `curriculum_courses`（全局归属学生、不挂 timetableId、整体替换）；`CurriculumSync`
+纪律同学业（与成绩共用 7 天闸门 / 先校验再写库 / 失败静默 / 成功才记日期），触发点三处：
+首启登录成功（静默、不进结果弹窗）、冷启动链（学业后）、进页自动 + 手动刷新；备份加
+`curriculumCourses` 段（非空才整体替换、方案名不进备份）。解析两坑：**学时 5 子列 DOM
+class 全同**只能按行内顺序认（理论/实践/讲座/实验/总）；**方案名在「三、课程设置总表」
+切片之外**要全页搜（其余口径与 scripts 侧 `fetch_curriculum.py` 互证一致）。新增
+`CurriculumParserTest` 8 例 + `CurriculumRulesTest` 5 例 + `ImportJsonShapeTest` +3 例，
+全量 **1480 例 0 失败**；debug 包已装真机。
+
+调课检测误报修复（2026-10-07，DESIGN §4.17；规则同步见 `.agents/rules/import-jw.md`）：
+用户报「误报上游有差异、重新导入后仍显示、教务里根本没变」。根因两条——① 理论/实验课表的
+**HTML 直取解析**（`parseFromHtml`，调课检查与首启导课表共用）每格只取**第一个**
+`li.courselists-item`，而同格多课块是常态（单双周拆块 / 回课时换教室；实测用户课表 35 格
+里 9 格多课块、34 块只解析出 24 块）。基线是注入脚本全取的结果，检查链拿「少 10 块的
+教务」比对 → 9 门课被误报「教务删除」，且**重新导入永远修不好**（每次检查都重解析）。
+逐块切法收口到 `CourseBlocks`（两页共用），修后 App 解析产物与 `scripts/fetch_courses.py`
+/ `fetch_lab_courses.py`（真机口径）在同一份真实页面上**逐条一致（33+12 条，0 差集）**。
+② 待处置缓存只进不出：基线推进（导入/合并）与「检查无差异」都不清缓存 → 处置页一直挂着
+已经不存在的变动，而「合并」会照指纹把它们套到课表上（静默删课）。现在两处都清
+（同课表才清）。新增契约用例 2 例，全量 **1496 例 0 失败**；含此修复的 debug 包已在真机
+（本次装机由并行会话的构建循环带出，已核对装机 APK 与本地构建 md5 一致）。
+
+调课检测复核轮（2026-10-07，用户要求「审核其他代码完整性，确认无其他 bug，比如有差异但
+没检测出来」；DESIGN §4.17，规则同步见 `.agents/rules/import-jw.md`）：解析口径跨学期
+互证（2025-2026-2 / 2026-2027-1 两学期理论+实验与 `scripts/` 逐条对，0 差集）+ 全链路
+走查，共修 6 处（都属「漏报 / 假报 / 静默丢数据」家族）：
+① **单/双周标注被丢**（`parseWeeks`）：教务页有 `1,11单周` / `2,6双周` 形态（实测
+2025-2026-2 两处），带标注 token 此前被 toIntOrNull 拒掉、整段周次静默少几周（课少排）；
+现按奇偶过滤 + 脏 token 抠数字兜底，`scripts/fetch_courses.py` 的 `parse_weeks` 同步改；
+② **完全重复的课块**（教务页偶发把同一课块渲染两遍）：理论两条解析路径去重（此前会导入
+两行一模一样的课 → 双份提醒 / 双卡）；
+③ **实验页学期不校验**：实验页也有 `select#xnxq01id`（单引号形态），新增 `labTermError`
+与理论页互校，不一致 / 抽不到都判失败——教务若忽略学期参数，混两个学期比对会刷一屏假差异；
+④ **整类课「有 → 零」闸门**（`vanishingKindError`）：解析器与页面脱节时硬比对会把整类课
+报成「教务删除」，勾选合并即批量删课——现在判 Failed、不报差异、不落检查时刻；
+⑤ **合并路径把本机条目洗进基线**：`applyScheduleChanges` 原用整张课表重建基线，手动加 /
+AI 加的课会在下次检查被报「教务删除」、勾选合并即删掉用户自己的课；改为
+`ScheduleDiff.baselineAfter`（旧基线 + 已应用改动），与「AI 改动不推基线」同一条纪律；
+⑥ **`importJson` 基线推进写太早**（在课程写库之前）：恢复完基线存的是恢复前的旧课表，
+一查全是假差异——移到课程写完之后。另：`importIfEmpty` 在实验页结构不可信时改报失败
+（静默导入会整批漏掉实验课且用户看不到分项条数）。新增契约用例 11 例，全量
+**1524 例 0 失败**；APK 已就绪、设备断连待重装（无线调试掉线，与并行会话同因）。未修、
+留观察：处置页「检查被跳过」文案把「课表没有学期号」也归进「开关未开启或间隔未到」；
+JSON 恢复后基线 = 恢复内容（含本机条目）的语义模糊。
+
+教学日历开学日 / 学生评教 / 实习基地（2026-10-07，DESIGN §3.27 / §4.42–§4.44；规则见
+`.agents/rules/import-jw.md`）：三个新教务数据源一轮落地——① **开学日自动设置**：导入课表
+写库成功后抓「教学日历」（`/jsxsd/jxzl/jxzl_query?xnxq01id=<学期>`，学期参数真实生效），
+把第 1 周周一写进目标课表的 `semester_config.startDate`；解析的坑全在「工作日列是裸日号、
+周末列才是 `MM月DD日`、全表无年份」——年份从学期号推导 + 周六格必须真是周六 + 周一/周二
+裸日号交叉校验，响应学期 ≠ 请求学期一律放弃（不猜学期）；失败静默、值没变不写库不弹泡，
+口径「教务为准」（用户仍可在课表设置手改，下次导入会再校准；**不动总周数**）。
+② **学生评教直达**：评教没有静态 URL（`toZlpt_11319('jwxsjdp')` = POST 取 token →
+`jiaowupj.juwp.edu.cn` 的 SPA，跨主机、JWT 约 4 小时）——新增 `JwImportMode.TeachingEval`
+复用教务 WebView：自动登录落 xsMainV 后注入 `JwTeachingEval.launchJs()`（页面自带 jQuery
+取 token → 同窗口 `location.href`），15s 原地看门狗 + 刷新重试，**App 只导航不代评**；
+平台域 URL 在 9 处日志点脱敏，token 不落 logcat（`redactForLog`）。③ **实习基地查看**：
+layui 接口 `/jsxsd/sxsxgl/sxjd.do`（**实测忽略一切分页参数、固定只回前 10 条**，见复查轮），
+原生只读页按类别分组 + 弹层全字段，**不落 Room**（12 小时快照缓存，见复查轮）。入口都在
+「我的 → 学习」新分组「教务服务」。新增 `TeachingCalendarParserTest` 10 例 +
+`InternshipBaseParserTest` 6 例 + `InternshipBaseRulesTest` 2 例，全量 **1507 例 0 失败**；
+debug 包待设备重连后补装。
+
+一卡通支付反馈一轮（2026-10-07，DESIGN §3.10 / §4.19 / §4.24；规则见
+`.agents/rules/life-power.md`、`ui-common.md`）：用户要求「以支付金额大字显示为主」，扩成四块——
+① **弹窗改版**：`CampusPaymentDialog` 以**扣款金额大字**为主（新建 `ui/common/AmountText.kt`
+的 `AmountHeroText` = `displaySmall` + SemiBold，金额样式唯一口径），商户 · 交易时间与交易后
+余额退成 bodyMedium 次级小字（商户与时间都缺就不占行，旧兜底口径保留），说明再低一档；
+「充值成功 / 正在确认充值结果」两张弹窗同批换同款（字段与文案语义不变）。
+② **宿主补口**：扣款结果收敛到 `CampusPayResultDialogHost`（collect + consume + 弹窗），挂
+`MainActivity` 根层（四个 Tab 之上）+ 校园卡设置页两处——此前生活页与设置页各自自持，今日页
+「+ → 付款码」出码付款后没人消费结果，弹窗会一直挂着、到下次打开生活页才迟到弹出
+（`PayCodeResultBus` 注释与 §3.10 早已写明今日页也要弹）。
+③ **电费充值结果步补金额**：`AcceptedStep` 此前只有状态文案（金额只在密码步与农行等待步
+出现），现在 `¥X` 大字 + 原状态 / 入账文案不动。
+④ **命中即震**：`PayCodeViewModel` 判定到扣款那一刻直接 `ReminderVibration.vibrate`——页面层
+LaunchedEffect 会被 STARTED 闸门挂起、晚到亮屏才响，VM 里才是「钱刚动」的时刻；不挂开关
+（即时操作反馈，不是打扰型提醒）。该弹窗只在扫码消费后才出现，无模拟器触发路径。全量
+**1527 例 0 失败**；设备不在线，debug 包未装。
+
+三源功能复查轮（2026-10-07，三路独立复查 + 逐条修复）：共报 2 条 P1 + 5 条 P2 + 一批
+P3，全部核验后逐条修——① **实习基地分页是假象**（P1）：`sxjd.do` 忽略一切分页参数、
+固定只回前 10 条，原「按页循环拿齐 count」把同一页拿两遍，真机上就是「每张卡重复一份」；
+改单次抓取 + 界面注明差额（10/17），对照实证：同会话成绩接口 `cjcx_list` 翻页正常。
+② 同链路补缓存：**12 小时快照**（`InternshipSnapshotStore`，filesDir JSON、不进备份）+
+顶栏强刷 + 更新失败宁旧勿空（带 `updateFailed` 标记），进页默认零网络；解析补
+`data:null` 容错、`count` 缺失按 -1。③ **评教错误浮层泄 token**（P1）：
+`JwImportDiagnosis` 正文拼原始 URL，平台域失败会把 JWT/xlgToken 显示在错误浮层——
+诊断参数改收脱敏串、SSL 日志补脱敏（第 10 处）；15s 看门狗加「尝试代次」防刷新后假告警；
+评教底部空条去掉。④ 首启开学日竞态：`AutoImportResult.Imported` 携带 `timetableId`，
+钩子不再用「apply 时的当前课表」近似。⑤ **评教移动端页**（`jiaowupj:81/#/jspxxsp`）
+实测其启动认证拒绝教务 token（401）、CAS 配置指向外校域名——**暂不接入**（调查记录见
+§4.44 / import-jw.md）。**复查二轮**（对修复本身的复查）：装载器补 `Dispatchers.IO` 收口
+（页面从主线程调、快照与凭证闸门都是阻塞 IO，P1）；空结果口径收口（`count≤0` 权威空写
+快照、`count>0` 零行按结构异变走宁旧勿空）；`JwImportDiagnosis` 正文内嵌 url 统一过脱敏
+（自防线，防未来调用方传原文）；评教看门狗补 `autoNavDone` 条件（刷新到重注入的间隙不再
+命中）；`internship_bases.json` 补进两份备份排除 xml（此前「不进备份」只是口径、实际会被
+云备份带走）。新增 `TeachingCalendarParserTest` +3、`InternshipBaseParserTest`
++3、`InternshipCacheRulesTest` 3 例，全量 **1527 例 0 失败**；debug 包待设备重连后补装。
+
 ### 待真机点验（未闭环）
 
 2026-09-29 起累计 26 项改动只过了编译 + 单测（全量 1452 例 0 失败），真机点验一直挂着
@@ -690,10 +857,19 @@ App 做 diff」——复述未改动的行必然产生假差异/静默删除。�
 | 10-05 | 小程序免费倒计时 | 点「打开微信扫一扫」后 5 秒才起算、说明句只在小程序方式出现 |
 | 10-06 | 通知强提醒开关 | 开 / 关后提醒分别「直接震」/「只走系统渠道」 |
 | 10-06 | 收件箱 | 角标亮起、消息内容与教务实际比对、跳转 / 已读 / 多选删除往返 |
+| 10-06 | 会话被顶 + 教材补抓 | ① 在别处登录教务（另一台设备 / PC 跑 `scripts/` 脚本）后，导入页应给「账号已在其它地方登录」而不是裸 JSON；② 教材抓取失败时导入后应补一条「教材未同步」气泡；③ 该学期教材为空时冷启动补抓能补上（logcat 看 `TextbookSync`） |
 | 10-06 | AI 调课 | 填 DeepSeek API Key →「测试连接」通过 → 粘贴一条真实调课通知 → 差异卡内容与通知是否对得上 → 勾选应用后课表确实变了、**且调课检测基线没被推**（改完课再手动「重新检查」，AI 改的那门课不该被当成教务差异报出来）→ 401/404 的分类提示是否说清问题 |
 | 10-06 | AI 调课二轮：日期覆盖 | 粘贴一条**校历调休**通知（如「9月20日按第5周周一上课」「9月25日-10月7日放假」）→ 应出「日期覆盖」卡而不是「不做改动」→ 应用后：今日页/周网格/桌面小组件/上课提醒四处对同一天给出一致的课 → 放假那周网格表头显示「放假」→ 日历导出里放假日不出现、补课日出现借来的课 |
 | 10-06 | AI 调课二轮：流式与思考 | 「思考档位」关时是否仍能出结构化结果（强制工具调用）；开时是否先出思考文本再出结果；「显示思考过程」开关切换是否立即生效；流式过程中页面是否边出边显、不卡 |
+| 10-06 | 检查更新（关于页） | 无代理点「检查更新」应能拉到清单（多源轮询）；已最新 Snackbar / 有更新弹窗 / 双通道下载跳转 / SHA-256 点按复制 |
+| 10-06 | 校历：官网直取 + 多源兜底 + 刷新反馈 | 点刷新：进度圈 + 结果提示；logcat `CampusCalendar` 应见 `school source:`（无代理直取教务处官网成功）；跨学年自动换图需下学年验证 |
 | 10-07 | AI 调课界面 v2 + 记录与动效 | ① 分析完成后提案卡**默认展开**、勾选与预览可改，底栏「重新分析」可用（改完通知直接重跑，不必再清空重来）；② 应用后摘要卡 + 「上次应用」条：撤销顺手、**重新分析后仍可撤**；③ 空结果时底栏是「重新分析」而不是灰掉的「应用所选（0）」；④ 无 API Key 时首屏有「去配置」引导行；⑤ 观感：卡片 / 间距 / 徽章一致性与预览的单栏前 / 后切换；⑥ 「调课记录」页：应用后进页能看到记录、重启后仍在；「撤销」只出现在最新一条未撤销上，撤完上一条变可撤销；从记录页撤过回主页，回执应显示已撤销（不再报「跳过」）；⑦ 动效：分析完成后结果卡逐段淡入、思考过程展开收起、应用后折叠过渡；⑧ 配置页文案已收短、勾选行整卡可点、提示条不再压住底栏；⑨ 复查轮：应用事务期间底栏应显示「应用中…」不可点；建两张课表在 B 上应用一条 → 删 B → 记录页那条标「课表已删除」且**更早的记录仍可撤**；失败卡若已解析到条目应多一行说明；⑩ 重发同一通知（国庆调休场景）：已生效的日期安排不应再列为待确认（应在「已略过」里注明「该日期安排已生效」）；预览「应用前」应显示**当前**状态（含已生效的调休 / 停课），不再像「调课前」；同一天先补课后改放假，后者应赢 |
+| 10-07 | 培养方案（我的 → 学习） | ① 升级安装（v19→v20 迁移）打开不崩；② 入口副标题出「84 门课 · 共 161 学分」、页内按学年/学期分组与教务一致；③ 冷启动自动抓（logcat `CurriculumSync`）与顶栏「重新导入」；④ 导出 / 导入 JSON 往返（新段、预览弹窗注记） |
+| 10-07 | 调课检测误报修复 | 打开调课检测 →「重新检查」应报「暂无新的调课差异」且旧的 10 条差异从页上消失（待处置缓存被清）；对照教务确认那 9 门课仍在（若误点过「合并所选」则重新导入一次）；复核轮：合并几条差异后再「重新检查」，不应冒出「教务删除 你手动加的课」（基线只装教务条目） |
+| 10-07 | 教学日历 → 开学日 | 重新导入课表 → 主界面气泡「开学日已按教务教学日历设为 2026-08-31」→ 课表设置里值确实变化、今日页周数与教务一致（今天应为第 6 周）；手改后再导入会按教务重设；logcat 看 `TeachingCalendarSync` |
+| 10-07 | 学生评教（我的 → 学习 → 教务服务） | 点开自动登录后**直接落在评教平台**（不是教务主页）→ 能正常评教；失败时刷新可重试；logcat 与**错误浮层**里都不应出现带 token 的 URL；移动端页（:81）接入待定，见 §4.44 |
+| 10-07 | 实习基地查看 | **10 条**按校内 / 校外 / 其他分三组（教务接口固定只回前 10、页内会注明「标注共 17 个」）；与教务页面抽两条对照；顶栏刷新强刷；12 小时内再进页应零网络（logcat `InternshipBases` 见 `loaded … (cache)`） |
+| 10-07 | 一卡通支付反馈一轮（弹窗大字 + 宿主补口 + 电费金额 + 震动） | ① 今日页「+ → 付款码」出码付款 → 回到今日页**当场**弹「支付成功」（不再要等进生活页）；生活页付款码条、我的 → 校园卡两条路径照旧弹；② 弹窗金额大字为主、商户 · 时间与卡余额次级小字；③「充值成功」「正在确认充值结果」两张弹窗同款金额大字；④ 电费充值「结果步」能看到 ¥ 金额大字（此前只有状态文案）；⑤ 扣款命中那一刻有短震动（付款码页锁屏也震，节奏同提醒的双震） |
 
 **只有两项真的阻塞后续工作**，优先验：
 

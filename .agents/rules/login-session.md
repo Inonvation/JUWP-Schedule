@@ -162,6 +162,25 @@
   自动续登整条瘫痪。回归单测 `loggedInHomeWithLogoutForm_isNotALoginPage` 钉住。
 - 判据再改时必须先抓「已登录主页 + 未登录登录页」两份快照对照，不能只看登录页。
 
+## 强智是单会话：账号在别处登录会顶掉本地会话（2026-10-06 用户实测）
+
+- **现象**：教务页面直接显示裸 JSON `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`
+  （HTTP 200、URL 不变）。同账号在别处登录（另一台设备 / PC 上的 `scripts/` 爬虫 /
+  同一台手机上另一个安装包 debug↔release）就会这样。**这跟「是哪个安装包」无关**——
+  用户当时的原话是「还是我 release 包的问题？」，实际是单会话被顶。
+- 两个判据都要认，且**都不能只看一个标记**：
+  - OkHttp：`JwHttpSession.looksLikeSessionConflict`（业务文案 + `flag1` 键同时命中）→
+    抛 `JwHttpException.SessionInvalid`；
+  - WebView：`SESSION_PROBE_JS` 输出 `conflict` token（与
+    `JwImportDiagnosis.SESSION_CONFLICT_TOKEN` 逐字对齐）→ `sessionConflict` 诊断。
+  单看 `flag1` 会误伤正常 layui 应答（代价：清 cookie + 白登一次 + 这次数据拿不回来）。
+- **`CasSession.fetchHtml` 只对 `SessionInvalid` 作废会话（`clearCookies`）后重试一次**。
+  信任期内 `ensureValid` 不验会话，所以不作废就会一路用一份死会话——所有 OkHttp 取数
+  （教材 / 成绩 / 学业 / 学籍卡）同时静默失效，而 WebView 导入照常成功。
+  重试**不动闸门的失败计数**（作废的是会话不是凭证，那是防锁号的计数器）。
+- 排查提示：用 `scripts/fetch_*.py` 抓数据会**顶掉手机上那份会话**（同一个学号），
+  别在用户正在点验时跑。
+
 ## 落在统一认证登录页时自动填表登录
 
 - **落在统一认证登录页时自动填表登录**（2026-09-24，DESIGN §4.27「落登录页自动填表」）：三个 WebView 入口

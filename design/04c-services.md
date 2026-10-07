@@ -302,6 +302,8 @@ POST https://charge.juwp.edu.cn/blade-pay/pay          # 注意路径在根域�
 > `abstracts` 逐字节一致落库，随后删单。等待步口径同步校准：`order.status=1` 只是**扣款**
 > 成功，入账位（`getpayinfo` 的 `order.flag`）单独查、分开报告（`PowerOrderState` /
 > `PowerEntryState`），Accepted 步区分「已入账 / 入账处理中 / 入账失败」，入账失败提示找管理员。
+> 结果步自 2026-10-07 起把**金额大字**（`AmountHeroText`）放在最上——钱已动的这一屏必须能
+> 看到扣了多少（此前金额只在密码步与农行等待步出现，出结果的一步反而没有）。
 
 渠道（`payList`，也是 `GET /charge/pay/mergepay?feeitemids=181` 的返回）：
 
@@ -855,11 +857,37 @@ WebView cookie → 凭据 → 闸门/节流；UI 调用点挪进协程。回归�
 - 通知只在「转停用」那一刻发一条，之后不再重复；`POST_NOTIFICATIONS` 未授权时
   静默降级为只改状态卡（与 `BalanceAlertReminder` 同款处理）。
 
+#### 会话被别处登录顶掉（强智单会话，2026-10-06 用户实测）
+
+**现象**：教务页面上直接显示一段裸 JSON `{"flag1":3,"msgContent":"您的账号在其它地方登录"}`。
+用户当时的判断是「是不是我 release 包的问题？」——实际是**强智只允许一条会话**：同一学号在
+别处（另一台设备、PC 上的爬虫脚本、同一台手机上另一个安装包）登录后，先前那份会话对业务
+请求不再回数据，而是回这段 JSON（HTTP 200、URL 不变、**既不是登录页也不是数据**）。
+
+**两处代价**（都曾静默）：
+
+| 位置 | 旧行为 | 现行为 |
+|------|--------|--------|
+| OkHttp 侧 `JwHttpSession.fetchHtml` | 登录页判据只认 `用户没有登录` / `userPassword`，这段 JSON 两个都不含 → **被当页面数据交给解析器**，教材抓取因此抛「教务返回 code=-1」并被丢掉 → 「导入成功但详情里没教材」 | 新增判据 `looksLikeSessionConflict`（业务文案 + `flag1` 键**同时**命中，缺一不可），命中抛 `JwHttpException.SessionInvalid` |
+| WebView 侧 `SESSION_PROBE_JS` | 探针只查 `#loginDiv` / `input[type=password]`，这段 JSON 两个都没有 → 判定「会话有效」→ 继续自动导航 → 用户盯着裸 JSON | 探针补 `conflict` token（正文 < 4000 字节时扫标记），命中走 `JwImportDiagnosis.sessionConflict`，给「账号已在其它地方登录 + 在本机重登一次」的人话提示 |
+
+**自动恢复**：`CasSession.fetchHtml` 只对 `SessionInvalid` 作废本地会话（`clearCookies`）后
+重走一遍 `ensureValid` 再取一次——有凭证就真登一次（顺带把别处那份顶掉），没凭证就回灌
+WebView 那份。**只重试一次**，失败不重试的纪律不变；**不动闸门的失败计数**（作废的是会话
+不是凭证，那是「防锁号」的计数器）。
+
+**为什么非做不可**：信任期内 `ensureValid` 不会去验会话（那是「减少请求」的另一半），
+于是一份已经被顶掉的会话会被一路用下去——所有 OkHttp 取数（教材 / 成绩 / 学业 / 学籍卡）
+同时静默失效，而 WebView 那条导入链路照常成功，现象就是「导入没问题、就是没数据」。
+
 #### 请求收敛（按 §4.4.2 的决策收窄）
 
 **课表导入不动。** §4.4.2 已经评估过「同源 fetch 两份 HTML 再本地解析」并**否决**：
 `parseFromHtml` 只有合成 fixture 的单测，两张表的 DOM 抽取脚本才是真机口径。
 那条决策的优先级高于本节，不要再提案一次。
+（后记 2026-10-07：`parseFromHtml` 这条路 2026-10-04 起已被 §4.17 调课检测/首启导课表
+直取采用，并在当天修过一处与注入脚本不一致的「一格多课块只取第一个」——本节只约束
+**导入**链路不再改造，改动直取链时口径对齐要求见 `.agents/rules/import-jw.md`。）
 
 能动的只有「数据本来就是 JSON、解析器和 WebView 路径共用同一份」的两条，加学籍卡：
 
@@ -1506,12 +1534,60 @@ mPaaS（`ALIPUB080DFB9030956`）把小程序嵌在应用内跑，`assets/qzxy.pf
 （`ScheduleRepository.textbooksFor`）；课表没有学期号（旧数据/手工建表）时不显示教材，
 没有学期钥匙就查会串学期，宁可少显示。
 
-**写库时机**：教务一键导入/JSON 导入**写库成功后**把数据学期写进目标课表（`Timetable.term`），
+**写库时机**：教务一键导入**写库成功后**把数据学期写进目标课表（`Timetable.term`），
 再由 `TextbookSync.syncForTerm`（`CasSession` OkHttp 直抓，不开 WebView）顺带抓该学期教材：
-解析先校验再按学期整批替换（`replaceTextbooks` 事务先清后插）、失败静默绝不挡导入主流程、
-成功才记日期（`textbook_sync_date`，只记录不设闸门——教材跟导入走，天然低频）。
+解析先校验再按学期整批替换（`replaceTextbooks` 事务先清后插）、失败绝不挡导入主流程、
+成功才记日期（`textbook_sync_date`，只记录不设闸门）。
 **超出一页上限（200 条）不写入**：教材是确认清单不是流水，异常大的 count 更可能是接口行为
 变化，拿着半页数据写库不安全。
+
+**触发点口径**（2026-10-06 按代码订正，本节早先说「教务/JSON 导入都抓」与实现不符）：
+
+| 触发点 | 抓不抓 | 说明 |
+|--------|--------|------|
+| 教务一键导入确认后（`JwImportScreen`） | 抓 | 主路径 |
+| 冷启动补抓（`TextbookSync.backfillIfMissing`） | 抓 | 见下 |
+| 导入 JSON 文件 / 我的→数据→导入备份（`importJson`） | **不抓** | 教材从备份自己的 `textbooks` 段恢复（带数据才整体替换、空段不动现有数据），数据来自导出方而不是教务当前状态 |
+| 首启引导的自动导课表（`OnboardingScreen`） | 抓 | 与教务导入同一口径 |
+
+**同源 fetch 也要认「会话被顶」**（2026-10-06 复核补）：考试 / 成绩是在**已加载页面里再发
+fetch**（`fetchJsonInWebView`），被顶时 layui 接口回的就是那段 `flag1` JSON，此前会一路走到
+解析器变成「教务返回 code=-1，msg=」——既没说清原因，也没走 §4.27 的会话冲突诊断。
+现在在 `fetchJsonInWebView` 里一次性判掉（`JwImportDiagnosis.looksLikeSessionConflictBody`，
+与 OkHttp 路径同一判据、文案用与探针同源的短串「其它地方登录」），报成 Error 页并置
+`lastFetchConflict`，调用方的超时分支据此不再用「请求超时」把它盖掉。
+
+**抓取失败不再无声**（2026-10-06）：`syncForTerm` 的结果落一条 `Log.i`（`TextbookSync`），
+导入路径失败时另补一条气泡「教材未同步：<原因>」。用户此前只能看到「导入成功、详情里没有
+教材」，分不清是教务没数据还是会话被顶掉（见 §4.27「会话被别处登录顶掉」）。气泡走
+`JwImportResultBus`，排在导入结果之后——那条通道已从单值 StateFlow 改成**排队**语义
+（`OutcomeQueue`），否则后一条会把还没消费的前一条顶掉。
+
+**重登要过独立窗口**（2026-10-06 复核补）：`CasSession.fetchHtml` 发现会话作废时会作废本地
+会话并重登一次，但一次同步里有多个 URL（学业四个维度、选课三个 URL、成绩按翻页数），每个都能
+各自触发一次完整 CAS 登录——而每次登录都会把对方顶掉（强智单会话，PC 上跑脚本时尤其明显），
+不加冷却就是**登录乒乓**。现在走 `SessionStatus.tryAcquireRelogin`（60s 窗口，与
+`tryAcquireAutoLogin` 分开：那条管用户主动触发，这条管取数途中发现失效）。同时
+`clearCookies` 与重登收进 `loginMutex`（与 `logout` 同一条纪律：清 cookie 落在别人登录链路
+中途会把它打成「取不到 SSO ticket」）。
+
+**冷启动补抓**（`TextbookSync.backfillIfMissing`，2026-10-06；同日复核补两道判据）：当前课表有
+学期号、但该学期一条教材都没有时，冷启动补抓一次。教材原本只跟导入抓那一次，而那次会因为会话
+被顶掉而静默失败——补抓把「一次性失败」变成可恢复。闸门在 `AutoSyncRules.textbookBackfillDue`，
+**三道判据**：
+
+1. 该学期教材非空 → 跳过（成功过就不再打扰教务）；
+2. **该学期抓成功过**（`textbook_fetched_term`，含「成功但 0 条」）→ 跳过。
+   少了这一道，下学期还没征订、或实习/毕设这类本来没教材的学期会永远满足条件，
+   变成**每 6 小时打一次教务、永不停止**——判据不能只看「表里有没有行」；
+3. 距上次**尝试**不足 6 小时 → 跳过。**记的是尝试时刻不是成功时刻**（与
+   `textbook_sync_date` 相反）：它挡的是「反复打」，「还该不该重试」由前两条判定。
+
+**空结果不写库**（同日复核）：`replaceTextbooks` 是「删后插」，空列表等于把该学期旧教材清掉。
+征订窗口关闭 / 选课变动 / 教务抽风时接口就会回空，那不该毁掉已经拿到的数据——解析结果为空时
+只记「抓过这个学期」，不动库（文档一直这么承诺，实现此前是反的）。
+
+搭在冷启动 CAS 那组，顺序是成绩 → 考试 → 学业 → 教材。
 
 **展示**：课程详情面板「类型」之下，每本书一行（`textbookLine` = 书名 · 主编 · 出版社 · 版次，
 空段跳过；ISBN/定价不进弹窗——识别一本书用不着，堆上只会长行换行）。

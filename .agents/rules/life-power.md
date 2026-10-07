@@ -82,7 +82,12 @@
   取码、`FLAG_SECURE`、亮度拉满、`startPayWatch` 的「扫码后自动退出」全在那一页。
   **别再往生活页内嵌码位**——2026-09-23 到 2026-09-26 之间那套内嵌卡（`CodeSlots` +
   码位骨架 + 三枚等宽按钮）已删，未取码时要占约 280dp 的空框与置灰按钮，展示的却是
-  「还没有出示」。扣款结果仍经 `PayCodeResultBus` 回生活页弹「支付成功」，那条链路别断。
+  「还没有出示」。扣款结果仍经 `PayCodeResultBus` 交宿主 `CampusPayResultDialogHost` 弹
+  「支付成功」——宿主挂 `MainActivity` 根层（四个 Tab 之上）+ 校园卡设置页两处（2026-10-07
+  收敛；**别再改回各页自持**：今日页「+ → 付款码」出码的路径会漏弹、结果挂到下次打开
+  生活页才迟到弹出）；弹窗以金额大字（`AmountHeroText`）为主（见 `ui-common.md`）；
+  命中那一刻在 `PayCodeViewModel` 里**直接震一次**（不挂开关——即时操作反馈，不是打扰型
+  提醒；放页面层会被 STARTED 闸门挂起、晚到亮屏才响），那条链路别断。
 - **钱包卡两栏靠 `IntrinsicSize.Min` + 栏内 `weight(1f)` 空隙等高**（两个「充值」按钮落在
   同一水平线），取数时刻写在各自栏标题行右侧，说明合并在卡头的「钱包说明」弹窗里。
   栏内 `clickable` 刷新、按钮自己吃点击，改的时候别把这两个点击合成一个。
@@ -144,6 +149,8 @@
   `PowerReadingSource.RECHARGE`），读不到 dataJson 或房号**直接拒单**，绝不发缺字段表单。
   扣款与入账分开报告：`orderState`/`PowerOrderState`（status + entry 两字段），Accepted
   步区分「已入账 / 入账处理中 / 入账失败」，别再拿 `status=1` 当「到账」说满话；
+  **结果步要带金额**（2026-10-07）：`AcceptedStep` 顶部是 `AmountHeroText` 金额大字——
+  「金额只在密码步 / 农行等待步有、出结果的一步反而没有」是旧口径，别改回去；
   协议级验证脚本 `_archive/_probe_power_order_fix.py`（下单→验落库→删单）可随时重跑；
   支付 = `paystep=2 + paytype=ACCOUNT + paytypeid=59` 拿 `passwordMap` 乱序表，
   `PowerPayChallenge.cipherOf` 是密文换算唯一口径（用户数字 d → **d 在乱序表里的
