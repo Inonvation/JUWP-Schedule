@@ -255,6 +255,32 @@ interface ScholarProgressDao {
 }
 
 /**
+ * 培养方案课程设置（DESIGN §4.41，Room v19 → v20）。
+ *
+ * 全局归属学生、**不过滤 timetableId**（同 [ScholarProgressDao]）。写入口径是整体替换：
+ * [deleteAll] + [insertAll] 在一个事务里跑，见 `CurriculumRepository.replaceAll`。
+ */
+@Dao
+interface CurriculumDao {
+
+    @Query("SELECT * FROM curriculum_courses ORDER BY sortOrder, id")
+    fun observeCourses(): Flow<List<CurriculumCourseEntity>>
+
+    @Query("SELECT * FROM curriculum_courses ORDER BY sortOrder, id")
+    suspend fun getCourses(): List<CurriculumCourseEntity>
+
+    /** 「有没有数据」的廉价判定：导入闸门与 UI 空态都用它，不必把整张表读全。 */
+    @Query("SELECT COUNT(*) FROM curriculum_courses")
+    suspend fun count(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(courses: List<CurriculumCourseEntity>)
+
+    @Query("DELETE FROM curriculum_courses")
+    suspend fun deleteAll()
+}
+
+/**
  * 教材（DESIGN §4.31，Room v14）。归属口径同 [NoteDao]（挂课程名、不带 timetableId），
  * 另按 term 过滤——课程详情查「当前课表学期 + 课程名」，跨学期的教材互不可见。
  */

@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.CurriculumCourse
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -356,6 +357,55 @@ class ImportJsonShapeTest {
         val export = decode(good)
         assertTrue(export.scholarGroups.isEmpty())
         assertTrue(export.scholarCourses.isEmpty())
+    }
+
+    // ---- 培养方案备份段（DESIGN §4.3 / §4.41）----
+
+    /** 培养方案段导出再导入逐字段一致：含可空学分、五个学时原文与「2(周)」这类字符串。 */
+    @Test
+    fun curriculumSegmentRoundTrips() {
+        val course = CurriculumCourse(
+            term = 2,
+            sortOrder = 7,
+            courseNo = "081029008",
+            name = "理论力学",
+            kind = "学科基础课",
+            attr = "必修",
+            credit = 3.0,
+            hoursTheory = "46",
+            hoursPractice = "2",
+            hoursLecture = "0",
+            hoursExperiment = "0",
+            hoursTotal = "48",
+            tixi = "学科基础课",
+        )
+        val text = CourseJsonFormat.encodeToString(
+            CourseExport.serializer(),
+            CourseExport(courses = emptyList(), curriculumCourses = listOf(course.toBackupJson())),
+        )
+        val back = decode(text)
+        assertEquals(course, back.curriculumCourses.single().toCurriculumCourse())
+    }
+
+    /** 培养方案段缺字段（手工编辑）降级为默认值；学分缺省 null 而不是 0。 */
+    @Test
+    fun curriculumBackupPartialFieldsFallBackToDefaults() {
+        val sparse = """
+            {"courses":[{"name":"高数","day":1,"startSection":1,"endSection":2,"weeks":[1]}],
+             "curriculumCourses":[{"name":"甲"}]}
+        """.trimIndent()
+        val c = decode(sparse).curriculumCourses.single().toCurriculumCourse()
+        assertEquals(0, c.term)
+        assertEquals(0, c.sortOrder)
+        assertEquals("", c.kind)
+        assertNull(c.credit)
+        assertEquals("", c.hoursTotal)
+    }
+
+    /** 旧备份没有培养方案段：照常解码，段为空 = 导入不动培养方案数据。 */
+    @Test
+    fun oldFileWithoutCurriculumSegmentFallsBackToEmpty() {
+        assertTrue(decode(good).curriculumCourses.isEmpty())
     }
 
 private val OLD_JSON_WITHOUT_REMARK = """

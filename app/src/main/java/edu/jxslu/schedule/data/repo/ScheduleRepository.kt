@@ -3,6 +3,7 @@ package edu.jxslu.schedule.data.repo
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.DefaultData
 import edu.jxslu.schedule.data.local.CourseEntity
+import edu.jxslu.schedule.data.local.CurriculumCourseEntity
 import edu.jxslu.schedule.data.local.DateOverrideEntity
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.ScoreEntity
@@ -36,6 +37,7 @@ import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.ScheduleBackground
 import edu.jxslu.schedule.domain.ScheduleExporter
 import edu.jxslu.schedule.domain.ScheduleExporter.CourseEvent
+import edu.jxslu.schedule.domain.CurriculumCourse
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.ScholarCourse
 import edu.jxslu.schedule.domain.ScholarCourseStatus
@@ -123,6 +125,12 @@ data class CourseExport(
      */
     val scholarGroups: List<ScholarGroupBackupJson> = emptyList(),
     val scholarCourses: List<ScholarCourseBackupJson> = emptyList(),
+    /**
+     * 培养方案课程设置备份段（DESIGN §4.3/§4.41）：换机/重装随备份一起恢复。
+     * 与学业段同理，旧版 App 忽略该段、新版读旧文件缺省为空，两版互不破坏。
+     * 方案名不进备份（展示性字段，恢复后下次抓取即补，同学业段的口径）。
+     */
+    val curriculumCourses: List<CurriculumCourseBackupJson> = emptyList(),
     /**
      * 教材备份段（DESIGN §4.31）：换机/重装随备份一起恢复。与成绩同理，
      * 旧版 App 忽略该段、新版读旧文件缺省为空，两版互不破坏。
@@ -219,6 +227,27 @@ data class ScholarCourseBackupJson(
     val degreeCourse: Boolean? = null,
 )
 
+/**
+ * 备份文件里的培养方案课程段（DESIGN §4.3 / §4.41）：字段与 [CurriculumCourse] 对齐、
+ * 全带默认值——手工编辑或旧格式缺字段时降级为空值，而不是整个文件解码失败。
+ */
+@Serializable
+data class CurriculumCourseBackupJson(
+    val term: Int = 0,
+    val sortOrder: Int = 0,
+    val courseNo: String = "",
+    val name: String = "",
+    val kind: String = "",
+    val attr: String = "",
+    val credit: Double? = null,
+    val hoursTheory: String = "",
+    val hoursPractice: String = "",
+    val hoursLecture: String = "",
+    val hoursExperiment: String = "",
+    val hoursTotal: String = "",
+    val tixi: String = "",
+)
+
 /** 备份文件里的单条教材（DESIGN §4.31）：字段与 [Textbook] 对齐、全带默认值。 */
 @Serializable
 data class TextbookBackupJson(
@@ -312,6 +341,38 @@ fun ScholarCourse.toBackupJson(): ScholarCourseBackupJson = ScholarCourseBackupJ
     scoreText = scoreText,
     remark = remark,
     degreeCourse = degreeCourse,
+)
+
+fun CurriculumCourseBackupJson.toCurriculumCourse(): CurriculumCourse = CurriculumCourse(
+    term = term,
+    sortOrder = sortOrder,
+    courseNo = courseNo,
+    name = name,
+    kind = kind,
+    attr = attr,
+    credit = credit,
+    hoursTheory = hoursTheory,
+    hoursPractice = hoursPractice,
+    hoursLecture = hoursLecture,
+    hoursExperiment = hoursExperiment,
+    hoursTotal = hoursTotal,
+    tixi = tixi,
+)
+
+fun CurriculumCourse.toBackupJson(): CurriculumCourseBackupJson = CurriculumCourseBackupJson(
+    term = term,
+    sortOrder = sortOrder,
+    courseNo = courseNo,
+    name = name,
+    kind = kind,
+    attr = attr,
+    credit = credit,
+    hoursTheory = hoursTheory,
+    hoursPractice = hoursPractice,
+    hoursLecture = hoursLecture,
+    hoursExperiment = hoursExperiment,
+    hoursTotal = hoursTotal,
+    tixi = tixi,
 )
 
 fun ScoreBackupJson.toScoreRecord(): ScoreRecord = ScoreRecord(
@@ -1230,6 +1291,19 @@ class ScheduleRepository(
             }
         }
 
+    /**
+     * 当前课表的学期号（教材查询的钥匙）；没课表 / 没写过 term 时 null。
+     *
+     * 教材原本只在导入路径上用到 term，冷启动补抓（[TextbookSync.backfillIfMissing]，
+     * 2026-10-06）需要在没有导入动作时也拿到它，故从 [textbooksFor] 里抽出来一份。
+     */
+    suspend fun currentTerm(): String? =
+        db.timetableDao().getById(currentTimetableId.first())?.term?.takeIf { it.isNotBlank() }
+
+    /** 该学期有没有教材数据（[TextbookSync.backfillIfMissing] 的判据，2026-10-06）。 */
+    suspend fun hasTextbooksFor(term: String): Boolean =
+        db.textbookDao().getForTerm(term).isNotEmpty()
+
     // ------------------------------------------------------------------
     // 日期覆盖（调休 / 停课，DESIGN §4.40，2026-10-06）
     // 渲染层叠加，**不写 courses 表**：网格 / 今日页 / 小组件 / 提醒都拿它摊平后
@@ -1292,8 +1366,10 @@ class ScheduleRepository(
 
     /**
      * 用「写库后的实际课表」推进基线（过滤考试条目——教务课表页抓不到考试，
-     * 留在基线里会把每一场考试报成「教务删除」）。同时清已阅指纹：
-     * 基线推进后旧差异整体作废，与旧指纹的比对不再有意义。
+     * 留在基线里会把每一场考试报成「教务删除」）。同时清已阅指纹与待处置差异：
+     * 基线推进后旧差异整体作废，与旧指纹的比对不再有意义；待处置缓存留着只会让
+     * 处置页一直挂着已经不存在的变动（2026-10-07 用户报障：重新导入后仍显示有差异），
+     * 而「合并」会把它们照指纹套到刚导入的课表上（静默删课）。同课表才清。
      */
     suspend fun refreshBaselineFromDb(timetableId: Long) {
         val store = baselineStore ?: return
@@ -1301,6 +1377,9 @@ class ScheduleRepository(
         val courses = getTimetableCourses(timetableId).filter { it.kind != CourseKind.Exam }
         store.save(ScheduleBaselineStore.snapshotOf(timetableId, term, courses, System.currentTimeMillis()))
         prefs.setScheduleIgnoredFingerprint("")
+        if (prefs.schedulePendingChanges()?.timetableId == timetableId) {
+            prefs.setSchedulePendingChanges(null)
+        }
     }
 
     /** 用教务抓取结果直接建基线（检查首跑 / 换学期：此刻课表未动，教务现状即「一致状态」）。 */
@@ -1331,8 +1410,34 @@ class ScheduleRepository(
     )
 
     /**
+     * 合并差异成功后的基线推进（2026-10-07 复核补）：**在旧基线上套用已应用的改动**，
+     * 而不是拿写库后的课表整体重建。
+     *
+     * 重建会把手动添加 / AI 调课加进来的**本机条目**一起塞进基线——它们不在教务课表里，
+     * 下一次检查全被报成「教务删除」，勾选合并就把用户自己的课删了（与 AI 改动
+     * 「不推基线」是同一条纪律的两面，见 §4.39）。旧基线缺失 / 不属于目标课表
+     * （异常路径）时退回整体重建，保证基线始终可用。
+     */
+    private suspend fun advanceBaselineFromApplied(timetableId: Long, entries: List<AppliedEntry>) {
+        val store = baselineStore ?: return
+        val current = store.load()
+        val term = db.timetableDao().getById(timetableId)?.term.orEmpty()
+        if (current.timetableId != timetableId || current.term != term) {
+            refreshBaselineFromDb(timetableId)
+            return
+        }
+        val after = ScheduleDiff.baselineAfter(current.courses.map { it.toCourse() }, entries)
+        store.save(ScheduleBaselineStore.snapshotOf(timetableId, term, after, System.currentTimeMillis()))
+        prefs.setScheduleIgnoredFingerprint("")
+        if (prefs.schedulePendingChanges()?.timetableId == timetableId) {
+            prefs.setSchedulePendingChanges(null)
+        }
+    }
+
+    /**
      * 把用户勾选的调课差异应用到**当前课表**（事务内逐条删/改/增），成功后把基线
-     * 推进为应用完的实际全量（含未勾的本地内容——那部分差异下次检查仍会如实报出）。
+     * 推进为「旧基线 + 已应用的改动」。未勾选的条目下一次检查仍会如实报出；
+     * 本机条目（手动添加 / AI 调课）不进基线——它们从来不是教务口径的一部分。
      *
      * 这是「与教务达成一致」的合并路径（调课检测处置页）。AI 调课 / 其它本机改动走
      * [applyLocalChanges]：共用同一套写实现，但**完全不碰基线**。
@@ -1342,7 +1447,7 @@ class ScheduleRepository(
         acceptedIndexes: Set<Int>,
     ): ApplyReport {
         val (report, ttId) = applyChangeSet(changes, acceptedIndexes)
-        refreshBaselineFromDb(ttId)
+        advanceBaselineFromApplied(ttId, report.entries)
         return report
     }
 
@@ -1641,6 +1746,8 @@ class ScheduleRepository(
         // 导入侧对空段不动作，不会把新设备上已有的数据清掉
         val scholarGroups = db.scholarProgressDao().getGroups().map { it.toDomain().toBackupJson() }
         val scholarCourses = db.scholarProgressDao().getCourses().map { it.toDomain().toBackupJson() }
+        // 培养方案（DESIGN §4.41）：同样全局归属学生，全量一起带走；没抓过就是空段
+        val curriculumCourses = db.curriculumDao().getCourses().map { it.toDomain().toBackupJson() }
         // 教材（DESIGN §4.31）：同样全局归属学生，全学期一起带走
         val textbooks = db.textbookDao().getAll().map { it.toDomain().toBackupJson() }
         // 学期配置与作息按课表（DESIGN §4.3）：导出的就是这份课表的时间口径，恢复时跟课表走
@@ -1658,6 +1765,7 @@ class ScheduleRepository(
                 scores = scores,
                 scholarGroups = scholarGroups,
                 scholarCourses = scholarCourses,
+                curriculumCourses = curriculumCourses,
                 textbooks = textbooks,
                 semester = semester,
                 timeSlots = slots,
@@ -1720,6 +1828,13 @@ class ScheduleRepository(
                 return ImportResult.Failure("第 ${index + 1} 条学业课程缺少 dimension 或 name")
             }
         }
+        // 培养方案段同样在校验阶段挡下（DESIGN §4.41）：缺课程名的行一律整体拒绝
+        val backupCurriculum = export.curriculumCourses.map { it.toCurriculumCourse() }
+        backupCurriculum.forEachIndexed { index, c ->
+            if (c.name.isBlank()) {
+                return ImportResult.Failure("第 ${index + 1} 条培养方案课程缺少 name")
+            }
+        }
         // 教材段同样先全量校验（DESIGN §4.31）：缺学期/课程名/书名的行没意义，一律整体拒绝
         val backupTextbooks = export.textbooks.map { it.toTextbook() }
         backupTextbooks.forEachIndexed { index, b ->
@@ -1767,6 +1882,18 @@ class ScheduleRepository(
             }
             scholarCourses.size
         }
+        // 培养方案（DESIGN §4.41）：与学业同一口径——带数据才整体替换，空段不动现有数据
+        val restoredCurriculum = if (backupCurriculum.isEmpty()) {
+            0
+        } else {
+            db.withTransaction {
+                db.curriculumDao().deleteAll()
+                db.curriculumDao().insertAll(
+                    backupCurriculum.map { CurriculumCourseEntity.fromDomain(it) },
+                )
+            }
+            backupCurriculum.size
+        }
         // 教材（DESIGN §4.31）：与成绩同一口径——带数据才整体替换，空段不动现有数据
         val restoredTextbooks = if (backupTextbooks.isEmpty()) {
             0
@@ -1808,10 +1935,8 @@ class ScheduleRepository(
                 db.timetableDao().upsert(it.copy(term = export.term))
             }
         }
-        // 备份恢复也是一次「写库成功」：基线推进为恢复后的实际内容，
-        // 之后教务调课检测以它为底（旧基线与已阅指纹整体作废）
-        refreshBaselineFromDb(ttId)
-        return if (merge) {
+        // 课程写入拆成结果值；基线推进必须排在**课程写完之后**（见函数尾部的理由）。
+        val result = if (merge) {
             val added = mergeCourses(domain, timetableId)
             ImportResult.Success(
                 added = added,
@@ -1819,6 +1944,7 @@ class ScheduleRepository(
                 merge = true,
                 restoredScores = restoredScores,
                 restoredScholarCourses = restoredScholar,
+                restoredCurriculumCourses = restoredCurriculum,
                 restoredTextbooks = restoredTextbooks,
                 restoredSemester = restoredSemester,
                 restoredSlots = restoredSlots,
@@ -1834,11 +1960,17 @@ class ScheduleRepository(
                 merge = false,
                 restoredScores = restoredScores,
                 restoredScholarCourses = restoredScholar,
+                restoredCurriculumCourses = restoredCurriculum,
                 restoredTextbooks = restoredTextbooks,
                 restoredSemester = restoredSemester,
                 restoredSlots = restoredSlots,
             )
         }
+        // 备份恢复也是一次「写库成功」：基线推进为恢复后的实际内容。**必须排在课程
+        // 写完之后**——此前调用点写得太早，基线存的是恢复前的旧课表，恢复完再检查
+        // 全是假差异（2026-10-07 复核修）。旧基线与已阅指纹整体作废。
+        refreshBaselineFromDb(ttId)
+        return result
     }
 
     /** 解析并校验待导入文件；成功时携带领域模型，供目标课表弹窗按所选目标计算统计。 */
@@ -1868,6 +2000,13 @@ class ScheduleRepository(
                 return ImportPreview.Error("第 ${index + 1} 条学业课程缺少 dimension 或 name")
             }
         }
+        // 培养方案段同口径（DESIGN §4.41）：弹窗阶段就把坏备份挡下
+        val backupCurriculum = export.curriculumCourses.map { it.toCurriculumCourse() }
+        backupCurriculum.forEachIndexed { index, c ->
+            if (c.name.isBlank()) {
+                return ImportPreview.Error("第 ${index + 1} 条培养方案课程缺少 name")
+            }
+        }
         // 学期/作息段也先验一遍（与 importJson 同口径）：弹窗阶段就把坏备份挡下
         val backupSemester = export.semester?.let { s ->
             val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
@@ -1886,6 +2025,7 @@ class ScheduleRepository(
             term = export.term?.takeIf { it.isNotBlank() },
             scores = scores,
             scholarCourseCount = scholarCourses.size,
+            curriculumCourseCount = backupCurriculum.size,
             semester = backupSemester,
             slotCount = backupSlots.size,
         )
@@ -1912,6 +2052,8 @@ sealed interface ImportResult {
         val restoredScores: Int = 0,
         /** 随文件整体替换的学业完成情况课程条数；0 = 文件没带学业段。 */
         val restoredScholarCourses: Int = 0,
+        /** 随文件整体替换的培养方案课程条数；0 = 文件没带培养方案段。 */
+        val restoredCurriculumCourses: Int = 0,
         /** 是否随文件恢复了目标课表的学期配置。 */
         val restoredSemester: Boolean = false,
         /** 随文件恢复的作息条数；0 = 文件没带作息段。 */
@@ -1933,6 +2075,8 @@ sealed interface ImportPreview {
         val scores: List<ScoreRecord> = emptyList(),
         /** 文件携带的学业完成情况课程条数（DESIGN §4.29）：导入时整体替换；0 = 没带。 */
         val scholarCourseCount: Int = 0,
+        /** 文件携带的培养方案课程条数（DESIGN §4.41）：导入时整体替换；0 = 没带。 */
+        val curriculumCourseCount: Int = 0,
         /** 文件带的学期配置（null = 没有）；随预览展示到确认弹窗注记。 */
         val semester: SemesterConfig? = null,
         /** 文件带的作息条数（0 = 没有）。 */

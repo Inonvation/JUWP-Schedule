@@ -27,8 +27,9 @@ import edu.jxslu.schedule.domain.TimetablePrefs
         CourseSelectionEntity::class,
         InboxMessageEntity::class,
         DateOverrideEntity::class,
+        CurriculumCourseEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -48,6 +49,7 @@ abstract class JuwDatabase : RoomDatabase() {
     abstract fun courseSelectionDao(): CourseSelectionDao
     abstract fun inboxDao(): InboxDao
     abstract fun dateOverrideDao(): DateOverrideDao
+    abstract fun curriculumDao(): CurriculumDao
 
     companion object {
 
@@ -582,6 +584,37 @@ abstract class JuwDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v19 → v20（2026-10-07）：新表 `curriculum_courses`（培养方案课程设置，
+         * DESIGN §4.41）。非 destructive 的 CREATE TABLE。
+         *
+         * 可空列只有 `credit`（实体 `Double?`、无 Kotlin 默认值）→ 建表照写裸 `REAL`。
+         * **别顺手写 NOT NULL/DEFAULT**：多一个字就是「迁移建的表结构与实体期望不一致
+         * → 校验崩溃」（v7→v8 / v11→v12 / v14→v15 的老坑）。学时五列实体无默认值、
+         * 解析时落空串，`TEXT NOT NULL`；实体没有 @Index，迁移也不建索引。
+         */
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS curriculum_courses (" +
+                        "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, " +
+                        "term INTEGER NOT NULL, " +
+                        "sortOrder INTEGER NOT NULL, " +
+                        "courseNo TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "kind TEXT NOT NULL, " +
+                        "attr TEXT NOT NULL, " +
+                        "credit REAL, " +
+                        "hoursTheory TEXT NOT NULL, " +
+                        "hoursPractice TEXT NOT NULL, " +
+                        "hoursLecture TEXT NOT NULL, " +
+                        "hoursExperiment TEXT NOT NULL, " +
+                        "hoursTotal TEXT NOT NULL, " +
+                        "tixi TEXT NOT NULL)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: JuwDatabase? = null
 
@@ -611,6 +644,7 @@ abstract class JuwDatabase : RoomDatabase() {
                         MIGRATION_16_17,
                         MIGRATION_17_18,
                         MIGRATION_18_19,
+                        MIGRATION_19_20,
                     )
                     .build()
                     .also { instance = it }

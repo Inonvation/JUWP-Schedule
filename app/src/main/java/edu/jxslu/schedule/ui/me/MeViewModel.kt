@@ -321,6 +321,9 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
                             if (r.restoredScholarCourses > 0) {
                                 append("；学业完成情况已整体替换（${r.restoredScholarCourses} 门）")
                             }
+                            if (r.restoredCurriculumCourses > 0) {
+                                append("；培养方案已整体替换（${r.restoredCurriculumCourses} 门）")
+                            }
                             val configParts = buildList {
                                 if (r.restoredSemester) add("学期配置")
                                 if (r.restoredSlots > 0) add("作息 ${r.restoredSlots} 节")
