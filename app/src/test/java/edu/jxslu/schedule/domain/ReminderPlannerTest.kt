@@ -157,4 +157,62 @@ class ReminderPlannerTest {
         assertEquals(5, ReminderDefaults.coerceLead(7))
         assertEquals(30, ReminderDefaults.coerceLead(45))
     }
+
+    // ---- 日期覆盖（调休 / 停课，§4.40）进提醒口径（2026-10-07 实报修复）----
+    // 纯函数层一直收 overrides 参数，但核对层曾漏传——「AI 调完课今天没课了」
+    // 仍按裸课表在原时间点发提醒。以下用例把「覆盖参与提醒计算」钉在纯函数层。
+
+    @Test
+    fun suspendedDay_noReminder_evenAtOriginalTime() {
+        // 9/17（周四）停课：哪怕到了原上课时刻，两个「现在该发」的触发点都不该命中。
+        // 下一个闹钟顺延到下周四的行为由 suspendedDay_nextReminderMovesToFollowingWeek 钉住。
+        val overrides = listOf(
+            ScheduleOverride(fromDate = "2026-09-17", toDate = "2026-09-17", kind = OverrideKind.SUSPENDED),
+        )
+        assertNull(dueClassStartPlan(semester, slots, courses, at(14, 0), overrides))
+        assertNull(dueReminderPlan(semester, slots, courses, at(10, 8), leadMinutes = 10, overrides = overrides))
+    }
+
+    @Test
+    fun suspendedDay_nextReminderMovesToFollowingWeek() {
+        // 周四全天停课：上午 7 点排闹钟，第一个触发点应是下周四的 3-4 节
+        val overrides = listOf(
+            ScheduleOverride(fromDate = "2026-09-17", toDate = "2026-09-17", kind = OverrideKind.SUSPENDED),
+        )
+        val plan = nextReminderPlan(semester, slots, courses, at(7, 0), leadMinutes = 10, overrides = overrides)
+        assertEquals(LocalDate.parse("2026-09-24"), plan?.date)
+    }
+
+    @Test
+    fun followDay_remindsForBorrowedCourse() {
+        // 9/17（周四）按第 1 周周五（9/4）的课表上课；给源位置放一门 5-6 节的课
+        val borrowed = course(9, 5, 6).copy(day = 5, weeks = setOf(1))
+        val overrides = listOf(
+            ScheduleOverride(
+                fromDate = "2026-09-17", toDate = "2026-09-17", kind = OverrideKind.FOLLOW,
+                sourceWeek = 1, sourceWeekday = 5,
+            ),
+        )
+        // 补课那天按借来的课排：应提醒 course 9（14:00 上课）
+        val start = dueClassStartPlan(semester, slots, courses + borrowed, at(14, 0), overrides)
+        assertEquals(9L, start?.course?.id)
+        // 原周四的 3 门课当天都不上，不应命中
+        val original = dueClassStartPlan(semester, slots, courses, at(14, 0), overrides)
+        assertNull(original)
+    }
+
+    @Test
+    fun followDay_nextAlarmUsesBorrowedCourseTimes() {
+        val borrowed = course(9, 5, 6).copy(day = 5, weeks = setOf(1))
+        val overrides = listOf(
+            ScheduleOverride(
+                fromDate = "2026-09-17", toDate = "2026-09-17", kind = OverrideKind.FOLLOW,
+                sourceWeek = 1, sourceWeekday = 5,
+            ),
+        )
+        val plan = nextReminderPlan(semester, slots, courses + borrowed, at(7, 0), leadMinutes = 10, overrides = overrides)
+        // 触发点 = 借来的课（5-6 节 14:00）− 10 分钟
+        assertEquals(9L, plan?.course?.id)
+        assertEquals(LocalDateTime.of(thursday, LocalTime.of(13, 50)), plan?.triggerAt)
+    }
 }

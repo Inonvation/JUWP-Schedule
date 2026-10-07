@@ -269,12 +269,16 @@ internal object ReminderNotifications {
         val semester = repo.semester.first()
         val courses = repo.courses.first()
         val lead = repo.reminderLeadMinutes.first()
+        // 日期覆盖（调休 / 停课，§4.40）与排闹钟同口径（scheduleNext 已传）：
+        // 这里是「要不要发」的最后一道闸，漏了它，AI 调课/校历调休把今天的课
+        // 停掉后，周期核对仍按裸课表在原上课时间点发通知（2026-10-07 实报）。
+        val overrides = repo.overridesFor()
 
         // 两个通知点各自核对、各自去重（DESIGN §3.7）：同一轮可能只命中一个
         // （两触发点相差一个提前量，通常分处两轮），也可能同时命中（闹钟被推迟跨过两点）。
         // 先算「上课开始」（更晚的点）：它的窗口不依赖提前量，先判可避免 lead=0 时
         // 两个窗口重叠导致的重复计算。
-        val startDue = dueClassStartPlan(semester, slots, courses, now)
+        val startDue = dueClassStartPlan(semester, slots, courses, now, overrides)
         val startKey = startDue?.dedupKey
         // 通知强提醒（2026-10-06，通用设置）：默认关，开了才在发出后直接震动
         val strongVibration = repo.strongReminderVibration.first()
@@ -289,7 +293,7 @@ internal object ReminderNotifications {
             if (posted) repo.setReminderLastKey(ReminderKeyKind.Start, startKey)
         }
 
-        val due = dueReminderPlan(semester, slots, courses, now, leadMinutes = lead)
+        val due = dueReminderPlan(semester, slots, courses, now, leadMinutes = lead, overrides = overrides)
         val key = due?.dedupKey
         if (key != null && repo.reminderLastKey(ReminderKeyKind.Before) != key) {
             val posted = postClassNotification(

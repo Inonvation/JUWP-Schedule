@@ -148,12 +148,16 @@ class JuwApplication : Application() {
         // 课表数据一变就推给桌面：用户在 App 里改完课，回桌面立刻是新内容，
         // 不必等下一个 15 分钟兜底。flows 本身是 Room 驱动，只在真实写库时发射，无轮询。
         // 提醒也依赖这三份数据：同一处重排下一个提醒，改完课/换课表即刻生效。
+        // 日期覆盖（调休 / 停课，§4.40）也在这条链上：AI 调课的放假/补课只写
+        // `date_overrides`、不动 courses 表，不盯它的话已排的上课闹钟不会撤，
+        // 「调完课今天没课了」照样在原时间点响（2026-10-07 实报）。
         appScope.launch {
             kotlinx.coroutines.flow.combine(
                 repo.courses,
                 repo.semester,
                 repo.timeSlots,
-            ) { _, _, _ -> Unit }.collect {
+                repo.overrides,
+            ) { _, _, _, _ -> Unit }.collect {
                 TodayWidgetRefresh.refreshNow(this@JuwApplication)
                 ClassReminder.scheduleNext(this@JuwApplication)
             }
