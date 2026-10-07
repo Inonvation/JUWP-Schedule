@@ -1,10 +1,8 @@
 package edu.jxslu.schedule.domain
 
-import java.time.LocalDate
-
 /**
- * 余额提醒的两个来源（DESIGN §3.10 / §3.13）：各自独立开关、阈值与每日节奏。
- * 存储层的「上次成功检查日期」按它分键，设置页与后台核对用它指定要评估哪一个。
+ * 余额提醒的两个来源（DESIGN §3.10 / §3.13）：各自独立开关、阈值与检查间隔。
+ * 存储层的「上次成功检查时刻」「偏低已提醒标记」按它分键，设置页与后台核对用它指定要评估哪一个。
  */
 enum class BalanceAlertSource {
     /** 寝室电费（缴费平台剩余电量折算成元）。 */
@@ -19,10 +17,10 @@ enum class BalanceAlertSource {
  *
  * 两个来源各自独立：**寝室电费**（缴费平台剩余电量折算成元）与**一卡通余额**
  * （正式卡余额）。它们共用同一份凭证（`YktCredentialStore` 的学号 + 查询密码），
- * 因此设置项同页、开关同源，但阈值候选表与判定互不相干。
+ * 因此设置项同页、开关同源，但阈值候选表、检查间隔与判定互不相干。
  *
  * 单一来源：DataStore 键默认值、设置页轮选器、后台核对 Worker 的判定
- * 全部从这里取，不各自写字面量。
+ * 全部从这里取，不各自写字面量。模式同 [ScoreAlertDefaults]。
  */
 object BalanceAlert {
 
@@ -64,6 +62,27 @@ object BalanceAlert {
     }
 
     // ------------------------------------------------------------------
+    // 检查间隔口径（用户拍板 2026-10-07：默认 6 小时，档位 3–48 小时）
+    // ------------------------------------------------------------------
+
+    /** 默认检查间隔（小时）。 */
+    const val INTERVAL_DEFAULT_HOURS = 6
+
+    /** 检查间隔档位（小时）。两个来源共用同一张档位表，但**各自独立设置**。 */
+    val INTERVAL_CHOICES_HOURS: List<Int> = listOf(3, 6, 8, 10, 12, 24, 48)
+
+    /** 存储值兜底：不在档位表里归到默认档（旧数据/手改数据防线）。 */
+    fun coerceIntervalHours(value: Int): Int =
+        if (value in INTERVAL_CHOICES_HOURS) value else INTERVAL_DEFAULT_HOURS
+
+    /** 存储值 → 选项下标；不在档位表内的值归到默认档。 */
+    fun intervalChoiceIndex(value: Int): Int =
+        INTERVAL_CHOICES_HOURS.indexOf(coerceIntervalHours(value)).coerceAtLeast(0)
+
+    /** 存储值 → 设置页展示文案。 */
+    fun intervalLabel(value: Int): String = "每 ${coerceIntervalHours(value)} 小时"
+
+    // ------------------------------------------------------------------
     // 判定（纯函数，可 JVM 测）
     // ------------------------------------------------------------------
 
@@ -84,17 +103,4 @@ object BalanceAlert {
      * 时不提醒（边界只在一处定义，免得两边各理解一半）。
      */
     fun isLow(yuan: Double, thresholdYuan: Int): Boolean = yuan < thresholdYuan
-
-    /**
-     * 今天是否该做这一次检查（「每天最多一条」的闸门）。
-     *
-     * [lastCheckDate] 是上一次**成功取到数据**的 ISO 日期（`yyyy-MM-dd`），
-     * 从未成功过为 null。取数失败**不落日期**，所以当天还能补查——
-     * 与作业提醒「发出后才落键」同口径。
-     */
-    fun isDueToday(lastCheckDate: String?, today: LocalDate): Boolean =
-        lastCheckDate != today.toString()
-
-    /** 判定结果的落库日期文本。 */
-    fun dateKey(today: LocalDate): String = today.toString()
 }

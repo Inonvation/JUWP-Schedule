@@ -6,7 +6,6 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.data.session.ProfileSyncRules
-import edu.jxslu.schedule.domain.BalanceAlert
 import java.time.LocalDate
 import kotlinx.coroutines.flow.first
 
@@ -31,7 +30,7 @@ class ProfileSync(
 
     /** @return true = 这次真的抓到并落库了 */
     suspend fun syncOnce(force: Boolean = false): Boolean {
-        val todayKey = BalanceAlert.dateKey(today())
+        val todayKey = today().toString()
         if (!force) {
             val classBlank = prefs.profileClass.first().isBlank()
             val lastAttempt = prefs.profileSyncDate.first()

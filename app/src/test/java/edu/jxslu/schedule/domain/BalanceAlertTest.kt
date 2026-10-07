@@ -1,6 +1,5 @@
 package edu.jxslu.schedule.domain
 
-import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -93,14 +92,5 @@ class BalanceAlertTest {
         // 边界：正好等于阈值不提醒（「低于」= 严格小于）
         assertFalse(BalanceAlert.isLow(20.0, 20))
         assertFalse(BalanceAlert.isLow(20.01, 20))
-    }
-
-    @Test
-    fun `每天最多一条的日期闸门`() {
-        val today = LocalDate.of(2026, 9, 24)
-        assertTrue("从未成功检查过 → 该查", BalanceAlert.isDueToday(null, today))
-        assertTrue("昨天查过 → 今天该查", BalanceAlert.isDueToday("2026-09-23", today))
-        assertFalse("今天查过 → 不再查（也即不再发）", BalanceAlert.isDueToday("2026-09-24", today))
-        assertEquals("2026-09-24", BalanceAlert.dateKey(today))
     }
 }
