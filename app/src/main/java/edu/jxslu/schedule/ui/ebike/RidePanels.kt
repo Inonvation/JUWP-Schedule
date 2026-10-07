@@ -359,7 +359,7 @@ internal fun RideActionArea(
 /** 上区升起 / 收回的时长；下区不参与，所以只有这两个值在管"窗口升降"的手感。 */
 /** 动作区上区升起 / 容器高度过渡的时长。**RideScreen 也用它**（冻结地图让位高度要等这么久）。 */
 internal const val BAR_RISE_MS = 240
-private const val BAR_FALL_MS = 190
+internal const val BAR_FALL_MS = 190
 
 /** 动作条状态之间做交叉淡入，别让内容"啪"地换一块。 */
 private const val BAR_FADE_IN_MS = 200
@@ -378,6 +378,21 @@ private const val BAR_FINDING_SCAN = "finding-scan"
 private const val BAR_CAR = "car"
 private const val BAR_RIDING = "riding"
 private const val BAR_SETTLED = "settled"
+
+/**
+ * 上区内容的粗略高度档（只用于判「这次切换块是变矮了」，不是布局值）：
+ * 骑行仪表盘最高，结算卡与车辆卡居中，找车态没有上区内容最矮。
+ * 结算卡与车辆卡谁高不一定——两者互切按「没变矮」处理（走升起那边的稳妥路径）。
+ */
+internal fun barHeightTier(key: String): Int = when {
+    key == BAR_RIDING -> 3
+    key == BAR_SETTLED || key.startsWith(BAR_CAR) -> 2
+    else -> 1 // 找车态四种排版
+}
+
+/** 这次形态切换块会不会变矮（下沉）。页面据此决定地图让位高度的落位时机。 */
+internal fun barBlockShrinks(prev: String, next: String): Boolean =
+    barHeightTier(next) < barHeightTier(prev)
 
 /** 开锁/还车等写动作的「长时间等待」阈值（秒）：超过在按钮上补一句出路。 */
 private const val BUSY_LONG_WAIT_SECONDS = 20

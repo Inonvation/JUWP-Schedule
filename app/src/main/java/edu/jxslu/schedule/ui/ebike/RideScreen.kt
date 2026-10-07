@@ -508,10 +508,23 @@ fun RideScreen(
     LaunchedEffect(barKey) {
         // 首次组合不是"换形态"：只有 key 真的变了才冻结
         if (lastBarKey == barKey) return@LaunchedEffect
+        val prev = lastBarKey
         lastBarKey = barKey
         blockAnimating = true
-        // 等高度动画走完（多留一点余量，动画末帧还有一次落位）
-        delay(BAR_RISE_MS.toLong() + BLOCK_SETTLE_MS)
+        // 落位时机按方向分流（2026-10-07 修用户报的「还车后点继续找车，地图突然抽搐」）。
+        // 前提：容器高度动画（SizeTransform）**两个方向都是 BAR_RISE_MS**——它不看初末
+        // 尺寸，块的实际高度 240ms 才落底；BAR_FALL_MS 只是退场内容的滑动时长，
+        // **不是**沉底时刻，别把落位基数换成它。
+        // - **升起**（块变高）：等满程 + 标准余量。动画里地图不动、被升起来的块盖住，
+        //   落位时缩小的那截在块后面，看不见——2026-10-01 的修法，保持。
+        // - **下沉**（块变矮，如结算卡 → 继续找车）：动画一落底（[SHRINK_SETTLE_MS] 小余量）
+        //   就落位。原来也等满程 + 标准余量，块贴底后地图还矮着，露约 60ms 空档，然后让位
+        //   高度一次跳变、地图猛地补齐——那就是用户看到的「抽搐突变」。现在落位贴住块落底
+        //   那一刻，「面板沉下去 → 地图展开」读起来是连续的两个动作。
+        //   地图变大的 resize 仍然只发生一次（不做逐帧 resize，那是 10-01 修掉的掉帧来源）。
+        val settleMs = BAR_RISE_MS.toLong() +
+            if (barBlockShrinks(prev, barKey)) SHRINK_SETTLE_MS else BLOCK_SETTLE_MS.toLong()
+        delay(settleMs)
         measuredBlockDp = blockHeight.value
         blockAnimating = false
     }
@@ -1117,6 +1130,14 @@ private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里�
  * 让最后一帧的尺寸也落定再冻结地图的让位高度（见 RideScreen 里 mapReserveDp 的注释）。
  */
 private const val BLOCK_SETTLE_MS = 60L
+
+/**
+ * 下沉方向的落位余量（比 [BLOCK_SETTLE_MS] 小）：下沉分支的落位基数是 [BAR_RISE_MS]
+ * （容器高度动画双向都是这个时长，见 `RideScreen` 里落位那段的注释），要赶在「块刚落底」
+ * 而不是「全动画 + 标准余量」之后——晚那 50ms 就是用户报的抽搐空档。
+ * 别把两个余量并成一个：升起方向多等一点无害（被块盖住），下沉方向每多一等就多露一帧空档。
+ */
+private const val SHRINK_SETTLE_MS = 10L
 
 /**
  * 一个不进组合的可变格子：布局回调里记账用（RideScreen 的常驻块高度）。
