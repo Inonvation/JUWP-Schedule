@@ -1,8 +1,6 @@
 package edu.jxslu.schedule.ui.common
 
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseKind
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseEditSheet(
     course: Course?,
@@ -46,7 +43,12 @@ fun CourseEditSheet(
     var nameError by remember(course) { mutableStateOf<String?>(null) }
     val haptics = rememberAppHaptics()
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 键盘弹起时弹层「缓慢爬升」的根因（2026-10-07 用户报）：裸 ModalBottomSheet 默认
+    // skipPartiallyExpanded = false，键盘弹起后 M3 造出半高锚点并 animateTo 过去，而键盘
+    // 动画逐帧改容器高度、每帧重启那条动画——观感就是弹层一帧一帧往上爬。换
+    // ImeAwareModalBottomSheet（本包内，与充值弹层同款）：钉死 skipPartiallyExpanded = true
+    // 消掉半高锚点，退场「先收键盘再滑走」的时序也一并接上（文件头「硬要求」的口径）。
+    ImeAwareModalBottomSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

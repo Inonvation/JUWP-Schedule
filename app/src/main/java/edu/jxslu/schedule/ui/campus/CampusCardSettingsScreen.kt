@@ -1199,6 +1199,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             prefs.clearPendingRecharge()
             _pendingConfirmVisible.value = false
             _arrivalState.value = ArrivalState.Timeout(orderFen = orderFen)
+            clearArrivalBaseline()
         }
     }
 
@@ -1266,6 +1267,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         _arrivalState.value = ArrivalState.Arrived(orderFen = orderFen, newBalanceFen = newBalanceFen)
         _pendingConfirmVisible.value = false
         prefs.clearPendingRecharge()
+        clearArrivalBaseline()
     }
 
     private suspend fun checkTurnoverArrival(
@@ -1341,12 +1343,28 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
      *
      * 两者缺一就无法判定，只能退到流水口径；**不拿「现在的余额」当基线**——
      * 钱已经到账时那等于把判定门槛抬到自己头上，「确认到账」永远不成立。
+     *
+     * **以 pending 为准整体覆盖，不是判空补缺**（2026-10-07 修「余额更新了但确认弹窗
+     * 不弹」）：本 VM 只在 `_arrivalState` 不是 Watching（= 没有活跃轮询，内存基线必是
+     * **上一笔充值残留**）时才走到这里。上一笔基线偏高时，下一笔的判定门槛被抬成
+     * 「旧基线 + 新订单额」，钱到了也判不到——一直卡「正在确认」直到超时。典型触发：
+     * 两笔充值从不同入口发起（生活页与设置页是两个 Activity 各持一份 VM），另一份
+     * VM 恢复 pending 时沿用了自己残留的旧基线。每笔充值的基线唯一来源 = 持久化
+     * pending；活跃轮询路径（st is Watching）不经过这里，正在跑的那条链不受影响。
      */
     private fun restoreArrivalBaseline(pending: PendingRecharge) {
-        if (_arrivalBaseFen == null) _arrivalBaseFen = pending.balanceBeforeFen
-        if (_arrivalAccount == null) _arrivalAccount = pending.cardAccount
-        if (_arrivalTarget == null) _arrivalTarget = pending.targetAccount
-        if (_arrivalWalletBaseFen == null) _arrivalWalletBaseFen = pending.walletBalanceBeforeFen
+        _arrivalBaseFen = pending.balanceBeforeFen
+        _arrivalAccount = pending.cardAccount
+        _arrivalTarget = pending.targetAccount
+        _arrivalWalletBaseFen = pending.walletBalanceBeforeFen
+    }
+
+    /** 内存基线四件套一并清空（到账结论落定 / 用户声明未付款时调用）。 */
+    private fun clearArrivalBaseline() {
+        _arrivalBaseFen = null
+        _arrivalAccount = null
+        _arrivalTarget = null
+        _arrivalWalletBaseFen = null
     }
 
     /** 「正在确认到账」提示弹窗可见性（回到前台且未到账时显示；到账/超时/用户关闭即撤）。 */
@@ -1366,10 +1384,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         watchJob = null
         _pendingConfirmVisible.value = false
         _arrivalState.value = ArrivalState.Idle
-        _arrivalBaseFen = null
-        _arrivalAccount = null
-        _arrivalTarget = null
-        _arrivalWalletBaseFen = null
+        clearArrivalBaseline()
         viewModelScope.launch { prefs.clearPendingRecharge() }
     }
 

@@ -1212,6 +1212,11 @@ tween 一次跑完。两段之间没有空档，超时 450ms 兜底（只防「�
 宿主 composable **必须组合在弹层内容里**——写在 `ModalBottomSheet { … }` 外面拿到的是
 Activity 窗口的 `LocalFocusManager` / `LocalSoftwareKeyboardController` / insets，收不动
 弹窗里的键盘（第一版就这么写错，实测无效）；`ImeAwareModalBottomSheet` 已内建，新弹层直接用它。
+**课程编辑弹层（`CourseEditSheet`）2026-10-07 补接入**（用户报「点备注输入框键盘升起时弹层
+缓慢爬升」）：它是 09-21 建的老弹层、漏在「硬要求」之外——裸 `ModalBottomSheet` 默认
+`skipPartiallyExpanded = false`，键盘弹起 M3 造出半高锚点并 `animateTo` 过去，键盘动画逐帧改
+容器高度、每帧重启那条锚点动画，观感就是一帧一帧往上爬。换 `ImeAwareModalBottomSheet` 后
+进场即 Expanded、无半高锚点可重启，爬升消失；退场「先收键盘再滑走」的时序也一并接上。
 
 落位：`ui/life/LifeScreen.kt` + `LifeViewModel`（电费读数、电费流水、最近流水分段）、
 `data/power/`（§4.24）、`domain/LifeFeed.kt`（分段与排序的纯逻辑）。
