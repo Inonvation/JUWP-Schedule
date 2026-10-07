@@ -2078,6 +2078,8 @@ private fun IconButtonSmall(
  * [showEstimateNote] = 小程序方式（`caps.wechatScan`）：计时起点是「点扫一扫 + 5 秒缓冲」
  * 的预估时刻，App 感知不到真实开车，进度线下常驻一句「以小程序为准」（2026-10-05 用户要求）
  * ——账号方式的起点是服务端确认的开锁时刻，不需要这句。
+ * 进度线下还常驻一句套餐前提（[EbikeFreeRide.TICKET_NOTE]，2026-10-07 用户要求）：
+ * 前 15 分钟免费是骑行套餐卡的权益，两档都要看到。
  */
 @Composable
 private fun RideCountdown(
@@ -2129,6 +2131,11 @@ private fun RideCountdown(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
             )
         }
+        Text(
+            text = EbikeFreeRide.TICKET_NOTE,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+        )
     }
 }
 

@@ -379,15 +379,17 @@ private fun ReminderSettingsSection(
         subtitle = "通知栏常驻倒计时 + 两个精确闹钟，不写系统日历。",
     ) {
         // 免费时长提醒（DESIGN §3.9）：提前量 1~5 分钟（用户拍板默认 3）。
+        // 副标题带套餐前提（2026-10-07 用户要求）：前 15 分钟免费是骑行套餐卡的权益，
+        // 两档口径相同——15 分钟这个数由 EbikeFreeRide.FREE_MINUTES 出，别手抄。
         SettingSwitchRow(
             title = "免费时长提醒",
             // 计时起点两档不同：小程序方式是「点打开微信扫一扫 + 5 秒缓冲」这个预估起点
             // （2026-10-05 用户拍板），账号方式是服务端确认的开锁时刻
-            subtitle = if (caps.wechatScan) {
+            subtitle = (if (caps.wechatScan) {
                 "点「打开微信扫一扫」5 秒后开始计时并常驻倒计时，到点发通知提醒"
             } else {
                 "开锁成功后起常驻倒计时，到点发通知提醒"
-            },
+            }) + "；${EbikeFreeRide.TICKET_NOTE}（前 ${EbikeFreeRide.FREE_MINUTES} 分钟免费）",
             checked = freeEnabled,
             onCheckedChange = { checked ->
                 freeEnabled = checked

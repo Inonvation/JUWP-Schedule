@@ -191,6 +191,10 @@ class EbikeFreeRideTest {
         // 一律带上运营方口径的免责
         assertTrue(EbikeFreeRide.leadText(start, minutesAfterStart(12)).contains("15"))
         assertTrue(EbikeFreeRide.END_TEXT.contains("15"))
+        // 免费时长的前提（2026-10-07 用户要求写明）：前 15 分钟免费是骑行套餐卡的权益
+        assertTrue(EbikeFreeRide.leadText(start, start).contains("套餐卡"))
+        assertTrue(EbikeFreeRide.END_TEXT.contains("套餐卡"))
+        assertTrue(EbikeFreeRide.COUNTDOWN_TEXT.contains("套餐卡"))
     }
 
     @Test

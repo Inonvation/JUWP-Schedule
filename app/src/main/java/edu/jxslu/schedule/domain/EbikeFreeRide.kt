@@ -5,7 +5,7 @@ import kotlin.math.max
 /**
  * 共享单车免费时长倒计时（DESIGN §3.9）。
  *
- * 运营方口径：扫码开车后 15 分钟内免费，超时计费。App 无法感知实际开车成功
+ * 运营方口径：持有骑行套餐卡时每次骑车前 15 分钟免费，超时计费。App 无法感知实际开车成功
  * （扫码发生在微信里），计时起点 = 用户点「打开微信扫一扫」+ [SCAN_DELAY_MS]
  * 的缓冲（2026-10-05 用户拍板：点完按钮还要切微信、选图、扫码、开车，倒计时
  * 从点击 5 秒后才开始走，偏保守但不再把头几秒算进免费期）——仍偏保守
@@ -13,7 +13,7 @@ import kotlin.math.max
  * 「实际以微信小程序显示为准」。
  *
  * 本文件只做纯 JVM 的时刻计算与文案格式化，不含任何 Android API。
- * 15 分钟是运营方活动政策、可能变化，文案一律写「按 15 分钟计」，不承诺。
+ * 15 分钟是运营方政策、可能变化，文案一律写「按套餐卡 15 分钟免费计」，不承诺。
  *
  * 提醒通道的演变：2026-09-22 首版 = App 通知；2026-09-23 改系统日历；
  * **2026-09-24 改回 App 通知**（用户拍板）——日历 App 发提醒时 App 自己没法展示
@@ -22,8 +22,11 @@ import kotlin.math.max
  */
 object EbikeFreeRide {
 
-    /** 免费时长（分钟）。运营方政策口径，变了这里和文案一起改。 */
+    /** 免费时长（分钟）。运营方政策口径（**前提是持有骑行套餐卡**），变了这里和文案一起改。 */
     const val FREE_MINUTES = 15
+
+    /** 免费时长的前提说明（2026-10-07 用户要求写明）：前 15 分钟免费是套餐卡权益。 */
+    const val TICKET_NOTE = "免费以骑行套餐卡为准"
 
     /**
      * 小程序方式的扫码缓冲（毫秒）：计时起点 = 点「打开微信扫一扫」+ 这段
@@ -92,7 +95,7 @@ object EbikeFreeRide {
     const val COUNTDOWN_TITLE = "免费时长倒计时"
 
     /** 常驻倒计时通知的正文（无计时可显示时的兜底，正常路径走 [countdownText]）。 */
-    const val COUNTDOWN_TEXT = "按 $FREE_MINUTES 分钟计，超时开始计费"
+    const val COUNTDOWN_TEXT = "按套餐卡 $FREE_MINUTES 分钟免费计，超时开始计费"
 
     /**
      * 常驻倒计时通知的正文 = 「免费剩余 mm:ss」。
@@ -111,14 +114,14 @@ object EbikeFreeRide {
 
     /** 结束提醒的标题与正文。 */
     const val END_TITLE = "免费时长已结束"
-    const val END_TEXT = "按 $FREE_MINUTES 分钟计，现在起开始计费，请尽快还车"
+    const val END_TEXT = "按套餐卡 $FREE_MINUTES 分钟免费计，现在起开始计费，请尽快还车"
 
     /**
      * 提前量提醒的正文：按**实际剩余**写，不写设定的提前量——
      * 闹钟被 ROM 推迟时，写「还剩 3 分钟」而实际只剩 40 秒是假信息。
      */
     fun leadText(startAtMillis: Long, nowMillis: Long): String =
-        "按 $FREE_MINUTES 分钟计，还剩 ${formatRemaining(remainingSeconds(startAtMillis, nowMillis))}，超时开始计费"
+        "按套餐卡 $FREE_MINUTES 分钟免费计，还剩 ${formatRemaining(remainingSeconds(startAtMillis, nowMillis))}，超时开始计费"
 
     /** 提前量吸附到 [LEAD_MIN]..[LEAD_MAX]，防线脏数据。 */
     fun coerceLead(lead: Int): Int = lead.coerceIn(LEAD_MIN, LEAD_MAX)
