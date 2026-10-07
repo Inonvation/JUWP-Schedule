@@ -214,8 +214,10 @@ object SyjxScheduleParser {
     }
 
     /**
-     * 单元测试用：从完整 HTML 文本粗提课块。
-     * 真机上走 [EXTRACT_JS]（有完整 DOM API），这里用正则复刻同一套判定规则。
+     * 单元测试 / 备用路径（2026-10-04 起 §4.17 调课检测与首启导课表的 OkHttp 直取也在用）：
+     * 从完整 HTML 文本粗提课块。真机上走 [EXTRACT_JS]（有完整 DOM API），
+     * 这里用正则复刻同一套判定规则——**一格多课块要逐块全取**（[CourseBlocks]），
+     * 少一块就是一门课对不上（见 §4.17 的 2026-10-07 修复）。
      */
     fun parseFromHtml(html: String): ImportParseResult {
         val blocks = extractFromHtml(html)
@@ -253,17 +255,20 @@ object SyjxScheduleParser {
                 if ("qz-hasCourse" !in openTag(td)) return@forEachIndexed
                 val day = idx - (tds.size - BASE_TD_COUNT)
                 if (day !in 1..7 || week !in 1..40) return@forEachIndexed
-                val body = cellBody(td)
-                val name = divText(body, "qz-hasCourse-title") ?: return@forEachIndexed
-                val position = divText(body, "qz-hasCourse-detailitem").orEmpty()
-                out += RawBlock(
-                    name = name,
-                    position = position,
-                    day = day,
-                    week = week,
-                    startSection = sections.first,
-                    endSection = sections.second,
-                )
+                // 同理论页：一格可能含多个课块，必须逐块抽（[CourseBlocks]）。
+                // 只取第一个会与注入脚本的全取口径不一致，调课检测误报「教务删除」。
+                for (block in CourseBlocks.inCell(cellBody(td))) {
+                    val name = divText(block, "qz-hasCourse-title") ?: continue
+                    val position = divText(block, "qz-hasCourse-detailitem").orEmpty()
+                    out += RawBlock(
+                        name = name,
+                        position = position,
+                        day = day,
+                        week = week,
+                        startSection = sections.first,
+                        endSection = sections.second,
+                    )
+                }
             }
         }
         return out

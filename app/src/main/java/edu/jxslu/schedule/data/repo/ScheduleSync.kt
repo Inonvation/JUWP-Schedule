@@ -12,9 +12,12 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.data.session.CasEnsureResult
 import edu.jxslu.schedule.data.session.CasSession
+import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.ScheduleChangeRow
+import edu.jxslu.schedule.domain.ScheduleCourseRow
 import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.domain.SchedulePendingChanges
 import kotlinx.coroutines.delay
@@ -134,6 +137,9 @@ class ScheduleSync(
 
         val labHtml = cas.fetchHtml(JwUrls.labScheduleUrl(pageTerm))
             ?: return FetchResult.Failed("没取到实验课表页（会话可能已失效）")
+        // 实验页同样带学期下拉，必须与理论页一致（2026-10-07 复核补）：教务若忽略
+        // 实验页的学期参数、按自己的默认学期渲染，直取会把两个学期的课混在一起比对。
+        labTermError(pageTerm, labHtml)?.let { return FetchResult.Failed(it) }
         val labParsed = try {
             SyjxScheduleParser.parseFromHtml(labHtml)
         } catch (e: CancellationException) {
@@ -174,6 +180,12 @@ class ScheduleSync(
         // blocked = 两张表都没解析到课程（识别失败或教务真没课）。学期中途不该发生，
         // 首启导入按失败报告，让用户手动导一遍核对
         if (ok.result.blocked != null) return AutoImportResult.Failed(ok.result.blocked)
+        // 实验页结构不可信（2026-10-07 复核补）：静默导入会把实验课整批漏掉而用户看不到
+        // 分项条数，宁可报失败让用户手动导入一次核对——手动弹窗有「实验课表 0 条 /
+        // 未识别到课表」的分项提示，这里没有。
+        if (!ok.labReliable) {
+            return AutoImportResult.Failed("实验课表页未识别到课表（页面结构可能已变化），请手动导入一次核对")
+        }
 
         val count = repo.importParsedCourses(
             courses = ok.result.courses,
@@ -221,17 +233,28 @@ class ScheduleSync(
         }
 
         val baseline = repo.loadScheduleBaseline()
-        val changes = if (baseline.timetableId == ttId && baseline.term == term) {
-            ScheduleDiff.detect(baseline.courses.map { it.toCourse() }, ok.result.courses)
-        } else {
+        if (baseline.timetableId != ttId || baseline.term != term) {
             // 首跑 / 换课表 / 换学期：只建基线不通知，防整表刷屏（同 ExamSync 闸门）
             repo.saveScheduleBaseline(ttId, term, ok.result.courses)
             prefs.setScheduleCheckMillis(nowMillis())
             return CheckResult.Ok(term = term, changes = emptyList(), repeated = false)
         }
+        // 整类课解析为 0 而基线里有该类课 = 解析器与教务页面脱节的可疑信号，
+        // 硬比对会把整类课报成「教务删除」——这轮放弃，不落检查时刻（下个周期自动重试）
+        vanishingKindError(ok.result.courses, baseline.courses)?.let { return CheckResult.Failed(it) }
+        val changes = ScheduleDiff.detect(baseline.courses.map { it.toCourse() }, ok.result.courses)
         prefs.setScheduleCheckMillis(nowMillis())
 
-        if (changes.isEmpty()) return CheckResult.Ok(term = term, changes = emptyList(), repeated = false)
+        if (changes.isEmpty()) {
+            // 无差异 = 待处置缓存里那批差异已不存在（教务改回 / 基线刚被重新导入推进过）。
+            // 缓存是派生数据，留着只会让处置页一直挂着已经不存在的变动，而「合并」会把
+            // 它们照指纹套到当前课表上（静默删课）——2026-10-07 用户报障的「重新导入后
+            // 仍显示有差异 / 与教务对不上」有一半是这里。只清属于本次检查课表的缓存。
+            if (prefs.schedulePendingChanges()?.timetableId == ttId) {
+                prefs.setSchedulePendingChanges(null)
+            }
+            return CheckResult.Ok(term = term, changes = emptyList(), repeated = false)
+        }
         val fingerprint = ScheduleDiff.fingerprintOf(changes)
         if (fingerprint == prefs.scheduleIgnoredFingerprint() ||
             fingerprint == prefs.schedulePendingChanges()?.fingerprint
@@ -283,6 +306,44 @@ class ScheduleSync(
             if (!value.isNullOrBlank() && JwUrls.TERM_PATTERN.matches(value)) return value
             val after = block.substringAfter(selectedTag.value, "").substringBefore("</option>").trim()
             return after.takeIf { it.isNotEmpty() && JwUrls.TERM_PATTERN.matches(it) }
+        }
+
+        /**
+         * 实验课表的学期校验（2026-10-07 复核补）：实验页也带 `select#xnxq01id`
+         * （实测 56 个选项、选中项即服务端渲染的学期），必须与理论页一致——教务若忽略
+         * 学期参数、按自己的默认学期渲染实验页，直取就会把两个学期的课混为一批。
+         * 抽不到下拉同样视为不可信（结构变了就别猜）。返回 null = 校验通过。
+         */
+        internal fun labTermError(theoryTerm: String, labHtml: String): String? {
+            val labTerm = termFromHtml(labHtml)
+                ?: return "实验课表页没有学期下拉（教务结构可能已变化）"
+            return if (labTerm == theoryTerm) null
+            else "实验课表页返回学期（$labTerm）与理论课表页（$theoryTerm）不一致"
+        }
+
+        /**
+         * 「整类课解析为 0」的可疑判定（2026-10-07 复核补）：教务页骨架都在（否则
+         * fetch 已经失败），但理论 / 实验有一整类课解析为 0 条，而**基线里该类课有货**
+         * ——大概率是解析器与页面脱节（改版 / 字段改名）或教务整表异常，硬比对会把
+         * 整类课报成「教务删除」，勾选合并就是批量删课。返回人话描述（给提醒层与
+         * logcat），正常时 null。
+         *
+         * 只守「有 → 零」这一侧：基线没有、教务新有的课（0 → N）是正常新增，照报。
+         */
+        internal fun vanishingKindError(
+            remote: List<Course>,
+            baselineRows: List<ScheduleCourseRow>,
+        ): String? {
+            val baseTheory = baselineRows.count { it.kind == CourseKind.Theory.name }
+            val baseLab = baselineRows.count { it.kind == CourseKind.Lab.name }
+            val remoteTheory = remote.count { it.kind == CourseKind.Theory }
+            val remoteLab = remote.count { it.kind == CourseKind.Lab }
+            val gone = buildList {
+                if (baseTheory > 0 && remoteTheory == 0) add("理论课 ${baseTheory}→0")
+                if (baseLab > 0 && remoteLab == 0) add("实验课 ${baseLab}→0")
+            }
+            if (gone.isEmpty()) return null
+            return "教务课表解析异常（${gone.joinToString("、")}），本轮放弃比对，下个周期自动重试"
         }
     }
 }

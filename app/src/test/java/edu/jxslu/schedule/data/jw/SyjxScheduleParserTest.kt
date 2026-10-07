@@ -192,6 +192,56 @@ class SyjxScheduleParserTest {
         assertEquals(8, courses[0].endSection)
     }
 
+    /**
+     * 一格含两个课块时两块都要抽到（真实页面同一格可以并排两门课）。
+     * 与注入脚本 `querySelectorAll('li.courselists-item')` 同口径——只取第一个
+     * 会让调课检测把丢掉的课误报成「教务删除」（2026-10-07 报障）。
+     */
+    @Test
+    fun keepsEveryBlockInOneCell() {
+        val html = table(
+            "<tr class=\"qz-weeklyTable-tr\">" +
+                "<td class=\"qz-weeklyTable-td qz-weeklyTable-label\" rowspan=\"1\">2</td>" +
+                "<td class=\"qz-weeklyTable-td qz-weeklyTable-label\">3-4</td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                multiCourseCell("机械制造基础A|工程训练中心212", "人机交互技术|工程训练中心210") +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "</tr>",
+        )
+        val courses = coursesOf(html)
+        assertEquals("同格两块都要保留", 2, courses.size)
+        assertEquals(setOf("工程训练中心212", "工程训练中心210"), courses.map { it.position }.toSet())
+        assertTrue(
+            "两块都取所在格与所属周次",
+            courses.all { it.day == 3 && it.startSection == 3 && it.weeks == setOf(2) },
+        )
+    }
+
+    /** 同一格内两个完全相同的课块（教务页偶发重复渲染）聚合后只留一条。 */
+    @Test
+    fun duplicateBlocksInOneCellCollapse() {
+        val html = table(
+            "<tr class=\"qz-weeklyTable-tr\">" +
+                "<td class=\"qz-weeklyTable-td qz-weeklyTable-label\" rowspan=\"1\">2</td>" +
+                "<td class=\"qz-weeklyTable-td qz-weeklyTable-label\">3-4</td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                multiCourseCell("机械制造基础A|工程训练中心212", "机械制造基础A|工程训练中心212") +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "<td class=\"qz-weeklyTable-td\"></td>" +
+                "</tr>",
+        )
+        val courses = coursesOf(html)
+        assertEquals("重复课块聚合成一条", 1, courses.size)
+        assertEquals(setOf(2), courses[0].weeks)
+    }
+
     // ---------- fixture ----------
 
     private fun coursesOf(html: String) =
@@ -222,24 +272,42 @@ class SyjxScheduleParserTest {
 
     private fun emptyCell() = "<td class=\"qz-weeklyTable-td\"></td>"
 
-    /** 课块 + tooltip（tooltip 里故意放会干扰解析的字段）。 */
-    private fun courseCell(spec: String): String {
+    private fun courseLi(spec: String): String {
         val name = spec.substringBefore('|')
         val position = spec.substringAfter('|', "")
-        return "<td class=\"qz-weeklyTable-td qz-hasCourse qz-mixrow\" rowspan=\"1\">" +
-            "<div class=\"td-cell qz-flex-col\"><ul class=\"courselists hasMoreCourse qz-flex-col\">" +
-            "<li class=\"courselists-item qz-hasCourse-1\">" +
+        return "<li class=\"courselists-item qz-hasCourse-1\">" +
             "<div class=\"qz-hasCourse-title qz-ellipse\">$name</div>" +
             "<div class=\"qz-hasCourse-detaillists qz-hasCourse-abbrinfo\">" +
             "<div class=\"qz-hasCourse-detailitem\"> $position </div></div>" +
-            "</li></ul>" +
-            "<div class=\"qz-tooltip\"><div class=\"qz-tooltipContent\"><ul class=\"qz-toolitiplists\">" +
+            "</li>"
+    }
+
+    /** 课块 + tooltip（tooltip 里故意放会干扰解析的字段）。 */
+    private fun courseCell(spec: String): String =
+        "<td class=\"qz-weeklyTable-td qz-hasCourse qz-mixrow\" rowspan=\"1\">" +
+            "<div class=\"td-cell qz-flex-col\"><ul class=\"courselists hasMoreCourse qz-flex-col\">" +
+            courseLi(spec) +
+            "</ul>" +
+            tooltip(spec) +
+            "</div></td>"
+
+    /** 一格两个课块（真实页面同格多 li 的形态）。 */
+    private fun multiCourseCell(vararg specs: String): String =
+        "<td class=\"qz-weeklyTable-td qz-hasCourse qz-mixrow\" rowspan=\"1\">" +
+            "<div class=\"td-cell qz-flex-col\"><ul class=\"courselists hasMoreCourse qz-flex-col\">" +
+            specs.joinToString("") { courseLi(it) } +
+            "</ul>" +
+            tooltip(specs.first()) +
+            "</div></td>"
+
+    private fun tooltip(spec: String): String {
+        val name = spec.substringBefore('|')
+        return "<div class=\"qz-tooltip\"><div class=\"qz-tooltipContent\"><ul class=\"qz-toolitiplists\">" +
             "<li class=\"qz-toolitiplists\">" +
             "<div class=\"qz-tooltipContent-title qz-ellipse\">$name</div>" +
             "<div class=\"qz-tooltipContent-detaillists\">" +
             "<div class=\"qz-tooltipContent-detailitem\"> 课程编号：080803005 </div>" +
             "<div class=\"qz-tooltipContent-detailitem\"> 节次：60304 </div>" +
-            "</div></li></ul></div></div>" +
-            "</div></td>"
+            "</div></li></ul></div></div>"
     }
 }

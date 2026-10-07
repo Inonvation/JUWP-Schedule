@@ -14,6 +14,21 @@ class QiangzhiScheduleParserTest {
         assertEquals(setOf(6, 7, 8, 9, 10, 14, 15), QiangzhiScheduleParser.parseWeeks("6-10,14-15"))
     }
 
+    /**
+     * 「单周 / 双周」标注（2026-10-07 复核实测于 2025-2026-2）：`1,11单周` / `2,6双周`
+     * 的 token 不能被丢掉——此前 `11单` 会被 toIntOrNull 拒掉，整段周次静默少几周
+     * （课少排、指纹对不上）。scripts 侧 `parse_weeks` 已同步同一口径。
+     */
+    @Test
+    fun parseWeeksHandlesSingleDoubleWeekMarks() {
+        assertEquals(setOf(1, 11), QiangzhiScheduleParser.parseWeeks("1,11单周"))
+        assertEquals(setOf(2, 6), QiangzhiScheduleParser.parseWeeks("2,6双周"))
+        // 区间 + 标注：单周 = 奇数周（防御口径；实测样本都是显式列表）
+        assertEquals(setOf(1, 3, 5, 7, 9, 11, 13, 15), QiangzhiScheduleParser.parseWeeks("1-16单周"))
+        // 串中残留标注的脏 token：抠数字兜底
+        assertEquals(setOf(11), QiangzhiScheduleParser.parseWeeks("11单"))
+    }
+
     @Test
     fun parseDetail() {
         val d = QiangzhiScheduleParser.parseDetail(
@@ -139,6 +154,86 @@ class QiangzhiScheduleParserTest {
         assertEquals((1..7).toList(), courses.map { it.day }.sorted())
     }
 
+    /**
+     * 一格里的多个课块（单双周拆块 / 回课时换教室）必须全部抽出。
+     *
+     * 真实页面实测同一格最多 3 个 li（2026-10-07：35 个数据格里 9 格多课块，
+     * 旧实现每格只取第一个，34 个课块只解析出 24 个）。丢掉的课在调课检测里会被
+     * 误报成「教务删除」——注入脚本是全取的，两条解析路径必须逐块对齐。
+     */
+    @Test
+    fun parseFromHtmlKeepsEveryBlockInOneCell() {
+        val html = buildTable(
+            row0 = listOf(
+                multiCell(
+                    "液压与气压传动A" to "老师:唐刚;时间:11周[1-2节];地点:教学北大楼(北B102)",
+                    "液压与气压传动A" to "老师:唐刚;时间:15周[1-2节];地点:教学北大楼(北B306)",
+                ),
+                emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(),
+            ),
+            row1 = listOf(
+                emptyCell(),
+                multiCell(
+                    "PLC原理及应用B" to "老师:许春霞;时间:5-6周[3-4节];地点:教学南大楼(南B206)",
+                    "5形势与政策" to "老师:胡巧雅;时间:10,12,14,16周[3-4节];地点:()",
+                ),
+                emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(),
+            ),
+        )
+        val courses = (QiangzhiScheduleParser.parseFromHtml(html) as ImportParseResult.Success).courses
+        assertEquals(4, courses.size)
+        assertEquals(
+            setOf("教学北大楼(北B102)", "教学北大楼(北B306)"),
+            courses.filter { it.day == 1 }.map { it.position }.toSet(),
+        )
+        assertEquals(
+            setOf(setOf(11), setOf(15)),
+            courses.filter { it.day == 1 }.map { it.weeks }.toSet(),
+        )
+        assertEquals(
+            "同一格里的第二块不能被丢掉",
+            setOf("教学南大楼(南B206)", "()"),
+            courses.filter { it.day == 2 }.map { it.position }.toSet(),
+        )
+        assertEquals(setOf(10, 12, 14, 16), courses.first { it.name == "5形势与政策" }.weeks)
+    }
+
+    /**
+     * 教务页偶尔把**同一课块渲染两遍**（实测同一格内两个完全相同的 li）——两条解析
+     * 路径都要去重，否则导入两行一模一样的课（双份上课提醒 / 双卡）。口径与
+     * `scripts/fetch_courses.py` 的 `to_design` 去重一致。
+     */
+    @Test
+    fun parseFromHtmlDeduplicatesIdenticalBlocks() {
+        val html = buildTable(
+            row0 = listOf(
+                multiCell(
+                    "液压与气压传动A" to "老师:唐刚;时间:14周[3-4节];地点:教学北大楼(北B106)",
+                    "液压与气压传动A" to "老师:唐刚;时间:14周[3-4节];地点:教学北大楼(北B106)",
+                ),
+                emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(),
+            ),
+            row1 = listOf(
+                emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(), emptyCell(),
+            ),
+        )
+        val courses = (QiangzhiScheduleParser.parseFromHtml(html) as ImportParseResult.Success).courses
+        assertEquals("完全相同的两个课块只留一条", 1, courses.size)
+    }
+
+    @Test
+    fun parseExtractJsonDeduplicatesIdenticalItems() {
+        val json = """
+            {"ok":true,"items":[
+              {"name":"机电传动控制B","detail":"老师:陈磊;时间:14周[3-4节];地点:教学北大楼(北B106)","day":4},
+              {"name":"机电传动控制B","detail":"老师:陈磊;时间:14周[3-4节];地点:教学北大楼(北B106)","day":4}
+            ]}
+        """.trimIndent()
+        val result = QiangzhiScheduleParser.parseExtractJson(json)
+        assertTrue("应解析成功：$result", result is ImportParseResult.Success)
+        assertEquals(1, (result as ImportParseResult.Success).courses.size)
+    }
+
     private fun buildTable(row0: List<String>, row1: List<String>): String {
         fun row(section: String, cells: List<String>) = buildString {
             append("<tr class=\"qz-weeklyTable-tr\">")
@@ -162,6 +257,18 @@ class QiangzhiScheduleParserTest {
             "<div class=\"qz-hasCourse-title qz-ellipse\">$name</div>" +
             "<p><span class=\"qz-hasCourse-abbrinfo\">$detail</span></p>" +
             "</li></ul></td>"
+
+    /** 一格多个课块（真实页面同格多 li 的形态：一个 ul 里并排多个 li.courselists-item）。 */
+    private fun multiCell(vararg courses: Pair<String, String>): String =
+        "<td name=\"kbDataTd\" class=\"qz-weeklyTable-td qz-hasCourse\">" +
+            "<ul class=\"courselists\">" +
+            courses.joinToString("") { (name, detail) ->
+                "<li class=\"courselists-item qz-hasCourse-1\">" +
+                    "<div class=\"qz-hasCourse-title qz-ellipse\">$name</div>" +
+                    "<p><span class=\"qz-hasCourse-abbrinfo\">$detail</span></p>" +
+                    "</li>"
+            } +
+            "</ul></td>"
 
     private fun emptyCell(): String = "<td name=\"kbDataTd\" class=\"qz-weeklyTable-td\"></td>"
 

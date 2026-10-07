@@ -102,7 +102,11 @@ object QiangzhiScheduleParser {
                 )
             } else {
                 var failed = 0
+                // distinct：教务页偶尔把同一课块渲染两遍（实测同一格内两个完全相同的
+                // li），不去重会导入两行一模一样的课（双份提醒 / 双卡），scripts 侧
+                // `fetch_courses.py` 也是同一口径去重
                 val courses = items.mapNotNull { toCourse(it).also { c -> if (c == null) failed++ } }
+                    .distinct()
                 if (courses.isEmpty()) {
                     ImportParseResult.Failure(
                         "解析到 ${items.size} 条，但周次/星期字段不完整（失败 $failed 条）",
@@ -198,7 +202,13 @@ object QiangzhiScheduleParser {
             .removeSuffix("周")
             .trim()
         if (cleaned.isEmpty()) return emptySet()
-        for (part in cleaned.split(',', '，', '、', ' ')) {
+        // 「单周 / 双周」标注（2026-10-07 复核在 2025-2026-2 实测到 `1,11单周` / `2,6双周`，
+        // 挂在整串末尾）：数字照解析，最后按奇偶过滤（`1-16单周` 这类区间标注自然得到奇数周）。
+        // 此前带标注的 token 会被 toIntOrNull 拒掉、整段周次被**静默丢弃**——课会少排几周。
+        val oddOnly = cleaned.endsWith("单")
+        val evenOnly = cleaned.endsWith("双")
+        val body = if (oddOnly || evenOnly) cleaned.dropLast(1).trim() else cleaned
+        for (part in body.split(',', '，', '、', ' ')) {
             val p = part.trim()
             if (p.isEmpty()) continue
             val range = p.split('-', '—', '~', '至')
@@ -207,12 +217,24 @@ object QiangzhiScheduleParser {
                 val b = range[1].trim().toIntOrNull()
                 if (a != null && b != null && a in 1..40 && b >= a) {
                     weeks += (a..b.coerceAtMost(40))
+                    continue
                 }
+            }
+            val single = p.toIntOrNull()
+            if (single != null) {
+                if (single in 1..40) weeks += single
             } else {
-                p.toIntOrNull()?.let { if (it in 1..40) weeks += it }
+                // 兜底（与 scripts 侧 `parse_weeks` 同一口径）：从脏 token 里抠数字
+                Regex("\\d+").findAll(p).forEach { m ->
+                    m.value.toIntOrNull()?.let { if (it in 1..40) weeks += it }
+                }
             }
         }
-        return weeks
+        return when {
+            oddOnly -> weeks.filter { it % 2 == 1 }.toSet()
+            evenOnly -> weeks.filter { it % 2 == 0 }.toSet()
+            else -> weeks
+        }
     }
 
     /**
@@ -248,13 +270,17 @@ object QiangzhiScheduleParser {
                     .containsMatchIn(openTag)
                 if (isDataCell && col in 1..7) {
                     val day = col
-                    val chunk = cell.value
-                    val name = Regex("(?is)qz-hasCourse-title[^>]*>([\\s\\S]*?)</")
-                        .find(chunk)?.groupValues?.get(1)?.let { stripTags(it) }?.trim().orEmpty()
-                    val detail = Regex("(?is)qz-hasCourse-abbrinfo[^>]*>([\\s\\S]*?)</span>")
-                        .find(chunk)?.groupValues?.get(1)?.let { stripTags(it) }?.trim().orEmpty()
-                    if (name.isNotBlank()) {
-                        items += RawItem(name, detail, day)
+                    // 一格可能含多个课块（单双周拆块 / 回课时换教室，见 [CourseBlocks]）。
+                    // 必须逐块抽——只取第一个会静默丢课，与注入脚本的全取口径不一致，
+                    // 调课检测会把这些课误报成「教务删除」（2026-10-07 实测报障）。
+                    for (block in CourseBlocks.inCell(cell.value)) {
+                        val name = Regex("(?is)qz-hasCourse-title[^>]*>([\\s\\S]*?)</")
+                            .find(block)?.groupValues?.get(1)?.let { stripTags(it) }?.trim().orEmpty()
+                        val detail = Regex("(?is)qz-hasCourse-abbrinfo[^>]*>([\\s\\S]*?)</span>")
+                            .find(block)?.groupValues?.get(1)?.let { stripTags(it) }?.trim().orEmpty()
+                        if (name.isNotBlank()) {
+                            items += RawItem(name, detail, day)
+                        }
                     }
                 }
                 col += attrInt(openTag, "colspan")
@@ -263,7 +289,8 @@ object QiangzhiScheduleParser {
         if (items.isEmpty()) {
             return ImportParseResult.Failure("HTML 中未找到课表单元格，请打开学期理论课表后再解析")
         }
-        val courses = items.mapNotNull { toCourse(it) }
+        // distinct：与 parseExtractJson 同一口径——教务页偶尔把同一课块渲染两遍
+        val courses = items.mapNotNull { toCourse(it) }.distinct()
         return if (courses.isEmpty()) {
             ImportParseResult.Failure("找到 ${items.size} 条课程，但无法解析周次/节次")
         } else {

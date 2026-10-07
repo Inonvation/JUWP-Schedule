@@ -29,11 +29,19 @@ SCHEDULE_URL = f"{JW8080}/jsxsd/xskb/xskb_list.do?viweType=0"
 
 
 def parse_weeks(text: str) -> set[int]:
-    """解析周次串，如 `1-10` / `1,3,5` / `1-4,6`。"""
+    """解析周次串，如 `1-10` / `1,3,5` / `1-4,6`；`1,11单周` / `2,6双周` 按奇偶过滤。
+
+    「单周 / 双周」标注实测挂在整串末尾（2025-2026-2 的 `1,11单周`），数字照解析、
+    最后按标注奇偶过滤——App 侧 `QiangzhiScheduleParser.parseWeeks` 是同一口径。
+    """
     weeks: set[int] = set()
     if not text:
         return weeks
     text = re.sub(r"周次?$", "", text.strip())
+    odd_only = text.endswith("单")
+    even_only = text.endswith("双")
+    if odd_only or even_only:
+        text = text[:-1].strip()
     for part in re.split(r"[,，]", text):
         part = part.strip()
         if not part:
