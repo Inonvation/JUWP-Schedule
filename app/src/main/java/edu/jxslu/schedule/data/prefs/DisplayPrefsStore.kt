@@ -439,7 +439,8 @@ class DisplayPrefsStore(private val context: Context) {
     /**
      * 「我的」页学籍卡补抓的日期闸门（DESIGN §3.3）。空 = 从没试过。
      *
-     * 抓不到时不能每次进页都重试——那是白打教务。与余额提醒的 `alertLastCheckDate` 同款口径。
+     * 抓不到时不能每次进页都重试——那是白打教务。与余额提醒的 `balanceAlertCheckMillis`
+     * 同款口径（失败不落，下一轮还有机会）。
      */
     val profileSyncDate: Flow<String> = context.displayDataStore.data.map { p ->
         p[KEY_PROFILE_SYNC_DATE].orEmpty()

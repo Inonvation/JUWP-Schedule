@@ -179,6 +179,8 @@ fun CampusCardSettingsScreen(
     var showRechargeSheet by remember { mutableStateOf(false) }
     var showPowerPicker by remember { mutableStateOf(false) }
     var showYktPicker by remember { mutableStateOf(false) }
+    var showPowerIntervalPicker by remember { mutableStateOf(false) }
+    var showYktIntervalPicker by remember { mutableStateOf(false) }
 
     // 充值免责声明（与生活页同一条口径，domain/RechargeDisclaimer）：充值入口打开
     // 弹层前先过提醒，勾「一周内不再提醒」静默 7 天；首次（从未确认过）锁 5 秒
@@ -194,6 +196,8 @@ fun CampusCardSettingsScreen(
     val powerAlertYuan by viewModel.powerAlertYuan.collectAsStateWithLifecycle()
     val yktAlertEnabled by viewModel.yktAlertEnabled.collectAsStateWithLifecycle()
     val yktAlertYuan by viewModel.yktAlertYuan.collectAsStateWithLifecycle()
+    val powerAlertIntervalHours by viewModel.powerAlertIntervalHours.collectAsStateWithLifecycle()
+    val yktAlertIntervalHours by viewModel.yktAlertIntervalHours.collectAsStateWithLifecycle()
 
     fun feedback(notice: NoticeFeedback) {
         busy = false
@@ -487,7 +491,7 @@ fun CampusCardSettingsScreen(
             ) {
                 SettingSwitchRow(
                     title = "寝室电费提醒",
-                    subtitle = "每天检查一次，低于设定金额时发通知",
+                    subtitle = "低于设定金额时发通知；检查间隔在下一行调整",
                     icon = HugeIcons.Home01,
                     checked = powerAlertEnabled,
                     onCheckedChange = { want -> toggleAlert(want) { viewModel.setPowerAlertEnabled(it) } },
@@ -497,6 +501,12 @@ fun CampusCardSettingsScreen(
                     value = BalanceAlert.powerLabel(powerAlertYuan),
                     enabled = powerAlertEnabled,
                     onClick = { showPowerPicker = true },
+                )
+                SettingValueRow(
+                    title = "电费检查间隔",
+                    value = BalanceAlert.intervalLabel(powerAlertIntervalHours),
+                    enabled = powerAlertEnabled,
+                    onClick = { showPowerIntervalPicker = true },
                 )
                 SettingSwitchRow(
                     title = "一卡通余额提醒",
@@ -511,12 +521,18 @@ fun CampusCardSettingsScreen(
                     enabled = yktAlertEnabled,
                     onClick = { showYktPicker = true },
                 )
+                SettingValueRow(
+                    title = "余额检查间隔",
+                    value = BalanceAlert.intervalLabel(yktAlertIntervalHours),
+                    enabled = yktAlertEnabled,
+                    onClick = { showYktIntervalPicker = true },
+                )
             }
 
             SettingsSection(title = "关于余额提醒") {
                 Text(
-                    "· 检查在后台进行，每天一次（约 09:00），可能被系统省电策略推迟；打开 App 时若当天还没查过会补查一次；\n" +
-                        "· 同一天最多提醒一条：余额一直偏低也不会反复打扰，充值回到阈值以上即自然停止；\n" +
+                    "· 检查在后台按设置的间隔进行（默认每 6 小时），可能被系统省电策略推迟；打开 App 时若已到期会补查一次；\n" +
+                        "· 余额持续偏低期间只提醒一次（充值回升、或调整阈值/间隔后，再次下降才会重新提醒）；\n" +
                         "· 提醒依赖上面保存的学号与查询密码，关闭凭证时两个提醒会一并关掉；\n" +
                         "· 取数失败（网络不通、平台改版）当次不提醒，也不会重试——不会因为反复登录触发风控。",
                     style = MaterialTheme.typography.bodySmall,
@@ -539,6 +555,19 @@ fun CampusCardSettingsScreen(
         )
     }
 
+    if (showPowerIntervalPicker) {
+        WheelValueDialog(
+            title = "电费检查间隔",
+            values = BalanceAlert.INTERVAL_CHOICES_HOURS.map { BalanceAlert.intervalLabel(it) },
+            initialIndex = BalanceAlert.intervalChoiceIndex(powerAlertIntervalHours),
+            onConfirm = { index ->
+                showPowerIntervalPicker = false
+                viewModel.setPowerAlertIntervalHours(BalanceAlert.INTERVAL_CHOICES_HOURS[index])
+            },
+            onDismiss = { showPowerIntervalPicker = false },
+        )
+    }
+
     if (showYktPicker) {
         WheelValueDialog(
             title = "余额低于多少时提醒",
@@ -549,6 +578,19 @@ fun CampusCardSettingsScreen(
                 viewModel.setYktAlertYuan(BalanceAlert.YKT_CHOICES[index])
             },
             onDismiss = { showYktPicker = false },
+        )
+    }
+
+    if (showYktIntervalPicker) {
+        WheelValueDialog(
+            title = "余额检查间隔",
+            values = BalanceAlert.INTERVAL_CHOICES_HOURS.map { BalanceAlert.intervalLabel(it) },
+            initialIndex = BalanceAlert.intervalChoiceIndex(yktAlertIntervalHours),
+            onConfirm = { index ->
+                showYktIntervalPicker = false
+                viewModel.setYktAlertIntervalHours(BalanceAlert.INTERVAL_CHOICES_HOURS[index])
+            },
+            onDismiss = { showYktIntervalPicker = false },
         )
     }
 
@@ -803,6 +845,20 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             runBlocking { prefs.yktAlertYuan.first() },
         )
 
+    val powerAlertIntervalHours: StateFlow<Int> = prefs.powerAlertIntervalHours
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { prefs.powerAlertIntervalHours.first() },
+        )
+
+    val yktAlertIntervalHours: StateFlow<Int> = prefs.yktAlertIntervalHours
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            runBlocking { prefs.yktAlertIntervalHours.first() },
+        )
+
     fun setPowerAlertEnabled(value: Boolean) {
         viewModelScope.launch {
             prefs.setPowerAlertEnabled(value)
@@ -827,6 +883,20 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
     fun setYktAlertYuan(value: Int) {
         viewModelScope.launch {
             prefs.setYktAlertYuan(value)
+            BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Ykt)
+        }
+    }
+
+    fun setPowerAlertIntervalHours(value: Int) {
+        viewModelScope.launch {
+            prefs.setPowerAlertIntervalHours(value)
+            BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Power)
+        }
+    }
+
+    fun setYktAlertIntervalHours(value: Int) {
+        viewModelScope.launch {
+            prefs.setYktAlertIntervalHours(value)
             BalanceAlertReminder.onSettingsChanged(appContext, BalanceAlertSource.Ykt)
         }
     }

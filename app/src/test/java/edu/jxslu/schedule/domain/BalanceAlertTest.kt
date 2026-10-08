@@ -86,6 +86,37 @@ class BalanceAlertTest {
     }
 
     @Test
+    fun `检查间隔档位表 默认 6 小时`() {
+        assertEquals(listOf(3, 6, 8, 10, 12, 24, 48), BalanceAlert.INTERVAL_CHOICES_HOURS)
+        assertEquals(6, BalanceAlert.INTERVAL_DEFAULT_HOURS)
+        // 默认值必须落在档位表内，否则设置页轮选器初始下标会飘
+        assertTrue(BalanceAlert.INTERVAL_DEFAULT_HOURS in BalanceAlert.INTERVAL_CHOICES_HOURS)
+    }
+
+    @Test
+    fun `检查间隔夹取 非法值归默认档`() {
+        for (v in BalanceAlert.INTERVAL_CHOICES_HOURS) {
+            assertEquals(v, BalanceAlert.coerceIntervalHours(v))
+        }
+        assertEquals(6, BalanceAlert.coerceIntervalHours(0))
+        assertEquals(6, BalanceAlert.coerceIntervalHours(5))
+        assertEquals(6, BalanceAlert.coerceIntervalHours(7))
+        assertEquals(6, BalanceAlert.coerceIntervalHours(-1))
+        assertEquals(6, BalanceAlert.coerceIntervalHours(999))
+    }
+
+    @Test
+    fun `检查间隔下标与文案`() {
+        assertEquals(0, BalanceAlert.intervalChoiceIndex(3))
+        assertEquals(1, BalanceAlert.intervalChoiceIndex(6))
+        assertEquals(6, BalanceAlert.intervalChoiceIndex(48))
+        assertEquals(1, BalanceAlert.intervalChoiceIndex(7)) // 非法值归默认档的下标
+        assertEquals("每 6 小时", BalanceAlert.intervalLabel(6))
+        assertEquals("每 48 小时", BalanceAlert.intervalLabel(48))
+        assertEquals("每 6 小时", BalanceAlert.intervalLabel(7)) // 夹取后
+    }
+
+    @Test
     fun `低于阈值才提醒 等于阈值不算低`() {
         assertTrue(BalanceAlert.isLow(8.0, 20))
         assertTrue(BalanceAlert.isLow(19.99, 20))

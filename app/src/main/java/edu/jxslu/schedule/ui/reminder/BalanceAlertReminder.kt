@@ -42,14 +42,16 @@ import java.util.concurrent.TimeUnit
  *
  * 与上课/作业提醒（[ClassReminder]）的差别：那两个是**时间点**驱动（到点即发，闹钟为主），
  * 这里是**状态**驱动（余额低了才发），没有可预排的时刻，所以只有一条路：
- * WorkManager 每天一次周期核对 + 冷启动补查 + 设置变更后立即评估。
+ * WorkManager 周期核对（间隔 = 两链设置的最小档）+ 冷启动补查 + 设置变更后立即评估。
  * 不用 `setAlarmClock`——那会在状态栏挂一枚闹钟图标，对「余额低了」是错的语义。
  *
  * 三条口径（改之前先读）：
  *
- * 1. **每天最多一条**：闸门是「上次**成功**检查日期」（[DisplayPrefsStore.alertLastCheckDate]）。
- *    成功取到数据才落日期（无论是否低于阈值），所以同一天不会重复打第三方接口、
- *    也不会重复发通知；失败不落日期，当天还有补查机会——与作业提醒「发出后才落键」同口径。
+ * 1. **间隔与频率**：各路闸门是「上次**成功**检查时刻」（[DisplayPrefsStore.balanceAlertCheckMillis]），
+ *    判据 `AutoSyncRules.shouldAttemptAt`（间隔取各自设置档位，默认 6 小时）。成功取到数据才
+ *    落时刻，失败不落——闸门保持开着，下一轮还有补查机会。**偏低期间只提醒一次**：
+ *    「已提醒未回升」标记（`power/ykt_alert_notified`）在通知发出或免扰拦截后置位，
+ *    回升随收件箱状态消解清除；改设置也会清，让新规则立即重新评估。
  * 2. **不猜数**：电费金额 = 剩余电量 × 单价（[BalanceAlert.remainingYuan]），
  *    电量或单价缺失就当这次没有结论；余额/电费取数失败一律静默（不重试，防撞风控）。
  * 3. **凭证是前提**：两个来源共用 `YktCredentialStore` 的学号 + 查询密码；凭证缺失时
@@ -62,7 +64,7 @@ object BalanceAlertReminder {
 
     private const val TAG = "BalanceAlert"
 
-    /** 周期核对（每天一次）。 */
+    /** 周期核对（间隔 = 两链检查间隔的最小档）。 */
     private const val PERIODIC_WORK = "balance_alert_periodic"
 
     /** 即时评估（冷启动 / 开关与阈值变更）。 */
@@ -198,7 +200,7 @@ object BalanceAlertReminder {
             Graph.powerRepository(context).snapshot(
                 credentials.username,
                 credentials.password,
-                // 这一条读数是「用电统计」最稳定的采样点（每天一次，与开关联动）
+                // 这一条读数是「用电统计」最稳定的采样点（按设置的间隔，与开关联动）
                 source = PowerReadingSource.ALERT,
             )
         }.getOrNull() ?: return // 失败不落时刻：间隔闸门保持开着，下一轮还有补查机会

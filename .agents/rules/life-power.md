@@ -218,10 +218,15 @@
   （寝室电费 10–80 元 / 一卡通余额 10–50 元，步长 5）。口径单一来源 `domain/BalanceAlert.kt`：
   电费「元」= 剩余电量 × 单价（**唯一换算处**，生活页电费卡也走它，别再内联乘一次）、
   阈值是**严格小于**、档位表/夹取/文案都在这里。调度在 `ui/reminder/BalanceAlertReminder.kt`：
-  每天一次 + 冷启动补查 + 设置变更后立即评估，闸门是「上次**成功**检查日期」
-  （同一天每个来源最多一条；**取数失败不落日期**，当天还能补查）。
+  检查间隔按设置档位（2026-10-07 起小时级：两链**各自独立**，默认 6h、档位
+  3/6/8/10/12/24/48，`domain/BalanceAlert` 的间隔口径）+ 冷启动补查 + 设置变更后立即评估；
+  周期任务 `balance_alert_periodic` 取两链最小档排（KEEP 保相位 / 变档 REPLACE，
+  已排档位记 `balance_periodic_interval`），各路闸门是 `AutoSyncRules.shouldAttemptAt`
+  （「上次**成功**检查时刻」epoch millis；**取数失败不落时刻**，间隔闸门保持开着）。
+  「偏低期间只提醒一次」（`power/ykt_alert_notified` 标记）：通知发出或免扰拦截（补发兜底）
+  即置位，回升随收件箱状态消解一并清除；改设置（开关/阈值/间隔）清标记重新评估。
   四条不许动：**失败不重试**（防撞风控）、一卡通只算**正式卡余额**（不含电子账户）、
-  `balance_alert_periodic` / `BalanceAlertCheckWorker` 的名字（`KEEP` 下改名 = 每日兜底永久消失）、
+  `balance_alert_periodic` / `BalanceAlertCheckWorker` 的名字（`KEEP` 下改名 = 周期兜底永久消失）、
   通知 id/tag 与落点（电费 1005 / 一卡通 1006，`EXTRA_ROUTE=ROUTE_LIFE` 落生活页；
   生活页开关关掉时不带 extra 落今日页）。关凭证时两个开关一并回落（都靠那份凭证）。
   **PendingIntent requestCode（3005/3006）与通知 id 分离**：骑行提醒的通知 id 也是
