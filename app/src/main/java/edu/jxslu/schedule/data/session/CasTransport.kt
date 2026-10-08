@@ -19,6 +19,15 @@ interface CasTransport {
     /** 带会话取一个教务页面。给学籍卡这类一次性抓取用（DESIGN §3.3 的班级来源）。 */
     suspend fun fetchHtml(url: String): String
 
+    /**
+     * 带会话 **POST 表单**（2026-10-08 起；选课中心的列表查询用它——教务那个接口是
+     * POST + 旧版 DataTables 参数，见 `JwUrls.SELECTION_PLAN_LIST_API`）。
+     *
+     * [form] 是 `(name, value)` 对；`columns[0][data]` 这类键值由实现方统一编码。
+     * 失败抛 `JwHttpException`（登录页 / 被顶 = `SessionInvalid`）——与 [fetchHtml] 同一套判据。
+     */
+    suspend fun postForm(url: String, form: List<Pair<String, String>>): String
+
     fun hasCookies(): Boolean
 
     fun cookies(): List<Cookie>

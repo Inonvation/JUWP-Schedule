@@ -1,11 +1,13 @@
 package edu.jxslu.schedule.domain
 
-/** 课程列表的筛选条件（DESIGN §3.22，纯数据，UI 只负责收集）。 */
+/**
+ * 课程列表的**本地**筛选条件（DESIGN §3.22，纯数据，UI 只负责收集）。
+ *
+ * 2026-10-08 v2 收窄：关键词、余量与课程类别（kctype）都改走**服务端**查询
+ * （`SelectionQuery`，越分页越正确）；这里只剩「服务端没有的维度」——
+ * 只看已选与课程属性（教务 `kcsxmc`，列表接口没有对应筛选参数）。
+ */
 data class SelectionFilter(
-    /** 关键词：课程名 / 教师 / 时间地点 任一包含（去空白、忽略大小写）；空 = 不筛。 */
-    val query: String = "",
-    /** 只看还有余量的（余量未知的按「不排除」处理——不猜）。 */
-    val onlyAvailable: Boolean = false,
     /** 只看我已选中的。 */
     val onlySelected: Boolean = false,
     /** 课程属性（必修 / 任选…）；null = 全部。 */
@@ -36,26 +38,13 @@ enum class SelectionSort {
 object SelectionCourses {
 
     fun filter(courses: List<SelectionCourse>, filter: SelectionFilter): List<SelectionCourse> {
-        val query = filter.query.trim()
+        val attr = filter.attribute
         return courses.filter { course ->
-            if (query.isNotEmpty() && !course.matchesQuery(query)) return@filter false
-            if (filter.onlyAvailable) {
-                // remaining 是计算属性（无 backing field），取出来再判，别指望 smart cast
-                val remaining = course.remaining
-                if (remaining != null && remaining <= 0) return@filter false
-            }
             if (filter.onlySelected && !course.selected) return@filter false
-            val attr = filter.attribute
             if (attr != null && attr.isNotEmpty() && course.attribute != attr) return@filter false
             true
         }
     }
-
-    private fun SelectionCourse.matchesQuery(query: String): Boolean =
-        name.contains(query, ignoreCase = true) ||
-            teacher.contains(query, ignoreCase = true) ||
-            timeText.contains(query, ignoreCase = true) ||
-            placeText.contains(query, ignoreCase = true)
 
     fun sort(courses: List<SelectionCourse>, sort: SelectionSort): List<SelectionCourse> =
         when (sort) {

@@ -48,7 +48,6 @@ import edu.jxslu.schedule.ui.qzxy.QzxyScreen
 import edu.jxslu.schedule.ui.qzxy.QzxyDebugScreen
 import edu.jxslu.schedule.ui.scholar.ScholarScreen
 import edu.jxslu.schedule.ui.selection.SelectionCenterScreen
-import edu.jxslu.schedule.ui.selection.SelectionGrabScreen
 import edu.jxslu.schedule.ui.selection.SelectionRecordsScreen
 import edu.jxslu.schedule.ui.selection.SelectionScreen
 import edu.jxslu.schedule.ui.selection.SelectionWishesScreen
@@ -105,10 +104,8 @@ enum class SubpageScreen {
     SELECTIONS,
     /** 选课 → 应用内选课中心（课程列表 · 筛选 · 选课/退课，DESIGN §3.22 / §4.36） */
     SELECTION_CENTER,
-    /** 选课 → 预选清单（想选的课与教师 · 优先级，DESIGN §3.20 / §4.36） */
+    /** 选课 → 预选清单（预购匹配：想选的课与教师 · 优先级，DESIGN §3.20 / §4.36） */
     SELECTION_WISHES,
-    /** 选课 → 抢课面板（开始/停止 · 进度 · 日志，DESIGN §4.36） */
-    SELECTION_GRAB,
     /** 选课 → 已选课程（教务选课日志按学期，2026-10-01 自选课主页挪出，DESIGN §3.19 / §4.35） */
     SELECTION_RECORDS,
     /** 导出成绩单 → 最近导出（DESIGN §3.14；列表即 filesDir/transcripts，最多 10 份） */
@@ -306,7 +303,6 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SELECTION_CENTER ->
                 SelectionCenterScreen(onBack = onBack, focusRoundId = focusItemId)
             SubpageScreen.SELECTION_WISHES -> SelectionWishesScreen(onBack = onBack)
-            SubpageScreen.SELECTION_GRAB -> SelectionGrabScreen(onBack = onBack)
             SubpageScreen.SELECTION_RECORDS -> SelectionRecordsScreen(onBack = onBack)
             SubpageScreen.TRANSCRIPTS -> TranscriptHistoryScreen(onBack = onBack)
             // focusItemId 对 RIDE 复用为「进页即定位的车号」（2026-09-29）：识别 / 深链

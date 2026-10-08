@@ -33,6 +33,9 @@ class CasSessionTest {
         web = FakeWebCookieBridge()
         now = 1_700_000_000_000L
         SessionStatus.clear(LoginTarget.Jw)
+        // 重登节流是进程级静态态：不复位的话「先跑的用例」会把 60s 窗口留给后面的
+        // 重登用例（都拿固定假时钟）——用例顺序一换就随机红
+        SessionStatus.clearAutoLoginThrottle()
     }
 
     private fun newSession(proxyActive: Boolean = false) = CasSession(
@@ -299,6 +302,59 @@ class CasSessionTest {
         assertEquals("必须重取一次", 2, http.fetchHtmlCalls)
     }
 
+    /** POST 查询（选课列表）与 fetchHtml 同一套读语义：被顶 → 重登一次 → 重发一次。 */
+    @Test
+    fun postForm_reloginsOnceWhenSessionInvalid() = runBlocking {
+        store.cas = SessionCredentials("1", "p")
+        val session = newSession()
+        session.ensureValid()
+        val loginsBefore = http.loginCalls
+        http.postFormErrorOnce = JwHttpException.SessionInvalid("账号在其它地方登录")
+        http.postFormResult = """{"aaData":[]}"""
+
+        assertEquals("""{"aaData":[]}""", session.postForm("http://jiaowu/xsxkkc/xsxkBxqjhxk", listOf("a" to "b")))
+        assertEquals("必须重登一次", loginsBefore + 1, http.loginCalls)
+        assertEquals("必须重发一次", 2, http.postFormCalls)
+    }
+
+    @Test
+    fun postForm_returnsNullWhenSessionUnavailable() = runBlocking {
+        http.cookiePresent = false
+        assertEquals(
+            null,
+            newSession().postForm("http://jiaowu/xsxkkc/xsxkBxqjhxk", listOf("a" to "b")),
+        )
+        assertEquals(0, http.postFormCalls)
+    }
+
+    /**
+     * 写路径的规矩（2026-10-08）：会话被顶**不自动重登重发**——那两个 GET 是写操作
+     * （一次请求就是一次选课提交），静默重发可能造成重复提交；异常抛给调用方收场。
+     */
+    @Test
+    fun fetchForAction_doesNotReloginOnSessionInvalid() = runBlocking {
+        store.cas = SessionCredentials("1", "p")
+        val session = newSession()
+        session.ensureValid()
+        val loginsBefore = http.loginCalls
+        http.fetchHtmlError = JwHttpException.SessionInvalid("被顶")
+
+        val error = runCatching { session.fetchForAction("http://jiaowu/xsxkkc/bxqjhxkOper") }
+            .exceptionOrNull()
+        assertTrue(error is JwHttpException.SessionInvalid)
+        assertEquals("绝不自动重登", loginsBefore, http.loginCalls)
+        assertEquals("也不重发", 1, http.fetchHtmlCalls)
+    }
+
+    @Test
+    fun fetchForAction_throwsWhenSessionUnavailable() = runBlocking {
+        http.cookiePresent = false
+        val error = runCatching { newSession().fetchForAction("http://jiaowu/xsxkkc/bxqjhxkOper") }
+            .exceptionOrNull()
+        assertTrue(error is JwHttpException.SessionInvalid)
+        assertEquals(0, http.fetchHtmlCalls)
+    }
+
     /** 重登没成功就不再打第二次取数——失败不重试的纪律不变。 */
     @Test
     fun fetchHtml_sessionInvalid_doesNotRefetchWhenReloginFails() = runBlocking {
@@ -406,14 +462,18 @@ private class FakeCasTransport : CasTransport {
     var loginCalls = 0
     var verifyCalls = 0
     var fetchHtmlCalls = 0
+    var postFormCalls = 0
     var loginError: Throwable? = null
     var verifyError: Throwable? = null
     var fetchHtmlError: Throwable? = null
+    var postFormError: Throwable? = null
 
-    /** 只在**第一次**取页面时抛，之后恢复正常——用来造「会话被顶掉后重登再取」的场景。 */
+    /** 只在**第一次**请求时抛，之后恢复正常——用来造「会话被顶掉后重登再发」的场景。 */
     var fetchHtmlErrorOnce: Throwable? = null
+    var postFormErrorOnce: Throwable? = null
     var verifyResult = false
     var fetchHtmlResult = ""
+    var postFormResult = ""
     var cookiePresent = false
 
     override suspend fun login(username: String, password: String) {
@@ -438,6 +498,16 @@ private class FakeCasTransport : CasTransport {
         }
         fetchHtmlError?.let { throw it }
         return fetchHtmlResult
+    }
+
+    override suspend fun postForm(url: String, form: List<Pair<String, String>>): String {
+        postFormCalls++
+        postFormErrorOnce?.let {
+            postFormErrorOnce = null
+            throw it
+        }
+        postFormError?.let { throw it }
+        return postFormResult
     }
 
     override fun hasCookies(): Boolean = cookiePresent

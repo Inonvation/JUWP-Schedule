@@ -244,29 +244,68 @@
 - 周期检查搭 `ScoreAlertReminder` **第四路**：`ensurePeriodicWork` 的全关判定、`check` 的
   开关列表、`onSettingsChanged` 的清时刻，三处改任何一处都要四个开关一起想。
 
-## 选课（2026-10-01，DESIGN §3.19 / §3.20 / §3.21 / §4.35 / §4.36）
+## 选课（2026-10-01 建；2026-10-08 窗口期接入真实接口，DESIGN §3.19 / §3.20 / §3.21 / §3.22 / §4.35 / §4.36）
 
 - 选课结果 = 教务「选课日志」`loadXsxkjgList?lx=xkrz&type=list&xnxqid=<学期>`（**不带 .do**，
   layui JSON）；轮次 = `xsxk/xklc_list_data`。解析 `data/jw/SelectionParser.kt`，同步
   `SelectionSync`（OkHttp + `CasSession`），落 Room v17 `course_selections`（按学期替换）。
   接口字段与实测见 DESIGN §4.35，脚本侧 §5.8（`fetch_selections.py`）。
-- **读路径的红线**：`/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，POST，`lx=tk`/`lx=ww`）与
-  `/jsxsd/xsxk/mzlist.do`（免责声明查询，POST）任何路径都不碰。选课/退课主路径是应用内
-  选课中心（`SelectionCenterClient`，§3.22）；`JwImportMode.Selection` 的 WebView 只是
-  备用入口（选课页「教务网页」行 + 中心接口未接入时的逃生门），里面由用户自己操作。
-- **抢课是唯一的写路径**（2026-10-01 起，DESIGN §3.21 / §4.36）：只提交用户**预选清单**
-  匹配到的课程、**只加课不自动退课**；不并发、固定间隔（5–60 秒可调）、连续失败 5 次自动停、
-  单场上限 2 小时；遇验证码/异常页面立即停止并通知，**不绕过**。所有教务读写都走
-  `SelectionCenterClient` 抽象（`Graph.selectionCenterClient` 是唯一替换点），
-  真实实现等窗口期实测后接入——**现在这个位置是 `UnconfiguredSelectionCenterClient`**。
+- **应用内选课中心的三条接口**（2026-10-08 窗口期实测，真身 `SelectionCenterHttpClient`，
+  解析 `SelectionCenterParser`）：
+  ① 列表 = **POST** `xsxkkc/xsxkBxqjhxk`——body 必须是**旧版 DataTables 参数**
+  （`sEcho`/`iDisplayStart`/`mDataProp_i`…，键集是契约：缺了教务回它自家 **404 错误页**），
+  查询条件在 URL 上（页面 `queryKxkcList` 全参数面，2026-10-08 v2 起全部接入）；
+  ② 提交 = GET `xsxkkc/bxqjhxkOper?kcid=<jx02id>&cfbs=..&jx0404id=..`（照页面 JS 口径，
+  空 cfbs 页面会拼字面量 `null`——照抄）；
+  ③ 退课 = GET `xsxkjg/xstkOper?jx0404id=..`。课程主键 = `jx0404id|jx02id|cfbs` 拼串
+  （`SelectionCenterParser.splitCourseKey`）；验证码开关 `input#sfyzmxk` 在列表壳页
+  `getBxqjxk` 读，为 `"1"` 一律拒绝（红线：不绕验证码）。
+- **「先进轮次」是 xsxkkc 模块的会话前提**（2026-10-08 复测坐实）：列表/壳页请求前，
+  当前会话必须 GET 过 `newXsxkzx?jx0502zbid=<轮次>`——没进过时壳页只回 534 字节空存根、
+  列表一律回教务 404 页（**同参数进轮次后 200，不是参数问题**）。`prepare` 负责进轮次
+  （进程内一次）；会话被顶重登后这个状态会丢 → 列表 404，`fetchPageRetrying` 会
+  **重进轮次再试一次**（读语义可重试；写路径的「不自动重登重发」不动）。
+- **列表的查询条件与「浏览全量」**（v2 实测）：`kch`（课名/编号子串）、`jg0101id`
+  （教师名文本）、`skxq`（1-7）、`skjc`/`endJc`（1-11，须配星期）、`kctype`（01-09）、
+  `sfym`/`sfct`/`sfxx`——服务端 **AND** 叠加，全部接入 UI（`SelectionQuery`）。
+  **条件要求**：`kch`/`jg0101id`/`skxq` 至少一个非空（全空回 0 行、`%`/空格也回 0——
+  服务端按字面匹配）；**浏览全量 = `kch=0`**（编号全以 0 开头；数字扫描并集 48/48 覆盖，
+  `SelectionCenterParser.BROWSE_KEYWORD`）——空关键词/教师时由 `listQuery` 注入。
+  星期扫描会漏「无排课时间」的课程设计类（实测差 5 行），别拿它当浏览方案。
+- **三个开关的服务端语义**（v2 实测，App 默认值据此定）：`sfct=true` 会把所有带 `ctsm`
+  的行滤掉——**连「该课堂已选」的已选行一起**（48→15）→ **App 默认 `hideConflict=false`**
+  （否则已选课从列表消失、退课入口断链；教务页面自己默认勾选，不跟）；`sfym=true` 滤满员
+  （48→46，默认关）；`sfxx` 默认 true 保持既有口径。
+- **写路径只剩一条、过 `SelectionCenterClient` 抽象**（`Graph.selectionCenterClient` 是
+  唯一替换点）：**用户逐次确认**的手动加/退课（应用内中心 + 确认弹窗 `SelectionConfirmDialog`）。
+  **自动抢课整条链已于 2026-10-08 v3 下线**（引擎 / 前台服务 / 面板 / 到点自动开始 /
+  抢课须知，用户拍板「风险与未知太大」；留档见 DESIGN §3.21）——**没有任何自动提交、
+  后台轮询或到点自动执行**；预选清单改「预购匹配」（命中课程优先显示，见下一条）。
+  **写请求不自动重登重发**（`CasSession.fetchForAction`：会话被顶就停手、让用户重登——
+  防重复提交；读路径的 POST 查询才允许重登重试一次）。`JwImportMode.Selection` 的 WebView
+  仍是备用入口（选课页「教务网页」行），里面由用户自己操作。
+  **联调期 debug 落盘**：`filesDir/selection_debug/`（`SelectionDebugDump`，debug 包才写、
+  release 传 null；目录已进两套备份排除）——只落提交/退课应答原文，校准三态映射用。
+- **预选命中（预购匹配，v3）**：选课中心进页 / 刷新时按预选清单**逐条**调
+  `fetchCourses(roundId, [wish.nameKeyword])`（服务端只按课名/编号查，每条 1–3 页、串行
+  `interRequestDelayMs` 间隔；**不周期轮询**），`SelectionWishHits.group` 本地复核教师关键词、
+  按优先级归组去重；命中区块置顶优先显示，主列表同打标。匹配失败只在该区块提示 + 重试，
+  **不影响浏览与手动选课**。预选清单页（`SelectionWishesScreen`）进页同款匹配一次，标
+  「本轮已开 N 门」。
+- **红线补充**：`/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，老入口）与 `/jsxsd/xsxk/mzlist.do`
+  （免责声明查询）**任何路径都不碰**——2026-10-08 实测直接 GET 进选课页与数据接口都可用、
+  未见免责硬门槛，App 依旧不代发；若真机提交遇到免责门槛再回来定（先例：只由用户动作触发）。
+  **脚本永远只读**（探针也不例外；列表查询虽是 POST 但语义只读）。**退课永远只有用户
+  逐次确认这一条路径**（没有任何自动退课入口）。
 - **默认抓「当前学期 + 紧邻下一学期」**：选课常发生在学期末选下学期，光抓当前学期会漏掉
   「已选下学期」这件最要紧的事（`SelectionSync.resolveDefaultTerms`，学期从壳页选中项来、
   不猜；2026-10-04 起同样吃 12 小时壳页缓存，非 force 复用上次抓到的学期）。先全部抓到内存、
   再一次性落库——中途失败不留半套。
 - **轮次快照允许存空**（`SelectionRoundsStore` 与 `ExamSnapshotStore` 的「宁旧勿空」相反）：
   `count=0`（非选课期）是教务的权威状态，存空才会让页面如实显示、让过期提醒被撤销。
-- **提醒的时间解析容错到「解析不了就不排」**：`xksj` 的真实格式要等选课期才有样本
-  （`SelectionRounds.parseTimeRange` 支持 日期+时刻对 / 仅日期对 / 单个时刻）。
+- **提醒的时间解析**：`xksj` 真实格式已实测 = `2026-10-08 10:00~2026-10-12 23:59`
+  （`~` 无空格；夹具在 `SelectionRoundsTest.parsesRealWindowSample`）。容错口径不变：
+  日期+时刻对 / 仅日期对 / 单个时刻，**解析不了就不排**。
   提醒点 = 开始前 30 分钟 + 截止前 6 小时；已发键 `轮次id|start` / `轮次id|end` 落 DataStore，
   闹钟与周期核对共用去重；发不出去不落键（同作业提醒）。
 - **周期核对搭 `ScoreAlertReminder` 的周期任务**（核对间隔独立设置
@@ -283,9 +322,9 @@
   快照认不出退回 `pickTarget`）。带轮次 id 开教务 WebView（`JwImportActivity.start(...,
   selectionRoundId=)` → `autoNavTarget = JwUrls.selectionRoundUrl(id)`，`newXsxkzx?jx0502zbid=`）
   只剩中心「打开教务页面（备用）」一处调用。轮次 id **必须过 `ROUND_ID_PATTERN` 白名单**
-  （会拼进 URL，同 `TERM_PATTERN` 纪律），不合法一律退回选课中心列表。未实测：教务从列表
-  进去会先 POST `mzlist.do`（免责声明），直接进若被挡，退回列表即可（窗口底部的
-  「选课中心」按钮）。
+  （会拼进 URL，同 `TERM_PATTERN` 纪律），不合法一律退回选课中心列表。2026-10-08 实测：
+  直接 GET `newXsxkzx` 可进（页面渲染与数据接口都可用）；从列表进时教务仍会先 POST
+  `mzlist.do`（那一步 App 不碰）。预览页受 `yxzt=='1'` 门控，不满足回 no-open 页（实测）。
 
 ## 自动落页：触发点用 onPageCommitVisible（2026-10-01 修）
 

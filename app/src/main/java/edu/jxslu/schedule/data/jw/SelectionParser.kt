@@ -4,6 +4,7 @@ import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.SelectionRound
 import edu.jxslu.schedule.domain.SelectionRounds
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -94,7 +95,9 @@ object SelectionParser {
     const val ROUNDS_URL: String = JwUrls.SELECTION_ROUNDS_API
 
     /**
-     * 解析轮次 JSON。字段名来自页面表格定义（非选课期无样本可对照）：
+     * 解析轮次 JSON。字段名曾来自页面表格定义、无样本；2026-10-08 选课窗口期已实抓（见
+     * `SelectionParserTest.parsesRealRoundRowFromLiveWindow`）——`xksj` 是
+     * 「`日期 时刻~日期 时刻`」（`~` 无空格）形态。
      * 缺 `jx0502zbid`（进选课的键）或名称的行直接丢弃——没有它这行不可操作。
      */
     fun parseRounds(jsonText: String): RoundsPage {
@@ -186,8 +189,13 @@ object SelectionParser {
         return root
     }
 
-    private fun JsonObject.str(key: String): String? =
-        this[key]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
+    private fun JsonObject.str(key: String): String? {
+        // JsonNull 要走这里挡掉：它的 `content` 是字符串 "null"，不挡就会把
+        // 「教务没给」渲染成界面上的 "null"（实测 shzt/yy/xnxqid 整列 null）
+        val value = this[key] ?: return null
+        if (value is JsonNull) return null
+        return value.jsonPrimitive.content.trim().takeIf { it.isNotEmpty() }
+    }
 
     private fun JsonObject.dbl(key: String): Double? = try {
         (this[key] as? JsonPrimitive)?.content?.toDoubleOrNull()
@@ -197,7 +205,9 @@ object SelectionParser {
 
     /** 教务多行字段用 `<br>` 分隔（如「星期四 0708节<br>星期五 0708节」）：转 `\n` 并清掉残余标签。 */
     private fun JsonObject.multiline(key: String): String {
-        val raw = this[key]?.jsonPrimitive?.content ?: return ""
+        val value = this[key] ?: return ""
+        if (value is JsonNull) return ""
+        val raw = value.jsonPrimitive.content
         return raw
             .replace(BR_RE, "\n")
             .replace(TAG_RE, "")

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -27,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,33 +44,45 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.domain.CourseSelection
+import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.repo.SelectionClientException
+import edu.jxslu.schedule.data.session.AutoSyncRules
+import edu.jxslu.schedule.domain.SelectionRound
+import edu.jxslu.schedule.domain.SelectionRounds
 import edu.jxslu.schedule.domain.SelectionWish
 import edu.jxslu.schedule.domain.SelectionWishes
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.LoadingHint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 预选清单（DESIGN §3.20，我的 → 学习 → 选课 → 预选清单）。
  *
- * 选课开放前录入「想选的课」：课程名关键词（必填、包含匹配）+ 教师名关键词（可选）+ 优先级。
- * 选课开放后抢课引擎按优先级匹配教务课程列表（DESIGN §4.36，窗口期联调后接通）。
+ * **预购匹配口径（2026-10-08 v3）**：录好「想选的课」（课程名关键词必填、教师名可选、
+ * 优先级）——进选课中心时按清单逐条匹配教务课程列表，**命中课程优先显示**；选课仍由用户
+ * 逐次确认，App **没有任何自动提交路径**（自动抢课已下线，见 DESIGN §3.21 下线记录）。
+ * 本页进页也顺带匹配一次，每条标「本轮已开 N 门」，可直接去选课中心。
  *
  * **防重复对照**（2026-10-01）：每条预选在「已选课程」（Room 选课日志）与「当前课表」
  * 里做一次本地匹配（同一套 [SelectionWishes.matches] 口径），命中就在卡上标出来——
  * 录清单最常见的错是这门课其实已经选过/课表里已有，不用等接口，纯本机数据就能拦一道。
  *
- * 只在本机保存（DataStore JSON，口径同快捷方式）；页面明说「只在你手动开始后发出指令」，
- * 不让用户以为录完清单就会自动抢。
+ * 只在本机保存（DataStore JSON，口径同快捷方式）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SelectionWishesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { Graph.displayPrefs(context) }
+    val client = remember { Graph.selectionCenterClient(context) }
+    val sync = remember { Graph.selectionSync(context) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
@@ -83,6 +98,48 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
 
     var editing by remember { mutableStateOf<SelectionWish?>(null) }
     var deleting by remember { mutableStateOf<SelectionWish?>(null) }
+
+    // 「本轮已开」匹配（v3）：进页 / 清单变化 / 手动刷新时各跑一次，每条预选一次查询
+    var round by remember { mutableStateOf<SelectionRound?>(null) }
+    LaunchedEffect(Unit) {
+        round = withContext(Dispatchers.IO) {
+            SelectionRounds.pickTarget(sync.cachedRounds(), System.currentTimeMillis())
+        }
+    }
+    var hitCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var hitsLoading by remember { mutableStateOf(false) }
+    var hitsError by remember { mutableStateOf<String?>(null) }
+
+    fun loadHits() {
+        val target = round ?: return
+        val list = wishesState.orEmpty()
+        if (list.isEmpty() || !client.isConfigured || hitsLoading) return
+        hitsLoading = true
+        hitsError = null
+        scope.launch {
+            val counts = mutableMapOf<String, Int>()
+            try {
+                list.forEachIndexed { index, wish ->
+                    if (index > 0) delay(AutoSyncRules.interRequestDelayMs())
+                    counts[wish.id] = client.fetchCourses(target.id, listOf(wish.nameKeyword))
+                        .count { SelectionWishes.matches(wish, it.name, it.teacher) }
+                }
+                hitCounts = counts
+            } catch (e: SelectionClientException) {
+                hitsError = e.message ?: "本轮匹配失败"
+                if (counts.isNotEmpty()) hitCounts = counts
+            } catch (e: Exception) {
+                hitsError = "本轮匹配失败：${e.message ?: "未知错误"}"
+                if (counts.isNotEmpty()) hitCounts = counts
+            }
+            hitsLoading = false
+        }
+    }
+
+    // key 里带清单内容：首帧到达 / 增删改后重新匹配；清单没变不重查
+    val wishKey = wishesState.orEmpty()
+        .joinToString("|") { "${it.id}:${it.nameKeyword}:${it.teacherKeyword}" }
+    LaunchedEffect(round?.id, wishKey) { loadHits() }
 
     // 每条预选的防重复提示，组合层一次算好（清单 × 已选 × 课表，量级很小不值得流式）
     val dupHints = remember(wishesState, selectionsState, timetableCourses) {
@@ -103,6 +160,14 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
         scope.launch { prefs.setSelectionWishes(next) }
     }
 
+    /** 头部状态行后缀：匹配中 / 失败 / 命中条数（都拿不到时不写）。 */
+    val matchSummary: String? = when {
+        !client.isConfigured || round == null -> null
+        hitsLoading -> "本轮匹配中…"
+        hitsError != null -> "本轮匹配失败，点右上角重试"
+        else -> "本轮已开 ${hitCounts.count { it.value > 0 }} 条预选"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -113,6 +178,12 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { loadHits() },
+                        enabled = client.isConfigured && round != null && !hitsLoading,
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "重新匹配")
+                    }
                     IconButton(onClick = { editing = SelectionWish() }) {
                         Icon(Icons.Filled.Add, contentDescription = "添加")
                     }
@@ -138,8 +209,8 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
             ) {
                 EmptyHint(
                     title = "还没有预选课程",
-                    body = "选课开放前把想选的课录在这里：填课程名关键词（必填）与教师名（可选），" +
-                        "再标一个优先级。\n抢课只在你手动开始后发出指令。",
+                    body = "把想选的课录在这里：填课程名关键词（必填）与教师名（可选），再标一个优先级。" +
+                        "\n进选课中心时会按它匹配，命中的课程优先显示；选课仍由你逐次确认。",
                     actionLabel = "添加一条",
                     onAction = { editing = SelectionWish() },
                 )
@@ -149,30 +220,35 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
                     Text(
-                        "共 ${sorted.size} 条 · 抢课时按优先级从高到低匹配",
+                        buildString {
+                            append("共 ${sorted.size} 条 · 命中课程在选课中心优先显示（按优先级从高到低）")
+                            matchSummary?.let { append(" · ").append(it) }
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = 4.dp),
                     )
                 }
                 items(sorted, key = { it.id }) { wish ->
                     WishCard(
                         wish = wish,
                         dup = dupHints[wish.id].orEmpty(),
+                        hitCount = if (hitsError == null && !hitsLoading) hitCounts[wish.id] else null,
+                        onOpenCenter = {
+                            SubpageActivity.start(context, SubpageScreen.SELECTION_CENTER)
+                        },
                         onClick = { editing = wish },
                         onDelete = { deleting = wish },
                     )
                 }
                 item {
-                    Text(
-                        "清单只保存在本机；「开始抢课」需要手动发起（或打开对应开关），" +
-                            "不会在后台自行选课。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                    FooterDisclaimer(
+                        body = "清单只保存在本机；进选课中心时按它匹配、命中课程优先显示——" +
+                            "选课 / 退课始终由你逐次确认，App 不会自动提交。",
                     )
                 }
             }
@@ -201,15 +277,20 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
             title = { Text("删除这条预选？") },
             text = { Text("「${target.nameKeyword}」将从清单里移除。") },
             confirmButton = {
-                TextButton(onClick = {
-                    deleting = null
-                    persist(wishesState.orEmpty().filterNot { it.id == target.id })
-                }) {
+                TextButton(
+                    onClick = {
+                        deleting = null
+                        persist(wishesState.orEmpty().filterNot { it.id == target.id })
+                    },
+                    modifier = Modifier.heightIn(min = 44.dp),
+                ) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deleting = null }) { Text("取消") }
+                TextButton(onClick = { deleting = null }, modifier = Modifier.heightIn(min = 44.dp)) {
+                    Text("取消")
+                }
             },
         )
     }
@@ -222,6 +303,9 @@ private data class DupLine(val text: String, val fromSelections: Boolean)
 private fun WishCard(
     wish: SelectionWish,
     dup: List<DupLine>,
+    /** 本轮匹配到的候选班级数；null = 还没结果（匹配中 / 失败 / 不在选课期）。 */
+    hitCount: Int?,
+    onOpenCenter: () -> Unit,
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -275,6 +359,31 @@ private fun WishCard(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 modifier = Modifier.padding(top = 4.dp),
             )
+        }
+        if (hitCount != null) {
+            Text(
+                if (hitCount > 0) "本轮已开 $hitCount 门" else "本轮未匹配到开课",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (hitCount > 0) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                },
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        if (hitCount != null && hitCount > 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(
+                    onClick = onOpenCenter,
+                    modifier = Modifier.heightIn(min = 44.dp),
+                ) { Text("去选课中心确认") }
+            }
         }
     }
 }
@@ -341,23 +450,26 @@ private fun WishEditDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val candidate = initial.copy(
-                    nameKeyword = name.trim(),
-                    teacherKeyword = teacher.trim(),
-                    note = note.trim(),
-                    priority = priority,
-                )
-                val problem = SelectionWishes.validate(candidate)
-                if (problem != null) {
-                    error = problem
-                } else {
-                    onSave(candidate)
-                }
-            }) { Text("保存") }
+            TextButton(
+                onClick = {
+                    val candidate = initial.copy(
+                        nameKeyword = name.trim(),
+                        teacherKeyword = teacher.trim(),
+                        note = note.trim(),
+                        priority = priority,
+                    )
+                    val problem = SelectionWishes.validate(candidate)
+                    if (problem != null) {
+                        error = problem
+                    } else {
+                        onSave(candidate)
+                    }
+                },
+                modifier = Modifier.heightIn(min = 44.dp),
+            ) { Text("保存") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 44.dp)) { Text("取消") }
         },
     )
 }

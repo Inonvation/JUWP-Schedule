@@ -58,6 +58,22 @@ class SelectionParserTest {
     }
 
     @Test
+    fun explicitNullsAreTreatedAsAbsent() {
+        // 实测（2026-10-08）：选课日志里 shzt / yy / xnxqid 整列是 JSON null、
+        // sksj / skdd 部分为 null——不挡会把「教务没给」渲染成字面上的 "null"
+        val payload = """{"msg":"0","code":0,"count":1,"data":[
+            {"kc_mc":"液压与气压传动A","kch":"080230008","xm":"教师丙","xf":2,"zxs":32,
+             "kclb_mc":"必修","kcxz_mc":"专业核心课","ktmc":"24机械[01-02]班","yx_mc":"机械工程学院",
+             "sksj":null,"skdd":null,"shzt":null,"yy":null,"xnxqid":null}]}"""
+        val row = SelectionParser.parseFetchJson(payload).rows.single()
+        assertEquals("", row.timeText)
+        assertEquals("", row.placeText)
+        assertEquals("", row.status)
+        assertEquals("", row.remark)
+        assertEquals("", row.term)
+    }
+
+    @Test
     fun loginPageIsReadableError() {
         val e = assertThrows(IllegalStateException::class.java) {
             SelectionParser.parseFetchJson("<html>用户没有登录</html>")
@@ -119,6 +135,27 @@ class SelectionParserTest {
         val (start, end) = first.startAt!! to first.endAt!!
         assertTrue(end > start)
         assertEquals(false, page.rounds[1].canPreview)
+    }
+
+    @Test
+    fun parsesRealRoundRowFromLiveWindow() {
+        // 2026-10-08 选课期实抓的轮次行（全字段形状保留；轮次数据不含个人信息）。
+        // 要点：xksj 是「日期+时刻对、~ 无空格」；yxzt=0（预览页会回 no-open）。
+        val payload = """{"msg":"","code":"0","count":1,"data":[
+            {"xkjzsj":"2026-10-12 23:59","xnxq01id":"2026-2027-1","txkz":"1","sfqyxfkz":"1",
+             "xkzt":"1","jx0502zbid":"2BF44EE44C5844D4A021EBB4F93F710A","yxzt":"0","sfxkxm":"0",
+             "xklc_mc":"2026-2027-1学期自主选课","xkkssj":"2026-10-08 10:00",
+             "xksj":"2026-10-08 10:00~2026-10-12 23:59","txkzmc":"可选可退","xqmc":"2026-2027-1"}]}"""
+        val page = SelectionParser.parseRounds(payload)
+        assertEquals(1, page.rounds.size)
+        val round = page.rounds[0]
+        assertEquals("2BF44EE44C5844D4A021EBB4F93F710A", round.id)
+        assertEquals("2026-2027-1学期自主选课", round.name)
+        assertEquals("2026-2027-1", round.term)
+        assertEquals(false, round.canPreview)
+        // xksj 真实格式能解出起止（具体断言在 SelectionRoundsTest.parsesRealWindowSample）
+        assertTrue(round.startAt != null && round.endAt != null)
+        assertTrue(round.endAt!! > round.startAt!!)
     }
 
     @Test

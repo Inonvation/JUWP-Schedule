@@ -26,7 +26,6 @@ import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.QuietWindow
 import edu.jxslu.schedule.domain.QuietWindows
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
-import edu.jxslu.schedule.domain.SelectionGrabPolicy
 import edu.jxslu.schedule.domain.SelectionWish
 import edu.jxslu.schedule.domain.SelectionWishes
 import edu.jxslu.schedule.domain.ReminderDefaults
@@ -678,11 +677,11 @@ class DisplayPrefsStore(private val context: Context) {
         }
     }
 
-    // ---- 预选清单（DESIGN §3.20 / §4.36）----
+    // ---- 预选清单（DESIGN §3.20 / §4.36，2026-10-08 v3 起为「预购匹配」）----
 
     /**
-     * 预选清单（选课开放后按它抢课）。JSON 存储，口径同快捷方式：
-     * 坏数据回空表，不崩在读路径上。
+     * 预选清单（选课期进选课中心时按它匹配、命中课程优先显示；选课仍由用户逐次确认）。
+     * JSON 存储，口径同快捷方式：坏数据回空表，不崩在读路径上。
      */
     val selectionWishes: Flow<List<SelectionWish>> = context.displayDataStore.data.map { p ->
         p[KEY_SELECTION_WISHES_JSON]?.let { SelectionWishes.decode(it) } ?: emptyList()
@@ -692,32 +691,6 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { p ->
             p[KEY_SELECTION_WISHES_JSON] = SelectionWishes.encode(wishes)
         }
-    }
-
-    // ---- 抢课（DESIGN §4.36）----
-
-    /** 抢课检查间隔（毫秒）。档位表与夹取在 [SelectionGrabPolicy]，这里只管存取。 */
-    val selectionGrabIntervalFlow: Flow<Long> = context.displayDataStore.data.map { p ->
-        p[KEY_SELECTION_GRAB_INTERVAL_MS] ?: SelectionGrabPolicy.INTERVAL_DEFAULT_MS
-    }
-
-    /** 服务侧读取（一次取值）。 */
-    suspend fun selectionGrabIntervalMs(): Long = selectionGrabIntervalFlow.first()
-
-    suspend fun setSelectionGrabIntervalMs(value: Long) {
-        context.displayDataStore.edit { p -> p[KEY_SELECTION_GRAB_INTERVAL_MS] = value }
-    }
-
-    /**
-     * 抢课免责声明的确认时刻（epoch millis）。0 = 没确认过（进抢课面板自动弹一次）。
-     * 抢课是写操作，首次必须显式确认（DESIGN §4.36 风险声明）。
-     */
-    val selectionGrabDisclaimerFlow: Flow<Long> = context.displayDataStore.data.map { p ->
-        p[KEY_SELECTION_GRAB_DISCLAIMER_AT] ?: 0L
-    }
-
-    suspend fun setSelectionGrabDisclaimerAt(millis: Long) {
-        context.displayDataStore.edit { p -> p[KEY_SELECTION_GRAB_DISCLAIMER_AT] = millis }
     }
 
     // ---- 调课检测（DESIGN §4.17，2026-10-04 重立）----
@@ -2067,8 +2040,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SELECTION_ALERT_ENABLED = booleanPreferencesKey("selection_alert_enabled")
         val KEY_SELECTION_REMINDED_KEYS = stringSetPreferencesKey("selection_reminded_keys")
         val KEY_SELECTION_WISHES_JSON = stringPreferencesKey("selection_wishes_json")
-        val KEY_SELECTION_GRAB_INTERVAL_MS = longPreferencesKey("selection_grab_interval_ms")
-        val KEY_SELECTION_GRAB_DISCLAIMER_AT = longPreferencesKey("selection_grab_disclaimer_at")
+        // 抢课三键（interval/disclaimer/auto_start）随自动抢课于 2026-10-08 v3 下线删除；
+        // 设备上残留的旧键不再读写（DataStore 不清理孤儿键，无副作用）。
 
         // 调课检测（DESIGN §4.17，2026-10-04 重立）：提醒开关 + 检查时刻 + 已阅指纹 + 待处置差异
         val KEY_SCHEDULE_ALERT_ENABLED = booleanPreferencesKey("schedule_alert_enabled")

@@ -6,15 +6,16 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /**
- * 一条预选清单（DESIGN §3.20，2026-10-01）：用户提前录入的「想选的课」，
- * 选课开放后由抢课引擎按它匹配教务课程列表（DESIGN §4.36）。
+ * 一条预选清单（DESIGN §3.20，2026-10-01；2026-10-08 v3 起为「预购匹配」）：
+ * 用户提前录入的「想选的课」——进选课中心时按它匹配教务课程列表，**命中课程优先显示**，
+ * 选课仍由用户逐次确认（DESIGN §4.36；没有任何自动提交路径）。
  *
  * 匹配口径（[SelectionWishes.matches]）：
  * - [nameKeyword] 必填，课程名**包含**它（去首尾空白、忽略大小写）；
  * - [teacherKeyword] 可空，填了就要求教师串同样包含（如「曾」可匹配「曾刚,李四」）。
  *
- * [priority] 数值越大越先抢（高=2 / 中=1 / 低=0）；同档保持录入顺序（[sorted] 稳定排序）。
- * 只在本机保存，不上传——抢课指令只在用户显式开始后发出。
+ * [priority] 数值越大越先展示（高=2 / 中=1 / 低=0）；同档保持录入顺序（[sorted] 稳定排序）。
+ * 只在本机保存，不上传。
  */
 @Serializable
 data class SelectionWish(

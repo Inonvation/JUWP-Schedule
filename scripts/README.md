@@ -118,6 +118,15 @@ CAS 已知会因此触发验证码。现在统一入口 `jw_session.load_or_logi
 2. **教务会话失效但 CAS TGC 还活** → 免账密，向 CAS 换新教务票（≈5 个请求）；
 3. **都失效** → 完整账密登录并覆盖保存。
 
+**`verify` 的判据有两代补丁**（每次都是「看着成功、其实失效」的假阳性）：
+   - 2026-10-07：新版登录页（80KB）不含「用户没有登录」且体积过阈值 → 加「请先登录系统」；
+   - 2026-10-08：**被别处登录顶掉**时收到的是同一张 80KB 登录页 + 红字
+     「您的账号在其它地方登录」，**不含**「请先登录系统」——只看旧标记又会把被顶页面
+     判成有效会话，后续业务请求全部拿到登录页。现在 `verify`/`get_html` 同时认
+     `userPassword`（登录页密码框，已登录主页 0 处）与「您的账号在其它地方登录」。
+     现象与处置：手机端登录过、脚本却「复用」成功 → 业务页全 80KB 登录页——重跑脚本
+     即自动走 2/3 级降级重登。
+
 - 会话 cookie（CAS / 教务 / ptwork 各自独立 jar）存 `scripts/out/jw_session_state.json`
   （已 gitignore；**含会话 cookie，与凭证同级敏感，勿外传勿提交**）。
 - `fetch_transcript` 用 `load_or_login_ptwork`：复用 CAS TGC 直接换 ptwork 票，跳过教务。
@@ -427,7 +436,7 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
 
 ---
 
-### 5.8 选课（选课日志与轮次，2026-09-30 实测）
+### 5.8 选课（选课日志与轮次，2026-09-30 实测；2026-10-08 窗口期补选课中心）
 
 教务「培养管理 → 选课管理」下两条链，与考试/成绩/教材同一套 **layui JSON** 形态
 （`{code,count,data}`，分页 `pageNum/pageSize`，**不带 .do**）：
@@ -442,17 +451,48 @@ App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看�
   `kclb_mc` 课程属性 / `kcxz_mc` 课程性质 / `ktmc` 教学班 / `yx_mc` 开课学院 /
   `sksj` 上课时间（`<br>` 多行）/ `skdd` 地点 / `shzt`·`yy` 审核状态与意见。
   实测 2026-2027-1 有 12 条、2025-2026-2 与 2024-2025-1 各 16 条——**全年可用**。
-- 轮次列名来自页面表格定义（非选课期无样本）：`xqmc` 学年学期 / `xklc_mc` 选课名称 /
-  `xksj` 选课时间 / `jx0502zbid` 轮次 id / `yxzt == '1'` 可预览。
+  注意 `shzt`/`yy`/`xnxqid` 实测整列为 JSON `null`、`sksj`/`skdd` 部分 `null`（消费侧
+  必须按「缺失」处理，别把 `"null"` 渲染出来）。
+- 轮次列名（2026-10-08 窗口期已实抓）：`xqmc` 学年学期 / `xklc_mc` 选课名称 /
+  `xksj` 选课时间 / `jx0502zbid` 轮次 id / `yxzt == '1'` 可预览；真行还带
+  `xkkssj`（开始）/ `xkjzsj`（截止）/ `sfxkxm` / `xkzt` 等列。
   **`code` 是字符串 `"0"`**（日志接口是数字）——判等统一按字符串比。
 - 空态不是故障：轮次在非选课期 `count=0`；预选（`/jsxsd/xkgl/xsyxgl?type=list`、
   `/jsxsd/xkgl/loadYxxkList`）当前无数据、查询页学期下拉为空。
+- **窗口期实测补充（2026-10-08，「2026-2027-1学期自主选课」进行中）**：
+  - `xksj` 真实格式 = `2026-10-08 10:00~2026-10-12 23:59`（`~` 无空格）——脚本原样输出
+    `timeText` 的口径不变；App 侧 `SelectionRounds.parseTimeRange` 已实测可解（夹具入测试）。
+  - 选课中心（`newXsxkzx?jx0502zbid=`）是壳页 + iframe；**xsxkkc 模块有会话前提**：
+    当前会话必须先 GET 过 `newXsxkzx?jx0502zbid=<轮次>`（进轮次），否则壳页只回 534 字节
+    空存根、列表请求一律回**教务自家 404 页**——同参数进轮次后 200，**不是参数问题**
+    （2026-10-08 复测坐实；探针脚本第一步都要先进轮次）。
+  - 「本学期计划选课」课程列表 = **POST** `xsxkkc/xsxkBxqjhxk`（body 必须**旧版
+    DataTables 参数** `sEcho`/`iDisplayStart`/`mDataProp_i`…——缺了教务也回 404 页），
+    查询条件在 URL 上（页面 `queryKxkcList` 全参数面）：`kch`（课名/编号子串）、
+    `jg0101id`（教师名文本）、`skxq`（星期 1-7）、`skjc`/`endJc`（节次 1-11，须配星期）、
+    `kctype`（类别代码 01-09）、`sfym`/`sfct`/`sfxx`（过滤 已满/冲突/限选）。
+  - **条件要求**：`kch`/`jg0101id`/`skxq` 至少一个非空（全空回 0 行；`%`、`%%`、空格
+    都回 0——服务端按字面匹配，不认 LIKE 通配）；`kctype`/节次**不顶条件**（单独用它
+    们还是 0 行，必须配上面三者之一）。**浏览全量 = `kch=0`**：编号是 9 位数字串、
+    全以 0 开头——数字扫描 kch=0..9 的并集（数学上必含全部课程）与 kch=0 单查询
+    **同为 48 行、0 差集**；星期扫描（1-7 并集）会漏掉**没有排课时间**的课程设计类
+    （实测差 5 行）。筛选全是服务端 **AND** 叠加（kch=0+类别=31 行、+星期=7 行，实测）。
+  - **开关语义实测**：`sfct=true` 把所有带 `ctsm` 的行滤掉——**连「该课堂已选」的
+    已选行一起**（48→15）；`sfym=true` 滤满员课（48→46）；`sfxx=true` 本数据无差异。
+  - 提交 = GET `xsxkkc/bxqjhxkOper`（`kcid`/`cfbs`/`jx0404id`…）、退课 =
+    GET `xsxkjg/xstkOper`；壳页 `getBxqjxk` 的 `input#sfyzmxk` 是验证码开关
+    （`"1"` = 验证码选课）。
+  - 探针留档 `_archive/_probe_xsxk_c.py` / `_probe_xsxk_c2.py` / `_probe_xsxk_browse3.py` /
+    `_probe_xsxk_compose.py`（只读；列表查询是 POST 但语义只读；`_probe_xsxk_enter.py` /
+    `_probe_xsxk_hdr.py` 是定位上述会话前提与 404 排查时的一次性脚本）；快照
+    `out/xsxk_c_*` / `out/xsxk_c2_*` / `out/xsxk_b3_*` / `out/xsxk_b4_*` 是 App 侧
+    解析器与行为口径的证据源。
 - **红线**：`/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，POST，`lx=tk`/`lx=ww`）与
-  `/jsxsd/xsxk/mzlist.do`（免责声明查询，POST）是写/副作用路径，脚本与 App 都**只读**，
-  绝不触碰；「进入选课」（`/jsxsd/xsxk/newXsxkzx?jx0502zbid=`）只在 App 的 WebView 里
-  由用户自己操作。
-- 未验证面：`xksj` 时间字符串的真实格式要等选课期才有样本，脚本原样输出 `timeText`，
-  App 侧容错解析（`SelectionRounds.parseTimeRange`），解析不了就不排提醒。
+  `/jsxsd/xsxk/mzlist.do`（免责声明查询，POST）是写/副作用路径，**脚本绝不触碰**；
+  `bxqjhxkOper` / `xstkOper` 一类选课/退课写操作同样**脚本一律不调**——只在 App 内
+  由用户逐次确认触发（DESIGN §4.36）。
+- 未验证面（真机）：提醒到点、以及服务端对固定间隔提交的实际容忍度——随 App 真机点验走
+  （见 AGENTS.md 待点验表）。
 
 ### 5.9 校历同步（教务处官网，2026-10-07 实测）
 

@@ -312,6 +312,50 @@ class JwHttpSession private constructor(
         }
     }
 
+    /**
+     * 带会话 POST 表单（2026-10-08 起；选课中心列表查询，见 [CasTransport.postForm]）。
+     *
+     * 判据与 [fetchHtml] 完全同款：登录页 / 被顶 JSON 抛 [JwHttpException.SessionInvalid]，
+     * 网络层抛 [Network]、5xx 抛 [Protocol]。
+     *
+     * 重定向照 [getFollowRedirects] 的口径**手动跟随**，但降级为 GET——
+     * 302 之后重发 POST 会丢原表单语义（教务在会话过期时可能把任意请求 302 到登录链）；
+     * 单次请求内最多跟 [MAX_REDIRECTS] 跳。
+     */
+    override suspend fun postForm(url: String, form: List<Pair<String, String>>): String =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = FormBody.Builder().apply {
+                    form.forEach { (name, value) -> add(name, value) }
+                }.build()
+                var current = url
+                var request = Request.Builder().url(current).header("User-Agent", UA).post(body).build()
+                repeat(MAX_REDIRECTS) {
+                    client.newCall(request).execute().use { r ->
+                        val location = r.header("Location")
+                        if (r.code in 300..399 && location != null) {
+                            current = current.toHttpUrl().resolve(location)?.toString()
+                                ?: throw JwHttpException.Protocol("无法解析重定向地址：$location")
+                            request = newGet(current)
+                            return@use
+                        }
+                        if (r.code >= 500) throw JwHttpException.Protocol("$current 返回 HTTP ${r.code}")
+                        val text = r.body?.string().orEmpty()
+                        if (looksLikeLoginPage(text)) {
+                            throw JwHttpException.SessionInvalid("教务会话已失效（页面退回登录页）")
+                        }
+                        if (looksLikeSessionConflict(text)) {
+                            throw JwHttpException.SessionInvalid("教务会话已被顶掉（账号在其它地方登录）")
+                        }
+                        return@withContext text
+                    }
+                }
+                throw JwHttpException.Protocol("重定向次数过多，链路可能已变")
+            } catch (e: IOException) {
+                throw JwHttpException.Network(e)
+            }
+        }
+
     private fun urlEncode(value: String): String =
         java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
 

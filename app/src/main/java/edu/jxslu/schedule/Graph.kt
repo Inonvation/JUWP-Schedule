@@ -59,9 +59,10 @@ import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.data.repo.SelectionRepository
 import edu.jxslu.schedule.data.repo.SelectionCenterClient
+import edu.jxslu.schedule.data.repo.SelectionCenterHttpClient
+import edu.jxslu.schedule.data.repo.SelectionDebugDump
 import edu.jxslu.schedule.data.repo.SelectionRoundsStore
 import edu.jxslu.schedule.data.repo.SelectionSync
-import edu.jxslu.schedule.data.repo.UnconfiguredSelectionCenterClient
 import edu.jxslu.schedule.data.repo.TeachingCalendarSync
 import edu.jxslu.schedule.data.repo.TextbookSync
 import edu.jxslu.schedule.data.jw.TranscriptClient
@@ -198,6 +199,9 @@ object Graph {
 
     @Volatile
     private var selectionSync: SelectionSync? = null
+
+    @Volatile
+    private var selectionCenterClient: SelectionCenterClient? = null
 
     @Volatile
     private var noteRepository: NoteRepository? = null
@@ -424,13 +428,21 @@ object Graph {
         }
 
     /**
-     * 选课接口单例（DESIGN §4.36）：抢课引擎唯一依赖的抽象。
+     * 选课接口单例（DESIGN §4.36）：应用内选课中心与「预选命中」查询唯一依赖的抽象。
      *
-     * **窗口期联调后从这里换成真实实现**（`SelectionCenterClient` 的真身：OkHttp +
-     * `CasSession` + 列表/提交解析）——替换点只有这一处，引擎与界面不动。
+     * 2026-10-08 窗口期已换成真身（[SelectionCenterHttpClient]：OkHttp + `CasSession` +
+     * 列表/提交/退课解析）——替换点只有这一处，界面不动。
      */
     fun selectionCenterClient(context: Context): SelectionCenterClient =
-        UnconfiguredSelectionCenterClient
+        selectionCenterClient ?: synchronized(this) {
+            selectionCenterClient ?: SelectionCenterHttpClient(
+                cas = casSession(context),
+                // debug 包才落提交/退课应答原文（联调校准三态映射用；release 一个字节都不写）
+                debugDump = File(context.applicationContext.filesDir, "selection_debug")
+                    .takeIf { BuildConfig.DEBUG }
+                    ?.let { SelectionDebugDump(it) },
+            ).also { selectionCenterClient = it }
+        }
 
     /** 笔记·课件仓库单例（DESIGN §4.20）：归属键是课程名，与课表无关。 */
     fun noteRepository(context: Context): NoteRepository =

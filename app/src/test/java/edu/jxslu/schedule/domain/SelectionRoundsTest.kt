@@ -42,6 +42,18 @@ class SelectionRoundsTest {
     }
 
     @Test
+    fun parsesRealWindowSample() {
+        // 2026-10-08 选课窗口实测样本（「2026-2027-1学期自主选课」）：
+        // 日期+时刻对、`~` 两侧无空格——此前该格式无真实样本（挂了一个月的待验证项）
+        val (start, end) = SelectionRounds.parseTimeRange(
+            "2026-10-08 10:00~2026-10-12 23:59",
+            zone,
+        )
+        assertEquals(at(2026, 10, 8, 10, 0), start)
+        assertEquals(at(2026, 10, 12, 23, 59), end)
+    }
+
+    @Test
     fun parsesDateOnlyRangeAsWholeDays() {
         val (start, end) = SelectionRounds.parseTimeRange("2026-09-28~2026-10-05", zone)
         assertEquals(dayStart(2026, 9, 28), start)
@@ -124,6 +136,9 @@ class SelectionRoundsTest {
         assertNull(SelectionRounds.nextTerm("2026"))
         assertNull(SelectionRounds.nextTerm("2026-2027-3"))
     }
+
+    // 注：`nextStart` / `runningAt` 两个函数随「到点自动开始」于 2026-10-08 v3 一并下线
+    // （它们的唯一调用方是已删除的 SelectionGrabAutoStart）。
 
     // ---- 提醒点 ----
 

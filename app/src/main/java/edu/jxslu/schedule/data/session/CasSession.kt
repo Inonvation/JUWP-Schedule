@@ -225,6 +225,37 @@ class CasSession(
     }
 
     /**
+     * 带会话 **POST 表单**（读语义，2026-10-08 起；选课中心的列表查询用它）。
+     *
+     * 与 [fetchHtml] 同一套编排：会话被顶（[JwHttpException.SessionInvalid]）时作废本地会话、
+     * 重登**一次**、重试**一次**；其余失败静默回 null。查询没有副作用，重试安全。
+     */
+    suspend fun postForm(url: String, form: List<Pair<String, String>>): String? {
+        if (ensureValid() !is CasEnsureResult.Ready) return null
+        val first = runCatchingCancellable { http.postForm(url, form) }
+        first.getOrNull()?.let { return it }
+        if (first.exceptionOrNull() !is JwHttpException.SessionInvalid) return null
+        if (!SessionStatus.tryAcquireRelogin(clock())) return null
+        if (relogin() !is CasEnsureResult.Ready) return null
+        return runCatchingCancellable { http.postForm(url, form) }.getOrNull()
+    }
+
+    /**
+     * 带会话 GET、一次就是一次（**写语义**，2026-10-08 起；选课提交 / 退课用它）。
+     *
+     * 与 [fetchHtml] 的差别只有一处、也是存在理由：**会话被顶时不自动重登重试**——
+     * 这两个 GET 是写操作（一次请求就是一次选课提交），静默重发可能造成重复提交；
+     * 会话问题原样抛给调用方收场（提示用户重新登录后再试）。
+     * 会话不可用 / 链路失败也照抛 [JwHttpException]，由调用方映射成可读终态。
+     */
+    suspend fun fetchForAction(url: String): String {
+        if (ensureValid() !is CasEnsureResult.Ready) {
+            throw JwHttpException.SessionInvalid("教务会话不可用（可能需要在导入页重新登录）")
+        }
+        return http.fetchHtml(url)
+    }
+
+    /**
      * 作废本地会话后重走一次 [ensureValid]：有凭证就真登一次，没凭证就回灌 WebView 那份。
      *
      * **清 cookie 与重登必须在同一把锁里**（与 [logout] 同一条纪律）：否则与在途登录并发时，

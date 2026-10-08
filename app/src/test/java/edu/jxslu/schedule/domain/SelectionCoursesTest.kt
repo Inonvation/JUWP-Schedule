@@ -14,55 +14,19 @@ class SelectionCoursesTest {
         attribute: String = "必修",
         remaining: Int? = 10,
         selected: Boolean = false,
-        timeText: String = "",
     ) = SelectionCourse(
         id = id,
         name = name,
         teacher = teacher,
         attribute = attribute,
         selected = selected,
-        timeText = timeText,
         // remaining = null 时容量两端都为空（余量未知）；否则容量 = remaining + 5、已选 5
         capacity = remaining?.plus(5),
         enrolled = remaining?.let { 5 },
     )
 
-    @Test
-    fun queryMatchesNameTeacherPlace() {
-        val courses = listOf(
-            course("1", "机械设计基础A", teacher = "曾刚", timeText = "星期四 0708节"),
-            course("2", "PLC原理及应用B", teacher = "李四"),
-        )
-        assertEquals(
-            listOf("1"),
-            SelectionCourses.filter(courses, SelectionFilter(query = "机械")).map { it.id },
-        )
-        assertEquals(
-            listOf("1"),
-            SelectionCourses.filter(courses, SelectionFilter(query = "曾")).map { it.id },
-        )
-        assertEquals(
-            listOf("1"),
-            SelectionCourses.filter(courses, SelectionFilter(query = "0708")).map { it.id },
-        )
-        assertEquals(
-            listOf("2"),
-            SelectionCourses.filter(courses, SelectionFilter(query = "plc")).map { it.id },
-        )
-    }
-
-    @Test
-    fun onlyAvailableExcludesKnownFullButKeepsUnknown() {
-        val courses = listOf(
-            course("1", "满的", remaining = 0),
-            course("2", "有余额", remaining = 3),
-            course("3", "余量未知", remaining = null),
-        )
-        assertEquals(
-            listOf("2", "3"),
-            SelectionCourses.filter(courses, SelectionFilter(onlyAvailable = true)).map { it.id },
-        )
-    }
+    // 关键词 / 余量 / 类别筛选自 2026-10-08 v2 起走**服务端**（SelectionQuery，见
+    // SelectionCenterParserTest 的 listQuery 用例）；本地筛选只剩已选与课程属性两个维度。
 
     @Test
     fun onlySelectedAndAttribute() {

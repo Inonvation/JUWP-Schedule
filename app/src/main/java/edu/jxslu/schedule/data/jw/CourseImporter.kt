@@ -214,6 +214,43 @@ object JwUrls {
     const val SELECTION_ROUNDS_API = "$XSD_BASE/jsxsd/xsxk/xklc_list_data"
 
     /**
+     * 应用内选课中心「本学期计划选课」的数据接口（2026-10-08 窗口期实测）。
+     *
+     * 形态与其它 layui 接口都不同，三条别搞混：
+     * - **POST**，且 body 必须是**旧版 DataTables 参数**（`sEcho` / `iDisplayStart` /
+     *   `mDataProp_i`…，见 `SelectionCenterParser.listBody`）——参数不齐教务会回它自家的
+     *   **404 错误页**（不是 400，实测）；
+     * - 查询条件（`kch` / `jg0101id` / …）在 **URL** 上；关键字**必填**——空串回 0 行
+     *   （页面原话「选课课程默认不加载，请输入课程或上课教师等查询课程进行选课」）；
+     * - `kch` 搜课程编号/名称；`jg0101id` 传**教师姓名文本**也能搜（实测，页面 JS 的同款降级）。
+     */
+    const val SELECTION_PLAN_LIST_API = "$XSD_BASE/jsxsd/xsxkkc/xsxkBxqjhxk"
+
+    /**
+     * 「本学期计划选课」壳页（`selectBottom` 的 tab 落点）：
+     * 验证码开关 `input#sfyzmxk` 在这里读——为 "1" 时提交走验证码流程，App 一律拒绝（红线）。
+     */
+    const val SELECTION_PLAN_LIST_SHELL = "$XSD_BASE/jsxsd/xsxkkc/getBxqjxk"
+
+    /**
+     * 选课提交（`bxqjhxkOper`）。**写操作**：只由用户在应用内逐次确认触发（无任何自动提交）。
+     *
+     * 注意：教务页面用 `$.ajax({url, data})` 未指定 `type`（jQuery 默认 **GET**），
+     * 实测形状 = `?kcid=<jx02id>&cfbs=<cfbs>&jx0404id=<id>&xkzy=&trjf=&sfsyjc=&sfkvtj=`。
+     * 客户端照页面口径复刻（`cfbs` 缺省时页面会拼成字面量 `null`——照抄）。
+     */
+    const val SELECTION_PLAN_SUBMIT = "$XSD_BASE/jsxsd/xsxkkc/bxqjhxkOper"
+
+    /**
+     * 退课（`xstkOper`，选课中心自带的退课口）。**写操作**：只由用户在应用内逐次确认触发；
+     * 只由用户逐次确认触发（红线：只加课、退课也永远是用户手动的一次操作）。
+     *
+     * 与「选课管理」的 `/jsxsd/xkgl/Xsxkjg_tk.do`（申请退课，老入口）**不是同一个**——
+     * 那个仍然绝不触碰（`.agents/rules/import-jw.md`）。
+     */
+    const val SELECTION_DROP = "$XSD_BASE/jsxsd/xsxkjg/xstkOper"
+
+    /**
      * 轮次 id（教务 `jx0502zbid`）白名单：会被拼进 URL，非此格式一律拒绝——
      * 与 [TERM_PATTERN] 同一把尺子（宁可退回列表页，也不拼一个可能出错的地址）。
      * 真实格式未实测（非选课期无轮次样本），故放宽到「字母数字下划线短横，1–64 位」。
@@ -224,8 +261,10 @@ object JwUrls {
      * 「进入选课」页（轮次页 JS `jrxk` 的落点）：
      * `newXsxkzx?jx0502zbid=<轮次id>&isallsc=`；[preview] = true 走预览页 `yxxsxk_index`。
      *
-     * 未实测：教务从轮次列表进选课时会先 POST `mzlist.do`（免责声明检查）再跳这里，
-     * 直接进可能与那一步有关。真进不去就退回选课中心列表（窗口底部的「选课中心」按钮）。
+     * 2026-10-08 窗口期实测：**直接 GET 就能进**（页面照常渲染、数据接口可用），
+     * 轮次页 JS 里先 POST `mzlist.do`（免责声明检查）那一步未见硬门槛——App 不代发
+     * 免责声明 POST（红线），提交侧是否有免责门槛等真机联调见分晓。
+     * 预览页受 `yxzt=='1'` 门控：不满足时回 no-open 页（实测）。
      * 轮次 id 不合法返回 null，调用方回退到 [SELECTION_CENTER]。
      */
     fun selectionRoundUrl(roundId: String, preview: Boolean = false): String? {

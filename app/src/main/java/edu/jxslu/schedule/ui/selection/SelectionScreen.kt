@@ -45,7 +45,6 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.JwImportActivity
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
-import edu.jxslu.schedule.data.repo.SelectionGrabStore
 import edu.jxslu.schedule.data.repo.SelectionSync
 import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
@@ -68,7 +67,6 @@ import me.rerere.hugeicons.stroke.AddToList
 import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.CheckList
 import me.rerere.hugeicons.stroke.Globe
-import me.rerere.hugeicons.stroke.Rocket
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -82,8 +80,8 @@ import java.time.format.DateTimeFormatter
  * 1. **轮次卡**：进行中/即将开始的轮次置顶（状态标签 + 确定性时间文案），唯一主按钮
  *    「进入选课」开应用内选课中心（§3.22，轮次 id 随行直达）；其余轮次收成紧凑行。
  *    **教务 WebView 全页只留一个入口**——下方「教务网页」行（备用）；轮次行不再直达教务页。
- * 2. **功能入口**：已选课程（`SELECTION_RECORDS`，记录列表整体挪入）/ 预选清单 /
- *    自动抢课 / 教务网页（备用）。
+ * 2. **功能入口**：已选课程（`SELECTION_RECORDS`，记录列表整体挪入）/ 预选清单（预购匹配，
+ *    命中课程在选课中心优先显示）/ 教务网页（备用）。
  * 3. **提醒**：轮次开始前/截止前的定时通知（[SelectionAlertReminder]），默认关。
  *
  * 数据闸门：进页自动同步一次、30 分钟内重复进页直接用缓存（`SelectionSync.MIN_REFRESH_MS`）；
@@ -112,10 +110,8 @@ fun SelectionScreen(onBack: () -> Unit) {
     val intervalHours by prefs.selectionAlertIntervalHours
         .collectAsStateWithLifecycle(initialValue = ScoreAlertDefaults.INTERVAL_DEFAULT)
     val wishes by prefs.selectionWishes.collectAsStateWithLifecycle(initialValue = emptyList())
-    val grab by SelectionGrabStore.state.collectAsStateWithLifecycle()
-    val client = remember { Graph.selectionCenterClient(context) }
 
-    // 页面可能被「等开抢」的用户长时间停着：每分钟重算一次相位，
+    // 页面可能被等轮次开始的用户长时间停着：每分钟重算一次相位，
     // 「即将开始 → 进行中」「剩余时间」不至于停在进页那一刻
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -180,7 +176,7 @@ fun SelectionScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 RoundsCard(
@@ -214,21 +210,13 @@ fun SelectionScreen(onBack: () -> Unit) {
                     SettingItem(
                         title = "预选清单",
                         subtitle = if (wishes.isEmpty()) {
-                            "录入想选的课程与教师 · 选课开放后按清单抢课"
+                            "录入想选的课程与教师 · 命中后优先显示，选课仍由你确认"
                         } else {
-                            "已有 ${wishes.size} 条 · 点击编辑"
+                            "已有 ${wishes.size} 条 · 命中课程在选课中心优先显示"
                         },
                         icon = HugeIcons.AddToList,
                         onClick = {
                             SubpageActivity.start(context, SubpageScreen.SELECTION_WISHES)
-                        },
-                    )
-                    SettingItem(
-                        title = "自动抢课",
-                        subtitle = grabSubtitle(grab, client.isConfigured),
-                        icon = HugeIcons.Rocket,
-                        onClick = {
-                            SubpageActivity.start(context, SubpageScreen.SELECTION_GRAB)
                         },
                     )
                     SettingItem(
@@ -368,7 +356,7 @@ private fun RoundsCard(
                 .fillMaxWidth()
                 .padding(top = 10.dp)
                 // min 而不是固定高：系统大字体档位下按钮要能撑高，别把字裁了
-                .heightIn(min = 40.dp),
+                .heightIn(min = 44.dp),
         ) {
             Text(
                 when {
@@ -508,12 +496,4 @@ private fun ReminderSection(
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
         )
     }
-}
-
-/** 抢课行的副标题：进行中 > 待接入 > 可开始 > 还差什么。 */
-private fun grabSubtitle(state: SelectionGrabStore.State, configured: Boolean): String = when {
-    state.running -> "进行中：已抢到 ${state.grabbedCount}/${state.targetCount}"
-    !configured -> "接口待接入（选课窗口期联调后启用）"
-    state.lastStop != null -> "上次：${state.lastStop}"
-    else -> "按预选清单自动加课 · 只加课不自动退课"
 }
