@@ -63,6 +63,7 @@ import me.rerere.hugeicons.stroke.BookEdit
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Exchange01
 import me.rerere.hugeicons.stroke.GraduationScroll
+import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Wallet01
 
@@ -381,6 +382,7 @@ private fun kindIcon(kind: String) = when (
     InboxKind.SELECTION_ROUND -> HugeIcons.BookEdit
     InboxKind.POWER_LOW -> HugeIcons.Alert02
     InboxKind.YKT_LOW -> HugeIcons.Wallet01
+    InboxKind.WENQU_ACTIVITY -> HugeIcons.HeartHandshake
 }
 
 /** 时间标签：当天只给 HH:mm，当年给「M月d日 HH:mm」，更早带年份。 */

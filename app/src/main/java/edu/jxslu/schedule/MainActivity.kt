@@ -1000,6 +1000,10 @@ internal fun JuwApp(
                             onOpenInbox = {
                                 SubpageActivity.start(context, SubpageScreen.INBOX)
                             },
+                            // 志愿服务（DESIGN §3.28，2026-10-08）：问渠页的近路，独立窗口
+                            onOpenWenqu = {
+                                SubpageActivity.start(context, SubpageScreen.WENQU)
+                            },
                             // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
                             // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
                             onOpenShortcuts = { focusItemId ->
@@ -1083,6 +1087,10 @@ internal fun JuwApp(
                             },
                             onOpenExtensionServices = {
                                 SubpageActivity.start(context, SubpageScreen.EXT_SERVICES_HUB)
+                            },
+                            // 问渠 · 志愿服务（DESIGN §3.28）：账号卡那一行的工时点进来的落点
+                            onOpenWenqu = {
+                                SubpageActivity.start(context, SubpageScreen.WENQU)
                             },
                             onOpenAbout = {
                                 SubpageActivity.start(context, SubpageScreen.ABOUT)

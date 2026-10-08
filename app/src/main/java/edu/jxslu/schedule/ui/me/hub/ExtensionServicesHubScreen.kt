@@ -36,6 +36,7 @@ import me.rerere.hugeicons.stroke.Calendar03
 import me.rerere.hugeicons.stroke.ClipboardList
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Droplet
+import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Repair
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
@@ -69,6 +70,8 @@ fun ExtensionServicesHubScreen(
     onOpenCampusCalendar: () -> Unit,
     /** U净 洗衣房（DESIGN §4.37）：空闲看板 · 扫码识别；登录凭据在第三方手里。 */
     onOpenUjing: () -> Unit,
+    /** 问渠 · 志愿服务（DESIGN §3.28 / §4.45）：手机号 + 密码登录，只读志愿工时 / 劳动教育。 */
+    onOpenWenqu: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
     val context = LocalContext.current
@@ -80,6 +83,8 @@ fun ExtensionServicesHubScreen(
     val kvcxLoggedIn by remember { Graph.kqcx(context).loggedIn }
         .collectAsStateWithLifecycle()
     val ujingLoggedIn by remember { Graph.ujing(context).loggedIn }
+        .collectAsStateWithLifecycle()
+    val wenquLoggedIn by remember { Graph.wenqu(context).loggedIn }
         .collectAsStateWithLifecycle()
     // 使用方式（DESIGN §3.9 / §4.32）：**快趣出行账号入口只属于账号登录方式**——
     // 小程序方式不碰快趣账号，入口留着就是它用不到的功能（切回去入口自然回来）。
@@ -180,6 +185,14 @@ fun ExtensionServicesHubScreen(
                     icon = HugeIcons.WashingMachine,
                     value = if (ujingLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenUjing,
+                )
+                // 问渠（2026-10-08 加入）：学校「问渠」实践教育平台的志愿工时 / 劳动教育（只读）
+                SettingItem(
+                    title = "问渠 · 志愿服务",
+                    subtitle = "志愿工时 · 活动 · 劳动教育（只读）",
+                    icon = HugeIcons.HeartHandshake,
+                    value = if (wenquLoggedIn) "已登录" else "点击登录",
+                    onClick = onOpenWenqu,
                 )
             }
         }

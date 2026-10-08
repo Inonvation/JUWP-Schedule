@@ -146,6 +146,7 @@ import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Edit02
+import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.QrCodeScan
@@ -197,6 +198,8 @@ fun TodayScreen(
     onOpenPayCode: () -> Unit = {},
     /** 顶栏「+ → 收件箱」：应用内重要事实的留痕页（DESIGN §3.24） */
     onOpenInbox: () -> Unit = {},
+    /** 顶栏「+ → 志愿服务」：问渠 · 志愿服务页（DESIGN §3.28，2026-10-08） */
+    onOpenWenqu: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
@@ -531,6 +534,17 @@ fun TodayScreen(
                                     quickMenuOpen = false
                                     quickHaptics.tap()
                                     onOpenInbox()
+                                },
+                            )
+                            // 志愿服务（DESIGN §3.28，2026-10-08）：问渠页在「我的 → 校园服务」
+                            // 里埋得深，顶栏给一条常驻近路
+                            DropdownMenuItem(
+                                text = { Text("志愿服务") },
+                                leadingIcon = { Icon(HugeIcons.HeartHandshake, contentDescription = null) },
+                                onClick = {
+                                    quickMenuOpen = false
+                                    quickHaptics.tap()
+                                    onOpenWenqu()
                                 },
                             )
                         }

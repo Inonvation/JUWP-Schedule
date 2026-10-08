@@ -416,7 +416,7 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 - **保留策略**（冷启动 purge 一次）：软删 30 天清除 / 已读 90 天清除 /
   未删总量 200 条保最新；列表查询同 LIMIT 200。
 
-**五个挂点**（与系统通知互不依赖，通知开关只管通知）：
+**六个挂点**（与系统通知互不依赖，通知开关只管通知）：
 
 | 挂点 | 说明 |
 |------|------|
@@ -425,6 +425,7 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 | `ScheduleSync.check` 落待处置缓存处 | 差异入箱；处置页合并/忽略完成后 `markKindRead(SCHEDULE_CHANGE)` 标已读 |
 | `SelectionAlertReminder` 核对到期点处 | 与通知共用同一份文案（`reminderCopy`，两处各写迟早漂）。已发键在「通知真发出」或「通知被系统整体关闭」时都落（后者事实已进收件箱，且不落键会让重排闹钟把这个已过去的点反复排成立即触发的空转）；只有「通知开着但发送异常」留给下一轮 |
 | `BalanceAlertReminder.checkPower/checkYkt` | 低于阈值入箱（状态型）、回升消解；正文与系统通知同一份 |
+| `WenquActivityAlertReminder.check` 发现新活动处（2026-10-08） | 键 `wenqu\|activity\|<本批最大 id>`：一次核对只留一条痕，之后再出现更新的活动才算新事实。通知被 ROM 吞掉时它是唯一兜底 |
 
 **通知总开关的口径（2026-10-06 修正）**：`ScoreAlertReminder.check` 与
 `BalanceAlertReminder.check` 原先在入口处 `areNotificationsEnabled()` 早退——通知全关
@@ -795,3 +796,121 @@ Loading；顶栏「刷新」放开 `autoNavDone` 即重试）。平台页跳过�
 由编译器逐个点名）。设备点验清单见 AGENTS.md 待点验表。
 
 ---
+
+### 4.45 问渠（志愿服务 / 劳动教育，2026-10-08）
+
+学校「**问渠**实践教育平台」——**道然科技基于 CRMEB 商城框架定制**的第三方系统
+（后端 `https://wenqu.juwp.edu.cn/api/`，小程序 appid `wxadcfe9039706799c`，入口在
+「江西水利电力大学水宝宝」公众号 → 便捷服务）。实现在 `data/wenqu/` + `ui/wenqu/`，
+UI 规格见 §3.28。
+
+**为什么不用微信登录**：小程序主登录是 `POST /api/wechat/mp_auth`，入参是 `wx.login` 的
+`code`（或 `{encryptedData, iv, cache_key}` 四件套），**只有微信运行时能生成**；`cache_key`
+存在微信**加密** MMKV 里，磁盘上无明文。App 造不出来，这条死路**别再试**。
+
+**所以走手机号 + 密码**（三条实测口径）：
+
+| 环节 | 接口 | 口径 |
+|------|------|------|
+| 发码 | `POST /api/register/verify` | `{phone, type:"reset"}`；**成功与失败都是 `status:200`**（成功 `msg="发送成功"`），只能看 `msg`；限流约 5 分钟一条 |
+| 设/重置密码 | `POST /api/register/reset` | `{account:手机号, captcha, password}`；语义是重置，对**从没设过密码**的账号实测即创建 |
+| 登录 | `POST /api/login` | `{account:手机号, password}` → `{token, expires_time}`；**账号是手机号，学号不行** |
+| 我的记录 | `POST /api/volunteer/my` | `{status:"", start_time:"", end_time:""}` → `total_score` + `list`（我参加过的） |
+| 星级证书 | `POST /api/volunteer/star_cert` | `{}` → `volunteer_score_total` + `star_level` |
+| **活动列表** | `POST /api/volunteer/v2` | `{page, limit, keyword}` → `list` + `qj_count` / `qx_count` / `isBlack` / `stop_apply_reason`；**需要登录**（无 token 回 `410000 请登录`） |
+| **活动详情** | `POST /api/volunteer/detail/{id}` | id 走路径、请求体 `{}` → `detail` + `apply`；**工时 `score` 与活动群号 `group_id` 只有这里才有** |
+
+- token 是 **3 天** JWT（`exp - iat = 259200s`）；`data` 里**没有 cache_key**，续期就是重登，
+  本地存着手机号+密码所以用户无感。
+- 请求头是 **`Authori-zation`**（CRMEB 错拼），不是 `Authorization`。
+- 会话失效只有 `status:410000`（`请登录`）——网络 / 5xx 一律不计（对齐一卡通纪律）。
+
+**「活动列表」与「我的记录」是两张表，别互相复用解析**：`volunteer/my` 是「我参加过的」
+（字段 `total_score` / 单条 `score` / `apply_status_text`），`volunteer/v2` 是「平台上有的」
+（字段 `people_num` / `join_num` / `balance_num` / `isApply` / 单条 `status`）。两者都有
+`title` / `unit` / `start_time`，但语义与取值都不同。状态文案照小程序那张表：
+`{0:已取消, 1:招募中, 2:进行中, 3:已结束}`（`WenquRules.statusLabel`）。
+
+**但两条记录的 `id` 是同一个活动 id**：小程序「我的志愿服务」的 `goToDetail` 就是拿记录的
+`id` 去 `volunteer_detail/index?id=`，实测对得上（记录 34658 与 `volunteer/detail/34658`
+标题与工时一致）。所以**记录详情 = 活动详情**，客户端复用同一份详情正文
+（`WenquActivityDetailContent`），记录视角只把徽章换成 `apply_status_text`（如「已完成」）。
+映射是 `WenquVolunteerRecord.asActivity()`，它把 `status` 钉成
+`WENQU_STATUS_NOT_APPLICABLE`（-1）——**别用 `WenquActivity.status` 的默认值 0**：
+平台表里 0 是「已取消」，照搬会让记录徽章写「已取消」；-1 在 `statusLabel` 下回空串
+（宁可不显示徽章，也不显示一个编出来的状态）。自主（DIY）类记录 `id` 为 null
+（`coerceInputValues` 收成 0），本地字段已经够看，不发注定失败的详情请求。
+
+**活动列表的两条实测口径**：① `keyword` **空串是合法的**（回全量前 `limit` 条），
+与教务选课中心「空关键词回 0 行」相反；② **接口不返回总数**，`hasMore` 只能按
+「上一页回满 `limit` 即可能还有」推断（宁可多给一次「加载更多」，也不要漏数据）。
+总量上千且按 id 倒序，所以列表是「时间流」——已结束的占绝大多数，状态筛选在**本地**做。
+
+**进程内 TTL 缓存**（2026-10-08 二轮，用户报「每次进这个界面都要重新获取」）：
+问渠页是 `SubpageActivity` 上的独立窗口，**每次进页都新建 ViewModel**，旧写法在 `init` 里
+一订阅到登录态就取数 → 进页 = 三次请求。现在工时 / 星级 / 活动列表各有一份
+`WenquTtlCache`（30 分钟，`WenquRules.ACTIVITY_TTL_MS` / `HOURS_TTL_MS`），
+`WenquRepository` 是 `Graph` 单例所以跨页面、跨窗口都命中；进页还会先用
+`cachedActivities` / `cachedVolunteer` **同步**铺上快照，不闪骨架屏。只有顶栏刷新
+（`force = true`）绕过缓存。**不做磁盘缓存**（第三方公开内容、随时在变，落盘还要处理
+备份排除与陈旧展示，收益不抵成本），**也不做周期轮询**（活动提醒那一路是周期任务，
+但它是独立的开关 + 间隔闸门，见下）。换人登录会 `clearCaches()`。
+
+**本地筛选与排序**（2026-10-08 三轮）：服务端只认 `keyword`，状态 + 「隐藏已满」两个维度都在本地做
+（`WenquRules.matchesFilter` / `isFull`），再按 **`displayRank` 稳定排序**（招募中优先）——
+平台的顺序既不是 id 也不是 add_time（实测前 21 条严格降序、之后跳回旧 id），不排就是满屏已结束。
+「满」= 招募中 + 剩余名额 0，**招募人数没填（0）时一律不算满**。两个筛选都落 DataStore
+（`wenqu_status_filter`，-1 = 全部；`wenqu_hide_full`）。
+
+**`isApply` / `isBlack` / `stop_apply_reason` 三个平台字段要展示**（2026-10-08 三轮）：
+前者在活动卡上给一枚「已报名」徽章（早先解析了却没展示，报过名和没报名的长得一模一样）；
+后两个是**账号级**的报名限制，`WenquActivityPage` 带上它们，页面在筛选行下面挂一条
+「报名受限」+ 平台原话（`WenquRules.applyBlockedText`）。
+
+**详情取不到不是错误**（2026-10-08 用户报「点记录弹详情，同时飘一条取不到详情」）：
+平台回 `detail: null`（活动已删 / 不可见）是**正常回答**，`activityDetail` 回 `WenquActivity?`，
+调用方用入口那条（列表 / 记录）继续展示，只在弹层内挂一行说明，**不弹任何提醒**
+（`detailUnavailable` 标志）。
+
+**新增志愿活动提醒**（2026-10-08 三轮，`ui/reminder/WenquActivityAlertReminder.kt`）：
+搭 `ScoreAlertReminder` 的周期任务（**第五路**，不新开 WorkManager 任务），
+开关 `wenqu_activity_alert_enabled` **默认关**（打扰型能力，同选课/调课口径）、
+间隔 `wenqu_activity_interval_hours` 默认 **24**（档位复用 `ScoreAlertDefaults.INTERVAL_CHOICES`）。
+四条口径：① **只报「招募中」**（`WenquRules.isNewRecruiting`）——平台会把补录的老活动插进列表
+（实测 id 最大的一条是「补录」且已结束），按 id 无差别报全是噪音；② **首跑只建基线**
+（`wenqu_activity_last_seen_id` ≤ 0 一律不算新增），否则用户一开开关就被几十条历史活动轰一遍，
+基线只前进不后退；③ **扫描一整页 100 条**（`WenquRepository.scanActivities`）——
+`volunteer/v2` **不保证按 id 排序**（实测前 21 条严格降序、之后跳回旧 id），扫 20 条会漏掉
+夹在中间的新活动；④ **检查时刻只在成功时落**（同成绩/考试纪律）。
+通知走免扰时段拦截（事实型 → 时段结束补发）+ 收件箱留痕
+（`InboxKind.WENQU_ACTIVITY`，键 `wenqu|activity|<本批最大 id>`，一次核对只留一条痕）；
+通知 id 1013 / 落点 requestCode 3013 / 渠道 `wenqu_activity`。
+
+**两处 2026-10-08 三轮的修补**：① `scanActivities` 成功后**顺手把浏览页缓存写成刚抓到的前 20 条**
+（`page = 1`）——提醒刚说「有新活动」，用户点通知进来却看到 30 分钟前的旧列表，这个坑就是这么来的；
+只放前 20 条且 `page = 1` 是为了与 `activities()` 的分页口径一致，加载更多接着取 page 2 不重叠。
+② 设置页改开关 / 间隔走 `WenquActivityAlertReminder.onSettingsChanged`，
+**不用** `ScoreAlertReminder.onSettingsChanged`——后者会把五路的检查时刻一起清 0，
+于是动一下问渠开关就顺带让成绩 / 考试 / 选课 / 调课各打一次教务；问渠的入口只清自己那一路，
+再 `ensurePeriodicWork` + `enqueueWenquCheck`（复用同一个 Worker 类名与工作名，不新开任务）。
+
+**本地凭证**：独立文件 `secure_wenqu`（`EncryptedSharedPreferences`，**含密码**，与一卡通查询密码
+同级），自愈三段照抄 `QzxySessionStore`；**两份备份排除 xml 都要登记**（正式件 + `.fallback`）。
+存 token 的 `expiresAt`（从 JWT 解）+ 工时影子（`hours` / `hoursFetchedAt`，30 分钟 TTL）。
+
+**红线**：① **只读**——报名 / 签到 / 提交类写接口（`volunteer/apply`、`volunteer/checkin`、
+`*_submit`）一律不碰，`volunteer/v2` 与 `volunteer/detail/{id}` 都是读；② **无日志拦截器**，
+手机号 / 密码 / token / 负责人姓名电话不进 Logcat；③ 响应里的他人信息**分两档**
+（2026-10-08 起）：`leader_name` / `leader_phone`（活动负责人）**已声明进模型**、在详情弹层展示
+（电话可长按复制），但**只展示**——不进日志、不进持久化、不进夹具与文档（仓库是公开的，
+夹具一律假名假号）；`attendance_name` / `attendance_phone`（考勤人）**不声明**，
+`ignoreUnknownKeys` 下连内存都不进（`WenquModelsTest` 有兜底用例：toString 里出现即红）。
+
+**测试**：`WenquRulesTest` 28 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
+星级与工时文案 / 状态文案 / 时间戳与时间段 / 名额文案 / 「满了没」/ 本地筛选两维叠加 /
+展示排序权重 / 报名限制文案 / 筛选哨兵 / 新增活动判据 / 活动提醒间隔档位与兜底）
++ `WenquModelsTest` 19 例（信封判定 / 发码双 200 只看 msg / 数字与字符串两种工时 /
+记录带地点与报名时间 / 记录→活动映射与 `status` 钉 -1 / 自主类 id 收 0 / 负责人进模型而考勤人不进 /
+记录转活动带负责人 / 报名限制标记 / 活动列表与详情解析 / 忽略未知字段 / `data:null` 容错）
++ `WenquTtlCacheTest` 6 例（新鲜期命中 / 过期即删 / 按关键词各存一份 / 超量按写入序淘汰 /
+重写排到最新 / clear）。夹具按真实结构脱敏改写，人名手机号一律假值。

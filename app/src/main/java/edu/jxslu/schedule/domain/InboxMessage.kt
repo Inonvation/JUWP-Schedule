@@ -20,6 +20,8 @@ enum class InboxKind {
     POWER_LOW,
     /** 校园卡正式卡余额低于提醒线（状态型：回升即消解）。 */
     YKT_LOW,
+    /** 问渠平台上出现新的可报名志愿活动（`WenquActivityAlertReminder`，2026-10-08）。 */
+    WENQU_ACTIVITY,
 }
 
 /** 收件箱消息的领域模型（`InboxMessageEntity` 的镜像，纯逻辑层可测）。 */
@@ -64,6 +66,13 @@ object InboxKeys {
 
     /** 一卡通偏低：同上。 */
     const val YKT_LOW = "balance|ykt|low"
+
+    /**
+     * 问渠新活动：`wenqu|activity|` + 本批新活动里**最大的那个 id**。
+     * 用「本批最大 id」而不是每个活动一条：一次核对发现 10 个新活动只该留一条痕，
+     * 之后再出现更新的活动（id 更大）才算新事实。
+     */
+    const val WENQU_ACTIVITY_PREFIX = "wenqu|activity|"
 }
 
 /**

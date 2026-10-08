@@ -53,6 +53,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.OnboardingActivity
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.AccountMask
+import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.data.session.LoginState
 import edu.jxslu.schedule.data.session.LoginStateRules
 import edu.jxslu.schedule.data.session.LoginTarget
@@ -108,6 +109,8 @@ fun SettingsScreen(
     onOpenLearningHub: () -> Unit = {},
     onOpenWidgetCalendarHub: () -> Unit = {},
     onOpenExtensionServices: () -> Unit = {},
+    /** 问渠 · 志愿服务（DESIGN §3.28）：账号卡班级行那枚工时点进来的落点。 */
+    onOpenWenqu: () -> Unit = {},
     onOpenAbout: () -> Unit = {},
     /** 账户卡三格的落点（DESIGN §3.16）：教务账户页 / 校园卡设置 / 胖乖生活页。 */
     onOpenJwLogin: () -> Unit = {},
@@ -170,6 +173,15 @@ fun SettingsScreen(
             // 登录 / 退出在趣智校园页发生，主窗口不重建也得跟着变
             val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
                 .collectAsStateWithLifecycle()
+            // 问渠 · 志愿服务（DESIGN §3.28）：工时影子跟着仓库的会话流走——它是后台刷的，
+            // 只在组合期读一次的话账号卡那一行会停在进页那一刻的旧值
+            val wenquSession by remember { Graph.wenqu(context).session }
+                .collectAsStateWithLifecycle()
+            // 进页（含从别的窗口回来）时，工时过期才后台刷一次；未登录 / 没过期直接返回。
+            // 失败静默在仓库里（refreshHoursIfStale），卡片保留旧值
+            LaunchedEffect(resumeTick) {
+                Graph.wenqu(context).refreshHoursIfStale()
+            }
             // 升级用户没存凭证，但 WebView 里可能还有有效会话。只读 CookieManager、不联网，
             // 不认这一点就会出现「卡上说未登录、点进导入却能用」的自相矛盾。
             val webSession = remember(resumeTick) { WebViewCookieBridge.hasAnyCookie() }
@@ -238,6 +250,9 @@ fun SettingsScreen(
                 onOpenYkt = onOpenCampusCard,
                 onOpenQiekj = onOpenWater,
                 onOpenQzxy = onOpenQzxy,
+                // 问渠工时（DESIGN §3.28）：未登录为 null，班级行不显示这一段
+                wenquHours = wenquSession?.takeIf { it.isComplete }?.let { WenquRules.formatHours(it.hours) },
+                onOpenWenqu = onOpenWenqu,
             )
 
             // 入口顺序（2026-10-07 重排）：功能入口在前（课表 / 学习 / 校园服务 /
@@ -315,10 +330,13 @@ private fun AccountBar(
     showQiekj: Boolean,
     /** 趣智校园卡片开关：同上。 */
     showQzxy: Boolean,
+    /** 问渠工时（已格式化）；null = 未登录 / 无数据，班级行不显示这一段（DESIGN §3.28）。 */
+    wenquHours: String?,
     onOpenJw: () -> Unit,
     onOpenYkt: () -> Unit,
     onOpenQiekj: () -> Unit,
     onOpenQzxy: () -> Unit,
+    onOpenWenqu: () -> Unit,
 ) {
     var revealed by rememberSaveable { mutableStateOf(false) }
     val masked = AccountMask.maskStudentId(username).orEmpty()
@@ -370,14 +388,36 @@ private fun AccountBar(
                         )
                     }
                 }
-                if (className.isNotBlank()) {
-                    Text(
-                        text = className,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                // 班级行（DESIGN §3.28）：班级 + 问渠志愿工时。**班级先让位**（吃余量、可省略），
+                // 工时优先保完整——它是用户最关心的数；点工时进问渠页
+                if (className.isNotBlank() || wenquHours != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (className.isNotBlank()) {
+                            Text(
+                                text = className,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        if (wenquHours != null) {
+                            Text(
+                                text = if (className.isNotBlank()) " · 志愿 $wenquHours 工时" else "志愿 $wenquHours 工时",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(onClickLabel = "查看志愿服务") { onOpenWenqu() }
+                                    .padding(horizontal = 2.dp),
+                            )
+                        }
+                    }
                 }
             }
             IconButton(onClick = { revealed = !revealed }) {

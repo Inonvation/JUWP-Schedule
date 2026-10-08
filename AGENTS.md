@@ -30,6 +30,7 @@
 | 共享单车 / 地图 / 免费时长提醒 | `.agents/rules/ebike.md` |
 | 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
 | U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
+| 问渠（志愿服务 / 劳动教育） | `.agents/rules/wenqu.md` |
 | 学工表单 / 盖章成绩单 | `.agents/rules/xg-transcript.md` |
 
 其他只读参考：
@@ -92,7 +93,7 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 | 情况 | 做法 |
 |------|------|
 | 手机在线 | `adb install -r` 装 debug 包 → 告诉用户已装好、装的是哪个包、建议点验的 2–3 处 → 停下等反馈。不要自己接着在设备上反复点 |
-| 手机不在线，且改动够小 | 自己起模拟器自测（起法见下），结论落成一句话 |
+| 手机不在线，且改动够小 | **先判有没有必要自测**（判据见下）：有必要 → 起模拟器自测，结论落成一句话；没必要 → 确认代码无误、指明用户点验什么，不起模拟器 |
 | 手机不在线，改动不够小 | 说明缺哪台设备、需要用户点验什么。不要为了「测过」而扩大模拟器范围 |
 
 「够小」= 下面三条**同时**满足，缺一条就交给用户：
@@ -100,6 +101,15 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 1. 不碰网络请求路径（Retrofit/OkHttp、WebView 注入、教务/胖乖/一卡通/电费/快趣/农行收银台）
 2. 不碰凭证、签名、`proguard-rules.pro`、Room 迁移、`AndroidManifest` 权限
 3. 验证点只在 UI 层，且 `uiautomator dump` 或 `screencap` 能给出结论
+
+「够小」只说明**允许**自测，不等于**必须**自测。三条同时满足后再判有没有必要：
+
+**有必要自测**：验证点读代码定不了、且 `uiautomator dump` / `screencap` 能给出确定结论——
+实测布局（行高 / 对齐 / 省略号 / 裁字 / 命中区）、动画与过渡的实际观感、需真实测量值才判的排版。
+
+**没必要自测**：纯文案 / 常量 / 配色 / 资源改动；状态接线、分支条件等读代码即可判定且已有单测覆盖的改动；
+验证点只有用户能判（主观观感、真机行为、真实数据）；模拟器起不来（本机常发生，见下）也别空转。
+没必要自测时：确认代码无误 + 指明用户点验什么，不起模拟器。
 
 模拟器上的结果只算冒烟，不算真机验证；沾到账号、网络、系统权限的功能一律等用户点验。
 
@@ -125,21 +135,23 @@ adb shell am start -n edu.jxslu.schedule.debug/edu.jxslu.schedule.MainActivity
 **模拟器必须避开 WinNAT 保留端口段（2026-09-29 实测）**：`-port 5554/5556/5558` 全部起不来
 ——现象是 qemu 活着、客户机也在渲染（日志里有 RenderThread），但 `adb devices` 里没有它，
 `bind` 直接回 `WinError 10013`。**根因是这些端口落在 Hyper-V/WinNAT 的保留段里**，
-不是"本机禁绑"（同一台机器 `5183/5960/8000` 都能绑）。起模拟器前先查：
+不是"本机禁绑"——同一台机器上不在保留段的端口都能绑。**保留段每次重启会重排，写死的端口迟早失效**
+（2026-10-08 复核：文档曾用的 `5183` 已落进保留段 `5137-5236`，`5458-5557` 仍在、`5558-5657` 已变）。
+**每次起之前现查现挑，不要照抄任何写死的端口**：
 
 ```powershell
-netsh int ipv4 show excludedportrange protocol=tcp   # 本机实测保留 5458-5557 / 5558-5657…
+netsh int ipv4 show excludedportrange protocol=tcp   # 输出即当前保留段，逐段避开
 ```
 
-再挑一个**不在保留段**的端口（如 `-port 5183`），启动后就是 `emulator-5183`。
+从查询结果之外挑一个端口（下文示例统一写 `<port>`），启动后就是 `emulator-<port>`。
 本机两个 AVD：`jwptest`、`jw35`（android-35），可用的 headless 起法：
 
 ```powershell
 & "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd jw35 -no-window -no-audio `
-  -no-boot-anim -no-snapshot -gpu swiftshader_indirect -port 5183
-adb -s emulator-5183 install -r app\build\outputs\apk\debug\app-debug.apk
-adb -s emulator-5183 shell uiautomator dump /sdcard/u.xml   # 页面文字树，可逐条核对
-adb -s emulator-5183 exec-out screencap -p > shot.png       # 真渲染截图
+  -no-boot-anim -no-snapshot -gpu swiftshader_indirect -port <port>   # <port> 照上面的查询现挑
+adb -s emulator-<port> install -r app\build\outputs\apk\debug\app-debug.apk
+adb -s emulator-<port> shell uiautomator dump /sdcard/u.xml   # 页面文字树，可逐条核对
+adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 ```
 
 **模拟器比真机好用**：`uiautomator dump` 能直接读到 Compose 的文字树、`screencap` 出真图，
@@ -220,7 +232,9 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
                UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37；
                调课处置页 SCHEDULE_CHANGES，§4.17；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
-               培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；学生评教走
+               培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；问渠 WENQU +
+               志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
+               WENQU_SETTINGS，§3.28；学生评教走
                JwImportActivity 的 TeachingEval 模式（§4.44））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
@@ -241,6 +255,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  学年分组/校验/标签，§4.41）
  + TeachingCalendar·TeachingCalendarRules / InternshipBase·InternshipBaseRules（§4.42 / §4.43：
  教学日历→第 1 周周一推导 · 实习基地与类别分组）
+ + WenquRules（问渠：token 续期时机 · 验证码 5 分钟冷却 · 手机号/密码校验 · 星级与工时文案 ·
+ 活动状态文案 · 时间戳/时间段与名额文案，§4.45）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
@@ -296,7 +312,19 @@ data/ai/         AI 调课（DESIGN §4.39；OpenAI 兼容 /chat/completions + /
                  thinking disabled；带图时 content 升多模态数组；**无日志拦截器**）
                  + AiCredentialStore（API Key，secure_ai.xml 已排除备份）
                  规则见 .agents/rules/ai-schedule.md
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|inbox|ai
+data/wenqu/      问渠（志愿服务 / 劳动教育，DESIGN §4.45 / UI §3.28；**手机号 + 密码**登录，
+                 不走微信——code / cache_key 只有微信运行时能生成，App 造不出来）：
+                 WenquApi（裸 OkHttp；请求头是 CRMEB 错拼的 Authori-zation；无日志拦截器）
+                 + WenquCredentialStore（secure_wenqu.xml **含密码**，已排除备份）
+                 + WenquRepository（3 天 JWT，快到期自动重登；工时影子 30 分钟 TTL）
+                 + WenquTtlCache（进程内 TTL 缓存：工时 / 星级 / 活动列表各一份，进页不重复取数）
+                 活动列表 = `volunteer/v2`（平台上有的，与「我的记录」`volunteer/my` 是两张表）
+                 + `volunteer/detail/{id}`（工时 / 群号只有详情有）
+                 + scanActivities（新增活动提醒的扫描口：一次取 100 条，成功后把浏览页缓存
+                 刷成刚抓到的前 20 条——否则点通知进来看到的是旧列表）
+                 新增活动提醒见 ui/reminder/WenquActivityAlertReminder.kt（第五路周期链）
+                 规则见 .agents/rules/wenqu.md
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|inbox|ai
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -320,7 +348,7 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
 
 - 与用户中文交流；少形容词，多可验证结论
 - 完成定义：功能可演示。能跑则跑 `assembleDebug` + `testDebugUnitTest`；装机与点验按「装机与验证路径」
-  走，手机在线就装给用户点验，不在线且改动够小才自测，其余写明阻塞；未越权改无关模块
+  走，手机在线就装给用户点验，不在线且够小、有必要才自测（没必要则确认代码后交用户点验），其余写明阻塞；未越权改无关模块
 - 文档同步是收尾动作，排在编译/装机之后。删功能时把引用它的文档、注释、测试一并清掉
 
 ## 阶段状态（见 DESIGN.md §6 里程碑）
@@ -458,7 +486,7 @@ handler、CancellationException 穿透 10 处、**新增 `data/net/AppHttp.kt` O
 的 `AlertDialog` 没有 compose 侧动画、compose Dialog 窗口也没配 `windowAnimationStyle`，
 开与关都是硬切。新增 `ui/common/DialogWindowFade.kt`（`DialogWindowFadeEffect` 把
 `DialogWindowFade` 窗口动画样式挂到 dialog window：淡入 + 0.86→1 放大 240ms / 淡出 190ms，
-与动作区 `BAR_RISE_MS`/`BAR_FALL_MS` 同档；退场时窗口表面停在最后一帧直到播完），
+与动作区的升起档同长（`BAR_RISE_MS` 240；`BAR_FALL_MS` 2026-10-08 起只管列表侧收起）；退场时窗口表面停在最后一帧直到播完），
 `KvcxConfirmDialog` 与同页「结束计时」确认弹窗已接；勾选说明行从默认 spring 换成与动作区
 同族的显式 tween（`FastOutSlowInEasing`）。模拟器录屏逐帧验证进出场都是渐进过渡；
 全量 1281 例 0 失败。
@@ -534,8 +562,8 @@ App 侧落地两件：① 新增 `ui/reminder/ReminderVibration`（自 ebike `vi
 `onLongClick` 参数）+ 底部批量条「标为已读 / 删除」，删除是软删（重投同键不复活）。
 数据 = Room v18 `inbox_messages`（dedupeKey 唯一索引 upsert 去重：同键不重发、已删
 不复活、未删重投重新置未读）；保留策略软删 30 天 / 已读 90 天 / 总量 200 条，冷启动
-purge。五个挂点（ExamSync / ScoreSync / ScheduleSync / SelectionAlertReminder /
-BalanceAlertReminder）全部落在既有结果点上，**收件箱不发任何网络请求**、写操作吞错
+purge。六个挂点（ExamSync / ScoreSync / ScheduleSync / SelectionAlertReminder /
+BalanceAlertReminder / WenquActivityAlertReminder）全部落在既有结果点上，**收件箱不发任何网络请求**、写操作吞错
 不反向打断业务链；`ScoreSync` 的 changes 与 `scoreAlertEnabled` 解耦（恒计算，通知层
 自判开关）；余额消息是状态型（回升即整条移除，失败绝不误删）；**通知总开关只拦发通知
 不拦核对与入箱**（2026-10-06 修正：`ScoreAlertReminder`/`BalanceAlertReminder` 入口
@@ -1046,6 +1074,16 @@ acceleration/magnetic-field` 合成姿态，扇形随磁场方向出现并转动
 长车号不许把右侧图标挤没）。全量 **1662 例 0 失败**；改动是纯 UI（未碰网络 / 凭证 / Room /
 Manifest），但**骑行态需要真机登录 + 在案订单才能复现**，见下表。
 
+动作区升起动画改「直接上升」（2026-10-08 第二轮，用户口径「开车卡片的动画从右下角升起
+有点丑，直接上升就行」；DESIGN §3.9）：旧版上区进出场是 `slideInVertically` / 
+`slideOutVertically` **两块反向滑动**叠上容器 `SizeTransform` 长高，合成的运动轨迹发斜、
+观感像"从角落冒出来"。改成：进 = 全高上滑 + 快速淡入（200ms）；出 = **原地淡出**
+（`BAR_FADE_OUT_MS` 120ms，不再向下沉）；容器高度动画两个方向仍是 `BAR_RISE_MS` 240
+（页面冻结地图让位高度的口径不变，`RideScreen` 落位注释同步改）。`BAR_FALL_MS` 保留给
+列表侧（停车点卡收起、滚动落定余量），上区不再用它。模拟器录屏逐帧验证：车辆卡换车
+（100000198→100000573）旧卡原地淡出、新卡纯竖直升起，收起方向同样无斜向；全量
+**1662 例 0 失败**。
+
 关于页「清理缓存」（2026-10-08，DESIGN §3.3；`data/repo/AppCacheCleaner`）：关于页「应用」区
 新增一行——进页统计一次占用（含 WebView 数据目录求和），点行二次确认后清。安全边界是
 **只清可自愈的临时数据**：WebView 三件套走官方 API（Cookie 整库清 = 退出登录同款、
@@ -1057,7 +1095,109 @@ Room 与 DataStore、全部凭证 prefs、`notes_img/` `schedule_bg/` `transcrip
 `schedule_baseline.json` 等变动检测基准（删了下次同步把旧数据当新变动误报）、
 `ai_apply_history.json`（撤销入口）、`quiet_hours_queue.json`（待补发提醒）——
 清单与逐项依据在 `AppCacheCleaner` KDoc，改清单先读它。文件名常量与各 Store 的 private
-常量互为镜像（注释已标注），改名必须两处同步。
+常量互为镜像（注释已标注），改名必须两处同步。**用户口径**（2026-10-08）：WebView
+Cookie（教务网页登录状态）纳入清理（下次进教务页面自动填表重登，不影响 OkHttp 直取的
+后台同步）、崩溃记录纳入清理（清后关于页「导出诊断日志」份数同步归零，`crashRefresh`
+键重读）。模拟器冒烟通过（预置假文件 → 清理 → `run-as` 复核：假文件与 `app_webview`
+4.6MB→644KB、瓦片库缩空、行占用 5.6MB→442KB、Snackbar 与份数归零正确）；全量 **1662 例
+0 失败**。改动不碰网络路径 / 凭证 / Room / Manifest（不属于「够小」仅因 WebView Cookie
+即登录态，真机点验见下表）。
+
+三路独立复查轮（2026-10-08，对本轮两功能「骑行卡四态收口 + 清理缓存」的复核；三份报告
+共 20+ 条核验点全部通过，P1 零条）：关键结论——`RideUpperCard` 三处调用内边距无双份、
+`Alignment.CenterVertically` 解析正确；长车号挤压下右侧图标组**几何上不可能被挤没**
+（Row 测序非 weighted 先量），胶囊极端窄屏下省略号是可接受降级；Unknown↔Locked 切换
+卡高恒定（头行 / 倒计时 / 指标行两态同构），不触发地图让位连锁；`barHeightTier` 未被
+新容器改变语义；stash 在 key 复活场景（car:A→finding→car:A）不会让旧值上屏（复活即
+isCurrent，先写后画）；AppCacheCleaner 删除边界与三份规则逐项吻合（瓦片 SQL purge 链、
+ai_img Mutex、bike_zones_cache.json 经 EbikeMapCache 一并清且安全）、WebView cookie
+清理对 OkHttp 链（MemoryCookieJar 独立）与自动重登链均自愈、measure/clear 全程 IO 协程。
+**修复 6 处**：① `RideActionArea` 删掉三个只透传不消费的死参数（phase / loggedIn /
+pickedCar——形态已全部折进 barKey）；② `RideUpperStash` KDoc 的 `[BAR_FALL_MS]` 改
+`[BAR_FADE_OUT_MS]`（退场时长 120ms，旧引用指向列表侧常量）；③ `.agents/rules/ebike.md:77`
+残留的「190ms」改 120ms；④ 清理缓存确认弹窗补 `DialogWindowFadeEffect`（ui-common.md
+口径：确认型弹窗一律带过渡）；⑤ `runClearCache` 加 `if (clearingCache) return` 重入闸
+（挂起点之前）；⑥ `EbikeMapCache.clear` 时序注释「只从出码页发起」更新为双入口口径。
+另记录两处**不改**的已知取舍：结算卡段间距 8→10dp（统一容器的必然结果，卡高 +4dp 在
+tier 2 内）；大字体下倒计时块自身变高会触发一次单步地图 resize（非逐帧，原有口径）。
+修复后全量 **1662 例 0 失败**；模拟器冒烟：骑行页正常起、清理缓存弹窗带过渡 + 清理后
+占用 1.1MB→274KB + Snackbar 正确。
+
+问渠二轮：活动列表 + 详情弹层 + 进页不重复取数（2026-10-08，用户报「界面太丑 / 每次进页
+都重新获取 / 点活动卡片要看详情 / 没把劳动教育里的活动名称弄进来」；DESIGN §3.28 / §4.45，
+规则见 `.agents/rules/wenqu.md`）：四块——① **活动列表**接真身：`POST volunteer/v2`
+（`{page,limit,keyword}`，**空关键词合法**，与选课中心相反）+ `POST volunteer/detail/{id}`
+（工时 `score` 与群号 `group_id` **只有详情有**），状态文案照小程序
+`{0:已取消,1:招募中,2:进行中,3:已结束}`；接口**不返回总数**，`hasMore` 按「回满即可能还有」
+推断；总量上千且按 id 倒序（实测 800+ 里「招募中」只有个位数），故状态筛选在**本地**做。
+② **进页不重复取数**：新增 `WenquTtlCache`（纯 Kotlin、`@Synchronized`、`LinkedHashMap` 当 LRU），
+工时 / 星级 / 活动列表各一份 **30 分钟**缓存，`WenquRepository` 是 `Graph` 单例所以跨页面跨窗口
+命中；进页先用 `cachedActivities` / `cachedVolunteer` **同步**铺快照，不闪骨架屏；只有顶栏刷新
+`force` 才重取；换人登录 `clearCaches()`。**不做磁盘缓存、不做周期轮询**。
+③ **UI 收口**：已登录页两块（工时卡 → 可报名活动），活动卡与记录卡共用 `WenquEntryCard`
+（徽章 + 右侧数字 / 标题 / `单位 · 地点 · 时间`）；搜索框（服务端关键词 + IME 搜索键）、
+状态 chips、加载更多；点卡片弹 `WenquActivitySheet`（列表那条先顶着，详情回来补工时与群号，
+群号 `SelectionContainer` 可长按复制）。**「我的报名」入口按用户口径不做**。
+④ **记录入口收进工时卡 → 独立记录页**（同日用户口径「记录放到工时卡里、展示共 n 条、每条也能
+点开；记录列表别用弹层，不然详情又是弹层有 bug」）：工时卡末行改成可点的「共 N 条记录 ›」→
+**独立二级页 `SubpageScreen.WENQU_RECORDS`**（`WenquRecordsScreen` + 自己的 `WenquRecordsViewModel`，
+数据走同一个仓库缓存，从主页点进来通常零请求）；**记录详情仍走弹层**（页 + 弹层没问题，弹层套弹层才是
+问题）。**记录的 `id` 就是活动 id**（小程序 `goToDetail` 同口径，实测记录 34658 与
+`volunteer/detail/34658` 标题工时一致），所以记录详情复用同一个 `WenquActivitySheet`，
+传 `recordBadge` 切记录视角（徽章换成 `apply_status_text`、去掉「我的状态」行、页脚换记录口径）；
+`WenquVolunteerRecord.asActivity()` 把 `status` 钉成 `WENQU_STATUS_NOT_APPLICABLE`（-1）
+——**默认值 0 在平台表里是「已取消」，照搬会让记录徽章写「已取消」**（踩到，单测钉住）。
+（**这一条里的「入口挂在工时卡上」当轮就作废了**——三轮按用户口径改成工时卡只显示工时数、
+记录入口进设置页，见下。记录页本身与 `recordBadge` 口径不变。）
+⑤ **详情展示负责人与电话**（用户要求）：`leader_name` / `leader_phone` 声明进模型、
+在详情弹层显示（电话可长按复制）；**考勤人 `attendance_*` 仍不声明**（连内存都不进，
+`WenquModelsTest` 兜底钉着）。口径随之调整：负责人**只展示**——不进日志 / 持久化 / 夹具 / 文档
+（夹具一律假名假号），红线由「不声明」改成「不落盘、不进仓库」。
+⑥ 顺手修 `WenquCredentialStore` 一段过时 KDoc（说姓名学号来自 `star_cert` 的 student 段，
+实际模型没解析它们）。新增 `WenquTtlCacheTest` 6 例 + `WenquRulesTest` +8 + `WenquModelsTest` +8，
+全量 **1705 例 0 失败**；模拟器冒烟（未登录页 / 校园服务入口 / 登录表单）通过，
+**已登录态要真机点验**（手机当时锁屏，AI 进不去）。
+
+问渠三轮：筛选 / 加载更多反馈 / 设置页 / 活动提醒 / 顶栏入口（2026-10-08，用户一次报五件；
+DESIGN §3.28 / §4.45，规则见 `.agents/rules/wenqu.md`、`.agents/rules/today-ui.md`）：五块——
+① **筛选加「隐藏已满」**（本地筛，`WenquRules.isFull` = 招募中 + 剩余名额 0；
+**招募人数没填（0）时一律不算满**，否则凭空藏掉一堆活动）+ 状态 chips，两维叠加
+（`matchesFilter`）；默认关，平台里大部分活动是已结束的，默认藏掉满了的会让人以为列表变短了。
+② **修「加载更多没反馈」**：新增卡片在折叠线以下时屏上什么都不变——按钮换进度圈 +「加载中…」、
+落地后 `animateScrollToItem(3 + 点之前的可见条数)` 滚到第一张新增卡、本地筛选把新页整页滤掉时
+Snackbar 明说。`loadMoreSeq` 自增是「这一下到底有没有结果」的判据。
+③ **群号下挂「请确保在小程序报名成功后再进群」**（有些活动的群号是报名后才给的）。
+④ **新增问渠设置页 `WENQU_SETTINGS`**（顶栏齿轮进）：账号（脱敏手机号 + **记录入口**）/
+提醒（新增活动提醒开关 + 间隔）/ 退出登录——**主页工时卡只留工时数**，不再挂任何入口（用户口径）。
+⑤ **新增志愿活动提醒**：搭 `ScoreAlertReminder` 周期任务的**第五路**，开关默认关、
+间隔默认 **24h**（档位复用成绩那套）；只报「招募中」（平台会把补录的老活动插进来，
+实测 id 最大的一条就是补录且已结束）、**首跑只建基线**、**扫一整页 100 条**
+（`volunteer/v2` 不保证按 id 排序，实测前 21 条严格降序之后跳回旧 id）、检查时刻只在成功时落；
+通知走免扰拦截 + 收件箱第六个挂点（`InboxKind.WENQU_ACTIVITY`，键 `wenqu|activity|<本批最大 id>`）。
+⑥ **今日页顶栏「+」加「志愿服务」**（下拉三行改四行，落问渠页）。
+新增 `WenquRulesTest` +5 例（满了没 / 两维筛选 / 新增判据 / 手机号脱敏 / 间隔档位），
+全量 **1710 例 0 失败**；模拟器冒烟（登录表单 / 校园服务入口）通过，**已登录态仍待真机点验**。
+
+问渠四轮：修 3 个 bug + 落地 7 条优化（2026-10-08，用户点验后报 + 采纳上轮建议；
+DESIGN §3.28 / §4.45，规则见 `.agents/rules/wenqu.md`）：**三个 bug**——
+① **点记录弹详情时同时飘一条「取不到详情」**：平台回 `detail: null`（活动已删 / 不可见）是
+**正常回答**不是错误，`activityDetail` 改回 `WenquActivity?`，调用方用入口那条继续展示、
+只在弹层内挂一行说明（`detailUnavailable`），**不弹任何提醒**；
+② **加载更多的提示不走软件内那张提示卡**：问渠三页原先用裸 `SnackbarHost`（这套主题里是另一副
+模样），全部换成全 App 统一的 `AppSnackbarHost`；
+③ **加载更多的语义不清**：现在**报条数**——「已加载 N 条」/「已加载 N 条 · 没有更多了」/
+「这一页没有符合筛选的活动」/「没有更多活动了」，列表到底再挂一行「已到底 · 本次共加载 N 条」。
+**七条优化**——① `scanActivities` 成功后顺手把浏览页缓存写成刚抓到的前 20 条（`page = 1`）：
+提醒说「有新活动」而用户点通知进来看到旧列表的坑；② 设置页改开关 / 间隔改走
+`WenquActivityAlertReminder.onSettingsChanged`（只清自己那一路），不再用
+`ScoreAlertReminder.onSettingsChanged`（会把五路检查时刻一起清 0 → 顺带打四次教务）；
+③ 活动卡按 `isApply` 加「已报名」徽章；④ 本地「招募中优先」稳定排序（平台顺序既不是 id
+也不是 add_time，不排就是满屏已结束）；⑤ 状态筛选 + 隐藏已满**落盘**；
+⑥ 头部三块合成一个 `item("header")`，`HEADER_ITEM_COUNT = 1`（加载更多滚动落点不再靠脆耦合的 3）；
+⑦ 被平台限制报名时列表上方挂平台原话（`isBlack` / `stop_apply_reason`）。
+**交互细节**：电话 / 群号那两行整行可点即复制（行尾淡图标 + 44dp 命中区）、一滚列表就收键盘、
+空态改用统一的 `EmptyHint`。新增 `WenquRulesTest` +4 + `WenquModelsTest` +1，
+全量 **1714 例 0 失败**；模拟器冒烟通过，**已登录态仍待真机点验**。
 
 ### 待真机点验（未闭环）
 
@@ -1070,6 +1210,7 @@ Room 与 DataStore、全部凭证 prefs、`notes_img/` `schedule_bg/` `transcrip
 | 引入 | 功能 | 要验什么 |
 |------|------|----------|
 | 09-29 | 快趣出行三处调整 | 登录表单的「忘记密码」出路、还车点用运营方点位名、免费时长提醒震动 |
+| 10-08 | 关于页「清理缓存」 | ① 清理后打开教务页面应要求重新登录（已存密码自动填表重登成功），OkHttp 后台同步（成绩/考试/选课）不受影响；② 快趣地图瓦片清空后进地图页正常重载；③ 校历页回落内置兜底图、手动刷新能重下真图；④ 清理后上课提醒 / 收件箱 / 课表成绩等业务照常（确认没误删基准与队列） |
 | 10-01 | 快趣 开锁 / 还车确认弹窗 | 小屏与大字体档位下按钮不被挤出；「以后开锁不再确认」勾选与恢复入口 |
 | 10-01 | 快趣 地图重绘 | 拖动 / 刷新后车标与还车点照常出现、点车辆行高亮正常 |
 | 10-01 | 快趣 开锁后掉帧 | 开锁后是否还掉帧、面板升起是否照旧 |
@@ -1108,7 +1249,7 @@ Room 与 DataStore、全部凭证 prefs、`notes_img/` `schedule_bg/` `transcrip
 | 10-07 | 课程编辑弹层键盘手感修复 | 今日页/课表页点课程 → 编辑：点任意输入框（尤其最底部「备注」）键盘升起时，弹层停在原位随容器让位、内容可滚，**不再缓慢爬升**；输完点遮罩退出时键盘先收、弹层再滑走（`ImeAwareModalBottomSheet` 口径顺带生效） |
 | 10-07 | 一卡通到账弹窗跨笔基线残留修复 | 复现原 bug 场景：一笔充值到账确认后（或从另一入口发起下一笔）再充值并等待——到账后「充值成功」弹窗应**当场弹出**，不再卡「正在确认到账」直到 30 分钟超时；等待期间余额行数字照常刷新 |
 | 10-07 | 免扰时段（拦截与补发全链路） | ① 入口「我的 → 提醒与桌面 → 免扰时段」：预置「夜间休息 22:00–次日 07:00」「午休 12:30–13:30」两行 + 总开关默认开；② 点行进编辑弹窗、滚轮改起止时间、保存后列表即时刷新；添加自定义时段（含跨零点）、停用开关、删除（保底留一个）；③ **拦截**：把一个时段设成覆盖「现在」的几分钟（如 5 分钟后结束），期间触发任一提醒（如把上课提醒提前量调最小等一节课，或看 logcat `QuietHours` 的 `held`）——通知不弹、`logcat QuietHoursQueue` 队列有记录；④ **补发**：时段结束后通知应**当场补发**（logcat `flushed N held notification(s)`），点通知落点正确；⑤ **过期丢弃**：免扰期让「10 分钟后上课」类提醒入队且事件点已过 10 分钟，时段结束后不应补发（logcat 见 `expired 1`）；⑥ 总开关关掉后提醒恢复立即发送；⑦ 收件箱在免扰期内照常有记录；⑧ 顺手修的 3011 撞号：发过一条调课通知后再收 U净 完成通知，点 U净 通知应落 U净 页（不再落调课处置页） |
-| 10-08 | 快趣骑行卡两态变形修复 + 上区组件统一 | ① 账号方式骑行中反复下拉刷新 / 点胶囊现查：卡片外观**任何一态都同一副骨架**（同缩进、同高度基准），只有底色描边与胶囊文案变；② 锁状态缺失（服务端没回 `lockStatus`）时卡片不塌：仍是描边卡 + 胶囊写「锁状态未知」，点它现查一次；③「更新于 hh:mm」在窄屏与**大字体档位**下完整可见（不再被切掉半个字）；④ 长车号（12 位）不把右侧定位 / 响铃 / 刷新三枚图标挤没；⑤ 车辆卡与结算卡现在是同一套描边卡（与列表卡片同观感）；⑥ 骑行中切锁 / 解锁，整卡底色与胶囊颜色**渐变**过渡、不跳 |
+| 10-08 | 快趣骑行卡两态变形修复 + 上区组件统一 | ① 账号方式骑行中反复下拉刷新 / 点胶囊现查：卡片外观**任何一态都同一副骨架**（同缩进、同高度基准），只有底色描边与胶囊文案变；② 锁状态缺失（服务端没回 `lockStatus`）时卡片不塌：仍是描边卡 + 胶囊写「锁状态未知」，点它现查一次；③「更新于 hh:mm」在窄屏与**大字体档位**下完整可见（不再被切掉半个字）；④ 长车号（12 位）不把右侧定位 / 响铃 / 刷新三枚图标挤没；⑤ 车辆卡与结算卡现在是同一套描边卡（与列表卡片同观感）；⑥ 骑行中切锁 / 解锁，整卡底色与胶囊颜色**渐变**过渡、不跳；⑦ 动作区换形态（含点列表换车、进骑行态）是**纯竖直升起 / 原地淡出**，无斜向轨迹（模拟器录屏已验，真机确认手感） |
 | 10-08 | 临时锁车「确认中」语义（修开锁后锁车易报失败） | ① 账号方式开锁后**立即**点「锁车」：应先显示「锁车中…」，要么 12 秒内确认成功（Info「已临时锁车；订单与计费继续」），要么转**黄字**「车辆回报稍慢；可点刷新核实，车没锁上就再点一次锁车」+ 状态胶囊「锁车确认中…」——**不应再出现红字 Error**；② 确认中时点刷新：车辆上报到达后胶囊翻「已锁」、提示自动消解；③ 确认中再点一次锁车：应真重发指令（已锁也照发、不再客户端早退）、车已锁应快速回成功；④ 还车流程不受影响（静默锁 → 结束订单照旧） |
 | 10-08 | 胖乖开水面板文案补全（在线说明 + 积分折算 + 充足提醒） | 今日页点胖乖卡「小票 ¥X ›」开面板：① 底部常驻「软件无法识别设备是否在线，仅提供开水接口，请确保靠近设备且在线」；② 积分行追「· 约可抵扣 ¥X」——**与官方小程序显示的可抵金额对得上**（服务端 `integralAmount` 无真实样本，重点核；若有积分但后缀始终不出现 = 接口未给该字段，回报再定兜底）；③「使用积分抵扣」副行第二行「确保积分充足」 |
 | 10-08 | 骑行卡状态色整卡 + 三槽位按钮 + 锁车重发 | ① 三态外观：已解锁=青卡、临时锁车后=灰卡、悬置（开锁未确认 / 锁车确认中）=黄卡（整卡含倒计时与指标行；锁↔解锁切换换色平滑、高度不跳）；② **锁车成功后再点一次「锁车」应真重发指令**（客户端早退已删；观察服务端对「已锁再锁」的响应——本项唯一的未验证服务端行为面）；③ 骑行中（未锁）点左位「开锁」→「已确认开锁」（重发解锁指令、免确认）；④ 三枚按钮单行固定位（开锁位 / 锁车 / 还车）、大字体档位不裁字；⑤「解锁」「还车」「重试开锁」原流程不受影响 |
@@ -1124,6 +1265,9 @@ Room 与 DataStore、全部凭证 prefs、`notes_img/` `schedule_bg/` `transcrip
 | 10-08 | 教务窗口返回语义 + 「内容为空」假告警（第二轮） | ① 返回：在选课中心 / 进入选课页多走几层，按返回应一步退到**上一个有意义的业务页**（不再出现"按了没反应"或"退到登录页"），退无可退才关窗口；② 顶栏左上角箭头**直接退出窗口**，系统返回才逐页退（先关弹层 → 退业务页 → 关窗口）；③ 选课中心状态条应是「选课中心已打开。点「进入选课」…」，**不再**出现「页面已加载但内容为空，可点重试」（模拟器已验证这两条）；④ 待拍板：选课中心下方那片空白要不要用壳页适配填掉（现状与桌面浏览器开 980×1622 窗口一致） |
 | 10-08 | 教务弹窗收口 + 返回分工（第三/四轮） | ① 打开教务页里的弹窗（如选课中心「选课结果」）：弹窗应**完整落在屏内**（不再左右两头被切，实测 1500px 弹窗已收成 972px 居中）、内部表格照常可读；② 弹窗开着时按返回：**只关弹窗、页面不动**；再按一次才退页；③ 关掉电脑版（切「手机版」）后弹窗恢复原样（收口样式随开关撤销）；④ 教务页自己弹的小提示（`layer.msg` 之类，几秒自动消失的那种）若刚好在按返回时被关掉，属预期（返回优先关弹层），不影响后续导航；⑤ **顶栏左上角箭头 = 直接退出窗口**（不管历史有几层），**系统返回**才逐页退（先关弹层 → 退业务页 → 关窗口）——两条路各点一次对比 |
 | 10-08 | 骑行页蓝点朝向（罗盘扇形光晕） | ① 转动手机（平持缓慢原地转圈）：蓝点后方的扇形光晕应实时跟随、指向手机顶边所对的地理方向（与高德浏览态同语义），站定也显示；② 罗盘**方向正确性**（模拟器只能验"扇形随传感器转动"，方位角符号/基准只有真机磁力计能定）：顶边指北扇形朝屏幕上方、指东朝右，横屏下（`SubpageActivity` 未锁竖屏）按屏幕顶边计而非设备顶边；③ 无磁力计设备（或模拟器关传感器）蓝点退回无方向圆点、不崩溃；④ 拖动 / 缩放地图流畅无掉帧（heading 节流 ≤10Hz，`MapOverlayInputs` 比对在动）；⑤ 退到后台传感器监听注销（`dumpsys sensorservice` 无 `BikeCompass` 注册记录）；⑥ 有扇形时点蓝点附近的聚合圈命中不受影响 |
+| 10-08 | 问渠 活动列表 + 负责人 + 进页不重复取数 | ① **活动列表**：进页即出（默认「全部」），状态徽章与平台一致（招募中 / 进行中 / 已结束）、右侧是 `已报 N/M`（满了给红字「已满」）；② 搜索框输「支教」→ 出该词结果（**服务端搜**，不是本地筛）；状态 chips 切「招募中」→ **不发请求**、列表只剩招募中；③ **点活动卡片**：弹层先出列表那条、随后补上「计 N 工时」「负责人 / 负责人电话」「活动群号」（后两者可长按复制）——对照小程序同一条活动，负责人姓名与电话应**一字不差**；④ **点记录 → 弹层详情**（记录入口在设置页，见下一行）：徽章是「已完成」这类**我的报名状态**、**不是**「已取消 / 已结束」；详情里的负责人 / 电话 / 地点与小程序对得上；⑤ **进页不重复取数**：退出页面再进（或进「我的」再回来），logcat 里**不应再出现** `volunteer/my` / `volunteer/star_cert` / `volunteer/v2` 请求（30 分钟内走缓存）；从主页进记录页也应零请求；点顶栏刷新才重取（且刷新期间顶栏是转圈）；⑥ 弹层里**不应出现考勤人**姓名与电话（负责人是要求展示的，只有考勤人不该有）；⑦ 退出登录后回到登录表单、账号卡那行的工时消失 |
+| 10-08 | 问渠 筛选 · 加载更多反馈 · 设置页 · 活动提醒 · 顶栏入口 | ① **工时卡只剩工时数 + 星级**，顶栏是「刷新 + 齿轮」；齿轮进**问渠设置**：账号（脱敏手机号 `138****0000` + 「我的志愿服务记录 · 共 N 条」）/ 提醒（开关默认关 + 间隔默认「每 24 小时」）/ 退出登录；② **隐藏已满**：筛选行最后那枚 chip 打开后，招募中且 `已满` 的活动应消失、已结束的**不受影响**；与状态 chips 叠加生效；③ **加载更多**：点一下按钮**当场变进度圈 + 「加载中…」**，落地后列表**自动滚到第一张新增卡**（不再"点了没反应"）；若当前筛选把新页整页滤掉，应弹「这一页没有符合筛选的活动，可继续加载」；④ **群号下面那句说明**：活动详情里群号非空时应有「请确保在小程序报名成功后再进群」；⑤ **活动提醒**：设置里打开开关 → 立刻会跑一次核对（**首跑只建基线、不弹通知**，logcat `WenquActivity`）→ 之后平台真出现新的「招募中」活动才会通知（验证办法：先关掉开关、在平台发一条新活动，再打开开关并等一轮，或直接看 `wenqu_activity_last_seen_id` 是否推进）；点通知 / 点收件箱那条都落问渠页；间隔改成 1 小时后再点其它提醒开关，周期任务应重排；⑥ **今日页顶栏「+」**下拉四行，最后一行「志愿服务」→ 落问渠页 |
+| 10-08 | 问渠 修 3 bug + 7 条优化（点验后第二轮） | ① **点记录弹详情**：弹层正常打开，**不再**同时飘一条「取不到详情」；若某条活动平台真没有详情，弹层底部只多一行灰字「完整详情暂时取不到（工时 / 群号可能缺失）」（`activityDetail` 回 null 的路径，可临时断网点一条复现）；② **提示卡外观**：问渠三页的提示应是**全 App 那张白卡**（`AppSnackbarHost`），不再是另一副模样；③ **加载更多报条数**：点一下 → 进度圈 → 滚到新增卡 + 提示「已加载 N 条」（到底了写「已加载 N 条 · 没有更多了」）；滑到列表底部应有一行「已到底 · 本次共加载 N 条」；④ **排序**：默认「全部」打开，**招募中的活动应在最上面**（不再一屏已结束）；⑤ **筛选记住**：把「隐藏已满」打开、状态切「招募中」→ 退出页面再进 → 两个筛选**都还在**（重启 App 也在）；⑥ **已报名徽章**：报过名的活动卡片上应多一枚「已报名」（拿一条已报名的活动对）；⑦ **报名受限**：若账号被拉黑，筛选行下面应出现「报名受限」+ 平台原话（没有此状态时该条不出现）；⑧ **复制**：详情里点「负责人电话」/「活动群号」整行 → 提示「已复制…」，粘贴出来一致；⑨ **键盘**：搜索框输完点 IME 搜索键 → 键盘收起；随后滚动列表键盘也不该再冒出来 |
 
 **只剩一项真的阻塞后续工作**，优先验：
 

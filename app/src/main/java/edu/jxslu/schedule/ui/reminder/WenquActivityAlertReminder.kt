@@ -1,0 +1,196 @@
+package edu.jxslu.schedule.ui.reminder
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.R
+import edu.jxslu.schedule.SubpageRequest
+import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.repo.PendingLaunch
+import edu.jxslu.schedule.data.wenqu.WenquActivity
+import edu.jxslu.schedule.data.repo.PendingNotification
+import edu.jxslu.schedule.data.session.AutoSyncRules
+import edu.jxslu.schedule.domain.InboxKeys
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.WenquRules
+import edu.jxslu.schedule.subpageLaunchIntent
+import kotlinx.coroutines.flow.first
+
+/**
+ * 新增志愿活动提醒（DESIGN §4.45，2026-10-08）：问渠平台上出现新的**可报名**活动时发一条通知。
+ *
+ * 编排搭 [ScoreAlertReminder] 的周期任务（**第五路**，不新开 WorkManager 任务），
+ * 闸门与节奏在本类内：开关 → 间隔（默认 24h）→ 真抓一次列表。
+ *
+ * 四条口径（改之前先读）：
+ *
+ * 1. **首跑只建基线、不提醒**：第一次扫到的全量是基线（见 [WenquRules.isNewRecruiting]），
+ *    否则用户一开开关就被几十条历史活动轰一遍。
+ * 2. **只报「招募中」**：平台会把补录的老活动插进列表（实测 id 最大的一条是「补录」且已结束），
+ *    按 id 无差别报会把已经结束的活动报成「新活动」。
+ * 3. **扫描范围是一整页（100 条）**：`volunteer/v2` **不保证按 id 排序**（实测前 21 条严格降序、
+ *    之后跳回旧 id），只扫 20 条会漏掉夹在中间的新活动。
+ * 4. **检查时刻只在成功时落**：失败（未登录 / 网络 / 5xx）不写，下一轮还试——同成绩/考试的纪律。
+ *
+ * 通知走免扰时段拦截（DESIGN §3.7）：新活动是**事实型**（eventAt = null），
+ * 时段内拦下入队、时段结束补发；收件箱照常留痕（通知被 ROM 吞了也看得到）。
+ */
+object WenquActivityAlertReminder {
+
+    private const val TAG = "WenquActivity"
+
+    private const val CHANNEL_ID = "wenqu_activity"
+    private const val NOTIFICATION_TAG = "wenqu_activity"
+
+    /** 固定通知 id：与上课（1001/1004）、作业（1002）、余额（1005/1006）、成绩（1008/1009）、
+     *  选课（1010）、调课/U净（1011）互不覆盖。 */
+    private const val NOTIFICATION_ID = 1013
+
+    /** 通知点击落点的 requestCode。**不能复用通知 id**，也不能与既有落点
+     *  （0 / 2000 / 3005 / 3006 / 3008–3012…）撞——撞了会互相改写 EXTRA。 */
+    private const val CONTENT_REQUEST_CODE = 3013
+
+    /** 一次扫描取多少条。见类注释口径 3：接口不保证排序，多取一点才圈得住新活动。 */
+    private const val SCAN_LIMIT = 100
+
+    /** 通知 / 收件箱正文最多列几个活动名，多出的折叠成「等 N 个」。 */
+    private const val MAX_LINES = 3
+
+    /**
+     * 设置变更（开关 / 间隔）后的入口：清自己那一路的检查时刻 + 重排周期任务 + 立刻评估一次。
+     *
+     * **只碰自己这一路**：`ScoreAlertReminder.onSettingsChanged` 会把五路的检查时刻一起清 0，
+     * 那样用户只是动一下问渠的开关，成绩 / 考试 / 选课 / 调课四路就各打一次教务
+     * （2026-10-08 复查发现）——问渠是第三方功能，不该顺带骚扰教务。
+     */
+    suspend fun onSettingsChanged(context: Context) {
+        runCatching {
+            Graph.displayPrefs(context).setWenquActivityCheckMillis(0)
+        }.onFailure { Log.w(TAG, "clear check millis failed", it) }
+        // 周期任务的间隔取五路最小档，开关一变就得重排；但即时评估只叫醒自己那一路
+        ScoreAlertReminder.ensurePeriodicWork(context)
+        ScoreAlertReminder.enqueueWenquCheck(context)
+    }
+
+    /**
+     * 核对一次。幂等，可任意重复调用；任何失败都不抛出（后台任务里失败不该让 Worker 报错重试，
+     * 重试会再打一次第三方接口）。
+     */
+    suspend fun check(context: Context) {
+        runCatching {
+            val prefs = Graph.displayPrefs(context)
+            if (!prefs.wenquActivityAlertEnabled.first()) return
+            val intervalHours =
+                WenquRules.coerceActivityIntervalHours(prefs.wenquActivityIntervalHours.first())
+            val now = System.currentTimeMillis()
+            if (!AutoSyncRules.shouldAttemptAt(prefs.wenquActivityCheckMillis(), intervalHours, now)) return
+
+            // 没登录就别试了：ensureToken 会直接抛，白跑一趟
+            val repo = Graph.wenqu(context)
+            if (!repo.loggedIn.value) return
+
+            val page = repo.scanActivities(SCAN_LIMIT)
+            val lastSeen = prefs.wenquActivityLastSeenId()
+            val maxId = page.maxOfOrNull { it.id } ?: 0L
+            val fresh = page.filter { WenquRules.isNewRecruiting(it.id, it.status, lastSeen) }
+
+            // 成功才落：检查时刻 + 基线（基线只前进不后退——接口乱序时不能让 id 缩回去）
+            prefs.setWenquActivityCheckMillis(now)
+            if (maxId > lastSeen) prefs.setWenquActivityLastSeenId(maxId)
+            if (fresh.isEmpty()) return
+
+            val title = if (fresh.size == 1) "新志愿活动：${fresh[0].title}" else "有 ${fresh.size} 个新的志愿活动"
+            val text = activityText(fresh)
+
+            // 收件箱留痕（DESIGN §4.38）：入箱不依赖通知——通知被 ROM 吞掉时它是唯一的兜底。
+            // 键用本批最大的 id：同一批只留一条，之后更新的活动才算新事实。
+            Graph.inboxRepository(context).post(
+                kind = InboxKind.WENQU_ACTIVITY,
+                dedupeKey = InboxKeys.WENQU_ACTIVITY_PREFIX + fresh.maxOf { it.id },
+                title = title,
+                body = text,
+                route = SubpageScreen.WENQU.name,
+            )
+
+            val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+            if (!notificationsEnabled) return
+            // 免扰时段（DESIGN §3.7）：新活动是事实型通知（eventAt = null），拦下待补发
+            val held = QuietHoursGate.intercept(
+                context,
+                PendingNotification(
+                    tag = NOTIFICATION_TAG,
+                    notificationId = NOTIFICATION_ID,
+                    channelId = CHANNEL_ID,
+                    category = NotificationCompat.CATEGORY_REMINDER,
+                    title = title,
+                    text = text,
+                    enqueuedAt = now,
+                    launch = PendingLaunch(
+                        kind = PendingLaunch.Kind.SUBPAGE,
+                        requestCode = CONTENT_REQUEST_CODE,
+                        screen = SubpageScreen.WENQU.name,
+                        clearTask = true,
+                    ),
+                ),
+            )
+            if (!held) postNotification(context, title, text)
+        }.onFailure { Log.w(TAG, "check failed", it) }
+    }
+
+    /** 通知与收件箱共用同一份正文，两处各写迟早漂。 */
+    private fun activityText(fresh: List<WenquActivity>): String {
+        val lines = fresh.take(MAX_LINES).map { activity ->
+            buildString {
+                append(activity.title.ifBlank { "志愿服务活动" })
+                val whenText = WenquRules.timeRange(activity.startTime, activity.endTime)
+                if (whenText.isNotBlank()) append(' ').append(whenText)
+                if (activity.address.isNotBlank()) append(' ').append(activity.address)
+            }
+        }
+        val rest = fresh.size - lines.size
+        return buildString {
+            append(lines.joinToString("\n"))
+            if (rest > 0) append("\n等 $rest 个")
+        }
+    }
+
+    private fun postNotification(context: Context, title: String, text: String) {
+        ensureChannel(context)
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_bell)
+            .setContentTitle(title)
+            .setContentText(text.lines().firstOrNull().orEmpty())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    context,
+                    CONTENT_REQUEST_CODE,
+                    subpageLaunchIntent(context, SubpageRequest(SubpageScreen.WENQU))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(context)
+                .notify(NOTIFICATION_TAG, NOTIFICATION_ID, notification)
+        }.onFailure { Log.w(TAG, "notify failed", it) }
+    }
+
+    private fun ensureChannel(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
+        // IMPORTANCE_DEFAULT：新活动不是「马上要做的事」，不值得横幅打断
+        val channel = NotificationChannel(CHANNEL_ID, "志愿活动提醒", NotificationManager.IMPORTANCE_DEFAULT)
+            .apply { description = "问渠平台上出现新的可报名志愿活动时提醒" }
+        manager.createNotificationChannel(channel)
+    }
+}

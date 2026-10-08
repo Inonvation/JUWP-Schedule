@@ -61,6 +61,9 @@ import edu.jxslu.schedule.ui.ujing.UjingHistoryScreen
 import edu.jxslu.schedule.ui.ujing.UjingOrderScreen
 import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
+import edu.jxslu.schedule.ui.wenqu.WenquRecordsScreen
+import edu.jxslu.schedule.ui.wenqu.WenquScreen
+import edu.jxslu.schedule.ui.wenqu.WenquSettingsScreen
 
 /** 二级页种类；通过 extra 传给 [SubpageActivity]，值必须与 enum 名一致。 */
 enum class SubpageScreen {
@@ -160,6 +163,15 @@ enum class SubpageScreen {
     UJING_ORDER,
     /** U净 → 历史账单（本 App 发起的订单留痕，DESIGN §3.23 / §4.37） */
     UJING_HISTORY,
+    /** 我的 → 校园服务 → 问渠 · 志愿服务（手机号+密码登录 · 志愿工时/劳动教育只读，DESIGN §3.28 / §4.45） */
+    WENQU,
+    /**
+     * 问渠 → 我的志愿服务记录（DESIGN §3.28）。
+     * **是独立页而不是弹层**：记录详情本身也要弹层，弹层里再开弹层会互相打架（2026-10-08）。
+     */
+    WENQU_RECORDS,
+    /** 问渠 → 设置（记录入口 · 新增活动提醒 · 退出登录，DESIGN §3.28，2026-10-08）。 */
+    WENQU_SETTINGS,
     /** 调课检测处置页（差异列表 · 勾选合并 · 忽略，DESIGN §4.17，2026-10-04 重立） */
     SCHEDULE_CHANGES,
     /** AI 调课（粘贴调课通知 → 模型给结构化建议 → 勾选落库，DESIGN §4.39，2026-10-06） */
@@ -275,6 +287,15 @@ class SubpageActivity : ComponentActivity() {
             )
             SubpageScreen.UJING_ORDER -> UjingOrderScreen(onBack = onBack)
             SubpageScreen.UJING_HISTORY -> UjingHistoryScreen(onBack = onBack)
+            SubpageScreen.WENQU -> WenquScreen(
+                onBack = onBack,
+                onOpenSettings = { SubpageActivity.start(this, SubpageScreen.WENQU_SETTINGS) },
+            )
+            SubpageScreen.WENQU_RECORDS -> WenquRecordsScreen(onBack = onBack)
+            SubpageScreen.WENQU_SETTINGS -> WenquSettingsScreen(
+                onBack = onBack,
+                onOpenRecords = { SubpageActivity.start(this, SubpageScreen.WENQU_RECORDS) },
+            )
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->
@@ -399,6 +420,7 @@ class SubpageActivity : ComponentActivity() {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CALENDAR)
                 },
                 onOpenUjing = { SubpageActivity.start(this, SubpageScreen.UJING) },
+                onOpenWenqu = { SubpageActivity.start(this, SubpageScreen.WENQU) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

@@ -9,6 +9,7 @@
       secure_kqcx.xml     快趣出行账号凭证（手机号 + 密码，§4.32）
       secure_ujing.xml    U净（美的校园洗衣）登录会话（§4.36）
       secure_ai.xml       AI 调课服务的 API Key（§4.39）
+      secure_wenqu.xml    问渠（志愿服务 / 劳动教育）账号凭证（手机号 + 密码，§4.45）
     其余（Room 课表、DataStore 偏好）保持默认可备份。
 
     **`.fallback` 也要排**（2026-10-06 复核补）：Keystore 连续两次损坏时，
@@ -32,6 +33,7 @@
     <exclude domain="sharedpref" path="secure_kqcx.xml" />
     <exclude domain="sharedpref" path="secure_ujing.xml" />
     <exclude domain="sharedpref" path="secure_ai.xml" />
+    <exclude domain="sharedpref" path="secure_wenqu.xml" />
     <exclude domain="sharedpref" path="secure_token.fallback.xml" />
     <exclude domain="sharedpref" path="secure_qzxy.fallback.xml" />
     <exclude domain="sharedpref" path="jw_credentials.fallback.xml" />
@@ -40,6 +42,7 @@
     <exclude domain="sharedpref" path="secure_kqcx.fallback.xml" />
     <exclude domain="sharedpref" path="secure_ujing.fallback.xml" />
     <exclude domain="sharedpref" path="secure_ai.fallback.xml" />
+    <exclude domain="sharedpref" path="secure_wenqu.fallback.xml" />
     <exclude domain="file" path="crash/" />
     <exclude domain="file" path="ujing_debug/" />
     <exclude domain="file" path="power_debug/" />

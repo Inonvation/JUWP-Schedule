@@ -32,6 +32,8 @@ import edu.jxslu.schedule.data.ujing.UjingRepository
 import edu.jxslu.schedule.data.ujing.UjingSessionStore
 import edu.jxslu.schedule.data.ujing.UjingDraftStore
 import edu.jxslu.schedule.data.ujing.UjingHistoryStore
+import edu.jxslu.schedule.data.wenqu.WenquCredentialStore
+import edu.jxslu.schedule.data.wenqu.WenquRepository
 import edu.jxslu.schedule.data.repo.AiApplyHistoryStore
 import edu.jxslu.schedule.data.repo.AiImageStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
@@ -148,6 +150,9 @@ object Graph {
 
     @Volatile
     private var qzxyWateringStore: QzxyWateringStore? = null
+
+    @Volatile
+    private var wenquRepository: WenquRepository? = null
 
     @Volatile
     private var qzxyGattLink: QzxyGattLink? = null
@@ -572,6 +577,18 @@ object Graph {
         qzxyRepository ?: synchronized(this) {
             qzxyRepository ?: QzxyRepository(QzxySessionStore(context.applicationContext))
                 .also { qzxyRepository = it }
+        }
+
+    /**
+     * 问渠（志愿服务 / 劳动教育）仓库单例（DESIGN §4.45）。
+     *
+     * 又一个「带密码」的第三方凭证（与一卡通查询密码、快趣账号密码同级）：
+     * 独立文件 `secure_wenqu`，与其余第三方会话互不牵连；已登记进两份备份排除 xml。
+     */
+    fun wenqu(context: Context): WenquRepository =
+        wenquRepository ?: synchronized(this) {
+            wenquRepository ?: WenquRepository(WenquCredentialStore(context.applicationContext))
+                .also { wenquRepository = it }
         }
 
     /** 趣智校园已绑定设备（DESIGN §4.30）。纯本地偏好，与登录会话分开存。 */

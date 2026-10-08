@@ -32,6 +32,7 @@ import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.domain.ScheduleAlertDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.SchedulePendingChanges
+import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.domain.ShortcutItem
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.Shortcuts
@@ -767,6 +768,69 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setAlertPeriodicInterval(value: Int) {
         context.displayDataStore.edit { it[KEY_ALERT_PERIODIC_INTERVAL] = value }
+    }
+
+    // ---- 问渠新增志愿活动提醒（DESIGN §4.45，2026-10-08）----
+
+    /**
+     * 新增志愿活动提醒开关。**默认关**——通知是打扰型能力（同选课 / 调课提醒口径；
+     * 与「成绩/考试变动默认开」不同：那是用户要的事实，这是「可能有你感兴趣的东西」）。
+     */
+    val wenquActivityAlertEnabled: Flow<Boolean> =
+        context.displayDataStore.data.map { p -> p[KEY_WENQU_ACTIVITY_ALERT_ENABLED] ?: false }
+
+    suspend fun setWenquActivityAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_ACTIVITY_ALERT_ENABLED] = value }
+    }
+
+    /** 问渠活动提醒的检查间隔（小时），默认 24（一天一次，第三方系统别打太勤）。 */
+    val wenquActivityIntervalHours: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_ACTIVITY_INTERVAL_HOURS] ?: WenquRules.ACTIVITY_ALERT_INTERVAL_DEFAULT
+    }
+
+    suspend fun setWenquActivityIntervalHours(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_ACTIVITY_INTERVAL_HOURS] = value }
+    }
+
+    /** 问渠活动上次成功检查时刻（epoch millis）。0 = 从没成功过。失败不写（同成绩/考试纪律）。 */
+    suspend fun wenquActivityCheckMillis(): Long =
+        context.displayDataStore.data.first()[KEY_WENQU_ACTIVITY_CHECK_MILLIS] ?: 0L
+
+    suspend fun setWenquActivityCheckMillis(millis: Long) {
+        context.displayDataStore.edit { it[KEY_WENQU_ACTIVITY_CHECK_MILLIS] = millis }
+    }
+
+    /**
+     * 上次扫描见过的最大活动 id。**0 = 还没建基线**：首跑只把当前最大 id 记下来、不发提醒
+     * （第一次抓到的全量是基线不是「新增」，见 [WenquRules.isNewRecruiting]）。
+     */
+    suspend fun wenquActivityLastSeenId(): Long =
+        context.displayDataStore.data.first()[KEY_WENQU_ACTIVITY_LAST_SEEN_ID] ?: 0L
+
+    suspend fun setWenquActivityLastSeenId(id: Long) {
+        context.displayDataStore.edit { it[KEY_WENQU_ACTIVITY_LAST_SEEN_ID] = id }
+    }
+
+    /**
+     * 活动列表的状态筛选。**存 [WenquRules.FILTER_ALL_STORED] 表示「全部」**
+     * （DataStore 没有可空 Int）——用户专门要过「隐藏已满」，每次进页都重置一遍会烦
+     * （2026-10-08）。
+     */
+    val wenquStatusFilter: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_STATUS_FILTER] ?: WenquRules.FILTER_ALL_STORED
+    }
+
+    suspend fun setWenquStatusFilter(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_STATUS_FILTER] = value }
+    }
+
+    /** 活动列表的「隐藏已满」开关，默认关（同页面默认值）。 */
+    val wenquHideFull: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_HIDE_FULL] ?: false
+    }
+
+    suspend fun setWenquHideFull(value: Boolean) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_HIDE_FULL] = value }
     }
 
     /**
@@ -2071,6 +2135,15 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_SCHEDULE_CHECK_MILLIS = longPreferencesKey("schedule_check_millis")
         val KEY_SCHEDULE_IGNORED_FP = stringPreferencesKey("schedule_ignored_fingerprint")
         val KEY_SCHEDULE_PENDING_JSON = stringPreferencesKey("schedule_pending_changes_json")
+
+        // 问渠新增志愿活动提醒（DESIGN §4.45，2026-10-08）：开关 + 间隔 + 检查时刻 + 基线 id
+        val KEY_WENQU_ACTIVITY_ALERT_ENABLED = booleanPreferencesKey("wenqu_activity_alert_enabled")
+        val KEY_WENQU_ACTIVITY_INTERVAL_HOURS = intPreferencesKey("wenqu_activity_interval_hours")
+        val KEY_WENQU_ACTIVITY_CHECK_MILLIS = longPreferencesKey("wenqu_activity_check_millis")
+        val KEY_WENQU_ACTIVITY_LAST_SEEN_ID = longPreferencesKey("wenqu_activity_last_seen_id")
+        // 活动列表的本地筛选（2026-10-08）：状态（-1 = 全部）+ 隐藏已满
+        val KEY_WENQU_STATUS_FILTER = intPreferencesKey("wenqu_status_filter")
+        val KEY_WENQU_HIDE_FULL = booleanPreferencesKey("wenqu_hide_full")
 
         // AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 教师名脱敏 / 首次隐私确认。
         // API Key **不在这里**——它是账号凭据，走 AiCredentialStore 加密存储（secure_ai.xml）。

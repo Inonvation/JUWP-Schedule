@@ -17,6 +17,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageScreen
@@ -28,6 +29,7 @@ import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.domain.ExamChangeDetector
 import edu.jxslu.schedule.domain.ScheduleAlertDefaults
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
+import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.subpageLaunchIntent
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.first
@@ -65,6 +67,12 @@ object ScoreAlertReminder {
     /** 即时评估（冷启动 / 开关与间隔变更）。 */
     private const val ONE_SHOT_WORK = "score_alert_check"
 
+    /** [enqueueCheck] 的入参键：非空 = 只跑那一路（目前只有问渠用，见 [enqueueWenquCheck]）。 */
+    internal const val KEY_ONLY_CHAIN = "only_chain"
+
+    /** 「只跑问渠那一路」的取值。 */
+    private const val CHAIN_WENQU = "wenqu"
+
     private const val CHANNEL_ID = "score_alert"
 
     /** 成绩通知：固定 id/tag/requestCode，与考试那条及既有通知互不覆盖。 */
@@ -88,24 +96,15 @@ object ScoreAlertReminder {
     private const val MAX_LINES = 4
 
     /**
-     * 周期核对：三个开关都关时**撤销**任务而不是留着空跑（同 [BalanceAlertReminder]）。
-     * 幂等策略：**档位没变时 KEEP**，免得每次冷启动都把周期相位推后；档位变了用
-     * REPLACE 换周期（2.7.1 没有 UPDATE 策略；REPLACE 取消旧任务重新排，只在用户
-     * 改间隔那一刻发生）。已排周期记在 DataStore（`alert_periodic_interval`），
-     * 进程重启后也能比对；0 = 当前没有在排的周期任务。
-     *
-     * 选课提醒（DESIGN §4.35）搭同一趟车，核对时它自己顺带刷新轮次快照。
-     */
-    /**
-     * 周期核对：四个开关都关时**撤销**任务而不是留着空跑（同 [BalanceAlertReminder]）。
+     * 周期核对：**五个开关都关时撤销**任务而不是留着空跑（同 [BalanceAlertReminder]）。
      * 幂等策略：**间隔没变时 KEEP**，免得每次冷启动都把周期相位推后；间隔变了用
      * REPLACE 换周期（2.7.1 没有 UPDATE 策略；REPLACE 取消旧任务重新排，只在用户
      * 改间隔那一刻发生）。已排周期记在 DataStore（`alert_periodic_interval`），
      * 进程重启后也能比对；0 = 当前没有在排的周期任务。
      *
-     * 间隔（2026-10-04 起四链各自独立设置）取**四条链的最小档**：周期任务只负责
-     * 「按最勤的那条叫醒」，各路 sync 里的 `shouldAttemptAt` 用各自的间隔与检查时刻
-     * 决定真抓还是跳过——把成绩设成 1 小时、调课设成 24 小时，任务每小时醒来一次，
+     * 间隔（2026-10-04 起各链独立设置，2026-10-08 加问渠那路）取**五条链的最小档**：
+     * 周期任务只负责「按最勤的那条叫醒」，各路自己的 `shouldAttemptAt` 用各自的间隔与
+     * 检查时刻决定真抓还是跳过——把成绩设成 1 小时、调课设成 24 小时，任务每小时醒来一次，
      * 调课那路自己会挡住 23 次。
      *
      * 选课提醒（DESIGN §4.35）搭同一趟车：核对时它自己顺带刷新轮次快照。
@@ -117,7 +116,8 @@ object ScoreAlertReminder {
             if (!prefs.scoreAlertEnabled.first() &&
                 !prefs.examAlertEnabled.first() &&
                 !prefs.selectionAlertEnabled.first() &&
-                !prefs.scheduleAlertEnabled.first()
+                !prefs.scheduleAlertEnabled.first() &&
+                !prefs.wenquActivityAlertEnabled.first()
             ) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
                 prefs.setAlertPeriodicInterval(0)
@@ -128,6 +128,7 @@ object ScoreAlertReminder {
                 ScoreAlertDefaults.coerceIntervalHours(prefs.examAlertIntervalHours.first()),
                 ScoreAlertDefaults.coerceIntervalHours(prefs.selectionAlertIntervalHours.first()),
                 ScheduleAlertDefaults.coerceIntervalHours(prefs.scheduleAlertIntervalHours.first()),
+                WenquRules.coerceActivityIntervalHours(prefs.wenquActivityIntervalHours.first()),
             ).min()
             val request = PeriodicWorkRequestBuilder<ScoreAlertCheckWorker>(intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(connectedConstraint())
@@ -142,15 +143,27 @@ object ScoreAlertReminder {
     }
 
     /** 即时评估（REPLACE：连着改两次只跑最后一次）。冷启动与设置变更都走这里。 */
-    fun enqueueCheck(context: Context) {
+    fun enqueueCheck(context: Context, onlyChain: String? = null) {
         runCatching {
             val request = OneTimeWorkRequestBuilder<ScoreAlertCheckWorker>()
                 .setConstraints(connectedConstraint())
+                .setInputData(
+                    if (onlyChain == null) workDataOf() else workDataOf(KEY_ONLY_CHAIN to onlyChain),
+                )
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniqueWork(ONE_SHOT_WORK, ExistingWorkPolicy.REPLACE, request)
         }.onFailure { Log.w(TAG, "enqueueCheck failed", it) }
     }
+
+    /**
+     * **只跑问渠那一路**的一次性核对（问渠设置页改开关 / 间隔时用）。
+     *
+     * 为什么不能直接走 [onSettingsChanged]：那个会把五路的检查时刻一起清 0，
+     * 于是用户只是动一下「新增志愿活动提醒」，成绩 / 考试 / 选课 / 调课四路就各打一次教务
+     * （2026-10-08 复查发现）。问渠是第三方功能，不该顺带骚扰教务。
+     */
+    fun enqueueWenquCheck(context: Context) = enqueueCheck(context, onlyChain = CHAIN_WENQU)
 
     /**
      * 设置变更（开关或间隔档位）后的统一入口：清掉三条链路的检查时刻再排即时评估。
@@ -160,6 +173,8 @@ object ScoreAlertReminder {
      * 会直接 Skipped）。选课那条原来靠 SelectionScreen 的开关自己清，考试页一直漏清，
      * 现在统一收口到这里，调用方不用再各管一遍。首次评估抓到的全量会被 `ScoreSync` /
      * `ExamSync` 当基线（firstImport / 空基线），不发通知。
+     *
+     * **问渠那一路不在这里**——它有自己的 [enqueueWenquCheck]（见上）。
      */
     suspend fun onSettingsChanged(context: Context) {
         runCatching {
@@ -177,19 +192,26 @@ object ScoreAlertReminder {
      * 核对一次：成绩、考试、选课各查各的（开关各自独立），有变更/到期才发通知。
      * 整体兜异常：后台任务里任何失败都不该让 Worker 报错重试（重试会再打一次教务）。
      *
+     * [onlyChain] 非空 = **只跑那一路**（设置页改问渠提醒时用，见 [enqueueWenquCheck]）。
+     *
      * 通知总开关只拦「发通知」，不拦核对本身（2026-10-06 收件箱 §4.38）：成绩/考试的
      * 入箱不依赖通知——通知全关的用户恰好是最依赖收件箱的人。选课/调课两路不在此列：
      * 前者的入箱点在「通知发成功」内（发不出就不落已发键也不入箱，下一轮还有机会），
      * 后者的调度开关在 [ScheduleAlertReminder.check] 内部自判。
      */
-    suspend fun check(context: Context) {
+    suspend fun check(context: Context, onlyChain: String? = null) {
         runCatching {
             val prefs = Graph.displayPrefs(context)
+            if (onlyChain == CHAIN_WENQU) {
+                if (prefs.wenquActivityAlertEnabled.first()) WenquActivityAlertReminder.check(context)
+                return
+            }
             val scoreOn = prefs.scoreAlertEnabled.first()
             val examOn = prefs.examAlertEnabled.first()
             val selectionOn = prefs.selectionAlertEnabled.first()
             val scheduleOn = prefs.scheduleAlertEnabled.first()
-            if (!scoreOn && !examOn && !selectionOn && !scheduleOn) return
+            val wenquOn = prefs.wenquActivityAlertEnabled.first()
+            if (!scoreOn && !examOn && !selectionOn && !scheduleOn && !wenquOn) return
             val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
             if (scoreOn) checkScores(context, notificationsEnabled)
             if (examOn) checkExams(context, notificationsEnabled)
@@ -197,6 +219,8 @@ object ScoreAlertReminder {
             if (selectionOn) SelectionAlertReminder.check(context)
             // 调课检测（DESIGN §4.17 重立）：第四路搭同一趟车，闸门与静默纪律在 ScheduleSync.check
             if (scheduleOn) ScheduleAlertReminder.check(context)
+            // 问渠新活动（DESIGN §4.45）：第五路，自带开关 / 间隔闸门与首跑建基线
+            if (wenquOn) WenquActivityAlertReminder.check(context)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 
@@ -387,7 +411,8 @@ class ScoreAlertCheckWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        ScoreAlertReminder.check(applicationContext)
+        // 入参非空 = 只跑那一路（问渠设置页改开关时用，见 ScoreAlertReminder.enqueueWenquCheck）
+        ScoreAlertReminder.check(applicationContext, inputData.getString(ScoreAlertReminder.KEY_ONLY_CHAIN))
         return Result.success()
     }
 }
