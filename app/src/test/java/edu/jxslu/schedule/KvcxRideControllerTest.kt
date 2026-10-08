@@ -24,6 +24,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.net.SocketTimeoutException
 
 /**
@@ -65,7 +66,13 @@ class KvcxRideControllerTest {
         var returnCalls = 0
         var ringCalls = 0
 
-        override suspend fun queryUnderway(): KqcxAuth.Ride? = underway
+        /** 置非空则查询直接抛错（模拟断网）：动作后刷新的「失败不裁决」路径用。 */
+        var queryError: Throwable? = null
+
+        override suspend fun queryUnderway(): KqcxAuth.Ride? {
+            queryError?.let { throw it }
+            return underway
+        }
 
         override suspend fun unlockBike(
             carNum: String,
@@ -396,6 +403,35 @@ class KvcxRideControllerTest {
 
         assertFalse(kvcx.state.value.lockPending)
         assertEquals("未确认解锁；请到快趣小程序核对", notices.last().first)
+    }
+
+    @Test
+    fun `重试开锁未确认也作废锁车悬置`() {
+        // 共存场景（unlockPending + lockPending，只在"动作后刷新也失败"的断网窗口里
+        // 两悬置能同时挂住——刷新成功的裁决必然按快照消解其一）点「重试开锁」：
+        // 解锁意图已发出，锁车悬置一并作废——否则快照回报未锁时裁决先消解
+        // unlockPending、把残留的 lockPending 暴露成「锁车确认中…」，
+        // 与刚做的开锁动作打架
+        val session = FakeSession()
+        session.underway = ride(carNum = "100000669", locked = true)
+        session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
+        val kvcx = controller(session)
+        kvcx.unlock("100000669") // 开锁未确认（车辆仍报已锁，悬置保持）
+        assertTrue(kvcx.state.value.unlockPending)
+
+        // 断网：临时锁车未确认，动作后的刷新也失败——两悬置同时挂住
+        session.queryError = IOException("boom")
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = null)
+        kvcx.tempLock()
+        assertTrue(kvcx.state.value.lockPending)
+
+        // 网络恢复、车辆上报还没到，用户点「重试开锁」（重发解锁指令、仍未确认）
+        session.queryError = null
+        session.underway = ride(carNum = "100000669", locked = false)
+        kvcx.retryUnlock()
+
+        assertFalse(kvcx.state.value.lockPending)
+        assertEquals("仍未确认开锁；请到快趣小程序核对", notices.last().first)
     }
 
     @Test

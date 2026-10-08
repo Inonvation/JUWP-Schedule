@@ -300,8 +300,13 @@ class KvcxRideController internal constructor(
                 }
                 onNotice("已确认开锁", NoticeTone.Success)
             }
-            is UnlockOutcome.Unconfirmed ->
+            is UnlockOutcome.Unconfirmed -> {
+                // 解锁意图发出即作废锁车悬置（与 resumeRide 同一口径）：否则快照回报
+                // 未锁时裁决先消解 unlockPending、把残留的 lockPending 暴露成
+                // 「锁车确认中…」——和用户刚做的开锁动作打架（2026-10-08 复核对齐）
+                _state.update { it.copy(lockPending = false) }
                 onNotice("仍未确认开锁；请到快趣小程序核对", NoticeTone.Warning)
+            }
         }
         refreshInternal()
     }
@@ -509,9 +514,9 @@ class KvcxRideController internal constructor(
     /**
      * 骑行状态快照落库 + 悬置态裁决（[query] / [refreshInternal] / [queryLockState] 共用，
      * 别各写一份）：
-     * - 开锁未确认：刷新到「未锁」（或订单消失）才消解——上报慢时"已锁快照"不代表失败，
-     *   保持悬置等下一次快照（镜像自官方「重试开锁」出口）；
-     * - 锁车确认中：刷新到「已锁」即确认成功；订单消失（还车/其他端结束）也解除。
+     * - 开锁未确认：刷新到「未锁」才消解（锁状态缺失 / 订单消失同样按消解处理——
+     *   无信息不保持悬置）——上报慢时"已锁快照"不代表失败，保持悬置等下一次快照；
+     * - 锁车确认中：刷新到「已锁」即确认成功（锁状态缺失 / 订单消失同样按消解处理）。
      */
     private fun KvcxRideState.withRideSnapshot(ride: KqcxAuth.Ride?): KvcxRideState = copy(
         ride = ride,
