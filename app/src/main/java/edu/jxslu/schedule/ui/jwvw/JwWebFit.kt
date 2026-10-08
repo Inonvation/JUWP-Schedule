@@ -97,7 +97,10 @@ object JwWebFit {
   if (!window.__juwViewportGuard) {
     window.__juwViewportGuard = true;
     try{
-      new MutationObserver(apply).observe(document.head || document.documentElement, {
+      // 观察者存 window 上：撤销脚本（DESKTOP_REVERT_JS）要拿到它 disconnect——
+      // 只还原 meta 不断开的话，页面下一次 head 变异就会把 980 压回去（2026-10-08 复查轮 P2）
+      window.__juwViewportObserver = new MutationObserver(apply);
+      window.__juwViewportObserver.observe(document.head || document.documentElement, {
         childList: true, subtree: true, attributes: true, attributeFilter: ['content', 'name']
       });
     }catch(e){}
@@ -160,10 +163,22 @@ object JwWebFit {
      *
      * 顶栏切回手机版时当场注入，**不重载页面**——用户能立刻看到两种口径的对比，
      * 选课页的列表 / 筛选状态也留着。页面没被覆盖过时它是空操作。
+     *
+     * **必须同时解除自愈观察者**（2026-10-08 复查轮 P2）：[DESKTOP_JS] 装的
+     * `MutationObserver` 是常驻的——只还原 meta 不 `disconnect()` 的话，页面下一次向
+     * head 插入任何节点（layui 弹 tips、页面自己的 script 是常态）就会把 980 重新压回去、
+     * 连带补回已删掉的弹层样式，「手机版」在动态页上形同虚设。观察者与守卫闸
+     * （`__juwViewportGuard`）都存在 window 上，撤销时一并断开 / 复位，下次开电脑版
+     * 会重新装上。
      */
     val DESKTOP_REVERT_JS: String = """
 (function(){
   try{
+    if (window.__juwViewportObserver) {
+      try{ window.__juwViewportObserver.disconnect(); }catch(e){}
+      window.__juwViewportObserver = null;
+    }
+    window.__juwViewportGuard = false;
     var s = document.getElementById('$LAYER_STYLE_ID');
     if (s && s.parentNode) s.parentNode.removeChild(s);
     var m = document.querySelector(

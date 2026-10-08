@@ -74,6 +74,25 @@ class JwWebFitTest {
         assertTrue(js.contains("void document.documentElement.offsetWidth"))
     }
 
+    /**
+     * 撤销脚本必须解除自愈观察者（2026-10-08 复查轮 P2）：`DESKTOP_JS` 装的
+     * MutationObserver 是常驻的——撤销只还原 meta 的话，页面下一次 head 变异
+     * （layui 弹 tips / 页面自己的 script）就会把 980 重新压回去并补回弹层样式，
+     * 「手机版」在动态页上形同虚设。撤销要 disconnect + 复位守卫闸，让下次开
+     * 电脑版能重新装上。
+     */
+    @Test
+    fun revertScriptDisconnectsSelfHealObserverAndResetsGuard() {
+        val desktop = JwWebFit.DESKTOP_JS
+        val revert = JwWebFit.DESKTOP_REVERT_JS
+        // 装的时候存到 window 变量上（撤销才拿得到）
+        assertTrue(desktop.contains("window.__juwViewportObserver = new MutationObserver(apply)"))
+        // 撤销时断开并复位守卫闸
+        assertTrue(revert.contains("window.__juwViewportObserver.disconnect()"))
+        assertTrue(revert.contains("window.__juwViewportObserver = null"))
+        assertTrue(revert.contains("window.__juwViewportGuard = false"))
+    }
+
     // ---- 判据：哪一页注入什么 ----
 
     @Test
