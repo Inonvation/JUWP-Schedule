@@ -155,12 +155,16 @@ class KqcxSessionRepository(
 
     /**
      * 临时锁车（官方骑行面板「锁车」）：订单与计费继续，仅物理锁车。
-     * 已锁时为幂等 no-op。
+     *
+     * **已锁也照发（2026-10-08 用户口径）**：原「已锁为幂等 no-op」删掉——系统可能把
+     * 锁车失败误判成已锁（`lockStatus` 已是 1、车却没锁上），用户再点一次锁车必须
+     * 真能重发指令（手动单次；零自动重试红线不变）。车若确实已锁，重发无害、
+     * 确认窗第一次查询即通过。
      *
      * **确认窗按动作分流（2026-10-08）**：锁车用 [LOCK_CONFIRM_ATTEMPTS]（8 次 ≈ 12 秒），
      * 比默认的 4 次长一倍——车把"已锁"上报服务端是异步的（落锁后 IoT 上报常见 3~15 秒），
      * 尤其**开锁后紧接着锁车**（没骑就走）时，上报还排在解锁上报之后，默认窗口几乎必然
-     * 等不到，之前被误报成"锁车失败"（用户再点一次时状态已同步，幂等早退假性"成功"）。
+     * 等不到，之前被误报成"锁车失败"（当时再点一次会命中客户端幂等早退、假性"成功"）。
      * 锁车免确认、无新增计费后果，多等几秒换确定性是划算的。
      *
      * 指令响应过 [KqcxAuth.parseSuccess]：服务端明确拒绝（车辆离线 / 指令处理中）时
@@ -169,8 +173,7 @@ class KqcxSessionRepository(
      */
     override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome {
         ensureSession()
-        val before = queryUnderway() ?: throw KvcBusinessError(null, "没有进行中的骑行")
-        if (before.locked == true) return LockOutcome.Locked(before)
+        queryUnderway() ?: throw KvcBusinessError(null, "没有进行中的骑行")
         server { KqcxAuth.parseSuccess(client.lockJson(requireToken(), gcjLat, gcjLng, LOCATION_SOURCE)) }
         val confirmed = awaitRide(attempts = LOCK_CONFIRM_ATTEMPTS) { it?.locked == true }
         return if (confirmed != null) {

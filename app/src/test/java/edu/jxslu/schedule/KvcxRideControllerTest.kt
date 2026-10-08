@@ -284,7 +284,8 @@ class KvcxRideControllerTest {
     @Test
     fun `锁车未确认不是错误而是确认中`() {
         // 2026-10-08 修「开锁后临时锁车容易失败」：上报慢是常态，超窗不该报 Error——
-        // 那会把用户推去反复点（那几次多半只是命中幂等早退）。置 lockPending + Warning。
+        // 那会把用户推去反复点（客户端幂等早退已同日删除：再点一次锁车=真重发指令）。
+        // 置 lockPending + Warning。
         val session = FakeSession()
         session.lockResult = LockOutcome.Unconfirmed(lastKnown = ride(locked = false))
         val kvcx = controller(session)
@@ -316,7 +317,8 @@ class KvcxRideControllerTest {
     @Test
     fun `锁车确认中刷新到未锁保持悬置等上报`() {
         // 语义与 unlockPending 一致（刷新到目标态才消解）：上报慢时"未锁快照"不代表
-        // 锁车失败——那正是本次修复的立论；保持悬置，出口是再点一次锁车（幂等重发）
+        // 锁车失败——那正是本次修复的立论；保持悬置，出口是再点一次锁车（真重发指令，
+        // 客户端早退已同日删除）
         val session = FakeSession()
         session.lockResult = LockOutcome.Unconfirmed(lastKnown = null)
         val kvcx = controller(session)
@@ -327,14 +329,17 @@ class KvcxRideControllerTest {
         kvcx.query(quiet = true)
 
         assertTrue(kvcx.state.value.lockPending)
-        // 「点刷新核实」走的也是公共 query：这条测试同时证明两条刷新路径共用同一份裁决
+        // 「点刷新核实」走公共 query——三条刷新路径（query / 动作后刷新 / 胶囊现查）
+        // 共用 withRideSnapshot 同一份裁决；本用例覆盖 query 这条
         assertEquals(1, session.lockCalls)
     }
 
     @Test
-    fun `解锁继续骑走 retryUnlock 并给继续骑行文案`() {
+    fun `已锁时解锁继续骑走 retryUnlock 并给继续骑行文案`() {
         val session = FakeSession()
+        session.underway = ride(carNum = "100000669", locked = true)
         val kvcx = controller(session)
+        kvcx.query(quiet = true)
 
         kvcx.resumeRide()
 
@@ -342,6 +347,73 @@ class KvcxRideControllerTest {
         assertEquals(0, session.unlockCalls)
         assertEquals("已解锁，继续骑行", notices.single().first)
         assertEquals(NoticeTone.Success, notices.single().second)
+    }
+
+    @Test
+    fun `已解锁时点开锁=重发解锁指令并给确认文案`() {
+        // 2026-10-08 用户口径「即使车辆已解锁，也保留开启车辆的按钮和功能」：
+        // 骑行卡左位「开锁」在未锁态 = 对在案订单重发 greenCarUnlock（不重建订单）
+        val session = FakeSession()
+        session.underway = ride(carNum = "100000669", locked = false)
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+
+        kvcx.resumeRide()
+
+        assertEquals(1, session.retryCalls)
+        assertEquals(0, session.unlockCalls)
+        assertEquals("已确认开锁", notices.single().first)
+        assertEquals(NoticeTone.Success, notices.single().second)
+    }
+
+    @Test
+    fun `解锁成功同时清掉锁车确认中的悬置`() {
+        val session = FakeSession()
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = ride(locked = false))
+        val kvcx = controller(session)
+        kvcx.tempLock()
+        assertTrue(kvcx.state.value.lockPending)
+
+        // 解锁是新的用户意图：成功即覆盖掉「锁车确认中」的悬置
+        kvcx.resumeRide()
+
+        assertFalse(kvcx.state.value.lockPending)
+        assertEquals("已确认开锁", notices.last().first)
+    }
+
+    @Test
+    fun `解锁未确认也作废锁车悬置`() {
+        val session = FakeSession()
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = ride(locked = false))
+        val kvcx = controller(session)
+        kvcx.tempLock()
+        assertTrue(kvcx.state.value.lockPending)
+
+        // 解锁意图已发出（即便结果未确认）：锁车悬置同样作废，
+        // 别让胶囊停在「锁车确认中…」和用户刚做的操作打架
+        session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
+        kvcx.resumeRide()
+
+        assertFalse(kvcx.state.value.lockPending)
+        assertEquals("未确认解锁；请到快趣小程序核对", notices.last().first)
+    }
+
+    @Test
+    fun `锁状态查询现查也消解悬置`() {
+        // 胶囊「核实」路径（queryLockState）与 query / 动作后刷新共用同一份悬置裁决：
+        // 查到未锁即消解「开锁未确认」（2026-10-08 复核对齐）
+        val session = FakeSession()
+        session.underway = ride(carNum = "100000669", locked = true)
+        session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
+        val kvcx = controller(session)
+        kvcx.unlock("100000669")
+        assertTrue(kvcx.state.value.unlockPending)
+
+        session.underway = ride(carNum = "100000669", locked = false)
+        kvcx.queryLockState()
+
+        assertFalse(kvcx.state.value.unlockPending)
+        assertEquals("车辆未锁，正在计费", notices.last().first)
     }
 
     @Test
@@ -511,7 +583,7 @@ class KvcxRideControllerTest {
 
     @Test
     fun `锁状态查询把答案说出来`() {
-        // 已锁：徽标是快照，点它 = 现查一次；答案里说清"订单还在、计费继续"
+        // 已锁：状态胶囊是快照，点它 = 现查一次；答案里说清"订单还在、计费继续"
         val session = FakeSession()
         session.underway = ride(locked = true)
         val kvcx = controller(session)

@@ -16,8 +16,8 @@ sealed interface UnlockOutcome {
 /**
  * 临时锁车结果（2026-10-08）。**形态镜像 [UnlockOutcome]**：车把"已锁"上报服务端是异步的
  * （落锁后 IoT 上报常见 3~15 秒），确认窗口内没等到 ≠ 锁车失败——锁车无新增计费后果、
- * 且仓库层幂等（已锁再点直接返回），"未确认"应该是一个**可自愈的中间态**而不是错误：
- * 调用方置「锁车确认中」，后续刷新到已锁即消解；用户再点一次锁车也无害。
+ * 再点一次锁车即重发指令（手动单次），"未确认"应该是一个**可自愈的中间态**而不是错误：
+ * 调用方置「锁车确认中」，后续刷新到已锁即消解。
  */
 sealed interface LockOutcome {
     /** 已确认车辆锁上（拿到确认后的订单状态）。 */
@@ -69,7 +69,8 @@ interface KvcxRideSession {
     suspend fun retryUnlock(gcjLat: Double, gcjLng: Double): UnlockOutcome
 
     /**
-     * 临时锁车（订单与计费继续，仅物理锁车）。已锁时幂等 no-op。
+     * 临时锁车（订单与计费继续，仅物理锁车）。**已锁也照发**（用户重按 = 重发指令，
+     * 防「误判已锁」后锁不上；见实现注释）。
      * 返回 [LockOutcome.Locked] = 已确认锁上；[LockOutcome.Unconfirmed] = 指令已发但
      * 窗口内未确认到（**不是失败**——上报慢是常态，见 [LockOutcome] 的说明）。
      */

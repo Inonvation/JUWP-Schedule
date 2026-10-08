@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -195,6 +196,34 @@ internal fun rideBarKey(
 }
 
 /**
+ * 骑行卡的状态色调（2026-10-08 用户口径「状态色包裹车辆信息卡片」）：整卡底色/描边
+ * 与头行状态胶囊共用这一份判据。
+ *
+ * - [Pending]（开锁未确认 / 锁车确认中）：指令已发、上报未到，**不是失败**——
+ *   警示色提示用户留意，直到刷新到确定态才消解；
+ * - [Locked] / [Unlocked]：按在案订单的 `lockStatus`；
+ * - 判不出（无订单 / 锁状态缺失且无悬置）返回 null：不套色、不摆胶囊（保持原样）。
+ */
+internal enum class RidingCardTone { Unlocked, Locked, Pending }
+
+/**
+ * [RidingCardTone] 的构造规则（与胶囊文案同一判据链，逐级短路）：
+ * 开锁悬置最优先 → 已锁快照次之（锁定是权威结果，锁车悬置的残留瞬态让位）→
+ * 锁车悬置 → 未锁快照；全无（无订单 / 锁状态缺失）返回 null。
+ */
+internal fun ridingCardTone(
+    locked: Boolean?,
+    unlockPending: Boolean,
+    lockPending: Boolean,
+): RidingCardTone? = when {
+    unlockPending -> RidingCardTone.Pending
+    locked == true -> RidingCardTone.Locked
+    lockPending -> RidingCardTone.Pending
+    locked == false -> RidingCardTone.Unlocked
+    else -> null
+}
+
+/**
  * 页面底部的**常驻动作区**（2026-09-30 结构，2026-10-01 搬到面板之外）。
  *
  * 用户口径一直是「跟说明文字那样固定在弹窗底部」，所以它和免责那行同住页面底部的常驻块
@@ -215,8 +244,9 @@ internal fun RideActionArea(
     busy: KvcxAction?,
     /** [busy] 的起始时刻（按钮「已等 N 秒」走秒的基准；0 = 无 busy）。 */
     busyAt: Long,
+    /** 开锁指令已发未确认（2026-10-08）：胶囊显「开锁未确认」、整卡转警示态。 */
     unlockPending: Boolean,
-    /** 锁车指令已发但未确认到（2026-10-08）：徽标显「锁车确认中…」，不是失败。 */
+    /** 锁车指令已发但未确认到（2026-10-08）：胶囊显「锁车确认中…」，不是失败。 */
     lockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
@@ -241,7 +271,7 @@ internal fun RideActionArea(
     onRefreshRide: () -> Unit,
     /** 响铃寻车（2026-09-30）：让在案订单的车鸣笛。 */
     onRingFind: () -> Unit,
-    /** 锁状态查询（2026-09-30）：点骑行卡上的锁徽标现查一次。 */
+    /** 锁状态查询（2026-09-30）：点骑行卡上的状态胶囊现查一次（2026-10-08 由锁徽标升级）。 */
     onQueryLock: () -> Unit,
     onEndTimer: () -> Unit,
     onTimerExpired: () -> Unit,
@@ -286,33 +316,37 @@ internal fun RideActionArea(
             contentAlignment = Alignment.BottomStart,
             modifier = Modifier.fillMaxWidth(),
         ) { key ->
-            // **进入这一档那一刻**的数据快照。AnimatedContent 会把退场的那一份继续组合
-            // [BAR_FALL_MS]，而它读的是外层参数的最新值：还车时 `ride` 已经变 null、
-            // 点「继续找车」时 `summary` 已经变 null，退场那一份于是当场画不出东西——
-            // 看到的就是"内容先没了、那块区域再收回去"。按 key 记一份，退场时还有东西可画。
-            //
-            // 计时那两项同理：小程序方式「结束计时」一按，`timerActive` 立刻变 false，
-            // 倒计时会在窗口滑走的路上先消失。
-            val held = remember(key) {
-                RideUpperHeld(
-                    ride = ride,
-                    summary = summary,
-                    timerActive = timerActive,
-                    timerStartAt = timerStartAt,
-                )
+            // 退场那份还会继续组合 [BAR_FALL_MS]，而它读到的外层参数在切换那一刻已被
+            // 清空（还车后 `ride` 变 null、点「继续找车」时 `summary` 变 null、结束计时
+            // 时 `timerActive` 变 false）——直接画就是"内容先没了、区域再收回去"。
+            // 所以：**当前档逐轮记账「最近一次实时值」，退场那份只读**（普通持有者，
+            // 不驱动重组，页面里 `DpHolder` 同法）。别退回"入场快照"——`remember(key)`
+            // 只记首帧，会让「已骑」回跳、悬置色复活（2026-10-08 复核修）。
+            val isCurrent = key == barKey
+            val stash = remember(key) { RideUpperStash() }
+            if (isCurrent) {
+                stash.ride = ride
+                stash.summary = summary
+                stash.timerActive = timerActive
+                stash.timerStartAt = timerStartAt
+                stash.unlockPending = unlockPending
+                stash.lockPending = lockPending
             }
             RideActionUpper(
                 key = key,
                 caps = caps,
                 state = state,
-                ride = ride ?: held.ride,
+                // 当前档一律实时值（重试成功、到点撤卡要立刻消解；∪ 快照会冻住它们，
+                // 2026-10-08 复核抓到「开锁未确认进骑行档后重试成功，胶囊不消」）；
+                // 退场那份才读 stash（切换前最后一帧，190ms 里不清、不闪）。
+                ride = if (isCurrent) ride else stash.ride,
                 rideFetchedAt = rideFetchedAt,
                 busy = busy,
-                lockPending = lockPending,
-                // 计时中用实时值（骑行中途换车会换起点）；退场那一份用快照把倒计时留住
-                timerActive = timerActive || held.timerActive,
-                timerStartAt = if (timerActive) timerStartAt else held.timerStartAt,
-                summary = summary ?: held.summary,
+                unlockPending = if (isCurrent) unlockPending else stash.unlockPending,
+                lockPending = if (isCurrent) lockPending else stash.lockPending,
+                timerActive = if (isCurrent) timerActive else stash.timerActive,
+                timerStartAt = if (isCurrent) timerStartAt else stash.timerStartAt,
+                summary = if (isCurrent) summary else stash.summary,
                 onDismissPicked = onDismissPicked,
                 onGenerateForCar = onGenerateForCar,
                 onFocusCar = onFocusCar,
@@ -401,17 +435,20 @@ internal fun barBlockShrinks(prev: String, next: String): Boolean =
 private const val BUSY_LONG_WAIT_SECONDS = 20
 
 /**
- * 退场动画期间要用的那一份数据（快照在 [RideActionArea] 里按 key 记）。
+ * 退场动画期间要用的「最近一次实时值」持有者（在 [RideActionArea] 里按 key 记）。
  *
- * 只放"状态换掉那一刻会被清空"的几项：其它参数（更新时刻、筛选开关）照旧读实时值，
- * 冻住它们会把骑行中的走时也一起冻掉。
+ * **不是入场快照**：当前档（key == barKey）逐轮把实时值记账进来，退场那份（还会继续
+ * 组合 [BAR_FALL_MS]）只读——切换那一刻外层参数已被清空，读到的就是最后一帧的真实
+ * 状态。普通持有者，不驱动重组（页面里 `DpHolder` 同法）。
  */
-private data class RideUpperHeld(
-    val ride: KqcxAuth.Ride?,
-    val summary: KvcxReturnSummary?,
-    val timerActive: Boolean,
-    val timerStartAt: Long,
-)
+private class RideUpperStash {
+    var ride: KqcxAuth.Ride? = null
+    var summary: KvcxReturnSummary? = null
+    var timerActive: Boolean = false
+    var timerStartAt: Long = 0L
+    var unlockPending: Boolean = false
+    var lockPending: Boolean = false
+}
 
 /** 车辆卡 key 里的车号（`car:100000398` → `100000398`）；不是车辆卡返回 null。 */
 private fun carNumOf(key: String): String? {
@@ -438,7 +475,9 @@ private fun RideActionUpper(
     ride: KqcxAuth.Ride?,
     rideFetchedAt: Long,
     busy: KvcxAction?,
-    /** 锁车确认中（2026-10-08）：锁徽标据此显「锁车确认中…」。 */
+    /** 开锁指令已发未确认（2026-10-08）：胶囊显「开锁未确认」、整卡转警示态。 */
+    unlockPending: Boolean,
+    /** 锁车确认中（2026-10-08）：状态胶囊据此显「锁车确认中…」。 */
     lockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
@@ -457,6 +496,7 @@ private fun RideActionUpper(
             ride = ride,
             rideFetchedAt = rideFetchedAt,
             busy = busy,
+            unlockPending = unlockPending,
             lockPending = lockPending,
             timerActive = timerActive,
             timerStartAt = timerStartAt,
@@ -562,35 +602,46 @@ private fun RideActionButtons(
             else -> RideActionButton("登录后可开锁", onLogin, icon = HugeIcons.UserAccount)
         }
 
+        // 骑行态三槽位**固定**（2026-10-08 用户口径「参考官方、按钮位置别变」）：
+        // 左=开锁位（文案随状态：开锁 / 解锁 / 重试开锁）、中=锁车（全态常驻可点——
+        // 已锁时再点=重发指令，防「系统误判已锁」后锁不上）、右=还车；左/右实心、
+        // 中描边（2026-10-08 预览定稿的层级）。「已等 N 秒」只缀在**当前忙碌的那枚**
+        // 按钮上（三枚都缀会把「列队等谁」说糊，还每秒跑三处交叉淡入——复核修）。
         key == BAR_RIDING -> if (ride != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
                     unlockPending -> RideActionButton(
-                        text = (if (busy == KvcxAction.RETRY_UNLOCK) "重试中…" else "重试开锁") + waitedText,
+                        text = if (busy == KvcxAction.RETRY_UNLOCK) "重试中…" + waitedText else "重试开锁",
                         onClick = onRetryUnlock,
                         enabled = busy == null,
                         modifier = Modifier.weight(1f),
-                        filled = false,
                     )
 
                     ride.locked == true -> RideActionButton(
-                        text = (if (busy == KvcxAction.RESUME) "解锁中…" else "解锁") + waitedText,
+                        text = if (busy == KvcxAction.RESUME) "解锁中…" + waitedText else "解锁",
                         onClick = onResume,
                         enabled = busy == null,
                         modifier = Modifier.weight(1f),
-                        filled = false,
                     )
 
                     else -> RideActionButton(
-                        text = (if (busy == KvcxAction.LOCK) "锁车中…" else "锁车") + waitedText,
-                        onClick = onTempLock,
+                        // 已解锁也保留开锁入口：对在案订单重发解锁指令（不重建订单、免确认）——
+                        // 「App 显示未锁、车实际还锁着」时要有出口
+                        text = if (busy == KvcxAction.RESUME) "开锁中…" + waitedText else "开锁",
+                        onClick = onResume,
                         enabled = busy == null,
                         modifier = Modifier.weight(1f),
-                        filled = false,
                     )
                 }
                 RideActionButton(
-                    text = (if (busy == KvcxAction.RETURN) "还车中…" else "还车") + waitedText,
+                    text = if (busy == KvcxAction.LOCK) "锁车中…" + waitedText else "锁车",
+                    onClick = onTempLock,
+                    enabled = busy == null,
+                    modifier = Modifier.weight(1f),
+                    filled = false,
+                )
+                RideActionButton(
+                    text = if (busy == KvcxAction.RETURN) "还车中…" + waitedText else "还车",
                     onClick = onReturn,
                     enabled = busy == null,
                     modifier = Modifier.weight(1f),
@@ -709,13 +760,15 @@ private fun RideCarUpper(
     }
 }
 
-/** 骑行态的**上区**：头行 + 倒计时 + 指标行。动作行在下区。 */
+/** 骑行态的**上区**：状态色整卡（头行 + 倒计时 + 指标一行）。动作行在下区。 */
 @Composable
 private fun RideRidingUpper(
     ride: KqcxAuth.Ride?,
     rideFetchedAt: Long,
     busy: KvcxAction?,
-    /** 锁车指令已发但未确认到（2026-10-08）：锁徽标显「锁车确认中…」。 */
+    /** 开锁指令已发未确认（2026-10-08）：胶囊显「开锁未确认」、整卡转警示态。 */
+    unlockPending: Boolean,
+    /** 锁车指令已发但未确认到（2026-10-08）：胶囊显「锁车确认中…」，不是失败。 */
     lockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
@@ -727,112 +780,206 @@ private fun RideRidingUpper(
     onLocateCar: () -> Unit,
     onTimerExpired: () -> Unit,
 ) {
+    // 状态色整卡（2026-10-08 用户口径「用状态颜色包裹车辆信息卡片」）：底与描边随锁
+    // 状态渐变，三态布局完全一致——只换颜色与胶囊文案、高度恒定（不触发地图让位那套）。
+    // 判不出（无订单 / 锁状态缺失且无悬置）时不套卡不摆胶囊（小程序计时态与老数据保持原样）。
+    val tone = ridingCardTone(
+        locked = ride?.locked,
+        unlockPending = unlockPending,
+        lockPending = lockPending,
+    )
+    val cardShape = RoundedCornerShape(16.dp)
+    val cardBackground by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primary.copy(alpha = 0.07f)
+            RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.045f)
+            RidingCardTone.Pending -> MaterialTheme.semanticColors.warning.copy(alpha = 0.08f)
+            null -> Color.Transparent
+        },
+        animationSpec = tween(220),
+        label = "ridingCardBg",
+    )
+    val cardBorderColor by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+            RidingCardTone.Pending -> MaterialTheme.semanticColors.warning.copy(alpha = 0.22f)
+            null -> Color.Transparent
+        },
+        animationSpec = tween(220),
+        label = "ridingCardBorder",
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
-            .padding(top = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(top = 10.dp)
+            // 卡片与下区按钮之间留 10dp（按钮容器自带 8dp 上边距，这里补 2dp；
+            // 恒 2dp，不随 tone 有无跳变）
+            .padding(bottom = 2.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                HugeIcons.ScooterElectric,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(9.dp))
-            Text(
-                text = ride?.let { "车 ${it.carNum}" } ?: "骑行计时中",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            ride?.locked?.let { locked ->
-                Spacer(Modifier.width(8.dp))
-                // 锁徽标**可点**（2026-09-30）：它显示的是最近一次拉取的快照，
-                // 点它 = 现查一次并把答案说出来（查询中在原位翻文案，不跳位置）
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
-                        .clickable(enabled = busy == null, onClick = onQueryLock)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(cardShape)
+                .background(cardBackground)
+                .border(1.dp, cardBorderColor, cardShape)
+                .padding(if (tone != null) 12.dp else 0.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    HugeIcons.ScooterElectric,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    text = ride?.let { "车 ${it.carNum}" } ?: "骑行计时中",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    // 窄屏 / 大字体下的防溢出：标题先省略号，别把尾部图标挤没
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                tone?.let { current ->
+                    Spacer(Modifier.width(8.dp))
+                    // 状态胶囊**可点**（2026-09-30 能力保留）：它显示的是最近一次拉取的
+                    // 快照，点它 = 现查一次并把答案说出来（查询中在原地翻文案，不跳位置）
+                    RidingStateChip(
+                        tone = current,
                         text = when {
                             busy == KvcxAction.QUERY_LOCK -> "查询中…"
-                            // 锁车确认中（2026-10-08）：指令已发、上报未到，不是失败——
-                            // 徽标说清状态，点击仍可现查（查询本身就是核实手段）
-                            lockPending && locked != true -> "锁车确认中…"
-                            locked -> "已锁"
-                            else -> "未锁"
+                            // 悬置态说清是「确认中」而不是失败；点击/刷新就是核实手段
+                            unlockPending -> "开锁未确认"
+                            lockPending && ride?.locked != true -> "锁车确认中…"
+                            ride?.locked == true -> "已锁"
+                            else -> "已解锁"
                         },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        enabled = busy == null,
+                        onClick = onQueryLock,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (ride != null) {
+                    IconButtonSmall(
+                        icon = HugeIcons.MapsLocation02,
+                        label = "在地图上定位到车",
+                        enabled = busy == null,
+                        onClick = onLocateCar,
+                    )
+                    IconButtonSmall(
+                        // 响铃寻车（2026-09-30）：车在车堆里认不出时让车鸣笛。没有计费后果，
+                        // 不用确认；与官方骑行页「响铃寻车」同一位置语义
+                        icon = HugeIcons.BellRing,
+                        label = "响铃寻车",
+                        enabled = busy == null,
+                        onClick = onRingFind,
+                    )
+                    IconButtonSmall(
+                        icon = HugeIcons.Refresh,
+                        label = "刷新骑行状态",
+                        enabled = busy == null,
+                        onClick = onRefresh,
                     )
                 }
             }
-            Spacer(Modifier.weight(1f))
+            if (timerActive) {
+                RideCountdown(
+                    startAt = timerStartAt,
+                    onExpired = onTimerExpired,
+                    showEstimateNote = showEstimateNote,
+                )
+            }
             if (ride != null) {
-                IconButtonSmall(
-                    icon = HugeIcons.MapsLocation02,
-                    label = "在地图上定位到车",
-                    enabled = busy == null,
-                    onClick = onLocateCar,
-                )
-                IconButtonSmall(
-                    // 响铃寻车（2026-09-30）：车在车堆里认不出时让车鸣笛。没有计费后果，
-                    // 不用确认；与官方骑行页「响铃寻车」同一位置语义
-                    icon = HugeIcons.BellRing,
-                    label = "响铃寻车",
-                    enabled = busy == null,
-                    onClick = onRingFind,
-                )
-                IconButtonSmall(
-                    icon = HugeIcons.Refresh,
-                    label = "刷新骑行状态",
-                    enabled = busy == null,
-                    onClick = onRefresh,
-                )
-            }
-        }
-        if (timerActive) {
-            RideCountdown(
-                startAt = timerStartAt,
-                onExpired = onTimerExpired,
-                showEstimateNote = showEstimateNote,
-            )
-        }
-        if (ride != null) {
-            val elapsed = rememberRideElapsed(ride, rideFetchedAt)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                LabeledValue(label = "已骑", value = elapsed ?: "--")
-                ride.payMoneyCents?.takeIf { it > 0 }?.let { cents ->
-                    LabeledValue(label = "当前费用", value = "¥%.2f".format(cents / 100.0))
+                val elapsed = rememberRideElapsed(ride, rideFetchedAt)
+                // 指标压成一行小字（2026-10-08）：原来三列「标签 + 值」把整卡顶得太高
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = buildString {
+                            append("已骑 ${elapsed ?: "--"}")
+                            ride.payMoneyCents?.takeIf { it > 0 }?.let { cents ->
+                                append(" · 费用 ¥%.2f".format(cents / 100.0))
+                            }
+                            ride.batteryPercent?.takeIf { it in 1..100 }?.let { percent ->
+                                append(" · 电量 $percent%")
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            // 等宽数字：已骑每秒跳动不抖
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "更新于 ${clockText(rideFetchedAt)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        maxLines = 1,
+                    )
                 }
-                ride.batteryPercent?.takeIf { it in 1..100 }?.let { percent ->
-                    LabeledValue(label = "电量", value = "$percent%")
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    LabeledValue(label = "计时起点", value = clockText(timerStartAt))
+                    LabeledValue(label = "免费时长", value = "15 分钟")
                 }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = "更新于 ${clockText(rideFetchedAt)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                LabeledValue(label = "计时起点", value = clockText(timerStartAt))
-                LabeledValue(label = "免费时长", value = "15 分钟")
             }
         }
         // 还车点列表在下面那块面板里，动作区不再补说明：两档现在都能拉图层
         // （2026-10-01 撤掉"小程序方式不拉"那道闸），空列表的说明在面板自己的空态里
+    }
+}
+
+/** 骑行卡头行的**状态胶囊**（[RidingCardTone] 三态配色的唯一出处；点它=现查锁状态）。 */
+@Composable
+private fun RidingStateChip(
+    tone: RidingCardTone,
+    text: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = when (tone) {
+        RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primaryContainer
+        RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
+        RidingCardTone.Pending -> MaterialTheme.semanticColors.warning.copy(alpha = 0.18f)
+    }
+    val foreground = when (tone) {
+        RidingCardTone.Unlocked -> MaterialTheme.colorScheme.onPrimaryContainer
+        RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+        RidingCardTone.Pending -> MaterialTheme.semanticColors.warning
+    }
+    val dot = when (tone) {
+        RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primary
+        RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+        RidingCardTone.Pending -> MaterialTheme.semanticColors.warning
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(background)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(dot),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = foreground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

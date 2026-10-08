@@ -797,7 +797,8 @@ fun RideScreen(
                                 haptics.tap()
                                 viewModel.kvcx.ringFindCar()
                             },
-                            // 锁状态查询（2026-09-30）：点骑行卡上的锁徽标现查一次
+                            // 锁状态查询（2026-09-30）：点骑行卡上的状态胶囊现查一次
+                            // （2026-10-08 由锁徽标升级；现查与刷新共用同一份悬置裁决）
                             onQueryLock = {
                                 haptics.tap()
                                 viewModel.kvcx.queryLockState()
