@@ -11,6 +11,7 @@ import edu.jxslu.schedule.data.kqcx.KqxCredentialStore
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
 import edu.jxslu.schedule.data.kqcx.ZoneCacheStore
 import edu.jxslu.schedule.data.power.PowerClient
+import edu.jxslu.schedule.data.power.PowerDebugDump
 import edu.jxslu.schedule.data.power.PowerHistoryCache
 import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerRepository
@@ -739,6 +740,11 @@ object Graph {
             powerRepository ?: PowerRepository(
                 PowerClient.create(),
                 powerReadingStore(context),
+                // debug 包才落协议原文（singleFeeitem / sceneBind，供核对「未设置寝室」
+                // 判据与绑定响应；release 一个字节都不写）
+                debugDump = File(context.applicationContext.filesDir, "power_debug")
+                    .takeIf { BuildConfig.DEBUG }
+                    ?.let { PowerDebugDump(it) },
             ).also { powerRepository = it }
         }
 

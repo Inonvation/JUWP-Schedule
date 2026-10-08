@@ -200,6 +200,9 @@ object BalanceAlertReminder {
         ) {
             return
         }
+        // 失败不落时刻：间隔闸门保持开着，下一轮还有补查机会。含「未设置寝室」
+        // （PowerException.RoomNotBound）：用户还没在缴费平台确认房间，静默跳过，
+        // 待他在生活页 / 校园卡设置里选好房间后自然恢复（2026-10-08）。
         val snapshot = runCatching {
             Graph.powerRepository(context).snapshot(
                 credentials.username,
@@ -207,7 +210,7 @@ object BalanceAlertReminder {
                 // 这一条读数是「用电统计」最稳定的采样点（按设置的间隔，与开关联动）
                 source = PowerReadingSource.ALERT,
             )
-        }.getOrNull() ?: return // 失败不落时刻：间隔闸门保持开着，下一轮还有补查机会
+        }.getOrNull() ?: return
         prefs.setBalanceAlertCheckMillis(BalanceAlertSource.Power, nowMillis)
         // 桌面生活小组件的电费副行（DESIGN §3.6 二条目改版）：读数已落 Room，
         // 顺手镜像一次（零网络）

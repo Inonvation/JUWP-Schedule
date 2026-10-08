@@ -494,6 +494,25 @@ JSON 后连 2024 年的过期单也能删（平台**不自动清理** `status=0`
 | 两条轮询的渐进化（2026-10-04） | **扫码消费检测**（`YktPayWatch.pollIntervalMs`：前 30 秒 5 秒、之后 10 秒、2 分钟后 20 秒，15 分钟封顶 ≈54 条）与**充值到账检测**（`YktArrival.arrivalPollIntervalMs`：前 2 分钟 5 秒、之后 15 秒、10 分钟后 60 秒，30 分钟封顶 ≈100 条；「每 3 轮一次流水」的比例不变，间隔拉长后流水自动等比变疏）都改为渐进节奏——轮询本身是功能依据不能砍，但固定 5 秒 × 长窗口是最像机器的请求形态；渐进后快速到账/刚扫完码的反馈精度不变 |
 | 不动的东西 | 8002/8003 验证码绝不重试、`NeedCaptcha` 立刻停手、`YktTurnoverSyncer` 的增量翻页逻辑（遇已入库 orderId 即停）一律保持原样 |
 
+#### 未设置寝室与 App 内确认（2026-10-08）
+
+用户报「缴费平台里没确认寝室时，App 无法加载电费，必须先去官方渠道把寝室选好」。
+排查与修复（协议事实来自官方前端 `app.7abec7aa….js` + 2026-10-08 探针实测，脚本
+`_archive/_probe_power_scene.py`）：
+
+| 环节 | 口径 |
+|------|------|
+| 判据 | `singleFeeitem.sceneinfo` 为空 = 未确认寝室——**官方 H5 同款判据**（`getData()` 里 `if (t.sceneinfo)`，为空进选择流程）。`view:"choose"` 是页面模板类型、**不是判据**（已绑定样本同样是 choose）；`bindStatus`（已绑定 = 1）只作旁证。`feeitem.flag[4]` = '0' → 该校是级联选择模式（非手输房间名），App 只做级联 |
+| 旧行为 | `snapshot()` 走到 `readMeter` 抛「项目没给绑定房间，读不了表」，卡副行原样显示；充值要到下单读表那一步才失败 |
+| 现行为 | 新增 `PowerException.RoomNotBound`（`snapshot()` 判 `feeItem.room == null` 即抛）：生活页电费栏转「**未设置寝室，点此设置**」CTA（值「—」、旧读数房号/时刻一并隐藏、`openRecharge` 闸门改道选择器）；「我的 → 校园卡」新增「寝室电费房间」行（设置 / 改绑的常驻入口，值取本机最新读数房号，零网络） |
+| 选择器 | `ui/life/PowerRoomPickerSheet(+ViewModel)`：`type=select&level=N` 逐级取候选（实测口径：校区 2、楼栋 58、单楼栋房间 182——候选 >12 带本地搜索过滤、单选项自动推进）→ 房间选定 `type=IEC` **读表预览**（**不落库**：预览的可能不是本人房间，落库仍只有 `snapshot()` 一处）→ 二次确认弹窗（明说会同步到缴费平台「我的房间」）→ 写一次 |
+| 绑定写入 | `POST /charge/sceneBind/add`，**JSON body**：`{"feeitemid":181,"sceneinfo":"campus:0#…;building:79#…;room:14686#…"}`（官方 `$api.post` 未带 `"qs"` → axios 默认 JSON）。`sceneinfo` 拼串唯一口径 `PowerModels.sceneinfoOf`（`code:id#name` 分号相连，与官方 `addSceneInfo()` 逐字一致）。**2026-10-08 同房间重绑实测通过**：HTTP 200 / `code=200`、重拉 `singleFeeitem` 不变；upsert 语义、官方允许改绑（确认文案「修改为」） |
+| 纪律 | 写请求只在用户点「确认绑定」后发一次，失败不重试（弹层里错误 + 手动「重试 / 重新绑定」）；不碰订单 / 支付链路；余额提醒（`BalanceAlertReminder`）遇 `RoomNotBound` 静默跳过；debug 包落盘 `filesDir/power_debug/`（`singleFeeitem` / `sceneBind` 原文，两套备份排除已含 `power_debug/`）——判据还没有真实未绑定账号的样本，首个案例到位时逐字段核对 |
+
+钉子：`PowerModelsTest`（sceneRoot / options 解析、脏数据、拼串格式、**空 `sceneinfo` = 未绑定**）
++ `PowerSceneSelectionTest`（改选上游层级清掉更深层旧选择——残留会让「房间」层直接显示旧预览，
+2026-10-08 复查轮修）。
+
 ### 4.25 导出成绩单（签章管理系统，2026-09-24，P6；UI 规格见 §3.14）
 
 成绩单**不在强智教务里**。强智的 `/jsxsd/kscj/cjcx_list`（§4.15）给的是成绩数据，

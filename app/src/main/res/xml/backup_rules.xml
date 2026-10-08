@@ -16,7 +16,7 @@
     只排原名等于把明文那份漏在备份里——8 个 store 一个都不能少。
 
     文件目录：crash/（崩溃堆栈不出本机）、ujing_debug/（debug 包协议样本）；
-selection_debug/（debug 包选课应答样本，§4.36）；
+    power_debug/（debug 包电费协议样本，§4.24）；selection_debug/（debug 包选课应答样本，§4.36）；
     ai_img/（AI 调课的通知截图，**会话级**，退出页面就清，本来就不该上云）；
     internship_bases.json（实习基地缓存，可重取，§4.43——别让「不进备份」的口径落空）。
 
@@ -42,6 +42,7 @@ selection_debug/（debug 包选课应答样本，§4.36）；
     <exclude domain="sharedpref" path="secure_ai.fallback.xml" />
     <exclude domain="file" path="crash/" />
     <exclude domain="file" path="ujing_debug/" />
+    <exclude domain="file" path="power_debug/" />
     <exclude domain="file" path="selection_debug/" />
     <exclude domain="file" path="ai_img/" />
     <exclude domain="file" path="internship_bases.json" />

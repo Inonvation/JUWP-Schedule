@@ -66,6 +66,14 @@ data class PowerCardState(
     val error: String? = null,
     /** 凭证没配置（或已随一卡通关闭被清除）：指引去「我的 → 校园卡」开启。 */
     val noCredentials: Boolean = false,
+    /**
+     * 已在缴费平台取到项目详情，但**没有确认寝室**（`sceneinfo` 为空，2026-10-08）。
+     *
+     * 这不是读取失败：官方渠道的判据同款，卡面要换「未设置寝室，点此设置」的出口，
+     * 由 [PowerRepository.sceneRoot] / `bindScene` 在 App 内完成设置（DESIGN §4.24）。
+     * 只在服务端明确判出时置位；网络类失败不清它（拿不准就维持原状）。
+     */
+    val roomNotBound: Boolean = false,
 )
 
 /** 生活页 UI 状态。 */
@@ -251,12 +259,16 @@ class LifeViewModel(
             }
             try {
                 val snapshot = powerRepo.snapshot(credentials.username, credentials.password, force = force)
-                _power.update { it.copy(loading = false, snapshot = snapshot, error = null) }
+                _power.update { it.copy(loading = false, snapshot = snapshot, error = null, roomNotBound = false) }
                 // 桌面生活小组件的电费副行（DESIGN §3.6 二条目改版）：读数已落 Room，
                 // 顺手镜像一次（零网络）
                 runCatching { LifeWidgetSync.refreshLifeWidgets(Graph.appContext) }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: PowerException.RoomNotBound) {
+                // 未确认寝室（DESIGN §4.24）：不是错误，卡面转「未设置寝室，点此设置」的
+                // 出口文案，由用户在 App 内选好房间确认后自然恢复
+                _power.update { it.copy(loading = false, error = null, roomNotBound = true) }
             } catch (e: PowerException.Credential) {
                 _power.update {
                     it.copy(loading = false, error = "${e.message}。若密码已改，请在「我的 → 校园卡」重新验证")
@@ -447,6 +459,12 @@ class LifeViewModel(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: PowerException.RoomNotBound) {
+                // 弹层开到一半发现寝室没设置（打开前的判据还没回来等竞态）：报在弹层里，
+                // 同时把卡面切到「去设置」——关掉弹层就能看到出口（DESIGN §4.24）
+                if (!isCurrentSession(session)) return@launch
+                _powerRecharge.value = _powerRecharge.value.copy(busy = false, error = e.message)
+                _power.update { it.copy(roomNotBound = true) }
             } catch (e: PowerException) {
                 if (!isCurrentSession(session)) return@launch
                 _powerRecharge.value = _powerRecharge.value.copy(busy = false, error = e.message)

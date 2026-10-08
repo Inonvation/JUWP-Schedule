@@ -22,6 +22,8 @@ class PowerRepository(
      * 落库也会被 `(epochMs, roomId)` 唯一索引挡掉）。
      */
     private val readingStore: PowerReadingStore,
+    /** debug 包专用的协议留痕（`filesDir/power_debug/`）；release 构建传 null，一个字节都不写。 */
+    private val debugDump: PowerDebugDump? = null,
 ) {
 
     /** access_token：读写都锁在 [loginMutex] 内；@Volatile 保证锁外读（快路径）的可见性。 */
@@ -97,8 +99,14 @@ class PowerRepository(
                 token = token,
                 params = mapOf("feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString()),
             )
+            // debug 留痕：`sceneinfo 为空 = 未设置寝室` 这条判据没有真实未绑定账号的
+            // 样本（2026-10-08），原文留住，首个真实案例一到就能逐字段核对
+            debugDump?.dump("singleFeeitem", detail.text)
             val feeItem = PowerModels.parseFeeItem(expectOk(detail, "取电费项目详情"))
-            PowerSnapshot(feeItem, readMeter(token, feeItem))
+            // 未确认寝室是「待用户设置」的状态而不是故障（官方页同款判据，DESIGN §4.24）：
+            // 分类抛出让 UI 给「去设置」的出口
+            if (feeItem.room == null) throw PowerException.RoomNotBound()
+            PowerSnapshot(feeItem, readMeter(token, feeItem.id, feeItem.scene))
         }
         // 读数落库失败不该影响页面（统计少一条而已，下一次读数会补上）
         runCatching { readingStore.record(fresh.meter, fresh.feeItem.priceYuan, source) }
@@ -135,6 +143,85 @@ class PowerRepository(
         cachedHistory = fresh
         cachedHistoryAtMs = System.currentTimeMillis()
         return fresh
+    }
+
+    // ------------------------------------------------------------------
+    // 寝室（场景）绑定（DESIGN §4.24「未设置寝室」；2026-10-08 实测打通）
+    // 官方 H5 同款三步：层级表 → 逐级候选 → sceneBind/add 确认。
+    // 全部由用户动作驱动：不开缓存、不轮询、失败不重试。
+    // ------------------------------------------------------------------
+
+    /** 选择器第一步：层级表（校区/楼栋/房间）+ 首层候选（同一个响应，见 [PowerSceneRoot]）。 */
+    suspend fun sceneRoot(username: String, password: String): PowerSceneRoot =
+        withToken(username, password) { token ->
+            val raw = client.postForm(
+                "/charge/feeitem/getThirdData",
+                token,
+                mapOf(
+                    "feeitemid" to PowerModels.RECHARGE_FEE_ITEM_ID.toString(),
+                    "type" to "select",
+                    "level" to "0",
+                ),
+            )
+            PowerModels.parseSceneRoot(expectOk(raw, "取场景层级"))
+        }
+
+    /**
+     * 第 [level] 层（0 起，= 已选层数）的候选；[chosen] = 已选各层的 `code → id`。
+     * 官方前端同款参数（`fetch_power.py --room` 已用同一形状在真实服务器跑通）。
+     */
+    suspend fun sceneOptions(
+        username: String,
+        password: String,
+        level: Int,
+        chosen: Map<String, String>,
+    ): List<PowerSceneOption> = withToken(username, password) { token ->
+        val form = buildMap {
+            put("feeitemid", PowerModels.RECHARGE_FEE_ITEM_ID.toString())
+            put("type", "select")
+            put("level", level.toString())
+            putAll(chosen)
+        }
+        val raw = client.postForm("/charge/feeitem/getThirdData", token, form)
+        PowerModels.parseSceneOptions(expectOk(raw, "取场景候选"))
+    }
+
+    /**
+     * 读某个场景（用户刚选的三个键）的电表读数，选择器预览用。
+     *
+     * **不落库**：预览的可能不是用户的房间（选错了、或只是比比），写进
+     * `power_readings` 会把无关房间混进用电统计。落库只发生在 [snapshot]。
+     */
+    suspend fun readMeterForScene(
+        username: String,
+        password: String,
+        scene: List<PowerSceneKey>,
+    ): PowerMeter = withToken(username, password) { token ->
+        readMeter(token, PowerModels.RECHARGE_FEE_ITEM_ID, scene)
+    }
+
+    /**
+     * 确认绑定（写，DESIGN §4.24；2026-10-08 同房间重绑实测通过）：
+     * `POST /charge/sceneBind/add`（**JSON body**：`feeitemid` + `sceneinfo`）→ `code=200`。
+     *
+     * 语义 = 官方页「添加为我的房间」（upsert，官方允许改绑）；[sceneinfo] 由
+     * [PowerModels.sceneinfoOf] 构造。**只在用户点确认后发一次**，失败不重试
+     * （`withToken` 里的重登重试只在 token 过期时发生——那时写请求根本没执行）。
+     * 写入侧不碰任何订单/支付链路。
+     */
+    suspend fun bindScene(username: String, password: String, sceneinfo: String) {
+        withToken(username, password) { token ->
+            val raw = client.postJson(
+                "/charge/sceneBind/add",
+                token,
+                buildJsonObject {
+                    put("feeitemid", JsonPrimitive(PowerModels.RECHARGE_FEE_ITEM_ID))
+                    put("sceneinfo", JsonPrimitive(sceneinfo))
+                },
+            )
+            debugDump?.dump("sceneBind", raw.text)
+            expectOk(raw, "确认寝室")
+        }
     }
 
     /**
@@ -340,14 +427,21 @@ class PowerRepository(
             PowerPayModels.orderStateFrom(raw.text)
         }
 
-    /** 读电表：`feeitemid` / `type=IEC` / `level` / 场景三键缺一不可（缺了平台只回 500 未知异常）。 */
-    private suspend fun readMeter(token: String, feeItem: PowerFeeItem): PowerMeter {
-        val scene = feeItem.scene
-        if (scene.isEmpty() || feeItem.room == null) {
-            throw PowerException.Protocol("项目没给绑定房间，读不了表")
-        }
+    /**
+     * 读电表：`feeitemid` / `type=IEC` / `level` / 场景三键缺一不可（缺了平台只回 500 未知异常）。
+     *
+     * [feeItemId] 与 [scene] 由调用方给：绑定链路传 [PowerFeeItem] 里的那份，
+     * 选择器预览传用户刚选的三个键（[readMeterForScene]）——**预览不落库**，
+     * `power_readings` 的写入仍只有 [snapshot] 一处。
+     */
+    private suspend fun readMeter(
+        token: String,
+        feeItemId: Int,
+        scene: List<PowerSceneKey>,
+    ): PowerMeter {
+        if (scene.isEmpty()) throw PowerException.RoomNotBound()
         val form = mutableMapOf(
-            "feeitemid" to feeItem.id.toString(),
+            "feeitemid" to feeItemId.toString(),
             "type" to "IEC",
             "level" to scene.size.toString(),
         )

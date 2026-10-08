@@ -151,6 +151,25 @@
 - **读表参数缺一不可**：`feeitemid=181` / `type=IEC` / `level=3` / campus+building+room；
   少一个平台只回 `code=500「未知异常」`（HTTP 200），**业务码 401 也藏在 HTTP 200 里**，
   必须读 body 的 `code` 才能触发重登。
+- **未设置寝室不是错误，是「待用户设置」的状态**（2026-10-08，DESIGN §4.24）：
+  `singleFeeitem.sceneinfo` 为空 = 未确认寝室——**这是官方 H5 自己的判据**（`if (t.sceneinfo)`），
+  仓库抛 `PowerException.RoomNotBound`；生活页电费栏转「未设置寝室，点此设置」CTA
+  （值「—」、旧读数房号 / 时刻一并隐藏、充值闸门改道选择器），出口直通选择器弹层。
+  **别把它并进普通错误文案**；也别拿 `view:"choose"` 当判据（已绑定账号同样是 choose，
+  它是页面模板类型），`bindStatus` 只作旁证。
+- **寝室选择 / 绑定链路**（弹层两处宿主：生活页 CTA、「我的 → 校园卡」的「寝室电费房间」行，
+  也是改绑入口）：`getThirdData type=select&level=N` 逐级取 校区/楼栋/房间（候选 >12 带本地
+  搜索过滤、单选项自动推进）→ 房间选定后 `type=IEC` **读表预览**（**不落库**——预览的可能
+  不是本人房间，`power_readings` 落库仍只有 `snapshot()` 一处）→ 二次确认弹窗 → 写一次。
+  **写接口纪律（红线）**：`POST /charge/sceneBind/add`（**JSON body**：`feeitemid` + `sceneinfo`，
+  拼串唯一口径 `PowerModels.sceneinfoOf`）只在用户点「确认绑定」后发一次、失败不重试
+  （错误留在弹层，手动「重试 / 重新绑定」）；不进任何订单 / 支付链路；确认文案必须写清
+  「会同步到缴费平台的『我的房间』」（upsert 语义，官方允许改绑——2026-10-08 同房间重绑
+  实测 HTTP 200 / `code=200`）。判据还没有真实未绑定账号的样本：debug 包落盘
+  `filesDir/power_debug/`（两套备份排除已含 `power_debug/`），首个真实案例到位时核对。
+- **级联选择的深层残留是坑**（2026-10-08 复查轮修）：改选上游层级后更深层的旧选择必须清掉
+  （`applySceneChoice`，`PowerSceneSelectionTest` 钉住）——残留会让「房间」层直接显示旧预览
+  而不是候选列表。
 - **电费充值已 App 内完成**（2026-09-24 实测收口；**2026-09-29 下单表单 8 字段**）：
   下单 = `POST /blade-pay/pay` `paystep=0`（`feeitemid=181 + tranamt + flag=choose +
   synAccessSource=h5 + abstracts + third_party`，签名 `PowerPaySign`，表单唯一口径

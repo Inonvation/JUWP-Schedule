@@ -5,7 +5,7 @@
      **每个 store 的 `.fallback.xml` 也要排**（2026-10-06 复核补）：Keystore 连续两次
      损坏时各 store 会退回明文 SharedPreferences，只排原名等于把明文那份漏在备份里。
      文件目录：crash/（崩溃留痕，堆栈不出本机）、ujing_debug/（debug 包协议样本）、
- selection_debug/（debug 包选课应答样本，§4.36）、
+     power_debug/（debug 包电费协议样本，§4.24）、selection_debug/（debug 包选课应答样本，§4.36）、
      ai_img/（AI 调课通知截图，会话级）、internship_bases.json（实习基地缓存，可重取），
      同属「不上云」口径，见 backup_rules.xml 注释。 -->
 <data-extraction-rules>
@@ -28,6 +28,7 @@
         <exclude domain="sharedpref" path="secure_ai.fallback.xml" />
         <exclude domain="file" path="crash/" />
         <exclude domain="file" path="ujing_debug/" />
+        <exclude domain="file" path="power_debug/" />
         <exclude domain="file" path="selection_debug/" />
         <exclude domain="file" path="ai_img/" />
         <exclude domain="file" path="internship_bases.json" />
@@ -51,6 +52,7 @@
         <exclude domain="sharedpref" path="secure_ai.fallback.xml" />
         <exclude domain="file" path="crash/" />
         <exclude domain="file" path="ujing_debug/" />
+        <exclude domain="file" path="power_debug/" />
         <exclude domain="file" path="selection_debug/" />
         <exclude domain="file" path="ai_img/" />
         <exclude domain="file" path="internship_bases.json" />

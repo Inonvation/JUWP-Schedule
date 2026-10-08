@@ -141,11 +141,13 @@ class PowerClient private constructor(private val http: OkHttpClient) {
         }
 
     /**
-     * POST JSON body（`/charge/order/deleteOrder` 专用）。
+     * POST JSON body（`/charge/order/deleteOrder` 与 `/charge/sceneBind/add` 用）。
      *
      * 2026-09-24 实测：删单端点**只认 JSON body**——表单（无论带不带 SIGN）一律
      * `500 未知异常`；`Content-Type: application/json` + `{"orderid":…}` 即成功。
-     * 这是全项目唯一一处 JSON body 请求，单独开方法不放 [postForm]。
+     * 2026-10-08 起场景绑定也走这里：官方前端对 `/sceneBind/add` 正是发 JSON
+     * （`$api.post` 没带 `"qs"` 参数 → axios 默认应用 `application/json`），
+     * 已用同房间重绑实测对齐。别把它改回表单。
      */
     suspend fun postJson(path: String, token: String, body: JsonObject): Raw =
         withContext(Dispatchers.IO) {

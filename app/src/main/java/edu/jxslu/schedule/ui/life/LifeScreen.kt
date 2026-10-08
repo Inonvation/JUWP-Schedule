@@ -146,6 +146,16 @@ fun LifeScreen(
 
     var showRechargeSheet by remember { mutableStateOf(false) }
     var showPowerRecharge by remember { mutableStateOf(false) }
+    // 「选择寝室」弹层（DESIGN §4.24「未设置寝室」）：电费栏未设置寝室时的 CTA 与
+    // 已设置后的改绑（校园卡设置页那边同款）都走它；打开前 start() 重置流程
+    var showRoomPicker by remember { mutableStateOf(false) }
+    val roomPickerViewModel: PowerRoomPickerViewModel = viewModel(
+        factory = PowerRoomPickerViewModel.factory(context.applicationContext),
+    )
+    fun openRoomSetup() {
+        roomPickerViewModel.start()
+        showRoomPicker = true
+    }
     val powerRecharge by viewModel.powerRecharge.collectAsStateWithLifecycle()
     // 「去充值电子账户」联动：打开一卡通充值时预选电子账户（DESIGN 4.24）
     var campusRechargePreferElectric by rememberSaveable { mutableStateOf(false) }
@@ -165,8 +175,14 @@ fun LifeScreen(
         when (kind) {
             // 打开弹层即重置流程并清一遍未支付单（平台不自动清，堆积会让新下单 500）
             RechargeKind.Power -> {
-                viewModel.preparePowerRecharge()
-                showPowerRecharge = true
+                // 未设置寝室（平台侧判据，DESIGN §4.24）：没有房间可读，充值无从谈起——
+                // 直接引到选择器，别让用户走到「下单读不到电表」那一步
+                if (state.power.roomNotBound) {
+                    openRoomSetup()
+                } else {
+                    viewModel.preparePowerRecharge()
+                    showPowerRecharge = true
+                }
             }
 
             RechargeKind.Campus -> showRechargeSheet = true
@@ -335,6 +351,10 @@ fun LifeScreen(
                         haptics.tap()
                         openRecharge(RechargeKind.Power)
                     },
+                    onSetupRoom = {
+                        haptics.tap()
+                        openRoomSetup()
+                    },
                     onOpenSettings = onOpenCampusSettings,
                 )
 
@@ -401,6 +421,23 @@ fun LifeScreen(
                             runCatching { context.startActivityOutsideApp(intent) }.isSuccess
                         },
                     ) { notice -> showNotice(notice.text, notice.tone) }
+                }
+            },
+        )
+    }
+
+    if (showRoomPicker) {
+        PowerRoomPickerSheet(
+            viewModel = roomPickerViewModel,
+            onDismiss = { showRoomPicker = false },
+            onBound = { room ->
+                showRoomPicker = false
+                // 绑定后立即按新房间刷新卡面（force：平台刚写完，缓存里那份还是「没房间」）
+                viewModel.refreshPower(force = true)
+                scope.launch {
+                    snackbar.showSnackbar(
+                        AppNoticeVisuals("已设置寝室：$room", tone = NoticeTone.Success),
+                    )
                 }
             },
         )
@@ -574,6 +611,8 @@ private fun WalletCard(
     onRefreshPower: () -> Unit,
     onRechargeCampus: () -> Unit,
     onRechargePower: () -> Unit,
+    /** 未设置寝室时电费栏的出口（「设置寝室」按钮与整栏点击都落到它）。 */
+    onSetupRoom: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -601,11 +640,14 @@ private fun WalletCard(
     val pricePerUnit = power.snapshot?.feeItem?.priceYuan
     val powerValue = when {
         power.noCredentials -> "—"
+        // 未设置寝室：不能拿旧读数（也许是别的房间的）当数，直接空值 + 出口文案
+        power.roomNotBound -> "—"
         meter?.remain != null -> "%.2f 度".format(meter.remain)
         else -> "—"
     }
     val powerSub = when {
         power.noCredentials -> "未开启凭证"
+        power.roomNotBound -> "未设置寝室，点此设置"
         meter?.remain != null && power.error != null -> "读取失败，显示上次读数"
         meter?.remain != null -> {
             // 「元」的换算只有一处口径（domain/BalanceAlert.remainingYuan，余额提醒共用）：
@@ -684,16 +726,35 @@ private fun WalletCard(
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 icon = HugeIcons.Bolt,
                 label = "寝室电费",
-                room = meter?.room?.room?.takeIf { it.isNotBlank() },
-                timeText = if (enabled && meter != null) formatTime(meter.fetchedAtMs) else null,
+                // 未设置寝室时旧读数的房间/时刻一并隐藏（那个数字不属于「现在」的状态）
+                room = if (power.roomNotBound) null else meter?.room?.room?.takeIf { it.isNotBlank() },
+                timeText = if (enabled && meter != null && !power.roomNotBound) {
+                    formatTime(meter.fetchedAtMs)
+                } else {
+                    null
+                },
                 value = powerValue,
-                valueMuted = power.noCredentials || meter == null,
+                valueMuted = power.noCredentials || power.roomNotBound || meter == null,
                 sub = powerSub,
-                subIsError = power.error != null,
-                actionLabel = if (enabled) "充值" else "去开启",
-                onAction = if (enabled) onRechargePower else onOpenSettings,
-                onRefresh = if (enabled) onRefreshPower else null,
-                onClickLabel = "刷新寝室电费读数",
+                subIsError = power.error != null && !power.roomNotBound,
+                // 未设置寝室：两枚出口（按钮与整栏点击）都换成「设置寝室」，
+                // 充值要先有房间（DESIGN §4.24 的闸门在 openRecharge 一侧兜底）
+                actionLabel = when {
+                    !enabled -> "去开启"
+                    power.roomNotBound -> "设置寝室"
+                    else -> "充值"
+                },
+                onAction = when {
+                    !enabled -> onOpenSettings
+                    power.roomNotBound -> onSetupRoom
+                    else -> onRechargePower
+                },
+                onRefresh = when {
+                    !enabled -> null
+                    power.roomNotBound -> onSetupRoom
+                    else -> onRefreshPower
+                },
+                onClickLabel = if (power.roomNotBound) "设置寝室" else "刷新寝室电费读数",
             )
         }
     }

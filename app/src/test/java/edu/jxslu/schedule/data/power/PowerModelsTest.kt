@@ -228,4 +228,87 @@ class PowerModelsTest {
         assertNull(snapshot.meter.room.room)
         assertEquals("14600", snapshot.meter.room.roomId)
     }
+
+    // ------------------------------------------------------------------
+    // 场景（寝室）绑定：选择器解析与 sceneinfo 拼串（2026-10-08）
+    // fixture 结构与实测样本一致（名字换成脱敏值；细节见 _archive/_probe_power_scene.py）
+    // ------------------------------------------------------------------
+
+    private val sceneRootJson = """
+        {"msg":"success","code":200,"map":{
+         "total":[{"code":"campus","name":"校区","level":1},
+                  {"code":"building","name":"楼栋","level":2},
+                  {"code":"room","name":"房间","level":3}],
+         "data":[{"name":"示例校区","value":"0"},{"name":"示例校区二","value":"9"}],
+         "dataType":"select"}}
+    """.trimIndent()
+
+    @Test
+    fun sceneRootCarriesLevelsAndFirstOptions() {
+        val root = PowerModels.parseSceneRoot(sceneRootJson)
+        assertEquals(listOf("campus", "building", "room"), root.levels.map { it.code })
+        assertEquals(listOf("校区", "楼栋", "房间"), root.levels.map { it.name })
+        assertEquals(listOf("示例校区", "示例校区二"), root.options.map { it.name })
+        assertEquals(listOf("0", "9"), root.options.map { it.value })
+    }
+
+    @Test
+    fun sceneLevelsAreSortedAndDirtyEntriesDropped() {
+        val raw = """
+            {"code":200,"map":{"total":[{"code":"room","name":"房间","level":3},
+             {"name":"缺 code","level":2},{"code":"campus","name":"校区","level":1}],
+             "data":[{"name":"1A101","value":10101},{"name":null,"value":"x"},{"name":"y"}]}}
+        """.trimIndent()
+        val root = PowerModels.parseSceneRoot(raw)
+        // 按 level 升序（平台自己给的是 1 起编号）
+        assertEquals(listOf("campus", "room"), root.levels.map { it.code })
+        // value 数字形态也收（平台两种都用过）；缺 name / value 的项丢掉
+        assertEquals(listOf("1A101"), root.options.map { it.name })
+        assertEquals(listOf("10101"), root.options.map { it.value })
+    }
+
+    @Test
+    fun sceneOptionsParseDeeperLevel() {
+        val raw = """
+            {"code":200,"map":{"data":[{"name":"1A101","value":"10101"},{"name":"1A102","value":"10102"}]}}
+        """.trimIndent()
+        assertEquals("10102", PowerModels.parseSceneOptions(raw)[1].value)
+    }
+
+    /** 拼串与官方前端逐字一致：`code:id#name` 分号相连（addSceneInfo() 同款）。 */
+    @Test
+    fun sceneInfoBuiltInOfficialFormat() {
+        val levels = PowerModels.parseSceneRoot(sceneRootJson).levels
+        val picks = listOf(
+            levels[0] to PowerSceneOption("示例校区", "0"),
+            levels[1] to PowerSceneOption("1A", "11"),
+            levels[2] to PowerSceneOption("1A101", "10101"),
+        )
+        assertEquals(
+            "campus:0#示例校区;building:11#1A;room:10101#1A101",
+            PowerModels.sceneinfoOf(picks),
+        )
+    }
+
+    @Test
+    fun sceneResponseWithoutMapIsProtocolError() {
+        assertThrows(PowerException.Protocol::class.java) {
+            PowerModels.parseSceneRoot("""{"code":500,"msg":"未知异常，请联系管理员"}""")
+        }
+    }
+
+    /**
+     * `sceneinfo` 为空 = 未确认寝室（官方页同款判据）：解析后 [PowerFeeItem.room] 为 null，
+     * 仓库据此抛 [PowerException.RoomNotBound] 让 UI 给「去设置」的出口。
+     */
+    @Test
+    fun emptySceneInfoMeansRoomNotBound() {
+        val raw = """
+            {"msg":"success","code":200,"view":"choose","sceneinfo":"",
+             "feeitem":{"feeitemid":181,"name":"房间电费","price":0.62,"billing_unit":"度","bindStatus":0}}
+        """.trimIndent()
+        val item = PowerModels.parseFeeItem(raw)
+        assertTrue(item.scene.isEmpty())
+        assertNull(item.room)
+    }
 }

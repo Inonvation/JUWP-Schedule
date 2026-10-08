@@ -34,6 +34,15 @@ sealed class PowerException(message: String) : Exception(message) {
 
     /** 协议类：平台返回结构与预期不同，或参数被拒。 */
     class Protocol(message: String) : PowerException(message)
+
+    /**
+     * 未在缴费平台确认寝室（`singleFeeitem.sceneinfo` 为空，DESIGN §4.24，2026-10-08）。
+     *
+     * 这不是故障：官方 H5 同样以 `sceneinfo` 空为「进选择流程」的判据，用户在 App 内
+     * 选好房间确认（`sceneBind/add`）后自然恢复。UI 收到它要给「去设置」的出口，
+     * 别当普通读取失败报错。
+     */
+    class RoomNotBound(message: String = "尚未在缴费平台确认寝室") : PowerException(message)
 }
 
 /** 场景层级里的一项。`code` 同时是请求参数名（campus / building / room）。 */
@@ -63,6 +72,23 @@ data class PowerRoom(
     val room: String?,
     val roomId: String?,
 )
+
+/**
+ * 场景层级（`getThirdData type=select` 的 `map.total` 一项）：校区 → 楼栋 → 房间。
+ *
+ * [level] 是平台自己的 1 起编号，只用于排序口径；请求参数 `level=` 按「已选层数」算
+ * （官方前端与 `fetch_power.py` 同款），不要拿这个字段当请求值。
+ */
+data class PowerSceneLevel(val code: String, val name: String, val level: Int)
+
+/** 场景候选（`map.data` 一项：某校区 / 某楼栋 / 某房间）。 */
+data class PowerSceneOption(val name: String, val value: String)
+
+/**
+ * 选择器第一步的结果：层级表 + 首层（校区）候选——两者在 `type=select&level=0`
+ * 的**同一个响应**里（`map.total` + `map.data`），别拆两次请求。
+ */
+data class PowerSceneRoot(val levels: List<PowerSceneLevel>, val options: List<PowerSceneOption>)
 
 /**
  * 一次电表读数。
@@ -284,6 +310,62 @@ object PowerModels {
             if (code.isEmpty() || id.isEmpty()) null else PowerSceneKey(code, id, name)
         }
     }
+
+    /**
+     * 场景层级表 + 首层候选（`POST /charge/feeitem/getThirdData` `type=select&level=0` 的 `map`）。
+     *
+     * 2026-10-08 实测量到的形态：`total=[{code:"campus",name:"校区",level:1}, …楼栋…, …房间…]`，
+     * `data=[{name,value}]` = 首层（校区）候选；更深的层用 `level=N` + 已选键另发。
+     */
+    fun parseSceneRoot(raw: String): PowerSceneRoot {
+        val map = sceneMapOf(raw)
+        return PowerSceneRoot(levels = levelsOf(map), options = optionsOf(map))
+    }
+
+    /** 某一层的候选（`type=select&level=N` 的 `map`）。 */
+    fun parseSceneOptions(raw: String): List<PowerSceneOption> = optionsOf(sceneMapOf(raw))
+
+    /**
+     * 选择结果 → `sceneinfo` 串（**唯一口径**，与官方前端逐字一致，2026-10-08 从
+     * `app.7abec7aa….js` 的 `addSceneInfo()` 与真实样本双向核对）：
+     * `code:id#name` 各层分号相连，如 `campus:0#X;building:79#13B;room:14686#13B309`。
+     * 官方就是逐层取 `level.code + ":" + value + "#" + name` 再 `join(";")`。
+     */
+    fun sceneinfoOf(choices: List<Pair<PowerSceneLevel, PowerSceneOption>>): String =
+        choices.joinToString(";") { (level, option) -> "${level.code}:${option.value}#${option.name}" }
+
+    /**
+     * 取 select 响应的 `map` 对象；缺了抛协议异常（与 [parseMeter] 同一口径——
+     * 参数不全时平台回 `code=500`，由调用侧的 `expectOk` 先拦一道）。
+     */
+    private fun sceneMapOf(raw: String): JsonObject =
+        root(raw)?.get("map")?.jsonObjectOrNull()
+            ?: throw PowerException.Protocol("场景返回里没有 map（平台可能已改版）")
+
+    /** `map.total` → 层级表（按 level 升序；code 缺失的项丢掉）。 */
+    private fun levelsOf(map: JsonObject): List<PowerSceneLevel> =
+        map["total"]?.jsonArrayOrNull().orEmpty()
+            .mapNotNull { element ->
+                val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
+                val code = asString(obj["code"])?.trim().orEmpty()
+                if (code.isEmpty()) return@mapNotNull null
+                PowerSceneLevel(
+                    code = code,
+                    name = asString(obj["name"]).orEmpty(),
+                    level = obj["level"]?.let { asInt(it) } ?: 0,
+                )
+            }
+            .sortedBy { it.level }
+
+    /** `map.data` → 候选列表（name / value 任一为空的项丢掉；value 数字与字符串都接受）。 */
+    private fun optionsOf(map: JsonObject): List<PowerSceneOption> =
+        map["data"]?.jsonArrayOrNull().orEmpty()
+            .mapNotNull { element ->
+                val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
+                val name = asString(obj["name"])?.trim().orEmpty()
+                val value = asString(obj["value"])?.trim().orEmpty()
+                if (name.isEmpty() || value.isEmpty()) null else PowerSceneOption(name, value)
+            }
 
     /**
      * 从 `showData` 里认剩余电量：先找键含「剩余电量」的，再退到含「电量」或「余额」的。

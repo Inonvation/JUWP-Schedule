@@ -322,8 +322,9 @@ POST https://charge.juwp.edu.cn/blade-auth/oauth/token   # 登录，access_token
      &logintype=student-sno-queryPassword                # 取值来自 GET /charge/logintype
 
 GET  /charge/feeitem/showFeeitem                          # 收费项目清单（**免登录**）
-GET  /charge/feeitem/singleFeeitem?feeitemid=181          # 详情；sceneinfo = 本人绑定房间
+GET  /charge/feeitem/singleFeeitem?feeitemid=181          # 详情；sceneinfo = 本人绑定房间（空 = 未确认寝室）
 POST /charge/feeitem/getThirdData                         # type=select 逐级取场景；type=IEC 读电表
+POST /charge/sceneBind/add                                # 确认/改绑寝室（**JSON body**；code=200）
 GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
 ```
 
@@ -370,10 +371,18 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
 8. **网页版收银台页有个会误导的 K 宝弹框**：手机浏览器打开 `pay.abchina.com/…` 时页面弹
    「K宝驱动没有正确安装…请使用IE浏览器」，点掉即可；真正的支付表单在其下方（K码支付：
    卡号 + 图形验证码 → 手机号后四位 + 短信验证码 + 支付密码）。
+9. **`sceneinfo` 为空 = 未确认寝室，是正常状态不是故障**（2026-10-08）：官方 H5 同款判据
+   （`getData()` 里 `if (t.sceneinfo)`，为空进选择流程；`view:"choose"` 是页面模板类型、
+   **不是判据**，已绑定账号同样是它）。**确认/改绑寝室** = `POST /charge/sceneBind/add`，
+   **JSON body** `{"feeitemid":181,"sceneinfo":"campus:…;building:…;room:…"}`（与 getThirdData
+   的 form 编码不同——官方 `$api.post` 没带 `"qs"` 参数即 axios 默认 JSON），`code=200` 即成功；
+   upsert 语义、官方允许改绑。同房间重绑探针：`_archive/_probe_power_scene.py`（2026-10-08 实测通过）。
 
 App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blade-pay` 下单 + 电子账户
-密码支付 + 农行支付内嵌手机版收银台，DESIGN §4.24）。**脚本不做充值**：支付链路留在
-App 里，脚本侧只读，只产出 `scripts/out/power.json` 供本机查看。
+密码支付 + 农行支付内嵌手机版收银台，DESIGN §4.24），并以同样三接口在 App 内提供
+「选择寝室」流程（未设置寝室时的 CTA 与改绑入口，DESIGN §4.24「未设置寝室与 App 内确认」）。
+**脚本不做充值、也不做绑定**：支付链路留在 App 里，脚本侧只读（探针那一次同房间重绑是
+一次性验证，`--read-only` 可跳过），只产出 `scripts/out/power.json` 供本机查看。
 
 ### 5.6 教务处盖章成绩单（签章管理系统，2026-09-24 实测）
 

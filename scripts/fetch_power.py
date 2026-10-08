@@ -7,8 +7,11 @@
 接口（同域 HTTPS，全部在 charge.juwp.edu.cn）:
   POST /blade-auth/oauth/token         登录，客户端凭据 Basic charge:charge_secret（前端公开常量）
   GET  /charge/feeitem/showFeeitem     收费项目清单（**免登录**；本期只有「房间电费」）
-  GET  /charge/feeitem/singleFeeitem   项目详情，sceneinfo = 本人绑定房间，view=choose 表示选房间
+  GET  /charge/feeitem/singleFeeitem   项目详情，sceneinfo = 本人绑定房间（空 = 未确认寝室，
+                                       官方页进选择流程；view=choose 是页面模板类型，不是判据）
   POST /charge/feeitem/getThirdData    type=select 逐级取校区/楼栋/房间；type=IEC 取该房间电表数据
+  POST /charge/sceneBind/add           确认/改绑寝室（JSON body：feeitemid + sceneinfo）→ code=200
+                                       （2026-10-08 实测，探针见 _archive/_probe_power_scene.py）
   GET  /charge/turnover/personal_data  充值/扣费流水（feeitemid + flag=3）
 
 用法:

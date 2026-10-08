@@ -89,6 +89,8 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.life.PowerRoomPickerSheet
+import edu.jxslu.schedule.ui.life.PowerRoomPickerViewModel
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.CreditCard
@@ -181,6 +183,17 @@ fun CampusCardSettingsScreen(
     var showYktPicker by remember { mutableStateOf(false) }
     var showPowerIntervalPicker by remember { mutableStateOf(false) }
     var showYktIntervalPicker by remember { mutableStateOf(false) }
+    // 「选择寝室」弹层（DESIGN §4.24「未设置寝室」，2026-10-08）：入口在下方「寝室电费」卡。
+    // 房号显示取本机最新读数（零网络；权威状态以生活页电费卡为准），改绑成功后就地更新
+    var showRoomPicker by remember { mutableStateOf(false) }
+    var roomLabel by remember { mutableStateOf<String?>(null) }
+    val roomPickerViewModel: PowerRoomPickerViewModel = viewModel(
+        factory = PowerRoomPickerViewModel.factory(context.applicationContext),
+    )
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        roomLabel = runCatching { Graph.powerReadingStore(context.applicationContext).latest() }
+            .getOrNull()?.roomName?.takeIf { it.isNotBlank() }
+    }
 
     // 充值免责声明（与生活页同一条口径，domain/RechargeDisclaimer）：充值入口打开
     // 弹层前先过提醒，勾「一周内不再提醒」静默 7 天；首次（从未确认过）锁 5 秒
@@ -483,6 +496,24 @@ fun CampusCardSettingsScreen(
                 },
             )
 
+            // 寝室电费房间（DESIGN §4.24「未设置寝室」，2026-10-08）：官方要求先在缴费平台
+            // 确认寝室，电费查询与充值才可用；未设置时生活页电费栏也会给同一个出口。
+            // 这里是「设置 / 改绑」的常驻入口（官方页同为 upsert 语义，允许改绑）。
+            SettingsSection(
+                title = "寝室电费",
+                subtitle = "在缴费平台确认的寝室；电费查询与充值都以它为准",
+            ) {
+                SettingValueRow(
+                    title = "寝室电费房间",
+                    value = roomLabel ?: "未设置",
+                    enabled = enabled,
+                    onClick = {
+                        roomPickerViewModel.start()
+                        showRoomPicker = true
+                    },
+                )
+            }
+
             // 余额提醒（DESIGN §3.13）：两个来源共用上面那份凭证，收成一张卡两行——
             // 开关行 + 各自的阈值行（开关关闭时阈值行置灰但值照旧显示）。
             SettingsSection(
@@ -591,6 +622,21 @@ fun CampusCardSettingsScreen(
                 viewModel.setYktAlertIntervalHours(BalanceAlert.INTERVAL_CHOICES_HOURS[index])
             },
             onDismiss = { showYktIntervalPicker = false },
+        )
+    }
+
+    // 选择寝室（设置 / 改绑）：与生活页同一个弹层与状态机；成功后更新行上的房号
+    if (showRoomPicker) {
+        PowerRoomPickerSheet(
+            viewModel = roomPickerViewModel,
+            onDismiss = { showRoomPicker = false },
+            onBound = { room ->
+                showRoomPicker = false
+                roomLabel = room
+                scope.launch {
+                    snackbar.showSnackbar(AppNoticeVisuals("已设置寝室：$room", tone = NoticeTone.Success))
+                }
+            },
         )
     }
 
