@@ -379,7 +379,7 @@ Token 模式只有输入框 + 登录键，想回去只能杀页面重进（趣�
   正文「`10:15–11:40` · `@南B208` · 教师」
   复用 `domain/TodayFormat` 的 `metaLine` 口径，不另写。
   **课程有备注时正文追加一行备注**（2026-10-08）：`metaLine` 换行 + `remarkPreview`
-  （20 字截断，与今日页课程卡右下角同一口径，§3.3）；无备注维持原文不变。
+  （20 字截断，与今日页课程卡备注预览同一口径，§3.3）；无备注维持原文不变。
 - 通道（2026-10-05 换 id 迁移）：`class_reminder_v2` / `homework_deadline_v2`，importance HIGH
   （横幅展示，用户可在系统设置降级）+ **渠道带振动**（双震 pattern，与免费时长提醒同节奏）。
   渠道建出来后振动与 importance 都改不动，旧 id（`class_reminder` / `homework_deadline`，

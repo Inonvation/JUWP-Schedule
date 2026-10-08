@@ -226,8 +226,9 @@ fun TodayScreen(
         ?.collectAsStateWithLifecycle()
         ?: remember { mutableStateOf(QzxyUiState()) }
     val homework by viewModel.homeworkPending.collectAsStateWithLifecycle()
-    // 课程卡的教材名行（DESIGN §4.31，2026-10-07）：当前课表学期下「课程名 → 书名列表」，
-    // 单独订阅不掺课表状态（与 homework 同纪律）；空映射 = 无教材数据，卡片不占行
+    // 课程卡的教材名（DESIGN §4.31，2026-10-07）：当前课表学期下「课程名 → 书名列表」，
+    // 挂在课名右边（2026-10-08 收口，不再另起一行）；单独订阅不掺课表状态（与 homework
+    // 同纪律）；空映射 = 无教材数据，卡片不占位
     val textbookTitles by viewModel.textbookTitles.collectAsStateWithLifecycle()
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
@@ -959,11 +960,11 @@ private fun TodayContent(
  * 顶部焦点卡：正在上的课，或 60 分钟窗口内的下一节（DESIGN §3.3）。
  *
  * 满宽卡片样式（2026-09-21 定稿，用户拍板）：主色 8% 底 + 左缘 3dp 主色竖条，
- * 内部「状态行（正在上课 / 下一节 · 第N-M节 + 倒计时）→ 课名 → meta →
- * （正在上课时）进度条」。与时间轴行（[CourseTimelineRow]）**同一卡片形态**：
- * 同为满宽、同圆角、同内边距体系，两处卡片左右缘天然对齐；区分靠底色
- * （焦点卡主色 / 时间轴行课程色）与状态行。焦点课从列表里拿走（不两处重复）；
- * 点卡片弹只读详情（编辑/删除是详情里的二级动作，与课表页同口径）。
+ * 内部「状态行（正在上课 / 下一节 · 第N-M节 + 倒计时）→ 课名（+ 教材名，课名右侧）→
+ * meta 行（+ 备注预览，右端）→ （正在上课时）进度条」。与时间轴行
+ * （[CourseTimelineRow]）**同一卡片形态**：同为满宽、同圆角、同内边距体系，两处卡片
+ * 左右缘天然对齐；区分靠底色（焦点卡主色 / 时间轴行课程色）与状态行。焦点课从列表里
+ * 拿走（不两处重复）；点卡片弹只读详情（编辑/删除是详情里的二级动作，与课表页同口径）。
  */
 @Composable
 private fun FocusCard(
@@ -1029,48 +1030,61 @@ private fun FocusCard(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            Text(
-                text = focus.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                text = metaLine(state.slots, focus),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = onSurface.copy(alpha = 0.62f),
-            )
-            // 教材名行（DESIGN §4.31，2026-10-07）：只显书名（作者/出版社在详情弹窗），
-            // 无教材数据的课程不占行
+            // 课名 + 教材名（DESIGN §4.31，2026-10-08 收口）：教材名挂在课名**右边**同一行，
+            // 不再另起一行抬卡高。课名先量（优先保完整、最长两行），教材名吃余量、不够省略号
             val textbookLine = textbookTitlesLine(textbookTitles[focus.name].orEmpty())
-            if (textbookLine != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = textbookLine,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
+                    text = focus.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    color = onSurface.copy(alpha = 0.62f),
-                    modifier = Modifier.padding(top = 2.dp),
                 )
+                if (textbookLine != null) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = textbookLine,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = onSurface.copy(alpha = 0.62f),
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
-            // 备注预览（DESIGN §4.3，2026-10-08）：卡片右下角、比 meta 更弱一级；
-            // 空 / 截断口径在 domain 的 remarkPreview（20 字上限），完整内容在详情面板
-            remarkPreview(focus.remark)?.let { remark ->
-                Text(
-                    text = remark,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = onSurface.copy(alpha = 0.45f),
-                    textAlign = TextAlign.End,
-                    modifier = Modifier
-                        .padding(top = 2.dp)
-                        .fillMaxWidth(),
-                )
+            Spacer(Modifier.height(3.dp))
+            // meta 行 + 备注预览（DESIGN §4.3，2026-10-08 收口）：备注贴卡片**右下角**——
+            // 与 meta 同一行、右端对齐，不再另起一行；meta 先量保完整（时刻/地点/教师是
+            // 卡面主信息），备注吃余量。空 / 截断口径在 domain 的 remarkPreview（20 字上限），
+            // 完整内容在详情面板
+            val meta = metaLine(state.slots, focus)
+            val remark = remarkPreview(focus.remark)
+            if (meta.isNotBlank() || remark != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (meta.isNotBlank()) {
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = onSurface.copy(alpha = 0.62f),
+                        )
+                    }
+                    if (remark != null) {
+                        Text(
+                            text = remark,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = onSurface.copy(alpha = 0.45f),
+                            textAlign = TextAlign.End,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 8.dp),
+                        )
+                    }
+                }
             }
             if (ongoing) {
                 val progress = state.ongoingProgress
@@ -1190,8 +1204,9 @@ private fun DoneBlock(state: TodayState) {
  * 与焦点卡（[FocusCard]）**同一卡片形态**：同为满宽、同圆角 12dp、同内边距体系
  * （horizontal 16dp + 卡内 11/13dp），两处卡片左右缘天然对齐；区分靠底色
  * （焦点卡主色 8% / 时间轴行课程色 16%）与焦点卡的状态行/进度条。
- * 卡内三行：课名 → 时刻范围+@地点 · 教师（metaLine 已含 `10:15–11:40` 起止，
- * 旧版行首时刻列删除后时刻信息仍完整）；整行可点弹只读详情。
+ * 卡内两行：课名（+ 教材名，课名右侧）→ 时刻范围+@地点 · 教师（+ 备注预览，右端）
+ * （metaLine 已含 `10:15–11:40` 起止，旧版行首时刻列删除后时刻信息仍完整）；
+ * 整行可点弹只读详情。
  */
 @Composable
 private fun CourseTimelineRow(
@@ -1223,49 +1238,60 @@ private fun CourseTimelineRow(
                 .weight(1f)
                 .padding(horizontal = 11.dp, vertical = 13.dp),
         ) {
-            Text(
-                text = course.name,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                color = onSurface,
-            )
-            if (meta.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
+            // 课名 + 教材名（DESIGN §4.31，2026-10-08 收口）：教材名挂在课名**右边**同一行，
+            // 不再另起一行抬卡高。课名先量（优先保完整、最长两行），教材名吃余量、不够省略号
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = meta,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
+                    text = course.name,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    color = onSurface.copy(alpha = 0.68f),
+                    color = onSurface,
                 )
+                if (textbook != null) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = textbook,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
-            // 教材名行（DESIGN §4.31，2026-10-07）：只显书名（作者/出版社在详情弹窗），
-            // 无教材数据的课程不占行
-            if (textbook != null) {
+            // meta 行 + 备注预览（DESIGN §4.3，2026-10-08 收口）：备注贴卡片**右下角**——
+            // 与 meta 同一行、右端对齐，不再另起一行；meta 先量保完整（时刻/地点/教师是
+            // 卡面主信息），备注吃余量。空 / 截断口径在 domain 的 remarkPreview（20 字上限），
+            // 完整内容在详情面板
+            val remark = remarkPreview(course.remark)
+            if (meta.isNotBlank() || remark != null) {
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    text = textbook,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = onSurface.copy(alpha = 0.55f),
-                )
-            }
-            // 备注预览（DESIGN §4.3，2026-10-08）：卡片右下角、比 meta 更弱一级；
-            // 空 / 截断口径在 domain 的 remarkPreview（20 字上限），完整内容在详情面板
-            remarkPreview(course.remark)?.let { remark ->
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = remark,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = onSurface.copy(alpha = 0.45f),
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (meta.isNotBlank()) {
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = onSurface.copy(alpha = 0.68f),
+                        )
+                    }
+                    if (remark != null) {
+                        Text(
+                            text = remark,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = onSurface.copy(alpha = 0.45f),
+                            textAlign = TextAlign.End,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 8.dp),
+                        )
+                    }
+                }
             }
         }
     }
