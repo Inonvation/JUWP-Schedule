@@ -49,6 +49,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,7 +78,7 @@ fun TranscriptHistoryScreen(onBack: () -> Unit) {
     var confirmClear by remember { mutableStateOf(false) }
 
     fun notify(message: String, tone: NoticeTone) {
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     fun refresh() {

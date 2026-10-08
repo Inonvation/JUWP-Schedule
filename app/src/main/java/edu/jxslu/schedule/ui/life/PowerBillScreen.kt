@@ -63,6 +63,7 @@ import edu.jxslu.schedule.ui.common.MonthPickerDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import java.time.YearMonth
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -109,14 +110,14 @@ fun PowerBillScreen(
     var detail by remember { mutableStateOf<PowerTurnover?>(null) }
 
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 is PowerBillEvent.Notice ->
-                    snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
             }
         }
     }

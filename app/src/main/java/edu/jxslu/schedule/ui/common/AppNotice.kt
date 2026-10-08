@@ -19,6 +19,7 @@ import androidx.compose.material3.SnackbarData
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,7 +40,7 @@ import me.rerere.hugeicons.stroke.InformationCircle
 
 /**
  * 提示语义。决定图标与强调色，不改变文案来源——[Info] 是「未说明语气」的兜底，
- * 所以沿用 M3 原生 `showSnackbar("文本")` 的调用点无需改动也能拿到统一观感。
+ * 所以只说一句话的调用点（`snackbar.showNotice("文本")`）无需指定语气也能拿到统一观感。
  */
 enum class NoticeTone { Info, Success, Warning, Error }
 
@@ -67,9 +68,8 @@ data class NoticeFeedback(val text: String, val tone: NoticeTone)
  * 无阴影）完全两套语言。这里把「长什么样」收进一个自绘卡片（见 [AppNoticeCard]），
  * 调用方只说「这条消息是什么语气」。
  *
- * 既有调用点（`snackbar.showSnackbar("文本", actionLabel = …, duration = …)`）走 M3 的
- * String 重载，落成 `SnackbarVisualsImpl` 后由 [AppNoticeCard] 兜底成 [NoticeTone.Info]，
- * 不必逐处改写。
+ * 调用点只说「这条消息是什么语气」，发送走 [showNotice]——只给一句话的调用点走
+ * [showNotice] 的 String 重载，落成这里的 [NoticeTone.Info]，观感与其余提示一致。
  */
 class AppNoticeVisuals(
     override val message: String,
@@ -81,12 +81,56 @@ class AppNoticeVisuals(
 ) : SnackbarVisuals
 
 /**
+ * 顶替式提示：显示 [visuals]，并把**当前那条当场收掉**，而不是排在它后面等它过期。
+ *
+ * 为什么不直接用 M3 的 `showSnackbar`：它是**排队**语义（内部一把 `Mutex`，先到的那条不返回、
+ * 后来的就挂在锁上），于是一串接一串的提示会一条条慢慢挤出来。用户报的正是这条
+ * （2026-10-08）：在教务窗口连点两下「电脑版 / 手机版」，第二条「已切换为手机版」要等第一条
+ * 过期才露面——而那时它说的已经不是眼前的事了。提示是「刚刚发生了什么」的一次性播报，
+ * 新的盖掉旧的才对，**全 App 统一走这里**（`SnackbarHostState.showSnackbar` 不再直接调用）。
+ *
+ * **只有「正在等用户做动作」的那条不让位**（`actionLabel != null`：撤销 / 去设置）——把它顶掉
+ * 等于把出口静默收走；而这类提示自身最长 [SnackbarDuration.Long] 就会过期，让它等是有界的。
+ * 其余（纯信息、带关闭键、`Indefinite` 的进行中提示）一律让位：`Indefinite` 尤其不能让，
+ * 否则它后面的每一条都会挂死（`CampusCardSettingsScreen` 那条「正在发起充值…请稍候」是
+ * 显式 cancel 掉再发结果的，本来就不靠排队）。
+ */
+suspend fun SnackbarHostState.showNotice(visuals: SnackbarVisuals): SnackbarResult {
+    currentSnackbarData?.takeIf { it.visuals.actionLabel == null }?.dismiss()
+    return showSnackbar(visuals)
+}
+
+/**
+ * 字符串重载：签名与默认值与 M3 的 `showSnackbar` **逐字对齐**（`actionLabel` 非空时默认
+ * `Indefinite`——照抄，别顺手改成 `Long`，那会让带动作的提示提前过期）。
+ *
+ * 落到 [AppNoticeVisuals]（`tone` 走 [NoticeTone.Info]）而不是 M3 的私有 `SnackbarVisualsImpl`，
+ * 与既有「不带语气」的调用点观感完全一致——[AppNoticeCard] 本来就把非 [AppNoticeVisuals]
+ * 兜底成 [NoticeTone.Info]。
+ */
+suspend fun SnackbarHostState.showNotice(
+    message: String,
+    actionLabel: String? = null,
+    withDismissAction: Boolean = false,
+    duration: SnackbarDuration = if (actionLabel == null) SnackbarDuration.Short else SnackbarDuration.Indefinite,
+): SnackbarResult = showNotice(
+    AppNoticeVisuals(
+        message = message,
+        actionLabel = actionLabel,
+        withDismissAction = withDismissAction,
+        duration = duration,
+    ),
+)
+
+/**
  * 全 App 统一的提示宿主：替代各页 Scaffold 里的 `SnackbarHost(snackbar)`。
  *
- * 只换「卡片长什么样」，不接管排队与超时——这两件事在 M3 的 [SnackbarHost] 里：
- * 它按 `visuals.duration`（配合动作有无、无障碍管理器把 Short/Long 折算成毫秒）
- * 延时后调 `data.dismiss()`，本函数把 `snackbar` 槽换成 [AppNoticeCard] 即可继承，
- * 顺带保留其进出场淡入淡出与缩放。自己起计时器会与它双份 dismiss。
+ * 只换「卡片长什么样」，**超时**仍交给 M3 的 [SnackbarHost]：它按 `visuals.duration`（配合动作
+ * 有无、无障碍管理器把 Short/Long 折算成毫秒）延时后调 `data.dismiss()`，本函数把 `snackbar`
+ * 槽换成 [AppNoticeCard] 即可继承，顺带保留其进出场淡入淡出与缩放。自己起计时器会与它双份
+ * dismiss。
+ *
+ * **「新提示顶掉旧提示」不在这里**，在发送侧 [showNotice]——宿主只负责画当前那一条。
  *
  * 位置由 Scaffold 的 `snackbarHost` 槽决定 → 贴着页面底边，不自己摆 Box 定位。
  * 底边之上还要让开多少由 [LocalBottomBarClearance] 给（见下面的实现注释）：

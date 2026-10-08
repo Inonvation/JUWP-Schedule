@@ -57,6 +57,7 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.reminder.SelectionAlertReminder
@@ -137,7 +138,7 @@ fun SelectionScreen(onBack: () -> Unit) {
             // 进页那次自动刷新**失败不进气泡**（轮次卡空态处说明）；手动「更新」才回报结果
             if (force) {
                 val results = outcome.results
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     when {
                         outcome.failedReason != null -> "同步失败：${outcome.failedReason}"
                         results is SelectionSync.Result.Updated -> "已更新：${results.rowCount} 条选课记录"
@@ -241,7 +242,7 @@ fun SelectionScreen(onBack: () -> Unit) {
                             // 清检查时刻 + 周期任务存废 + 即时核对都收在 onSettingsChanged
                             ScoreAlertReminder.onSettingsChanged(context)
                             SelectionAlertReminder.scheduleNext(context)
-                            snackbar.showSnackbar(if (value) "已开启选课提醒" else "已关闭选课提醒")
+                            snackbar.showNotice(if (value) "已开启选课提醒" else "已关闭选课提醒")
                         }
                     },
                     onPickInterval = { showIntervalPicker = true },

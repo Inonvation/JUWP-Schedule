@@ -75,6 +75,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -159,7 +160,7 @@ fun SelectionCenterScreen(onBack: () -> Unit, focusRoundId: String? = null) {
     fun doQuery(query: SelectionQuery) {
         val target = round ?: return
         query.validationError()?.let { message ->
-            scope.launch { snackbar.showSnackbar(message) }
+            scope.launch { snackbar.showNotice(message) }
             return
         }
         if (loading) return
@@ -200,9 +201,9 @@ fun SelectionCenterScreen(onBack: () -> Unit, focusRoundId: String? = null) {
                 // 服务端不再给行（数据在翻页期间变少）：就地收口，按钮消失，不让用户空点
                 if (page.rows.isEmpty()) total = courses.size
             } catch (e: SelectionClientException) {
-                snackbar.showSnackbar(e.message ?: "加载更多失败")
+                snackbar.showNotice(e.message ?: "加载更多失败")
             } catch (e: Exception) {
-                snackbar.showSnackbar("加载更多失败：${e.message ?: "未知错误"}")
+                snackbar.showNotice("加载更多失败：${e.message ?: "未知错误"}")
             }
             loadingMore = false
         }
@@ -276,10 +277,10 @@ fun SelectionCenterScreen(onBack: () -> Unit, focusRoundId: String? = null) {
                     wishHits = wishHits.map { hit ->
                         hit.copy(courses = hit.courses.map { if (it.id == course.id) it.copy(selected = true) else it })
                     }
-                    snackbar.showSnackbar("已选上：${course.name}")
+                    snackbar.showNotice("已选上：${course.name}")
                 }
-                is SelectionSubmitResult.Rejected -> snackbar.showSnackbar("未选上：${result.reason}")
-                is SelectionSubmitResult.Fatal -> snackbar.showSnackbar("已停止：${result.reason}")
+                is SelectionSubmitResult.Rejected -> snackbar.showNotice("未选上：${result.reason}")
+                is SelectionSubmitResult.Fatal -> snackbar.showNotice("已停止：${result.reason}")
             }
         }
     }
@@ -302,10 +303,10 @@ fun SelectionCenterScreen(onBack: () -> Unit, focusRoundId: String? = null) {
                     wishHits = wishHits.map { hit ->
                         hit.copy(courses = hit.courses.map { if (it.id == course.id) it.copy(selected = false) else it })
                     }
-                    snackbar.showSnackbar("已退课：${course.name}")
+                    snackbar.showNotice("已退课：${course.name}")
                 }
-                is SelectionSubmitResult.Rejected -> snackbar.showSnackbar("退课被拒：${result.reason}")
-                is SelectionSubmitResult.Fatal -> snackbar.showSnackbar("已停止：${result.reason}")
+                is SelectionSubmitResult.Rejected -> snackbar.showNotice("退课被拒：${result.reason}")
+                is SelectionSubmitResult.Fatal -> snackbar.showNotice("已停止：${result.reason}")
             }
         }
     }

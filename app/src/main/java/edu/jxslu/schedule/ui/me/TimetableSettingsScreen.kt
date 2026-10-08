@@ -41,6 +41,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.common.showNotice
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -77,7 +78,7 @@ fun TimetableSettingsScreen(
     LaunchedEffect(oneShot) {
         when (val s = oneShot) {
             is OneShot.Message -> {
-                snackbar.showSnackbar(s.text)
+                snackbar.showNotice(s.text)
                 viewModel.consumeOneShot()
             }
             else -> Unit

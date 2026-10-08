@@ -51,6 +51,7 @@ import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 
 /**
@@ -108,7 +109,7 @@ fun SelectionRecordsScreen(onBack: () -> Unit) {
             // 手动「更新」才回报结果（成功/失败都要有回声，否则用户以为没反应）
             if (force) {
                 val results = outcome.results
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     when {
                         outcome.failedReason != null -> "同步失败：${outcome.failedReason}"
                         results is SelectionSync.Result.Updated -> "已更新：${results.rowCount} 条选课记录"
@@ -129,11 +130,11 @@ fun SelectionRecordsScreen(onBack: () -> Unit) {
                 is SelectionSync.Result.Updated -> {
                     if (result.rowCount == 0) emptyTerms = emptyTerms + term
                     selectedTerm = term
-                    snackbar.showSnackbar(
+                    snackbar.showNotice(
                         if (result.rowCount == 0) "$term 暂无选课记录" else "已加载 $term：${result.rowCount} 条",
                     )
                 }
-                is SelectionSync.Result.Failed -> snackbar.showSnackbar("加载失败：${result.reason}")
+                is SelectionSync.Result.Failed -> snackbar.showNotice("加载失败：${result.reason}")
                 else -> Unit
             }
             refreshing = false

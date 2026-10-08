@@ -65,6 +65,7 @@ import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 
 /**
@@ -123,7 +124,7 @@ fun CurriculumScreen(onBack: () -> Unit) {
             when (result) {
                 is CurriculumSync.Result.Updated -> {
                     lastError = null
-                    snackbar.showSnackbar(
+                    snackbar.showNotice(
                         if (silent) "已获取 ${result.courses} 门课程"
                         else "已更新：${result.courses} 门课程",
                     )
@@ -136,7 +137,7 @@ fun CurriculumScreen(onBack: () -> Unit) {
                 is CurriculumSync.Result.Failed -> {
                     lastError = result.reason
                     // 自动那次不弹提示（用户没主动要），但原因会留在空态里
-                    if (!silent) snackbar.showSnackbar(result.reason)
+                    if (!silent) snackbar.showNotice(result.reason)
                 }
             }
         }

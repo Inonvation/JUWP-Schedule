@@ -38,6 +38,7 @@ import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -134,7 +135,7 @@ fun HomeworkTodoScreen(
                                     if (done) {
                                         val hw = items.firstOrNull { it.id == id }
                                         val label = hw?.let { homeworkDisplayTitle(it.detail) } ?: "作业"
-                                        val result = snackbar.showSnackbar(
+                                        val result = snackbar.showNotice(
                                             "已完成「$label」",
                                             actionLabel = "撤销",
                                             duration = SnackbarDuration.Short,

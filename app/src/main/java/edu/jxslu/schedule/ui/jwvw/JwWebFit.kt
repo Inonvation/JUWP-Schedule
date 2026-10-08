@@ -12,7 +12,8 @@ import edu.jxslu.schedule.data.jw.JwUrls
  * 三段脚本各管一件事，互不重叠：
  * - [SCHEDULE_FIT_JS]：课表页横向可滚 + 紧凑度（2026-09-17 起就有，文本未改）
  * - [LOGIN_FIT_JS]：登录 / SSO 页的固定宽表单收成百分比（同上）
- * - [DESKTOP_JS]：**电脑版**——把页面的 viewport 换成桌面宽度（2026-10-08 新增）
+ * - [DESKTOP_JS]：**电脑版**——把页面的 viewport 换成桌面宽度，并让整页当场缩到铺满屏幕
+ *   （2026-10-08 新增）
  */
 object JwWebFit {
 
@@ -32,11 +33,17 @@ object JwWebFit {
     /** 页面本来没有 meta、由我们新建时打的标记（撤销时整节点删掉）。 */
     const val ATTR_CREATED = "data-juw-created"
 
-    /** 注入脚本里用的宽度字面量，与 [DESKTOP_WIDTH_PX] 单一来源。 */
+    /**
+     * 注入脚本里的宽度字面量，与 [DESKTOP_WIDTH_PX] 单一来源。
+     *
+     * 单独用它是**兜底**：拿不到屏幕宽（Compose 首测 0×0 那一帧）时才退回这个裸值，
+     * 正常路径会拼上 `initial-scale`（见 [DESKTOP_JS] ②）。
+     */
     private const val DESKTOP_CONTENT = "width=$DESKTOP_WIDTH_PX"
 
     /**
-     * 电脑版：把页面的 `<meta name=viewport>` **整串换成** [DESKTOP_CONTENT]，并**自愈**。
+     * 电脑版：把页面的 `<meta name=viewport>` **整串换成**
+     * `width=980, initial-scale=<铺满屏幕的倍数>`，并**自愈**。
      *
      * 三条都是实测/踩出来的口径：
      *
@@ -46,22 +53,55 @@ object JwWebFit {
      * 这正是用户报的「不支持放大缩小」）；个别页还带 `user-scalable=no`，留着连双指放大都没了。
      * 换成单值 `width=980` 后初始即整页可见（约 0.42 倍），双指可放大到 5 倍、可缩回整页。
      *
-     * ② **改 meta 会触发重新布局**（2026-10-08 模拟器实测：`iw=412` → 改 content → `iw=980`，
+     * ② **必须带上 `initial-scale`，否则切过去"看不出变化"**（2026-10-08 用户报「从手机版切
+     * 电脑版界面不变，得手动缩小才看得出差异」）。根因是 **Blink 只在 meta 里显式写了
+     * `initial-scale` 时才会重新套用缩放**：只改 `width=980` 时它只重新布局
+     * （`innerWidth` 412 → 980），页面缩放停在原来的 1.0 —— 屏幕里只看得见 980 宽布局的左边
+     * 412px，字号不变，看着就是"没变化"（首屏加载时那 0.42 倍是 WebView 的 overview 口径给的，
+     * 动态改 meta 不会重算它）。实测（Chromium 手机版 1080×2400 / dpr 2.625）：
+     * `width=980` → `iw=980 vvw=412 scale=1.000`；`width=980, initial-scale=0.4198` →
+     * `iw=981 vvw=982 scale=0.420`（**当场生效，不用重载页面**）；切回页面自己那份
+     * `width=device-width, initial-scale=1.0` 也当场回到 `scale=1.000`（所以手机版方向本来就正常）。
+     * 倍数 = **屏幕 CSS 宽 / 980**，屏幕宽用 `visualViewport.width × scale` 现算
+     * （乘上 scale 后与当前缩放无关，用户双指缩放时这个乘积不变）。
+     *
+     * ③ **改 meta 会触发重新布局**（2026-10-08 模拟器实测：`iw=412` → 改 content → `iw=980`，
      * Chromium 文档只写了首次加载的规则，这条是实测补的）。所以注入点沿用既有
      * `applyPageFit`（`onPageCommitVisible` 首选、就绪路径兜底），**不需要重载页面**——
      * 切换电脑版 / 手机版时选课页的 iframe 状态不会丢。
      *
-     * ③ **自愈**（2026-10-08 补，模拟器上真踩到过一次）：注入可能跑在页面自己的 meta
+     * ④ **自愈**（2026-10-08 补，模拟器上真踩到过一次）：注入可能跑在页面自己的 meta
      * **之前**（`onPageCommitVisible` 早于 head 解析完），那样我们新建的 meta 会被页面后到的
      * meta 盖掉，页面按移动视口渲染 —— 表现是「电脑版开着却还是挤压的」。所以除了幂等早退，
      * 还挂一个 MutationObserver 盯着 head：viewport meta 一出现/一改 content 就重新压回
-     * `width=980`。自愈回调里靠 `__juwViewportApplying` 防自触发死循环（我们自己的
+     * 目标值。自愈回调里靠 `__juwViewportApplying` 防自触发死循环（我们自己的
      * `setAttribute` 也会被观测到，但那时 content 已是目标值，直接早退）。
      *
-     * ④ **弹层宽度也要收**（见 [LAYER_FIT_CSS]，2026-10-08 用户报「选课结果弹窗显示不全」）。
+     * ⑤ **`resize` 也要重算**：Compose 首测 0×0 那一帧算不出屏幕宽（退回裸 `width=980`），
+     * 旋转屏幕后 980 也不再等于屏宽——两者都靠 resize 再算一次补回来。**不会跟双指缩放打架**：
+     * 缩放不改窗口宽度（②里那个乘积不变），算出来的 content 与现值逐字相同 → 早退、不重设。
+     * 处理函数存在 `window.__juwViewportApply` 上：它同时是常驻监听，**撤销脚本必须摘掉**
+     * （见 [DESKTOP_REVERT_JS]）。
+     *
+     * ⑥ **弹层宽度也要收**（见 [LAYER_FIT_CSS]，2026-10-08 用户报「选课结果弹窗显示不全」）。
      */
     val DESKTOP_JS: String = """
 (function(){
+  // 屏幕的 CSS 宽。visualViewport.width × scale 与当前缩放无关（缩小时宽度变大、scale 变小）。
+  function screenCssWidth(){
+    try{
+      var vv = window.visualViewport;
+      if (vv && vv.width > 0 && vv.scale > 0) return vv.width * vv.scale;
+    }catch(e){}
+    try{ if (window.screen && window.screen.width > 0) return window.screen.width; }catch(e){}
+    return 0;
+  }
+  // 铺满屏幕所需的缩放 = 屏幕 CSS 宽 / 桌面布局宽。拿不到屏幕宽（还没布局）返回 0。
+  function desktopContent(){
+    var css = screenCssWidth();
+    if (css <= 0) return '$DESKTOP_CONTENT';
+    return '$DESKTOP_CONTENT, initial-scale=' + (css / $DESKTOP_WIDTH_PX).toFixed(4);
+  }
   function apply(){
     if (window.__juwViewportApplying) return;
     window.__juwViewportApplying = true;
@@ -78,11 +118,12 @@ object JwWebFit {
         m.setAttribute('$ATTR_CREATED', '1');
         (document.head || document.documentElement).appendChild(m);
       }
-      if (m.getAttribute('content') !== '$DESKTOP_CONTENT') {
+      var target = desktopContent();
+      if (m.getAttribute('content') !== target) {
         if (!m.hasAttribute('$ATTR_ORIG')) {
           m.setAttribute('$ATTR_ORIG', m.getAttribute('content') || '');
         }
-        m.setAttribute('content', '$DESKTOP_CONTENT');
+        m.setAttribute('content', target);
         void document.documentElement.offsetWidth;
       }
       if (!document.getElementById('$LAYER_STYLE_ID')) {
@@ -104,9 +145,15 @@ object JwWebFit {
         childList: true, subtree: true, attributes: true, attributeFilter: ['content', 'name']
       });
     }catch(e){}
-    window.addEventListener('DOMContentLoaded', apply);
-    window.addEventListener('load', apply);
-    window.addEventListener('pageshow', apply);
+    // 处理函数也存 window 上：**撤销要能摘掉监听**（与观察者同理，见 DESKTOP_REVERT_JS）。
+    // 这四条是「重新布局/重新进页面时再算一次」，撤销之后它们照样会被触发——
+    // 尤其 resize：撤销把视口从 980 还原成设备宽，这一步本身就派发 resize，
+    // 不摘的话当场就被压回 980（2026-10-08 真机 WebView 实测踩到）。
+    window.__juwViewportApply = apply;
+    window.addEventListener('DOMContentLoaded', window.__juwViewportApply);
+    window.addEventListener('load', window.__juwViewportApply);
+    window.addEventListener('pageshow', window.__juwViewportApply);
+    window.addEventListener('resize', window.__juwViewportApply);
   }
 })()
 """.trimIndent()
@@ -164,12 +211,20 @@ object JwWebFit {
      * 顶栏切回手机版时当场注入，**不重载页面**——用户能立刻看到两种口径的对比，
      * 选课页的列表 / 筛选状态也留着。页面没被覆盖过时它是空操作。
      *
-     * **必须同时解除自愈观察者**（2026-10-08 复查轮 P2）：[DESKTOP_JS] 装的
-     * `MutationObserver` 是常驻的——只还原 meta 不 `disconnect()` 的话，页面下一次向
-     * head 插入任何节点（layui 弹 tips、页面自己的 script 是常态）就会把 980 重新压回去、
-     * 连带补回已删掉的弹层样式，「手机版」在动态页上形同虚设。观察者与守卫闸
-     * （`__juwViewportGuard`）都存在 window 上，撤销时一并断开 / 复位，下次开电脑版
-     * 会重新装上。
+     * **必须同时解除自愈观察者与那四个重算监听**（2026-10-08 复查轮 P2 + 真机 WebView 实测）：
+     * [DESKTOP_JS] 装的东西都是常驻的，撤销时只还原 meta 会当场被打回 980——
+     * ① `MutationObserver`：页面下一次向 head 插入任何节点（layui 弹 tips、页面自己的 script
+     *    是常态）就会把 980 压回去、连带补回已删掉的弹层样式；
+     * ② `resize` / `load` / `pageshow` / `DOMContentLoaded`：**还原视口这一步本身就会派发
+     *    `resize`**（980 → 设备宽），不摘监听的话刚还原就被压回 980，用户看到的是「切回手机版
+     *    没反应」。这条是 2026-10-08 在真机 WebView 里用 CDP 跑 [DESKTOP_JS] / 本脚本时踩到的，
+     *    单测与 Chrome 侧的替身脚本都看不出来（那边是直接改 meta，没跑这两个脚本）。
+     * 观察者、处理函数与守卫闸（`__juwViewportGuard`）都存在 window 上，撤销时一并断开 / 摘掉 /
+     * 复位，下次开电脑版会重新装上。
+     *
+     * **撤销侧不需要补 `initial-scale`**：还原回去的那份原文自带显式 `initial-scale=1`
+     * （实测快照里教务业务页全是 `width=device-width, initial-scale=1`，见 [DESKTOP_JS] ①），
+     * Blink 会照它把缩放当场拨回 1.0（[DESKTOP_JS] ② 实测表最后一行）。
      */
     val DESKTOP_REVERT_JS: String = """
 (function(){
@@ -177,6 +232,14 @@ object JwWebFit {
     if (window.__juwViewportObserver) {
       try{ window.__juwViewportObserver.disconnect(); }catch(e){}
       window.__juwViewportObserver = null;
+    }
+    if (window.__juwViewportApply) {
+      var f = window.__juwViewportApply;
+      window.removeEventListener('DOMContentLoaded', f);
+      window.removeEventListener('load', f);
+      window.removeEventListener('pageshow', f);
+      window.removeEventListener('resize', f);
+      window.__juwViewportApply = null;
     }
     window.__juwViewportGuard = false;
     var s = document.getElementById('$LAYER_STYLE_ID');

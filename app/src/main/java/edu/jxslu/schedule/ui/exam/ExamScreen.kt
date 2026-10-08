@@ -60,6 +60,7 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.score.maybeRequestNotifPermission
@@ -123,7 +124,7 @@ fun ExamScreen(onBack: () -> Unit) {
     ) { granted ->
         if (!granted) {
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals(
                         "未授予通知权限，提醒不会显示；可在系统设置里重新开启",
                         tone = NoticeTone.Warning,
@@ -159,7 +160,7 @@ fun ExamScreen(onBack: () -> Unit) {
                             result.changes.isEmpty() -> "已更新：${result.term} 共 ${result.count} 场"
                             else -> "已更新：${result.term}，检测到 ${result.changes.size} 条变动"
                         }
-                        snackbar.showSnackbar(
+                        snackbar.showNotice(
                             AppNoticeVisuals(
                                 message,
                                 tone = if (result.changes.isEmpty()) {
@@ -170,7 +171,7 @@ fun ExamScreen(onBack: () -> Unit) {
                             ),
                         )
                     }
-                    is ExamSync.Result.Failed -> snackbar.showSnackbar(
+                    is ExamSync.Result.Failed -> snackbar.showNotice(
                         AppNoticeVisuals(result.reason, tone = NoticeTone.Error),
                     )
                     // force=true 不会被闸门挡下；真撞上并发就让位，不排队重抓一遍

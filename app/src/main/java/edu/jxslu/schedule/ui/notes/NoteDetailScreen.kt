@@ -53,6 +53,7 @@ import edu.jxslu.schedule.ui.common.TitleTextField
 import edu.jxslu.schedule.ui.common.epochMonthDay
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberImageInserter
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Delete02
@@ -83,7 +84,7 @@ fun NoteDetailScreen(
     val snackbar = remember { SnackbarHostState() }
     val haptics = rememberAppHaptics()
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     // 抗重建（优化 2）：转屏 / 进程回收后未保存的编辑必须还在。

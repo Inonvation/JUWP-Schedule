@@ -52,6 +52,7 @@ import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.ScheduleChangeCard
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -125,7 +126,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                 is ScheduleSync.CheckResult.Failed -> r.reason
                 else -> "检查被跳过（提醒开关未开启或间隔未到）"
             }
-            snackbar.showSnackbar(message)
+            snackbar.showNotice(message)
         }
     }
 
@@ -140,7 +141,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
             }.getOrNull()
             if (report == null) {
                 busy = false
-                snackbar.showSnackbar("合并失败，请稍后重试")
+                snackbar.showNotice("合并失败，请稍后重试")
                 return@launch
             }
             // 基线已在 apply 内推进；这里把「本次展示过的完整差异」记为已阅并清缓存——
@@ -152,7 +153,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
             busy = false
             haptics.success()
             val detail = if (report.skipped > 0) "，${report.skipped} 条与你的修改冲突被跳过" else ""
-            snackbar.showSnackbar("已合并 ${report.applied} 处变动$detail")
+            snackbar.showNotice("已合并 ${report.applied} 处变动$detail")
         }
     }
 
@@ -163,7 +164,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
             prefs.setSchedulePendingChanges(null)
             Graph.inboxRepository(context).markKindRead(InboxKind.SCHEDULE_CHANGE)
             confirmingIgnore = false
-            snackbar.showSnackbar("已忽略本轮差异；教务再变化时会重新提醒")
+            snackbar.showNotice("已忽略本轮差异；教务再变化时会重新提醒")
         }
     }
 

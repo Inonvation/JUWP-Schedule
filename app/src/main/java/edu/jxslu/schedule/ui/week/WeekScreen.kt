@@ -105,6 +105,7 @@ import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import edu.jxslu.schedule.ui.me.DisplaySettingsContent
 import edu.jxslu.schedule.ui.me.MeViewModel
@@ -179,13 +180,13 @@ fun WeekScreen(
         scope.launch {
             val text = readTextFromUri(context, uri)
             if (text.isNullOrBlank()) {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals("读取文件失败", tone = NoticeTone.Error),
                 )
                 return@launch
             }
             when (val p = repo.previewImport(text)) {
-                is ImportPreview.Error -> snackbar.showSnackbar(
+                is ImportPreview.Error -> snackbar.showNotice(
                     AppNoticeVisuals(p.message, tone = NoticeTone.Error),
                 )
                 is ImportPreview.Ok -> {
@@ -198,13 +199,13 @@ fun WeekScreen(
 
     suspend fun runJsonImport(text: String, merge: Boolean, targetId: Long) {
         when (val r = repo.importJson(text, merge, targetId)) {
-            is ImportResult.Success -> snackbar.showSnackbar(
+            is ImportResult.Success -> snackbar.showNotice(
                 AppNoticeVisuals(
                     if (merge) "合并完成：新增 ${r.added} / 文件共 ${r.total}" else "已覆盖导入 ${r.total} 门课",
                     tone = NoticeTone.Success,
                 ),
             )
-            is ImportResult.Failure -> snackbar.showSnackbar(
+            is ImportResult.Failure -> snackbar.showNotice(
                 AppNoticeVisuals(r.message, tone = NoticeTone.Error),
             )
         }
@@ -231,7 +232,7 @@ fun WeekScreen(
             // 拒绝也要有反馈：弹层已在发起申请时关闭（见 startCalendarSync），
             // 这里的提示才看得见——此前拒绝分支不关弹层，Snackbar 被分享弹层整个盖住
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals("未授予日历权限，无法同步", tone = NoticeTone.Warning),
                 )
             }
@@ -263,7 +264,7 @@ fun WeekScreen(
     val shareMessage by viewModel.shareMessage.collectAsStateWithLifecycle()
     LaunchedEffect(shareMessage) {
         shareMessage?.let {
-            snackbar.showSnackbar(AppNoticeVisuals(it.text, tone = it.tone))
+            snackbar.showNotice(AppNoticeVisuals(it.text, tone = it.tone))
             viewModel.consumeShareMessage()
         }
     }
@@ -272,7 +273,7 @@ fun WeekScreen(
     val undoableMessage by viewModel.undoableMessage.collectAsStateWithLifecycle()
     LaunchedEffect(undoableMessage) {
         undoableMessage?.let { m ->
-            val result = snackbar.showSnackbar(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
+            val result = snackbar.showNotice(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
             if (result == SnackbarResult.ActionPerformed) m.undo()
             viewModel.consumeUndoableMessage()
         }

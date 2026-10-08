@@ -41,6 +41,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.showNotice
 
 /**
  * 课表数据子页：导出 / 导入 JSON、剪贴板导入、清空。
@@ -65,7 +66,7 @@ fun DataSettingsScreen(
         when (val s = oneShot) {
             is OneShot.Message -> {
                 // 清空等操作带撤销动作：Snackbar 给「撤销」，点了就回滚
-                val result = snackbar.showSnackbar(
+                val result = snackbar.showNotice(
                     s.text,
                     actionLabel = if (s.undo != null) "撤销" else null,
                     duration = SnackbarDuration.Short,

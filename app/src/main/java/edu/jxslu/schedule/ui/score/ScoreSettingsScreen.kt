@@ -47,6 +47,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import kotlinx.coroutines.launch
 
@@ -84,7 +85,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
     ) { granted ->
         if (!granted) {
             scope.launch {
-                snackbar.showSnackbar("未授予通知权限，提醒不会显示；可在系统设置里重新开启")
+                snackbar.showNotice("未授予通知权限，提醒不会显示；可在系统设置里重新开启")
             }
         }
     }

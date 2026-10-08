@@ -77,8 +77,12 @@
 、`TranscriptHistoryTest`（最近导出：`.part` 半成品不进列表/标签反推/同秒稳定排序/保留 10 份裁边/文案/文件名越界防护）、`AccountMaskTest`（学号遮罩：保留前后各两位/恰好六位/短于六位与空值返回 null）
 、`CalendarSyncerPickTest`（日历同步挑目标日历：可写优先/隐藏让位给可见/只读跳过）
 、`JwAutoLoginTest`（自动填表脚本生成：字段定位与提交、原生 setter、特殊字符转义）
-、`JwWebFitTest`（教务 WebView 页面适配：电脑版覆盖必须整串替换 content / 幂等判据看 content、
-自愈防页面 meta 晚到、撤销还原原文、登录页绝不覆盖、关掉时与引入前逐字一致）
+、`JwWebFitTest`（教务 WebView 页面适配：电脑版覆盖必须整串替换 content 且**必须自带
+`initial-scale`**（不带就"切了看不出变化"）/ 幂等判据看 content、`resize` 重算、
+自愈防页面 meta 晚到、撤销还原原文并摘掉自愈观察者与四条监听、登录页绝不覆盖、
+关掉时与引入前逐字一致）
+、`AppNoticeTest`（提示顶替：`showNotice` 新提示当场顶掉旧条 / M3 原生排队语义的对照 /
+带 `actionLabel` 的条不让位 / 字符串重载默认时长与 M3 逐字一致）
 、`JwWebBackTest`（教务窗口返回语义：同址条目 / 同址不同 fragment / CAS·SSO·登录页一律跳过，
 跳无可跳返回 null = 关窗口）
 、`PowerBillTest`（电费账单按月归集：按缴费日期归档/充值退款分列/倒序/月窗口跨年）

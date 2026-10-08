@@ -71,6 +71,7 @@ import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberResumeTick
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ChevronRight
@@ -148,7 +149,7 @@ fun AiChatScreen(
 
     LaunchedEffect(imageNotice) {
         imageNotice?.let {
-            snackbar.showSnackbar(AppNoticeVisuals(it, tone = NoticeTone.Warning))
+            snackbar.showNotice(AppNoticeVisuals(it, tone = NoticeTone.Warning))
             viewModel.consumeImageNotice()
         }
     }
@@ -158,7 +159,7 @@ fun AiChatScreen(
     LaunchedEffect(notice) {
         notice?.let {
             if (it.tone == NoticeTone.Success) haptics.success()
-            snackbar.showSnackbar(AppNoticeVisuals(it.text, tone = it.tone))
+            snackbar.showNotice(AppNoticeVisuals(it.text, tone = it.tone))
             viewModel.consumeNotice()
         }
     }
@@ -225,7 +226,7 @@ fun AiChatScreen(
                         val pasted = readClipboardImages(context)
                         if (pasted.isEmpty()) {
                             scope.launch {
-                                snackbar.showSnackbar(
+                                snackbar.showNotice(
                                     AppNoticeVisuals("剪贴板里没有图片", tone = NoticeTone.Warning),
                                 )
                             }
@@ -288,7 +289,7 @@ fun AiChatScreen(
                                 onReadbackToComposer = { text ->
                                     viewModel.setDraft(text)
                                     scope.launch {
-                                        snackbar.showSnackbar(
+                                        snackbar.showNotice(
                                             AppNoticeVisuals("识别文字已填进通知框，改对再点「分析」", tone = NoticeTone.Info),
                                         )
                                     }
@@ -296,7 +297,7 @@ fun AiChatScreen(
                                 onCopyHeadline = { text ->
                                     clipboard.setText(AnnotatedString(text))
                                     scope.launch {
-                                        snackbar.showSnackbar(
+                                        snackbar.showNotice(
                                             AppNoticeVisuals("已复制", tone = NoticeTone.Success),
                                         )
                                     }

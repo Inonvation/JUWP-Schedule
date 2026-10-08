@@ -85,6 +85,7 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.CasLoginDialog
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -122,7 +123,7 @@ fun TranscriptScreen(onBack: () -> Unit) {
     var savedTerms by remember { mutableStateOf<List<String>>(emptyList()) }
 
     fun notify(message: String, tone: NoticeTone) {
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     /**

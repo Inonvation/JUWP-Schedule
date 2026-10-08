@@ -56,6 +56,7 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.me.MeViewModel
 import edu.jxslu.schedule.ui.theme.paletteSwatch
 import kotlinx.coroutines.launch
@@ -121,7 +122,7 @@ fun GeneralSettingsScreen(
     var showPaletteSheet by remember { mutableStateOf(false) }
     val showNotice: (String) -> Unit = { message ->
         scope.launch {
-            snackbar.showSnackbar(AppNoticeVisuals(message, tone = NoticeTone.Info))
+            snackbar.showNotice(AppNoticeVisuals(message, tone = NoticeTone.Info))
         }
     }
 

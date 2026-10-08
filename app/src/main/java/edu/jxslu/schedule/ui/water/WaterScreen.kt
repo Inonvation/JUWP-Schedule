@@ -86,6 +86,7 @@ import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.me.MeViewModel
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -151,7 +152,7 @@ fun WaterScreen(
             when (event) {
                 // 登录/出水/查询的结果都在页面自己的提示卡里显示（不再用系统 Toast 的黑框）；
                 // 事件都源自页面内的点击与随后的异步回调，此刻不会有我们的弹层盖在上面
-                is WaterEvent.Notice -> snackbar.showSnackbar(
+                is WaterEvent.Notice -> snackbar.showNotice(
                     AppNoticeVisuals(event.text, tone = event.tone),
                 )
             }
@@ -178,7 +179,7 @@ fun WaterScreen(
             awaitingRecharge = true
         } else {
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals(
                         "没找到能打开支付宝的应用。充值在支付宝的胖乖生活小程序里完成，先装一个支付宝。",
                         tone = NoticeTone.Warning,
@@ -194,7 +195,7 @@ fun WaterScreen(
         val token = viewModel.exportToken()
         if (token == null) {
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals("当前没有登录 Token", tone = NoticeTone.Warning),
                 )
             }
@@ -202,7 +203,7 @@ fun WaterScreen(
             val clipboard = context.getSystemService(ClipboardManager::class.java)
             clipboard?.setPrimaryClip(ClipData.newPlainText("胖乖生活 Token", token))
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals(
                         "Token 已复制。它等于账号通行证，只粘到本应用的「Token 登录」，别发到别处",
                         tone = NoticeTone.Warning,

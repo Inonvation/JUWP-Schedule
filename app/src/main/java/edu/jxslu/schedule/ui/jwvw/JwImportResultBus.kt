@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -112,10 +113,14 @@ internal class OutcomeQueue<T> {
  *
  * 清通道的时机要紧（2026-09-30 修正，此前「先 consume 再 show」五处落点全都不显示）：
  * [JwImportResultBus.consume] 把 flow 换成下一条（没有排队的就是 null）后，`LaunchedEffect(outcome)`
- * 会在下一帧重启、取消还挂在 `showSnackbar` 上的这个协程——M3 的契约是「caller cancelled →
+ * 会在下一帧重启、取消还挂在 `showNotice` 上的这个协程——M3 的契约是「caller cancelled →
  * snackbar removed from display」，气泡刚挂上去就被撤掉。所以过期消息在**进 show 之前**丢（防止它在
- * 后续组合里反复触发），新鲜消息**等 `showSnackbar` 返回后**才清（返回即上一条已下场，
- * 排队中的下一条这时才顶上来）。
+ * 后续组合里反复触发），新鲜消息**等 `showNotice` 返回后**才清（返回即上一条已下场，
+ * 这时才轮到 [OutcomeQueue] 里的下一条）。
+ *
+ * **一条一条播的节奏不靠提示宿主**：[OutcomeQueue] 只在 `current` 被消费后才换值，
+ * 所以同一时刻只有一个 `showNotice` 在飞——「导入完成」与「教材未同步」两条都会轮到，
+ * 不会被 [edu.jxslu.schedule.ui.common.showNotice] 的「新的顶掉旧的」吃掉（2026-10-08 核对）。
  */
 @Composable
 fun JwImportOutcomeEffect(snackbar: SnackbarHostState) {
@@ -126,7 +131,7 @@ fun JwImportOutcomeEffect(snackbar: SnackbarHostState) {
             JwImportResultBus.consume(pending)
             return@LaunchedEffect
         }
-        snackbar.showSnackbar(AppNoticeVisuals(pending.text, tone = pending.tone))
+        snackbar.showNotice(AppNoticeVisuals(pending.text, tone = pending.tone))
         JwImportResultBus.consume(pending)
     }
 }

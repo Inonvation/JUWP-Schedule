@@ -55,6 +55,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SkeletonBox
 import edu.jxslu.schedule.ui.common.lineHeightDp
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.CreditCard
@@ -97,7 +98,7 @@ fun PayCodeScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is PayCodeEvent.Notice ->
-                    snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
             }
         }
     }

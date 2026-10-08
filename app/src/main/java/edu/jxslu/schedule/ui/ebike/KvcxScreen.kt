@@ -58,6 +58,7 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -105,7 +106,7 @@ fun KvcxScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is KvcxEvent.Notice ->
-                    snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
             }
         }
     }

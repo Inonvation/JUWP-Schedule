@@ -46,6 +46,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
@@ -86,7 +87,7 @@ fun QzxyDebugScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is QzxyEvent.Notice -> snackbar.showSnackbar(
+                is QzxyEvent.Notice -> snackbar.showNotice(
                     AppNoticeVisuals(event.text, tone = event.tone),
                 )
             }
@@ -112,7 +113,7 @@ fun QzxyDebugScreen(
             ClipData.newPlainText("趣智校园诊断", viewModel.diagnosticText()),
         )
         scope.launch {
-            snackbar.showSnackbar(
+            snackbar.showNotice(
                 AppNoticeVisuals("诊断信息已复制，可直接粘贴发出来", tone = NoticeTone.Success),
             )
         }
@@ -128,7 +129,7 @@ fun QzxyDebugScreen(
         val text = viewModel.exportSession()
         if (text == null) {
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals("当前没有登录会话", tone = NoticeTone.Warning),
                 )
             }
@@ -136,7 +137,7 @@ fun QzxyDebugScreen(
             val clipboard = context.getSystemService(ClipboardManager::class.java)
             clipboard?.setPrimaryClip(ClipData.newPlainText("趣智校园会话", text))
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals(
                         "会话串已复制。它等于账号通行证，只粘到本应用的「会话串登录」，别发到别处",
                         tone = NoticeTone.Warning,

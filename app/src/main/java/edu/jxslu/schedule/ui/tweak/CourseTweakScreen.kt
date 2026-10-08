@@ -64,6 +64,7 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.domain.compactPosition
 import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -100,7 +101,7 @@ fun CourseTweakScreen(
 
     LaunchedEffect(message) {
         message?.let {
-            snackbar.showSnackbar(it)
+            snackbar.showNotice(it)
             viewModel.consumeMessage()
         }
     }
@@ -108,7 +109,7 @@ fun CourseTweakScreen(
     // 调课成功 → Snackbar 带「撤销」；覆盖/交换误操作有 5 秒后悔窗口
     LaunchedEffect(undoableMessage) {
         undoableMessage?.let { m ->
-            val result = snackbar.showSnackbar(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
+            val result = snackbar.showNotice(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
             if (result == SnackbarResult.ActionPerformed) m.undo()
             viewModel.consumeUndoableMessage()
         }

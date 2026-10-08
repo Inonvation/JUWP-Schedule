@@ -89,6 +89,15 @@
 - 一次性消息**只有一条通道**：页面 Scaffold 的 `snackbarHost = { AppSnackbarHost(snackbar) }`
   （`ui/common/AppNotice.kt`）。语气用 `NoticeTone` 四档，视觉规格见 DESIGN §3.2；
   **禁止**新增 `android.widget.Toast`（系统黑框，与 App 其余浮层两套观感）。
+- **发送一律用 `snackbar.showNotice(...)`，不要用 M3 的 `showSnackbar`**（2026-10-08，全 App 已换完）：
+  `showSnackbar` 是**排队**语义（内部一把 `Mutex`，先到的那条不返回，后来的挂在锁上），
+  用户报的「连着切电脑版 / 手机版，第二条要等第一条过期才出来」就是它。`showNotice` 先把当前
+  那条 `dismiss()` 掉再上新的——提示是「刚刚发生了什么」的一次性播报，新的盖掉旧的才对。
+  **只有带 `actionLabel` 的那条不让位**（撤销 / 去设置：顶掉它等于把出口静默收走），
+  它自己最长 `SnackbarDuration.Long` 就会过期，等待有界。判据是 `AppNotice.kt` 里那两个
+  `showNotice` 重载，`AppNoticeTest` 钉住（含「M3 原样排队」的对照用例）。
+- 「一条一条播」的队列要自己搭（如 `OutcomeQueue`）：**别指望提示宿主排队**——它现在只画当前
+  那一条，节奏由发送侧「上一条返回后再发下一条」决定。
 
 ## 确认型弹窗的既有规格
 

@@ -84,6 +84,7 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import androidx.compose.runtime.rememberCoroutineScope
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Droplet
@@ -150,7 +151,7 @@ fun QzxyScreen(
             viewModel.startScan()
         } else {
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals(
                         "缺少「附近的设备」权限，扫不到热水器。可到系统设置里为本应用打开该权限后重试。",
                         tone = NoticeTone.Warning,
@@ -171,7 +172,7 @@ fun QzxyScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is QzxyEvent.Notice -> snackbar.showSnackbar(
+                is QzxyEvent.Notice -> snackbar.showNotice(
                     AppNoticeVisuals(event.text, tone = event.tone),
                 )
             }
@@ -183,7 +184,7 @@ fun QzxyScreen(
     // 真卡住了流程会自己超时，几秒后按钮就回来了。
     BackHandler(enabled = state.flow is QzxyFlowState.Working) {
         scope.launch {
-            snackbar.showSnackbar(
+            snackbar.showNotice(
                 AppNoticeVisuals(
                     "正在处理，等这一步跑完再退出（卡住的话它会自己超时）",
                     tone = NoticeTone.Warning,
@@ -216,7 +217,7 @@ fun QzxyScreen(
             awaitingRecharge = true
         } else {
             scope.launch {
-                snackbar.showSnackbar(
+                snackbar.showNotice(
                     AppNoticeVisuals(
                         "没找到能打开支付宝的应用。充值在支付宝的趣智校园小程序里完成，先装一个支付宝。",
                         tone = NoticeTone.Warning,

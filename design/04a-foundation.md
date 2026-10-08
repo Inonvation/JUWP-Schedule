@@ -328,11 +328,13 @@ WebView 对它退默认 980px 桌面宽度 + `loadWithOverviewMode` 缩放到屏
 
 | 件 | 口径 |
 |----|------|
-| `JwWebFit.DESKTOP_JS` | 把页面 `<meta name=viewport>` 的原 content 存进 `data-juw-orig`，**整串换成** `width=980`；页面没有 meta 就新建（标 `data-juw-created`）。末尾 `void documentElement.offsetWidth` 触一次 reflow |
+| `JwWebFit.DESKTOP_JS` | 把页面 `<meta name=viewport>` 的原 content 存进 `data-juw-orig`，**整串换成** `width=980, initial-scale=<铺满屏幕的倍数>`；页面没有 meta 就新建（标 `data-juw-created`）。末尾 `void documentElement.offsetWidth` 触一次 reflow |
 | 为什么整串替换 | 留着 `initial-scale=1` 就缩不小、留着 `user-scalable=no`（部分页有）就放不大——宽度与缩放两件事都由这一个 content 决定 |
+| **为什么必须自己写 `initial-scale`** | **Blink 只在 meta 里显式写了 `initial-scale` 时才重新套用缩放**。只改 `width=980` 时它只重新布局（`innerWidth` 412→980），缩放停在 1.0 → 屏幕里只看得见 980 宽布局的左边 412px、字号不变，用户看到的就是「切了电脑版界面没变化，得手动缩小才看得出来」（2026-10-08 用户报）。倍数 = 屏幕 CSS 宽 / 980，屏幕宽用 `visualViewport.width × scale` 现算（乘 scale 后与当前缩放无关，双指缩放时这个乘积不变）；拿不到（Compose 首测 0×0）就退回裸 `width=980` |
 | 为什么 980 | 桌面浏览器默认视口宽，也正是 WebView「无 meta 时」用的值（Chromium《Web Page Layout》：No viewport tag → 980 + Fit on Screen）；单一常量 `DESKTOP_WIDTH_PX` |
-| 幂等判据 | **看 content 而不是看标记**：`onPageCommitVisible` 与就绪路径两轮都注入，第一轮可能跑在页面自己的 meta 之前，按标记早退就再也补不上 |
-| `JwWebFit.DESKTOP_REVERT_JS` | 撤销：自己新建的整节点删掉，页面自己那份把 content 还回去 |
+| 幂等判据 | **看 content 而不是看标记**：`onPageCommitVisible` 与就绪路径两轮都注入，第一轮可能跑在页面自己的 meta 之前，按标记早退就再也补不上（比对的是现拼出来的目标值） |
+| 重算时机 | `DOMContentLoaded` / `load` / `pageshow` / **`resize`** 四条都挂同一个处理函数（存 `window.__juwViewportApply`）：首测 0×0、转屏后 980 不再等于屏宽，都靠 `resize` 补算。双指缩放不改窗口宽度 → content 逐字相同 → 幂等早退，不跟缩放打架 |
+| `JwWebFit.DESKTOP_REVERT_JS` | 撤销：自己新建的整节点删掉，页面自己那份把 content 还回去。**必须同时 `disconnect()` 自愈观察者并摘掉上面四条监听**——尤其 `resize`：**还原视口这一步本身就派发 resize**，不摘的话刚还原就被压回 980（2026-10-08 在真机 WebView 里用 CDP 跑这两个脚本时踩到） |
 | `JwWebFit.fitScript(url, desktop)` | 唯一判据入口：登录 / SSO 页 → 只给 `LOGIN_FIT_JS`（**绝不覆盖**，它本来就是 980 口径，而自动填表与会话链挂在这几页的 DOM 上）；课表页 → 课表适配 + 覆盖；其余（主页 / 选课中心 / 成绩 / 评教平台）→ 覆盖；`desktop=false` 时与引入前逐字一致 |
 | 开关 | 窗口顶栏 `JwDesktopModeChip`（文字胶囊，开=「电脑版」/ 关=「手机版」，48dp 命中区），偏好 `jw_desktop_mode` **默认开**、独立单流（§3.3 通用设置不加入口——效果就在眼前） |
 | 切换语义 | **当场重注入、不重载页面**：实测改 meta viewport 会触发 Blink 重新布局（`iw=412 → 980`），重载只会白等一次网络、还会把选课中心 iframe 里的列表与筛选状态清掉 |
@@ -340,14 +342,19 @@ WebView 对它退默认 980px 桌面宽度 + `loadWithOverviewMode` 缩放到屏
 **选课中心不用单独处理**：它是壳页 + 三个 `width="100%"` 的 iframe（`scripts/out/xsxk_c_new_xsxkzx_*.html`），
 iframe 内的 meta 不参与布局 → 父级视口变 980，iframe 内容自然跟着变宽。
 
-**验证**（2026-10-08，模拟器端到端：本地 fixture 复刻真实教务页快照 + `iptables` 把 80/8080
+**验证**（2026-10-08）：① 模拟器端到端（本地 fixture 复刻真实教务页快照 + `iptables` 把 80/8080
 指到本机，不动账号、不走学校网络）：选课中心 `viewport probe iw=980`（关掉后 `iw=412`）、
 主页 / 理论课表 / 实验课表同样 980、**CAS 登录页保持 417（未被覆盖）**、
 顶栏开关当场来回切换（不重载、选课页状态不丢）、偏好跨窗口重启保持、一键导入仍解析出 45 课次。
+② 同日在真机 WebView 里用 CDP（`webview_devtools_remote`，debug 包已开调试）跑**线上那两段脚本
+原文**逐个读数：`width=device-width, initial-scale=1.0` → `iw=412 vvw=412 scale=1.000`；
+注入 `DESKTOP_JS` → `iw=980 vvw=980 scale=0.421`（`vvw == iw` 即整页铺满）；
+注入 `DESKTOP_REVERT_JS` → `iw=412 vvw=412 scale=1.000`；再注入一次电脑版 → 0.421。
 真机点验项见 AGENTS.md「待真机点验」表。
 
-**两条红线**：① 覆盖必须整串替换 content（拆开改宽度会丢缩放）；② 登录 / SSO 页不覆盖
-（`fitScript` 单点判据，别在别处另写一份）。
+**三条红线**：① 覆盖必须整串替换 content，且**必须带上自己算的 `initial-scale`**（拆开改宽度会丢
+缩放）；② 登录 / SSO 页不覆盖（`fitScript` 单点判据，别在别处另写一份）；③ 撤销必须把自愈观察者
+与四条监听一起摘掉——只还原 meta 会被它们当场压回 980。
 
 #### 4.4.4 教务窗口的返回语义与「内容为空」探针（2026-10-08，电脑版上线的同批修复）
 

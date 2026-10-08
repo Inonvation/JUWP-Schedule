@@ -47,6 +47,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -78,7 +79,7 @@ fun AiHistoryScreen(onBack: () -> Unit) {
     LaunchedEffect(notice) {
         notice?.let {
             if (it.tone == NoticeTone.Success) haptics.success()
-            snackbar.showSnackbar(AppNoticeVisuals(it.text, tone = it.tone))
+            snackbar.showNotice(AppNoticeVisuals(it.text, tone = it.tone))
             viewModel.consumeNotice()
         }
     }

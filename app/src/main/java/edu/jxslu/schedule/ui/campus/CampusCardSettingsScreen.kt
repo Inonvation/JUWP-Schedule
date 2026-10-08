@@ -89,6 +89,7 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.life.PowerRoomPickerSheet
 import edu.jxslu.schedule.ui.life.PowerRoomPickerViewModel
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
@@ -147,7 +148,7 @@ fun CampusCardSettingsScreen(
     androidx.compose.runtime.LaunchedEffect(arrivalState) {
         val st = arrivalState
         if (st is CampusCardViewModel.ArrivalState.Timeout) {
-            snackbar.showSnackbar(
+            snackbar.showNotice(
                 AppNoticeVisuals(
                     "暂未检测到到账——充值常有延迟，到账后「消费流水」会自动显示",
                     tone = NoticeTone.Info,
@@ -220,12 +221,12 @@ fun CampusCardSettingsScreen(
             savedUsername = viewModel.savedUsername
         }
         scope.launch {
-            snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
+            snackbar.showNotice(AppNoticeVisuals(notice.text, tone = notice.tone))
         }
     }
 
     fun showNotice(text: String, tone: NoticeTone = NoticeTone.Info) {
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(text, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(text, tone = tone)) }
     }
 
     // 两个提醒开关共用：开启那一刻请求 POST_NOTIFICATIONS（API 33+），拒绝不阻塞开关本身
@@ -634,7 +635,7 @@ fun CampusCardSettingsScreen(
                 showRoomPicker = false
                 roomLabel = room
                 scope.launch {
-                    snackbar.showSnackbar(AppNoticeVisuals("已设置寝室：$room", tone = NoticeTone.Success))
+                    snackbar.showNotice(AppNoticeVisuals("已设置寝室：$room", tone = NoticeTone.Success))
                 }
             },
         )
@@ -660,7 +661,7 @@ fun CampusCardSettingsScreen(
                             busy = false
                             username = ""
                             scope.launch {
-                                snackbar.showSnackbar(
+                                snackbar.showNotice(
                                     AppNoticeVisuals("已关闭并清除凭证", tone = NoticeTone.Info),
                                 )
                             }
@@ -713,7 +714,7 @@ fun CampusCardSettingsScreen(
                     // 弹层已关、页面无任何变化——先给一条常驻的进行中提示（Indefinite），
                     // 结束回调里 busy=false 后由结果 Snackbar 顶掉它
                     val progressJob = scope.launch {
-                        snackbar.showSnackbar(
+                        snackbar.showNotice(
                             AppNoticeVisuals(
                                 "正在发起充值…请稍候",
                                 tone = NoticeTone.Info,
@@ -735,7 +736,7 @@ fun CampusCardSettingsScreen(
                         busy = false
                         progressJob.cancel()
                         scope.launch {
-                            snackbar.showSnackbar(AppNoticeVisuals(notice.text, tone = notice.tone))
+                            snackbar.showNotice(AppNoticeVisuals(notice.text, tone = notice.tone))
                         }
                     }
                 }

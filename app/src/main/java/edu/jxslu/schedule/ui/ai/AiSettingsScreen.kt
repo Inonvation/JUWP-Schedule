@@ -49,6 +49,7 @@ import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AiBrain01
@@ -162,7 +163,7 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                                 },
                                 onFailure = { aiErrorText(it) },
                             )
-                            snackbar.showSnackbar(
+                            snackbar.showNotice(
                                 AppNoticeVisuals(
                                     message,
                                     tone = if (result.isSuccess) NoticeTone.Success else NoticeTone.Error,

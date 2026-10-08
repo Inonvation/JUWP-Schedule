@@ -87,6 +87,7 @@ import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.SkeletonBox
 import edu.jxslu.schedule.ui.common.lineHeightDp
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -241,14 +242,14 @@ fun LifeScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is LifeEvent.Notice -> snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                is LifeEvent.Notice -> snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
 
                 // 农行收银台：**App 内嵌页**打开（2026-09-28 用户拍板，不再甩给浏览器）。
                 // 卡号 / 手机号 / 短信验证码 / 支付密码只在农行页面里输入，本 App 不读不存。
                 is LifeEvent.OpenBankCashier -> {
                     runCatching { PowerBankPayActivity.start(context, event.url) }
                         .onFailure {
-                            snackbar.showSnackbar(
+                            snackbar.showNotice(
                                 AppNoticeVisuals("农行支付页打不开，请重试", tone = NoticeTone.Error),
                             )
                         }
@@ -258,7 +259,7 @@ fun LifeScreen(
     }
 
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     Scaffold(
@@ -435,7 +436,7 @@ fun LifeScreen(
                 // 绑定后立即按新房间刷新卡面（force：平台刚写完，缓存里那份还是「没房间」）
                 viewModel.refreshPower(force = true)
                 scope.launch {
-                    snackbar.showSnackbar(
+                    snackbar.showNotice(
                         AppNoticeVisuals("已设置寝室：$room", tone = NoticeTone.Success),
                     )
                 }

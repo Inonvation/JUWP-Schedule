@@ -71,6 +71,7 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberImageInserter
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -106,7 +107,7 @@ fun HomeworkDetailScreen(
     val snackbar = remember { SnackbarHostState() }
     val haptics = rememberAppHaptics()
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     // 抗重建（优化 2）：转屏 / 进程回收后未保存的编辑必须还在（口径与笔记详情一致）。

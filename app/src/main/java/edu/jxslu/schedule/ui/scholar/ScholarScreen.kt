@@ -81,6 +81,7 @@ import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 
 /**
@@ -176,7 +177,7 @@ fun ScholarScreen(onBack: () -> Unit) {
             when (result) {
                 is ScholarProgressSync.Result.Updated -> {
                     lastError = null
-                    snackbar.showSnackbar(
+                    snackbar.showNotice(
                         if (silent) "已获取 ${result.courses} 门课程的完成情况"
                         else "已更新：${result.courses} 门课程 / ${result.groups} 个分组",
                     )
@@ -189,7 +190,7 @@ fun ScholarScreen(onBack: () -> Unit) {
                 is ScholarProgressSync.Result.Failed -> {
                     lastError = result.reason
                     // 自动那次不弹提示（用户没主动要），但原因会留在空态里
-                    if (!silent) snackbar.showSnackbar(result.reason)
+                    if (!silent) snackbar.showNotice(result.reason)
                 }
             }
         }

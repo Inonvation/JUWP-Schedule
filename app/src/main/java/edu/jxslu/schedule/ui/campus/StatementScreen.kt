@@ -60,6 +60,7 @@ import edu.jxslu.schedule.ui.common.MonthNavRow
 import edu.jxslu.schedule.ui.common.MonthPickerDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -105,7 +106,7 @@ fun StatementScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is StatementEvent.Notice ->
-                    snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
             }
         }
     }

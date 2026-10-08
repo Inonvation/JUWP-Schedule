@@ -34,12 +34,14 @@
   Scaffold 把 `contentWindowInsets` 归零了，提示条要自己 `navigationBarsPadding()`。
 - 四条别改坏：① 课表/考试与成绩两条路径都发，文案各自拼（成绩不报课表名）；
   ② 发布放在**写库之后、`onBack()` 之前**，顺序反了就是「窗口关了、消息还没发」；
-  ③ 清通道的时机：**过期消息在进 `showSnackbar` 之前丢，新鲜消息等 `showSnackbar` 返回后才
+  ③ 清通道的时机：**过期消息在进 `showNotice` 之前丢，新鲜消息等 `showNotice` 返回后才
   `consume()`**——consume 把 flow 置 null 会让 `JwImportOutcomeEffect` 的 `LaunchedEffect(outcome)`
-  下一帧以 null 重启、取消还挂在 `showSnackbar` 上的协程，而 M3 的契约是
+  下一帧以 null 重启、取消还挂在 `showNotice` 上的协程，而 M3 的契约是
   「caller cancelled → snackbar removed」：气泡刚挂上去就被撤掉（2026-09-30 修正此前
   「先 consume 再 show」导致五处落点全都不显示）；过期即丢仍然挡着「旧消息在后续组合里
-  反复触发」那条老问题；④ 别把落点改回「只在课表页消费」。
+  反复触发」那条老问题；④ 别把落点改回「只在课表页消费」；⑤ 队列节奏是自持的——`OutcomeQueue`
+  只在 current 被消费后才换值，所以同一时刻只有一个 `showNotice` 在飞，「导入完成」与
+  「教材未同步」两条都会轮到，不会被 `showNotice` 的「新的顶掉旧的」吃掉（2026-10-08 核对）。
 - 新鲜期常数在 `JwImportOutcome.FRESH_WINDOW_MS`，边界由 `JwImportResultBusTest` 钉住。
 
 ## 确认弹窗支持切换学期（2026-09-28）
@@ -350,12 +352,27 @@
   `DESKTOP_JS`（覆盖）/ `DESKTOP_REVERT_JS`（撤销）/ `SCHEDULE_FIT_JS` + `LOGIN_FIT_JS`（既有，
   从 `JwImportScreen` 原样搬入）；`fitScript(url, desktop)` 是**唯一判据入口**，
   别在别处再写一份「哪些页要覆盖」。
-- **红线一：覆盖必须整串替换 content**（存原文到 `data-juw-orig` 再写 `width=980`）。
-  只改 width 会留下 `initial-scale=1` / `user-scalable=no` → 不能缩小 / 不能双指放大。
+- **红线一：覆盖必须整串替换 content**（存原文到 `data-juw-orig` 再写
+  `width=980, initial-scale=<铺满屏幕的倍数>`）。只改 width 会留下 `initial-scale=1` /
+  `user-scalable=no` → 不能缩小 / 不能双指放大。
+- **红线一之半：`initial-scale` 必须自己写出来**（2026-10-08 用户报「手机版切电脑版界面不变，
+  得手动缩小才看得出差异」）。**Blink 只在 meta 里显式写了 `initial-scale` 时才重新套用缩放**：
+  只改 `width=980` 时它只重新布局（`iw` 412→980），缩放停在 1.0 → 屏上只看得见 980 宽布局的
+  左边 412px、字号不变，看着就是"没变化"（首屏那 0.42 倍是 WebView overview 口径给的，动态改
+  meta 不会重算）。倍数 = 屏幕 CSS 宽 / 980，屏幕宽取 `visualViewport.width × scale`
+  （乘 scale 后与缩放无关，双指缩放不打架），拿不到就退回裸 `width=980`。
+  实测（真机 WebView，CDP 跑脚本原文）：`width=980` → `iw=980 vvw=412 scale=1.000`；
+  `width=980, initial-scale=0.4206` → `iw=980 vvw=980 scale=0.421`（`vvw == iw` 即铺满）。
 - **红线二：登录 / SSO 页（`/cas/login`、`Logon.do`、`/sso.jsp`）不覆盖**。它们本来就没有
   meta（已是 980 口径），而自动填表（`JwAutoLogin`）与整条会话链挂在这几页的 DOM 上。
 - 幂等判据**看 content 不看标记**：`onPageCommitVisible` 与就绪路径两轮都注入，第一轮可能
   跑在页面自己的 meta 之前（那时我们新建的 meta 会被页面后到的盖过），按标记早退就补不上了。
+- **重算时机**：`DOMContentLoaded` / `load` / `pageshow` / `resize` 四条挂同一个处理函数
+  （存 `window.__juwViewportApply`）——首测 0×0、转屏后 980 不再等于屏宽都靠 `resize` 补算。
+- **红线三：撤销要把常驻的东西全摘掉**（自愈 `MutationObserver` + 上面四条监听）。只还原 meta
+  会被它们当场压回 980——尤其 `resize`：**还原视口这一步本身就派发 resize**，用户看到的是
+  「切回手机版没反应」。这条是 2026-10-08 在真机 WebView 里用 CDP 跑这两个脚本时踩到的
+  （单测与 Chrome 侧替身脚本都看不出来——那边是直接改 meta，没跑这两个脚本）。
 - **切换不重载页面**：实测改 meta viewport 会触发 Blink 重新布局（模拟器实测 `iw=412 → 980`），
   所以顶栏开关是当场重注入——重载只会白等一次网络，还会把选课中心 iframe 里的列表与筛选状态清掉。
 - 选课中心是「壳页 + `width="100%"` 的 iframe」，iframe 内的 meta 不参与布局 → 父级变宽它就跟着变，
@@ -367,6 +384,10 @@
   ⚠️ **探针是 timing 敏感的**：它在 `onPageFinished` 里跑，可能早于"就绪路径"的第二次注入，
   于是会打出一帧的旧宽度（实测偶发 412）。要判"最终生效没生效"，看**渲染结果**或页面自己
   在 load 之后读的 `innerWidth`，别只信这一行。
+  ⚠️ 探针**不报缩放**，判「整页铺满没有」看的是 `vvw == iw`，得另测。现成办法是 CDP：
+  debug 包开了 `WebView.setWebContentsDebuggingEnabled(true)`，
+  `adb forward tcp:8000 localabstract:webview_devtools_remote_<pid>` 后连 `/json` 里的 ws 目标
+  `Runtime.evaluate`（2026-10-08 就是这么验的）。
 
 ## 教务窗口的返回语义（2026-10-08，DESIGN §4.4.4）
 

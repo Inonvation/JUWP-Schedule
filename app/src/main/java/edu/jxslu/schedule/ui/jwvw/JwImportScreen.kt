@@ -98,6 +98,7 @@ import edu.jxslu.schedule.ui.common.CasLoginDialog
 import edu.jxslu.schedule.ui.common.ImportTargetDialogHost
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.resolveImportTarget
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -593,7 +594,7 @@ fun JwImportScreen(
             val result = OneClickImport.combine(theory, lab)
             if (result.blocked != null) {
                 statusNote = result.blocked
-                snackbar.showSnackbar(result.blocked)
+                snackbar.showNotice(result.blocked)
                 return
             }
             statusNote = result.breakdown.joinToString("，") { (label, count) -> "$label $count 条" } +
@@ -676,7 +677,7 @@ fun JwImportScreen(
         if (wv == null) return
         if (!JwUrls.isJwHost(currentUrl)) {
             val msg = "请先打开考试安排查询页（教务域）再导入。"
-            snackbar.showSnackbar(msg); return
+            snackbar.showNotice(msg); return
         }
         busy = true
         try {
@@ -692,7 +693,7 @@ fun JwImportScreen(
             // 一键导入给实验页拼学期号时用的是同一把尺子）
             if (!JwUrls.TERM_PATTERN.matches(term)) {
                 statusNote = "取不到学期：请在考试安排查询页选择学期后重试"
-                snackbar.showSnackbar(statusNote)
+                snackbar.showNotice(statusNote)
                 return
             }
             statusNote = "正在请求 $term 考试安排…"
@@ -708,14 +709,14 @@ fun JwImportScreen(
                     // 会话被顶的 JSON 已经在 fetchJsonInWebView 里报成 Error 页了，别盖掉
                     if (lastFetchConflict) return
                     statusNote = "请求考试安排超时：${NetworkHint.briefOf(JwVpnDetector.isVpnActive(context))}"
-                    snackbar.showSnackbar(statusNote)
+                    snackbar.showNotice(statusNote)
                     return
                 }
                 val parsed = try {
                     ExamScheduleParser.parseFetchJson(body)
                 } catch (e: Exception) {
                     statusNote = e.message ?: "解析失败"
-                    snackbar.showSnackbar(statusNote)
+                    snackbar.showNotice(statusNote)
                     return
                 }
                 count = parsed.count
@@ -743,7 +744,7 @@ fun JwImportScreen(
                     }
                 }
                 statusNote = msg
-                snackbar.showSnackbar(msg)
+                snackbar.showNotice(msg)
                 return
             }
             // 历史/未来学期靠估算开学日定位（DESIGN §4.14）：估算可能与实际相差一两周，
@@ -792,7 +793,7 @@ fun JwImportScreen(
         if (wv == null) return
         if (!JwUrls.isJwHost(currentUrl)) {
             val msg = "请先登录教务（点击上方入口打开成绩查询页）再导入。"
-            snackbar.showSnackbar(msg); return
+            snackbar.showNotice(msg); return
         }
         busy = true
         try {
@@ -809,14 +810,14 @@ fun JwImportScreen(
                     // 会话被顶的 JSON 已经在 fetchJsonInWebView 里报成 Error 页了，别盖掉
                     if (lastFetchConflict) return
                     statusNote = "请求成绩超时：${NetworkHint.briefOf(JwVpnDetector.isVpnActive(context))}"
-                    snackbar.showSnackbar(statusNote)
+                    snackbar.showNotice(statusNote)
                     return
                 }
                 val parsed = try {
                     ScoreParser.parseFetchJson(body)
                 } catch (e: Exception) {
                     statusNote = e.message ?: "解析失败"
-                    snackbar.showSnackbar(statusNote)
+                    snackbar.showNotice(statusNote)
                     return
                 }
                 count = parsed.count
@@ -826,7 +827,7 @@ fun JwImportScreen(
 
             if (records.isEmpty()) {
                 statusNote = "教务没有返回任何成绩"
-                snackbar.showSnackbar(statusNote)
+                snackbar.showNotice(statusNote)
                 return
             }
             // 账号条资料（DESIGN §3.3）：学籍卡抓不到只降级，不挡成绩导入。
@@ -913,7 +914,7 @@ fun JwImportScreen(
                             val next = !desktopMode
                             scope.launch {
                                 prefs.setJwDesktopMode(next)
-                                snackbar.showSnackbar(
+                                snackbar.showNotice(
                                     if (next) "已切换为电脑版；双指可放大缩小" else "已切换为手机版",
                                 )
                             }

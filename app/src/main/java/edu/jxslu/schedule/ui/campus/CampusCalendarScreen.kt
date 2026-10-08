@@ -46,6 +46,7 @@ import edu.jxslu.schedule.ui.common.decodeFileSampled
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,21 +100,21 @@ fun CampusCalendarScreen(onBack: () -> Unit) {
                                     val year = store.state.value.year
                                     when (result) {
                                         CampusCalendarStore.RefreshResult.Updated ->
-                                            snackbar.showSnackbar(
+                                            snackbar.showNotice(
                                                 AppNoticeVisuals(
                                                     if (year.isBlank()) "校历已更新" else "校历已更新到 $year 学年",
                                                     tone = NoticeTone.Success,
                                                 ),
                                             )
                                         CampusCalendarStore.RefreshResult.Unchanged ->
-                                            snackbar.showSnackbar(
+                                            snackbar.showNotice(
                                                 AppNoticeVisuals(
                                                     if (year.isBlank()) "已是最新" else "已是最新（$year 学年）",
                                                     tone = NoticeTone.Info,
                                                 ),
                                             )
                                         CampusCalendarStore.RefreshResult.Failed ->
-                                            snackbar.showSnackbar(
+                                            snackbar.showNotice(
                                                 AppNoticeVisuals("刷新失败，请检查网络后重试", tone = NoticeTone.Warning),
                                             )
                                         CampusCalendarStore.RefreshResult.Skipped -> Unit

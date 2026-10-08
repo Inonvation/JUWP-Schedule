@@ -16,6 +16,7 @@ import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -33,7 +34,7 @@ internal fun showNotice(
     message: String,
     tone: NoticeTone = NoticeTone.Warning,
 ) {
-    scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+    scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
 }
 
 /**

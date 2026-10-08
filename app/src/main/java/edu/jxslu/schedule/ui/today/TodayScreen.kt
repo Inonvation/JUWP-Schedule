@@ -94,6 +94,7 @@ import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
 import edu.jxslu.schedule.domain.quickScanTargetOf
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
 import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
@@ -269,7 +270,7 @@ fun TodayScreen(
     val scope = rememberCoroutineScope()
     val showShortcutError: (String, String?) -> Unit = { message, itemId ->
         scope.launch {
-            val result = snackbar.showSnackbar(
+            val result = snackbar.showNotice(
                 message,
                 actionLabel = "去设置",
                 duration = SnackbarDuration.Long,
@@ -291,7 +292,7 @@ fun TodayScreen(
     LaunchedEffect(waterViewModel) {
         waterViewModel?.events?.collect { event ->
             when (event) {
-                is WaterEvent.Notice -> snackbar.showSnackbar(
+                is WaterEvent.Notice -> snackbar.showNotice(
                     AppNoticeVisuals(event.text, tone = event.tone),
                 )
             }
@@ -301,7 +302,7 @@ fun TodayScreen(
     // 单条结果提示（钉桌面失败等）：与快捷方式拉起失败共用同一条 Snackbar 队列，
     // 后到的消息自动排队，不会互相顶掉
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
-        scope.launch { snackbar.showSnackbar(AppNoticeVisuals(message, tone = tone)) }
+        scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
     // ── 顶栏「+ → 扫一扫 / 付款码」（DESIGN §3.3，2026-10-02）──
@@ -371,7 +372,7 @@ fun TodayScreen(
     val undoable by viewModel.undoable.collectAsStateWithLifecycle()
     LaunchedEffect(undoable) {
         undoable?.let { m ->
-            val result = snackbar.showSnackbar(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
+            val result = snackbar.showNotice(m.text, actionLabel = "撤销", duration = SnackbarDuration.Short)
             if (result == SnackbarResult.ActionPerformed) m.undo()
             viewModel.consumeUndoable()
         }

@@ -61,6 +61,7 @@ import edu.jxslu.schedule.ui.common.PermissionRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.widget.CampusCardWidgetReceiver
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.QiekjWaterWidgetReceiver
@@ -145,7 +146,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
     // 添加失败（桌面不支持应用内添加）的提示出口，走全 App 统一卡片
     val showNotice: (String) -> Unit = { message ->
         scope.launch {
-            snackbar.showSnackbar(AppNoticeVisuals(message, tone = NoticeTone.Warning))
+            snackbar.showNotice(AppNoticeVisuals(message, tone = NoticeTone.Warning))
         }
     }
 
