@@ -56,6 +56,14 @@ data class BalanceData(
         get() = tokenCoin?.toDoubleOrNull()?.let { "%.2f".format(it / 100.0) } ?: "-"
 
     val pointsText: String get() = integral ?: "-"
+
+    /**
+     * 积分折算的可抵金额（元）——**服务端 `integralAmount` 直给**，不在本地算比例。
+     * 语义出处：社区饮水脚本（3ryng1um/qiekj）注释「integralAmount是积分可抵的价格」。
+     * 舍入到分后为 0.00 / 解析失败回 null，调用方隐藏后缀（不显示「约可抵扣 ¥0.00」）。
+     */
+    val pointsDeductText: String?
+        get() = integralAmount?.toDoubleOrNull()?.takeIf { it >= 0.005 }?.let { "%.2f".format(it) }
 }
 
 // ── 设备 ──

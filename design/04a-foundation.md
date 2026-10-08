@@ -692,6 +692,11 @@ promotionList[].promotionType / discountAmount / subsidyAmount
   不计入花费。
 - **订单详情弹窗必须展示账单构成**（原价 / 小票支付 / 积分抵扣 / 其他优惠 / 现金支付 /
   本次花费）；只展示一个孤零零的「实付 ¥0.00」视同信息缺失，且方向错误。
+- **余额接口的 `integralAmount` 是积分可抵金额**（2026-10-08 接入展示）：`user/balance`
+  的 `integralAmount`（元）即「积分折算后可抵扣的价格」，今日页开水面板的
+  「积分 X · 约可抵扣 ¥Y」直接用它（`BalanceData.pointsDeductText`），**不在本地算比例**。
+  语义由社区饮水脚本（3ryng1um/qiekj）注释交叉确认——我们自己的 debug 落盘只覆盖
+  开水五端点，没有余额样本。为 0 / 解析失败时不显示后缀。
 - 本地快照同步存 `realPrice` / `payTypeName` / `tokenCoinDiscount`（可空，默认 null 兼容旧快照）。
 
 **UI 接入**

@@ -17,6 +17,7 @@ import edu.jxslu.schedule.domain.calculateActualCost
 import kotlinx.serialization.builtins.ListSerializer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -105,6 +106,32 @@ class QiekjModelsTest {
         val balance = BalanceData()
         assertEquals("-", balance.ticketText)
         assertEquals("-", balance.pointsText)
+        assertNull(balance.pointsDeductText)
+    }
+
+    @Test
+    fun balanceData_积分折算金额统一到两位小数() {
+        // integralAmount 是服务端直给的「积分可抵价格」（元），样本形态不可控：
+        // 裸数字、整数串、多位小数都归一到两位
+        assertEquals("3.09", BalanceData(integralAmount = "3.09").pointsDeductText)
+        assertEquals("5.00", BalanceData(integralAmount = "5").pointsDeductText)
+        assertEquals("1.25", BalanceData(integralAmount = "1.250000").pointsDeductText)
+        // 裸数字（非字符串）走 LenientStringSerializer，与其余字段同一套容错
+        val balance = QiekjJson.json.decodeFromString<ApiEnvelope<BalanceData>>(
+            """{"code":0,"data":{"integralAmount":5.0}}""",
+        ).requireData()
+        assertEquals("5.00", balance.pointsDeductText)
+    }
+
+    @Test
+    fun balanceData_积分折算为0或取不到时不显示() {
+        // 舍入到分后为 0.00 的显示出来只是噪音（「约可抵扣 ¥0.00」）；
+        // 解析失败也不能把脏串放进 UI（别显示「¥abc」）
+        assertNull(BalanceData(integralAmount = "0").pointsDeductText)
+        assertNull(BalanceData(integralAmount = "0.00").pointsDeductText)
+        assertNull(BalanceData(integralAmount = "0.004").pointsDeductText)
+        assertNull(BalanceData(integralAmount = "").pointsDeductText)
+        assertNull(BalanceData(integralAmount = "abc").pointsDeductText)
     }
 
     // ── 会话状态与使用量（2026-10-05 实测字段） ──

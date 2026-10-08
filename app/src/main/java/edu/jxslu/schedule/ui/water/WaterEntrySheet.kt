@@ -38,7 +38,8 @@ import java.math.RoundingMode
 
 /**
  * 今日页点余额弹出的开水操作面板（DESIGN §3.3，2026-09-23 起）：
- * 小票余额 + 积分 + 开水按钮 + 流程态（进度/结算/失败详情）+ 积分抵扣开关，
+ * 小票余额 + 积分（追「约可抵扣」折算）+ 开水按钮 + 流程态（进度/结算/失败详情）+
+ * 积分抵扣开关（附「确保积分充足」提醒）+ 底部常驻在线说明（2026-10-08 起），
  * 与开水页共享同一份 [WaterViewModel]——弹窗内发起的解锁流程两页状态一致，
  * 弹窗关闭不取消流程（副行给简报，重开弹窗看完整进度）。
  *
@@ -75,8 +76,14 @@ fun WaterEntrySheet(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
+                // 积分行追「约可抵扣 ¥X」（2026-10-08 用户要求）：integralAmount 是服务端
+                // 直给的折算金额（见 BalanceData.pointsDeductText），别在本地算比例；
+                // 取不到或折算为 0 时不显示后缀
                 Text(
-                    text = "积分 ${balance?.pointsText ?: "-"}",
+                    text = buildString {
+                        append("积分 ${balance?.pointsText ?: "-"}")
+                        balance?.pointsDeductText?.let { append(" · 约可抵扣 ¥$it") }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
@@ -136,6 +143,14 @@ fun WaterEntrySheet(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
+            // 设备在线状态判不了（2026-10-05 实测，见 .agents/rules/life-power.md
+            // 「设备在线检测」节）——2026-10-08 用户要求把这一点写给用户：
+            // App 只是开水接口的入口，失败时别先怀疑 App，先看设备是否通电、靠近
+            Text(
+                "软件无法识别设备是否在线，仅提供开水接口，请确保靠近设备且在线",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
         }
     }
 
@@ -162,6 +177,13 @@ private fun SheetFlowStatus(
                 Text("使用积分抵扣", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "关闭后开水不消耗积分",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+                // 2026-10-08 用户要求：「确保积分充足」——积分充足才会真正抵扣；
+                // 积分不足开水照常可用，只是不抵扣积分（用户订正，别写成「会失败」）
+                Text(
+                    "确保积分充足",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
