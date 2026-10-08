@@ -340,6 +340,68 @@
 - `autoNavPending` 是「本轮跳转在途」的闸门：用户在途期间手动发导航（底部按钮/刷新）
   会清掉它，在途的那一跳据此作废（回调里先判 `autoNavPending`）。
 
+## 电脑版预览：教务页的 viewport 覆盖（2026-10-08，DESIGN §4.4.3）
+
+- **挤压的根因是页面自己的 meta**，不是 WebView 配置漏了：教务业务页都带
+  `width=device-width, initial-scale=1.0`，而 `useWideViewPort = true` 会尊重它 →
+  布局宽 = 设备宽（约 411 CSS px）。`initial-scale=1` 同时把最小缩放钳在 1.0（只能放大）。
+  登录页没有 meta，所以它一直是 980 桌面宽度 + 缩放到屏幕——**电脑版就是让业务页跟它同口径**。
+- 三段脚本 + 判据收口在 `ui/jwvw/JwWebFit.kt`（纯 Kotlin，可 JVM 测）：
+  `DESKTOP_JS`（覆盖）/ `DESKTOP_REVERT_JS`（撤销）/ `SCHEDULE_FIT_JS` + `LOGIN_FIT_JS`（既有，
+  从 `JwImportScreen` 原样搬入）；`fitScript(url, desktop)` 是**唯一判据入口**，
+  别在别处再写一份「哪些页要覆盖」。
+- **红线一：覆盖必须整串替换 content**（存原文到 `data-juw-orig` 再写 `width=980`）。
+  只改 width 会留下 `initial-scale=1` / `user-scalable=no` → 不能缩小 / 不能双指放大。
+- **红线二：登录 / SSO 页（`/cas/login`、`Logon.do`、`/sso.jsp`）不覆盖**。它们本来就没有
+  meta（已是 980 口径），而自动填表（`JwAutoLogin`）与整条会话链挂在这几页的 DOM 上。
+- 幂等判据**看 content 不看标记**：`onPageCommitVisible` 与就绪路径两轮都注入，第一轮可能
+  跑在页面自己的 meta 之前（那时我们新建的 meta 会被页面后到的盖过），按标记早退就补不上了。
+- **切换不重载页面**：实测改 meta viewport 会触发 Blink 重新布局（模拟器实测 `iw=412 → 980`），
+  所以顶栏开关是当场重注入——重载只会白等一次网络，还会把选课中心 iframe 里的列表与筛选状态清掉。
+- 选课中心是「壳页 + `width="100%"` 的 iframe」，iframe 内的 meta 不参与布局 → 父级变宽它就跟着变，
+  **不要**去给 iframe 单独注入。
+- 偏好 `jw_desktop_mode`（默认开，独立单流，见 `DisplayPrefsStore.jwDesktopMode`）。
+  关掉时行为必须与引入电脑版之前逐字一致——`JwWebFitTest` 有回归闸钉住。
+- 验证靠 `viewport probe`（`JwImportScreen` 每次 `onPageFinished` 都打）：业务页 `iw` 应 ≈980，
+  **CAS 登录页应保持 ≈412**（未被覆盖）。2026-10-08 模拟器端到端已验证这一组数字。
+  ⚠️ **探针是 timing 敏感的**：它在 `onPageFinished` 里跑，可能早于"就绪路径"的第二次注入，
+  于是会打出一帧的旧宽度（实测偶发 412）。要判"最终生效没生效"，看**渲染结果**或页面自己
+  在 load 之后读的 `innerWidth`，别只信这一行。
+
+## 教务窗口的返回语义（2026-10-08，DESIGN §4.4.4）
+
+- 用户报「有时候按返回没有用」。根因是历史里有**退过去看不出变化**的条目，不是返回键坏了：
+  ① 重定向链 / 同址重载 / `location.href` 指回自己留下的**同址条目**；② App 自己走过的
+  **CAS / SSO / 教务登录页**。
+- 口径：**退到最近一个"有意义的业务页"，没有就关窗口**。判据 `JwWebBack.backDelta`（纯函数，
+  跳过同址 / 同址不同 fragment / 认证链 / `about:blank`，跳无可跳返回 null → 关窗口）。
+  **系统返回（手势 / 三键）**走 `backOrClose()`；**顶栏左上角箭头是直接退出窗口**（`onBack()`）
+  ——两边语义分开，别再把它们并成一个动作；**也不要再引入 `canGoBack` 直接 `goBack()`**
+  ——它只能回答"能不能退"，回答不了"退了有没有意义"。
+- 注意 `Logon.do`（教务独立登录）、`/sso.jsp`（预热入口）、CAS 域都算认证链，别只判 `/cas/login`。
+
+## 「内容为空」探针的 iframe 例外（2026-10-08）
+
+- `PAGE_CONTENT_PROBE_JS` 只量顶层文档的文字与元素数；**选课中心是「壳页 + 三个 iframe」**，
+  内容全在子文档里 → 旧口径必判空，用户在选课中心永远看到「页面已加载但内容为空，可点重试」。
+  现在**有 iframe 一律不算空**（返回 999）。探针是白屏排查的启发式，不是"内容存在"的证明，
+  宁可漏报不可误报——要改这条判据时先想清楚这个前提。
+
+## 教务弹层（layui layer）的两条纪律（2026-10-08）
+
+- **弹层宽度必须收口**（用户报「选课结果等弹窗显示不全」）。根因在教务自己的
+  `assets_newL/js/qzDialog.js`：弹层尺寸是硬编码像素（`选课结果` = `area: ['1500px','720px']`，
+  见 `scripts/out/xsxk_c_iframe_selectBottom_*.html` 的 `xkrz()`），定位却是
+  `left = (视口宽 - 弹窗宽) / 2` → 视口 980 时 left = **-260px**（实测
+  `layer0=-260,451 1500x720 inlineLeft=-260px winW=980`），左边够不着、右边溢出，两头被切。
+  收口见 `JwWebFit.LAYER_FIT_CSS`：`max-width: calc(100vw - 8px)`（max-width 恒定胜过 layui 的
+  行内 width）+ `left/right:0 + margin:auto` 重新居中，**不动 top**。改这条时注意：
+  弹层样式随电脑版开关一起注入/撤销（关掉电脑版要逐字还原）。
+- **返回键先关弹层**（用户报「按返回不会关闭弹窗，实则是窗口后的界面已经返回成功了」）。
+  `backOrClose()` 先注入 `JwWebFit.CLOSE_TOP_LAYER_JS` 点弹层自己的关闭按钮
+  （`.layui-layer-close`，与手点同一入口），返回 `1` = 关掉了 → 这一下返回就用掉，**别顺带退页**；
+  没有弹层才走 `JwWebBack` 的退页 / 关窗口。实测：弹层开着按返回 = 关弹层 + 0 次导航。
+
 ## 教学日历 → 开学日（2026-10-07，DESIGN §4.42）
 
 - 数据源 `/jsxsd/jxzl/jxzl_query?xnxq01id=<学期>`（**学期参数真实生效**；不带参按教务

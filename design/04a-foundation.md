@@ -309,6 +309,89 @@ SSO 落点 500；关闭即恢复。`JwVpnDetector` 在失败路径探测 `TRANSP
 - 导入学期会写进目标课表（`importParsedCourses(..., term)` → `Timetable.term`，Room v14），
   成为课程详情查教材的钥匙（§4.31）；JSON 导入用文件顶层 `term` 同样写入。
 
+#### 4.4.3 电脑版预览：教务页按桌面宽度排版（2026-10-08）
+
+用户口径：「教务这些信息在手机上都被挤压到一块了，特别是选课里的教务 web 页；
+要能按电脑版的形式预览，也要支持放大缩小。」请假 / 宿舍报修（§3.15 的 `XgFormScreen`，
+另一个窗口）手机端本来就正常，**不动**。
+
+**根因**（不是"WebView 配置漏了"，是页面自己声明了移动视口）：教务业务页都带
+`<meta name="viewport" content="width=device-width, initial-scale=1.0">`（实测快照
+`scripts/out/jw_xs_main.html`、`xsxk_c_new_xsxkzx_*.html`、`xsxk_c_iframe_selectTable_*.html`），
+而 `configureForJw` 的 `useWideViewPort = true` **会尊重**它 → 布局宽度 = 设备宽（约 411 CSS px），
+桌面表格被硬塞进 411px。同时 `initial-scale=1` 把最小缩放钳在 1.0 → **只能放大不能缩小**，
+这就是"不支持放大缩小"的另一半。反过来，**登录页（`/jsxsd/`、`Logon.do`）没有 meta viewport**，
+WebView 对它退默认 980px 桌面宽度 + `loadWithOverviewMode` 缩放到屏幕——教务导入窗口里
+"唯一不挤压"的页面恰恰就是它。所以电脑版 = 让业务页跟登录页同一口径。
+
+**实现**：`ui/jwvw/JwWebFit.kt`（纯 Kotlin，不 import android.\* → JVM 可测）+ 窗口顶栏开关。
+
+| 件 | 口径 |
+|----|------|
+| `JwWebFit.DESKTOP_JS` | 把页面 `<meta name=viewport>` 的原 content 存进 `data-juw-orig`，**整串换成** `width=980`；页面没有 meta 就新建（标 `data-juw-created`）。末尾 `void documentElement.offsetWidth` 触一次 reflow |
+| 为什么整串替换 | 留着 `initial-scale=1` 就缩不小、留着 `user-scalable=no`（部分页有）就放不大——宽度与缩放两件事都由这一个 content 决定 |
+| 为什么 980 | 桌面浏览器默认视口宽，也正是 WebView「无 meta 时」用的值（Chromium《Web Page Layout》：No viewport tag → 980 + Fit on Screen）；单一常量 `DESKTOP_WIDTH_PX` |
+| 幂等判据 | **看 content 而不是看标记**：`onPageCommitVisible` 与就绪路径两轮都注入，第一轮可能跑在页面自己的 meta 之前，按标记早退就再也补不上 |
+| `JwWebFit.DESKTOP_REVERT_JS` | 撤销：自己新建的整节点删掉，页面自己那份把 content 还回去 |
+| `JwWebFit.fitScript(url, desktop)` | 唯一判据入口：登录 / SSO 页 → 只给 `LOGIN_FIT_JS`（**绝不覆盖**，它本来就是 980 口径，而自动填表与会话链挂在这几页的 DOM 上）；课表页 → 课表适配 + 覆盖；其余（主页 / 选课中心 / 成绩 / 评教平台）→ 覆盖；`desktop=false` 时与引入前逐字一致 |
+| 开关 | 窗口顶栏 `JwDesktopModeChip`（文字胶囊，开=「电脑版」/ 关=「手机版」，48dp 命中区），偏好 `jw_desktop_mode` **默认开**、独立单流（§3.3 通用设置不加入口——效果就在眼前） |
+| 切换语义 | **当场重注入、不重载页面**：实测改 meta viewport 会触发 Blink 重新布局（`iw=412 → 980`），重载只会白等一次网络、还会把选课中心 iframe 里的列表与筛选状态清掉 |
+
+**选课中心不用单独处理**：它是壳页 + 三个 `width="100%"` 的 iframe（`scripts/out/xsxk_c_new_xsxkzx_*.html`），
+iframe 内的 meta 不参与布局 → 父级视口变 980，iframe 内容自然跟着变宽。
+
+**验证**（2026-10-08，模拟器端到端：本地 fixture 复刻真实教务页快照 + `iptables` 把 80/8080
+指到本机，不动账号、不走学校网络）：选课中心 `viewport probe iw=980`（关掉后 `iw=412`）、
+主页 / 理论课表 / 实验课表同样 980、**CAS 登录页保持 417（未被覆盖）**、
+顶栏开关当场来回切换（不重载、选课页状态不丢）、偏好跨窗口重启保持、一键导入仍解析出 45 课次。
+真机点验项见 AGENTS.md「待真机点验」表。
+
+**两条红线**：① 覆盖必须整串替换 content（拆开改宽度会丢缩放）；② 登录 / SSO 页不覆盖
+（`fitScript` 单点判据，别在别处另写一份）。
+
+#### 4.4.4 教务窗口的返回语义与「内容为空」探针（2026-10-08，电脑版上线的同批修复）
+
+**返回键**（用户报「有时候按返回没有用」）：不是返回键坏了，是历史里混着**退过去看不出变化**的条目——
+① 重定向链 / 同址重载 / `location.href` 指回自己留下的**同址条目**（退过去页面一模一样）；
+② App 自己走过的 **CAS / SSO / 教务登录页**（退到登录页对用户毫无意义，要重登有顶栏刷新与
+错误浮层的重试）。所以口径改成「**退到最近一个"有意义的业务页"，没有就关窗口**」：
+
+- 判据 `JwWebBack.backDelta(entries, currentIndex)` 是纯函数（跳过同址条目、fragment 不同的
+  同址条目、认证链条目、`about:blank`；跳无可跳返回 null = 关窗口），`WebBackForwardList`
+  只是薄适配。**两边语义是分开的**（用户口径 2026-10-08）：
+  **系统返回（手势 / 三键）= 先关页面弹层 → 逐页回退 → 退无可退才关窗口**（`backOrClose()`）；
+  **顶栏左上角箭头 = 直接退出窗口**（`onBack()`）——它管「离开这个窗口」，想一步退出的人有明确出口，
+  想回上一页的人用系统返回，两边不打架。
+- `canGoBack` 状态随之删掉——它只能回答"能不能退"，回答不了"退了有没有意义"。
+
+**「页面已加载但内容为空」的假告警**（用户在同一张截图上看到的那条）：`PAGE_CONTENT_PROBE_JS`
+只量顶层文档的文字与元素数，而**选课中心是「壳页 + 三个 iframe」**，内容全在子文档里 →
+旧口径必判空，用户在选课中心永远挂着一条「内容为空，可点重试」。现在**有 iframe 一律不算空**
+（探针是白屏排查的启发式，不是"内容存在"的证明，宁可漏报不可误报）。
+
+**教务弹层被切**（用户报「选课结果等弹窗显示不全」，2026-10-08 实测复现）：根因在教务自己的
+`assets_newL/js/qzDialog.js`——弹层尺寸**硬编码像素**（`选课结果` = `area: ['1500px','720px']`，
+见 `scripts/out/xsxk_c_iframe_selectBottom_*.html` 的 `xkrz()`），定位却是
+`left = (视口宽 - 弹窗宽) / 2`：视口 980 时算出 **-260px**（实测
+`layer0=-260,451 1500x720 inlineLeft=-260px winW=980`），左边 260px 跑到屏幕外、右边又溢出
+260px，两头都被切；手机版（412）更糟（left=-544）。收口在 [JwWebFit.LAYER_FIT_CSS]：
+`max-width: calc(100vw - 8px)` 压过 layui 写的行内 `width`（CSS 里 max-width 恒定胜过 width），
+`left/right: 0 + margin: auto` 重新居中，**不动 top**、不碰弹层内部结构；实测修后
+`layer0=4,451 972x720`（整张表 7 列全在屏内）。样式由电脑版脚本注入、撤销脚本移除。
+
+**返回键先关弹层**（用户报「按返回不会关闭弹窗，实则是窗口后的界面已经返回成功了」）：
+教务弹层是页面里的 DOM 覆盖层，返回直接退页时用户看到的就是"弹窗没关、背后却动了"。
+现在 `backOrClose()` 先注入 `JwWebFit.CLOSE_TOP_LAYER_JS` 点弹层自己的关闭按钮
+（`.layui-layer-close`，与用户手点同一入口），**关掉了就到此为止**；页面上没弹层才走退页 / 关窗口。
+实测：弹层开着按返回 = 弹层关闭 + **0 次导航**；再按返回才退到教务主页。
+
+**已知未修（用户未报，故不动）**：选课中心壳页 `.select-bottom{height:calc(100% - 477px)}` 是教务
+自己的 CSS，它假设视口高度≈内容高度；电脑版下视口 980×1622（比手机高 2.4 倍），下半区被撑到
+1145px 而列表只有约 600px，于是屏幕下方留一片空白（实测 `select-bottom=980x1145`、
+`[selectBottom] bodyScrollH≈600`）。**桌面浏览器开一个 980×1622 的窗口是同样效果**，不是渲染
+失败；要填满就得改这个壳页的高度分配（下半区贴合内容 + 上面网格吸收剩余高度），属观感取舍，
+用户没提就不动。
+
 ### 4.5 胖乖 API（源：light-life）
 
 Base：`https://userapi.qiekj.com/`  

@@ -944,6 +944,22 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_AI_SUPPORTS_IMAGE] ?: false
     }
 
+    /**
+     * 教务 WebView 的「电脑版预览」开关（DESIGN §4.4，2026-10-08）。全局项，**默认开**。
+     *
+     * 开 = 教务业务页的 viewport 换成桌面宽度（[edu.jxslu.schedule.ui.jwvw.JwWebFit.DESKTOP_JS]，
+     * 980px + 缩放到屏幕 + 双指可放大缩小）；关 = 维持页面自带的 `width=device-width`
+     * （今天的挤压观感）。**登录 / SSO 页不受它影响**——那几页本来就没有 viewport meta，
+     * 判据见 `JwWebFit.fitScript`。
+     *
+     * 默认开的理由：教务是桌面设计的系统，挤压是默认观感里的缺陷而不是选择；
+     * 不想要的用户在窗口顶栏点一下就能切回（选择落盘，重开窗口照旧）。
+     * 独立单流（`baseDisplayPrefs` 的 combine 已满员，口径同 [strongReminderVibration]）。
+     */
+    val jwDesktopMode: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_JW_DESKTOP_MODE] ?: true
+    }
+
     /** 共享单车免费时长提醒提前量（分钟）。读路径吸附 1~5。 */
     val ebikeFreeLeadMinutes: Flow<Int> = context.displayDataStore.data.map { p ->
         EbikeFreeRide.coerceLead(p[KEY_EBIKE_FREE_LEAD] ?: EbikeFreeRide.DEFAULT_LEAD_MINUTES)
@@ -1424,6 +1440,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 启动自动检查更新开关（语义见 [autoUpdateCheckEnabled]）。 */
     suspend fun setAutoUpdateCheckEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_AUTO_UPDATE_CHECK_ENABLED] = value }
+    }
+
+    /** 教务 WebView 电脑版预览开关（语义见 [jwDesktopMode]）。 */
+    suspend fun setJwDesktopMode(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_JW_DESKTOP_MODE] = value }
     }
 
     /** AI 调课服务地址（DESIGN §4.39）。存 trim 后的原文，允许空串（= 用户清空待重填）。 */
@@ -1925,6 +1946,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_QUIET_HOURS_JSON = stringPreferencesKey("quiet_hours_json")
         val KEY_AUTO_UPDATE_CHECK_ENABLED = booleanPreferencesKey("auto_update_check_enabled")
         val KEY_IGNORED_UPDATE_VERSION = stringPreferencesKey("ignored_update_version")
+        /** 教务 WebView 电脑版预览（DESIGN §4.4；语义见 [jwDesktopMode]）。 */
+        val KEY_JW_DESKTOP_MODE = booleanPreferencesKey("jw_desktop_mode")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
 

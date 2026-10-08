@@ -17,9 +17,11 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -56,11 +59,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.jw.ExamScheduleParser
@@ -160,11 +166,19 @@ fun JwImportScreen(
     var autoLoginTried by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
+    /**
+     * 电脑版预览（DESIGN §4.4，2026-10-08）：默认开、顶栏可切、选择落盘。
+     *
+     * 开 = 教务业务页按桌面宽度排版（[JwWebFit.DESKTOP_JS]）；关 = 与引入它之前逐字一致。
+     * **登录 / SSO 页不受影响**（判据在 `JwWebFit.fitScript`：那几页本来就没 viewport meta，
+     * 自动填表与会话链都挂在它们身上）。
+     */
+    val desktopMode by prefs.jwDesktopMode.collectAsStateWithLifecycle(initialValue = true)
+
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableIntStateOf(0) }
     var pageTitle by remember { mutableStateOf("学校统一身份认证") }
     var currentUrl by remember { mutableStateOf(JwUrls.SSO_WARMUP) }
-    var canGoBack by remember { mutableStateOf(false) }
     // 弹窗直接持有解析草稿：courses 之外还要带上页面学期（term）与识别分项供确认弹窗展示
     var importDraft by remember { mutableStateOf<ImportDraft?>(null) }
     /** 弹窗里切换学期后的重爬进行中：期间「导入」禁用、学期行不可点。 */
@@ -250,15 +264,57 @@ fun JwImportScreen(
     // 但真故障时不能无限重试打服务端。
     var autoRetryUsed by remember { mutableStateOf(false) }
 
-    // 与顶栏返回箭头同语义：WebView 能后退时先回退网页，否则才退出导入页。
-    // 根因：系统返回手势默认直接 popBackStack，会把 WebView 的历史连同登录进度一起丢掉，
-    // 和左上角箭头的行为不一致。
-    BackHandler(enabled = canGoBack) { webView?.goBack() }
+    /**
+     * 返回：**先关教务页上的弹层，再退页，退无可退才关窗口**（DESIGN §4.4.4）。
+     *
+     * 三件事各自的根因：
+     * ① 页面弹层（layui layer）是页面里的 DOM 覆盖层，返回直接退页时用户看到的是
+     *    「弹窗没关、背后的页面却动了」——所以先点弹层自己的关闭按钮（与手点同一入口），
+     *    关掉了就到此为止（用户报的正是这条）；
+     * ② 历史里混着重定向留下的**同址条目**与 **CAS/SSO 认证链**，退过去一个长得一模一样、
+     *    一个是登录页，用户看到的就是「按返回没有用」——判据见 [JwWebBack.backDelta]（纯函数、有单测）；
+     * ③ 都没得退就 `onBack()` 关窗口（等于系统默认的退窗语义）。
+     *
+     * **只给系统返回（手势 / 三键）用**（2026-10-08 用户口径）：系统返回手势默认直接 popBackStack，
+     * 会把 WebView 的历史连同登录进度一起丢掉，所以必须接管；而**顶栏左上角那枚箭头改成直接退出窗口**
+     * ——它管"离开这个窗口"，逐页回退交给系统返回（两边语义分开后，想一步退出的人有明确出口，
+     * 想回上一页的人用系统返回，不会互相打架）。
+     */
+    fun backOrClose() {
+        val wv = webView ?: return onBack()
+        wv.evaluateJavascript(JwWebFit.CLOSE_TOP_LAYER_JS) { raw ->
+            // 关掉了一个页面弹层 → 这一下返回就用掉了，别顺带退页
+            if (raw?.trim()?.removeSurrounding("\"") == "1") return@evaluateJavascript
+            val delta = JwWebBack.backDelta(wv.copyBackForwardList())
+            if (delta != null) wv.goBackOrForward(delta) else onBack()
+        }
+    }
+    BackHandler(enabled = webView != null) { backOrClose() }
 
     // 前置登录（DESIGN §4.27，2026-09-28）：本地没有凭据时进窗先问一次。
     // 用户在引导里跳过教务、或从没填过密码的，从此不必先撞一次 CAS 登录页才知道要存。
     LaunchedEffect(Unit) {
         if (savedCas == null && !casLoginDeclined) showCasLoginDialog = true
+    }
+
+    /**
+     * 顶栏切「电脑版 / 手机版」：**当场重注入，不重载页面**。
+     *
+     * 为什么不重载：实测改 viewport meta 会触发重新布局（2026-10-08 模拟器实测
+     * `iw=412 → 980`），重载只会白等一次网络；而选课中心的列表与筛选状态在 iframe 里，
+     * 重载会把它清掉——用户要的恰恰是"看一眼另一种口径再决定"。
+     *
+     * 首次组合不重跑（[lastDesktopMode] 记着初值）：进窗时页面还没开始加载，
+     * 每页的注入由 [applyPageFit] 负责，这里只处理"用户真的切了一下"。
+     */
+    var lastDesktopMode by remember { mutableStateOf(desktopMode) }
+    LaunchedEffect(desktopMode) {
+        if (desktopMode == lastDesktopMode) return@LaunchedEffect
+        lastDesktopMode = desktopMode
+        webView?.evaluateJavascript(
+            if (desktopMode) JwWebFit.DESKTOP_JS else JwWebFit.DESKTOP_REVERT_JS,
+            null,
+        )
     }
 
     /**
@@ -327,7 +383,7 @@ fun JwImportScreen(
     fun tryAutoLoginOnCasPage(view: WebView?, url: String?) {
         if (autoLoginTried) return
         val u = url.orEmpty()
-        if (!JwUrls.isCasHost(u) || !isLoginLikeUrl(u)) return
+        if (!JwUrls.isCasHost(u) || !JwWebFit.isLoginLikeUrl(u)) return
         val cred = savedCas ?: return
         if (!SessionStatus.tryAcquireAutoLogin(System.currentTimeMillis())) return
         autoLoginTried = true
@@ -842,14 +898,27 @@ fun JwImportScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        val wv = webView
-                        if (wv != null && canGoBack) wv.goBack() else onBack()
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    // 左上角箭头 = **直接退出窗口**（用户口径 2026-10-08）：它管"离开这个窗口"，
+                    // 逐页回退 / 先关弹层那套交给系统返回（见 backOrClose），两边语义分开。
+                    IconButton(onClick = { onBack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "退出")
                     }
                 },
                 actions = {
+                    // 电脑版 / 手机版（DESIGN §4.4）：效果就在眼前，所以开关放在这里而不是设置页。
+                    // 顶栏空间有限，用纯文字 chip（骑行页使用方式同款形态）而不是再加一枚图标。
+                    JwDesktopModeChip(
+                        desktop = desktopMode,
+                        onToggle = {
+                            val next = !desktopMode
+                            scope.launch {
+                                prefs.setJwDesktopMode(next)
+                                snackbar.showSnackbar(
+                                    if (next) "已切换为电脑版；双指可放大缩小" else "已切换为手机版",
+                                )
+                            }
+                        },
+                    )
                     IconButton(
                         onClick = {
                             // 先取出错误态里的重试目标，再改状态（顺序反了就永远读到 Loading）
@@ -912,7 +981,6 @@ fun JwImportScreen(
                                         favicon: Bitmap?,
                                     ) {
                                         progress = 0
-                                        canGoBack = view?.canGoBack() ?: false
                                         currentUrl = url ?: currentUrl
                                         statusNote = "加载中…"
                                         // 这里**不要**清 lastFailedUrl。实测回调顺序为
@@ -926,14 +994,13 @@ fun JwImportScreen(
                                     /** 首屏内容可见就先注入适配样式；等 onPageFinished 在图片多的页面上太晚。 */
                                     override fun onPageCommitVisible(view: WebView?, url: String?) {
                                         Log.d(TAG, "onPageCommitVisible ${view?.width}x${view?.height} ${JwTeachingEval.redactForLog(url)}")
-                                        applyPageFit(view, url)
+                                        applyPageFit(view, url, desktopMode)
                                         // 内容已可见 = 这一页真的到了（不被挂住的子资源拖住）——
                                         // 登录落地在教务主页就趁这里自动去目标页，见 [startAutoNavOnLanding]
                                         startAutoNavOnLanding(view, url)
                                     }
 
                                     override fun onPageFinished(view: WebView?, url: String?) {
-                                        canGoBack = view?.canGoBack() ?: false
                                         currentUrl = url ?: currentUrl
                                         pageTitle = view?.title?.takeIf { it.isNotBlank() } ?: pageTitle
                                         Log.d(TAG, "onPageFinished ${view?.width}x${view?.height} ${JwTeachingEval.redactForLog(url)}")
@@ -1045,7 +1112,7 @@ fun JwImportScreen(
                                             if (page != JwSchedulePage.None) {
                                                 autoNavPending = false
                                                 pageState = PageState.Ready
-                                                applyPageFit(view, u)
+                                                applyPageFit(view, u, desktopMode)
                                                 // 一键导入在等这一页：就绪即放行（DOM 已完整，可以注入抽取）
                                                 releaseLoadGate(u)
                                                 // 理论课表就绪 → 自动跑一次一键导入（DESIGN §4.4.2），
@@ -1063,12 +1130,12 @@ fun JwImportScreen(
                                             if (JwUrls.isScoreQueryUrl(u)) {
                                                 autoNavPending = false
                                                 pageState = PageState.Ready
-                                                applyPageFit(view, u)
+                                                applyPageFit(view, u, desktopMode)
                                                 releaseLoadGate(u)
                                                 autoImportOnScoreReady(u)
                                                 return@checkSessionLost
                                             }
-                                            applyPageFit(view, u)
+                                            applyPageFit(view, u, desktopMode)
                                             pageState = PageState.Ready
                                             releaseLoadGate(u)
                                             // 平台落地 = 评教这一跳完成：autoNavPending 归零（否则它一直
@@ -1259,7 +1326,7 @@ fun JwImportScreen(
             val pageKind = JwUrls.schedulePageKind(currentUrl)
             // 一键导入的可用前置：已在教务域、且不在登录页上。它自己会打开两张课表页，
             // 所以不再要求「当前页是课表页」；但 CAS 域或教务登录页上按下去只会白跳两次。
-            val canOneClick = JwUrls.isJwHost(currentUrl) && !isLoginLikeUrl(currentUrl)
+            val canOneClick = JwUrls.isJwHost(currentUrl) && !JwWebFit.isLoginLikeUrl(currentUrl)
             // 评教模式底部没有任何按钮（DESIGN §4.44）：整块不渲染——只留空分支的话，
             // Surface 的高程条与内边距会以一条空带留在页底
             if (mode != JwImportMode.TeachingEval) {
@@ -1748,6 +1815,48 @@ private fun ErrorOverlay(
     }
 }
 
+/**
+ * 电脑版 / 手机版开关（DESIGN §4.4）。
+ *
+ * 形态照骑行页「使用方式」chip：纯文字胶囊、**不用图标**（这是两态开关不是动作，
+ * 当前态直接写在胶囊上；也免了猜 HugeIcons 名）。开 = 主色底「电脑版」，
+ * 关 = 中性底「手机版」，点一下切到另一态。
+ *
+ * 命中区 48dp（胶囊本体约 32dp 高，外面套一层 [heightIn] + 点击），
+ * 与右侧刷新 IconButton 的触摸高度对齐。
+ */
+@Composable
+private fun JwDesktopModeChip(desktop: Boolean, onToggle: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(
+                    if (desktop) scheme.primaryContainer else scheme.onSurface.copy(alpha = 0.07f),
+                )
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+        ) {
+            Text(
+                text = if (desktop) "电脑版" else "手机版",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (desktop) {
+                    scheme.onPrimaryContainer
+                } else {
+                    scheme.onSurface.copy(alpha = 0.7f)
+                },
+            )
+        }
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 private fun configureForJw(webView: WebView) {
     // 根因（Redmi K70 / MIUI 实测）：硬件加速下课表页渲染完成后整面变白——
@@ -1769,9 +1878,14 @@ private fun configureForJw(webView: WebView) {
         //
         // 改成允许页面用自身 viewport（无 meta 时退化为 980px），再由 WebView 整体缩放到屏幕：
         // 先保证「看得全」，细节交给双指放大。课表页/主页自带 width=device-width，同样受益。
+        //
+        // 2026-10-08 起业务页的 viewport 由 [JwWebFit.DESKTOP_JS] 覆盖成桌面宽度（电脑版预览，
+        // 默认开、顶栏可切）——这两项是它的底座：有它们，"width=980" 才会被缩放到屏幕。
         useWideViewPort = true
         loadWithOverviewMode = true
 
+        // 双指缩放的开关。注意：真正卡住"缩小"的是页面 meta 里的 initial-scale=1
+        // （最小缩放被钳在 1.0），光开这两项不够——由电脑版覆盖脚本整串换掉 content 解决。
         setSupportZoom(true)
         builtInZoomControls = true
         displayZoomControls = false
@@ -1787,75 +1901,14 @@ private fun configureForJw(webView: WebView) {
 }
 
 /**
- * 课表页适配：让宽表格能横向滚动，并按屏幕调紧凑度与可读性。
+ * 按页面类型注入适配样式（课表 / 登录表单 / 电脑版视口）；幂等，重复调用无副作用。
  *
- * **不再改写 viewport meta**。课表页自带 `width=device-width`，改写它没有收益，
- * 反而会和 WebView 的 useWideViewPort / loadWithOverviewMode 两套缩放机制互相打架
- * （旧实现既改 meta 又关掉 useWideViewPort，方向是矛盾的）。
- *
- * 尺寸基准（用户拍板）：格子 min-width 110→96px、表格总宽 900→730px 同步下调——
- * 表格越窄，overview 缩放越接近 1:1，字在屏上就越大；同时教室/时间摘要文字
- * （`.qz-hasCourse-abbrinfo`，理论页为「老师/时间/地点」整段、实验页为地点）
- * 显式放大到 12.5px 并放宽行距，两页共用同一组 class，一并受益。
+ * 判据与三段脚本都在 [JwWebFit]（纯 Kotlin、有单测）；这里只负责"什么时候注"。
+ * [desktop] = 窗口当前的电脑版开关，由调用点从 Compose 状态读出来传进来——
+ * 本函数是文件级私有函数，读不到 Compose 状态。
  */
-private val SCHEDULE_FIT_JS: String = """
-(function(){
-  try{
-    if(document.getElementById('juw-schedule-fit')) return;
-    var css=document.createElement('style'); css.id='juw-schedule-fit';
-    css.textContent=
-      'html,body{overflow-x:auto !important;max-width:none !important;}'+
-      'table.qz-weeklyTable{min-width:730px !important;}'+
-      '#tableDiv,.qz-weeklyTableWrap,.qz-table-wrap{overflow-x:auto !important;}'+
-      'td[name=kbDataTd]{min-width:96px !important;}'+
-      '.qz-hasCourse-detailitem,.qz-hasCourse-abbrinfo{'+
-        'font-size:12.5px !important;line-height:1.5 !important;}';
-    (document.head||document.documentElement).appendChild(css);
-  }catch(e){}
-})()
-""".trimIndent()
-
-/**
- * 登录 / SSO 页适配：把固定宽表单收成页面宽度的百分比并居中。
- *
- * 同样不改写 viewport meta——这些页面没有 meta，正好交给 WebView 的
- * 「按页面宽度渲染 → 缩放到屏幕」来处理整页可见性；这里只补两件事：
- * 固定宽容器给百分比上限、表单控件不撑出屏幕。
- *
- * 注意：只对真正的登录页注入。学生端主页等桌面页不要碰，越改越乱。
- */
-private val LOGIN_FIT_JS: String = """
-(function(){
-  try{
-    if(document.getElementById('juw-login-fit')) return;
-    var css=document.createElement('style'); css.id='juw-login-fit';
-    css.textContent=
-      '.login{height:auto !important;min-height:0 !important;overflow:visible !important;}'+
-      '.form-container,.login-box,.login-container,.layui-form{'+
-        'position:static !important;right:auto !important;top:auto !important;'+
-        'width:92% !important;max-width:560px !important;height:auto !important;'+
-        'overflow:visible !important;margin:28px auto !important;}'+
-      'input,select,textarea{box-sizing:border-box !important;max-width:100% !important;}'+
-      '.layui-input-wrap>input{width:100% !important;}'+
-      'img{max-width:100% !important;height:auto !important;}';
-    (document.head||document.documentElement).appendChild(css);
-  }catch(e){}
-})()
-""".trimIndent()
-
-/** 只有真正的登录/SSO 页才需要表单兜底。 */
-private fun isLoginLikeUrl(url: String): Boolean =
-    "/cas/login" in url || "Logon.do" in url || "/sso.jsp" in url
-
-/** 按页面类型注入适配样式；幂等，重复调用无副作用。 */
-private fun applyPageFit(view: WebView?, url: String?) {
-    val u = url.orEmpty()
-    if (u.isBlank() || u == "about:blank") return
-    val js = when {
-        JwUrls.schedulePageKind(u) != JwSchedulePage.None -> SCHEDULE_FIT_JS
-        isLoginLikeUrl(u) -> LOGIN_FIT_JS
-        else -> return
-    }
+private fun applyPageFit(view: WebView?, url: String?, desktop: Boolean) {
+    val js = JwWebFit.fitScript(url, desktop) ?: return
     view?.evaluateJavascript(js, null)
 }
 
@@ -1885,12 +1938,18 @@ private val VIEWPORT_PROBE_JS: String = """
  * 返回文本长度 + 5 × 关键元素数，正常页面是三位数以上；
  * 小于 20 基本可以断定是空白页（而不是"只是排版乱"），这样可以给出准确的提示，
  * 而不是让用户面对白屏猜发生了什么。
+ *
+ * **有 iframe 的页面一律不算空**（2026-10-08 修）：选课中心是「壳页 + 三个 iframe」，
+ * 真正的内容全在子文档里，顶层文档既没文字也没元素——旧口径必判「内容为空」，
+ * 用户在选课中心就永远挂着一条「页面已加载但内容为空，可点重试」的假告警。
+ * 探针是「白屏排查」用的启发式，不是「内容存在」的证明，宁可漏报不可误报。
  */
 private val PAGE_CONTENT_PROBE_JS: String = """
 (function(){
   try{
     var b=document.body;
     if(!b) return 0;
+    if(b.querySelectorAll('iframe').length>0) return 999;
     var t=(b.innerText||'').replace(/\s+/g,'').length;
     var n=b.querySelectorAll('table,img,input,button,a').length;
     return t + n*5;
