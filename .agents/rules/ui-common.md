@@ -106,15 +106,19 @@
 - **弹窗的进出场动画统一走 `ui/common/DialogWindowFade.kt` 的 `DialogWindowFadeEffect`**
   （2026-10-03）：material3 1.3.0 的 `AlertDialog` 内部没有 compose 侧动画、compose 的
   `DialogWindowTheme` 也没配 `windowAnimationStyle`——弹窗开与关都是瞬间出现 / 抽掉
-  （用户在快趣开锁 / 还车弹窗上报过「突变跳动」）。`DialogWindowFadeEffect()` 放在弹窗
-  内容组合里调一次（`AlertDialog { }` 同级、通常函数体第一行），它把 `DialogWindowFade`
+  （用户在快趣开锁 / 还车弹窗上报过「突变跳动」）。**调用点必须放在弹窗窗口自己的组合里
+  ——即 `AlertDialog` 某个内容槽（如 `text = { }`）的第一行**；它把 `DialogWindowFade`
   样式（`res/values/dialog_motion.xml`：淡入 + 0.86→1 放大 240ms / 淡出 190ms）挂到
   dialog window 上由 WindowManager 播，内容与背后的压暗一起过渡；退场时窗口表面停在
   最后一帧直到播完，不会"内容先没了、窗再抽掉"。**进、出两段都能播的原因**：副作用落在
   首帧 traversal 里（`SideEffect`），而 enter 动画取样式发生在首帧 HAS_DRAWN 之后；
-  content 里的 `LocalView` 就是 `DialogLayout`（实现 `DialogWindowProvider`），
-  `parent` 一层是兼容写法。material3 升到 1.4.0（弹窗自带进出场动画）后，调用点可整体
-  删掉。已接：快趣开锁 / 还车确认弹窗、同页结束计时弹窗。
+  弹窗内容里的 `LocalView` 就是 `DialogLayout`（实现 `DialogWindowProvider`）。
+  **⚠️ 放 `AlertDialog` 调用外面是死代码（2026-10-08 实测）**：那时 `LocalView` 是页面
+  窗口、取不到 dialog window，不会挂上本应用样式——与不调用完全等价（A/B：内容槽内
+  `wanim=0x7f…` 本应用样式；外面 = 框架默认 `0x103030a`，与无调用弹窗一致）。**现存 23 处
+  调用点（13 个文件）全部是外置旧写法、均未生效，待统一挪进内容槽**；新弹窗一律按
+  「内容槽第一行」写。首启「全部跳过」确认弹窗（`OnboardingScreen`）已是正确写法可参照。
+  material3 升到 1.4.0（弹窗自带进出场动画）后，调用点可整体删掉。
 - **锁时长由宿主算好传入，弹窗不做「是否首次」的判断**：
   - 首启的两份声明（用户须知 / 免责声明）：队列只装「没同意过」的那几份
     （`domain/NoticeConsent.pendingNotices`），所以进队列的必然锁满，锁时长直接取
