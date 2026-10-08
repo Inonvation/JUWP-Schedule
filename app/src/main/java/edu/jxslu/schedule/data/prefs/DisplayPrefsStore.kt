@@ -900,6 +900,30 @@ class DisplayPrefsStore(private val context: Context) {
         QuietWindows.decode(p[KEY_QUIET_HOURS_JSON])
     }
 
+    // ---- 启动自动检查更新（DESIGN §3.3，2026-10-08）：开关 + 已忽略的版本号。
+    // 独立单流（combine 已满员，口径同上）；消费方 = 冷启动检查链与关于页开关。
+
+    /**
+     * 启动自动检查更新开关，**默认开**：更新是用户要的事实、检查静默无打扰
+     * （发现新版本才弹窗，且可「忽略此次更新」）；不想让 App 每次冷启动联网
+     * 的用户显式关。关 = 冷启动检查链零网络空跑，手动「检查更新」不受影响。
+     */
+    val autoUpdateCheckEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_AUTO_UPDATE_CHECK_ENABLED] ?: true
+    }
+
+    /**
+     * 「已忽略的版本号」（启动弹窗点「忽略此次更新」写入）。自动检查读到与清单
+     * 版本相等就不再弹；出现更高版本恢复。**手动检查不读它**——关于页点
+     * 「检查更新」永远能弹出。空 = 没有忽略。
+     */
+    suspend fun ignoredUpdateVersion(): String =
+        context.displayDataStore.data.first()[KEY_IGNORED_UPDATE_VERSION].orEmpty()
+
+    suspend fun setIgnoredUpdateVersion(value: String) {
+        context.displayDataStore.edit { p -> p[KEY_IGNORED_UPDATE_VERSION] = value }
+    }
+
     // ---- AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 脱敏 / 隐私确认。
     // API Key **不在 DataStore**——它是账号凭据，走 AiCredentialStore 加密存储。
     // 四条都单独成流，不进 baseDisplayPrefs 合并模型（combine 已满员）。
@@ -1424,6 +1448,11 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_QUIET_HOURS_JSON] = QuietWindows.encode(windows) }
     }
 
+    /** 启动自动检查更新开关（语义见 [autoUpdateCheckEnabled]）。 */
+    suspend fun setAutoUpdateCheckEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_AUTO_UPDATE_CHECK_ENABLED] = value }
+    }
+
     /** AI 调课服务地址（DESIGN §4.39）。存 trim 后的原文，允许空串（= 用户清空待重填）。 */
     suspend fun setAiBaseUrl(value: String) {
         context.displayDataStore.edit { it[KEY_AI_BASE_URL] = value.trim() }
@@ -1921,6 +1950,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_STRONG_REMINDER_VIBRATION = booleanPreferencesKey("strong_reminder_vibration")
         val KEY_QUIET_HOURS_ENABLED = booleanPreferencesKey("quiet_hours_enabled")
         val KEY_QUIET_HOURS_JSON = stringPreferencesKey("quiet_hours_json")
+        val KEY_AUTO_UPDATE_CHECK_ENABLED = booleanPreferencesKey("auto_update_check_enabled")
+        val KEY_IGNORED_UPDATE_VERSION = stringPreferencesKey("ignored_update_version")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
 

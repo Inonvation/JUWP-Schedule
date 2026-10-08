@@ -5,8 +5,12 @@ import android.app.NotificationManager
 import android.content.Context
 import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.data.repo.UpdateCheckClient
+import edu.jxslu.schedule.data.repo.UpdateCheckResult
 import edu.jxslu.schedule.data.session.AutoSyncRules
+import edu.jxslu.schedule.domain.UpdateCheck
 import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
+import edu.jxslu.schedule.ui.me.hub.UpdateAvailableBus
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import edu.jxslu.schedule.ui.reminder.QuietHoursGate
@@ -146,6 +150,31 @@ class JuwApplication : Application() {
         // 与教务自动导入互不相干，独立一条不进 CAS 会话那组
         appScope.launch {
             runCatching { Graph.campusCalendar(this@JuwApplication).refresh() }
+        }
+        // 启动自动检查更新（DESIGN §3.3，2026-10-08）：进程冷启动静默查一次
+        // （无闸门——需求就是每次启动查一次；清单是公开仓库文件，与教务伺服无关），
+        // 发现新版本经 UpdateAvailableBus 交主界面根层弹窗（用户关掉弹窗才消费）。
+        // 开关（默认开）关时零网络空跑；已忽略的版本不弹（手动检查不受影响）；
+        // 已最新 / 失败都静默——与校历同纪律。logcat `JuwApplication` 有每次结论。
+        appScope.launch {
+            runCatching {
+                if (!repo.autoUpdateCheckEnabled.first()) return@runCatching
+                when (val result = UpdateCheckClient().check()) {
+                    is UpdateCheckResult.UpdateAvailable -> {
+                        val latest = result.latest
+                        if (UpdateCheck.shouldAutoPrompt(latest.version, repo.ignoredUpdateVersion())) {
+                            UpdateAvailableBus.publish(latest)
+                            android.util.Log.i("JuwApplication", "update available: ${latest.version}")
+                        } else {
+                            android.util.Log.i("JuwApplication", "update ignored: ${latest.version}")
+                        }
+                    }
+                    is UpdateCheckResult.UpToDate ->
+                        android.util.Log.i("JuwApplication", "update check: up to date (${result.latest.version})")
+                    is UpdateCheckResult.Failed ->
+                        android.util.Log.i("JuwApplication", "update check: failed (network)")
+                }
+            }.onFailure { android.util.Log.w("JuwApplication", "update auto-check failed", it) }
         }
         // 登录失效提醒（DESIGN §3.16 / §4.27）：只在「转停用」那一刻发一条。
         // 会话过期但凭证有效时不打扰用户——那时会自动续登，发通知只会制造噪音。

@@ -99,6 +99,14 @@ object UpdateCheck {
         return false
     }
 
+    /**
+     * 自动检查（冷启动）是否应弹「发现新版本」：忽略过这个版本就不再弹，
+     * 出现更高版本恢复。**手动检查不经过这里**——关于页点「检查更新」永远弹。
+     * 空白视为未忽略（偏好缺省 / 脏值）。
+     */
+    fun shouldAutoPrompt(latestVersion: String, ignoredVersion: String): Boolean =
+        ignoredVersion.isBlank() || latestVersion != ignoredVersion
+
     /** GitHub Releases 直链（tag 与资产名都是发版口径的确定性值，不用查 API）。 */
     fun githubDownloadUrl(manifest: UpdateManifest): String =
         "$DOWNLOAD_BASE/${manifest.version}/${manifest.apkName}"

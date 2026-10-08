@@ -67,6 +67,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
+import edu.jxslu.schedule.ui.me.hub.UpdateAvailableDialogHost
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -784,6 +785,14 @@ internal fun JuwApp(
     // 直到下次打开生活页才迟到弹出；2026-10-07 补齐）。校园卡设置页是独立窗口，
     // 那份宿主在那边的页面里。
     CampusPayResultDialogHost()
+
+    // 「发现新版本」弹窗（DESIGN §3.3，2026-10-08）：冷启动自动检查的结果经
+    // UpdateAvailableBus 落在这里。「同步完成」结果弹窗还没消费时先不弹（防叠窗），
+    // 消费后自动接着弹；用户关掉弹窗（稍后 / 忽略 / 下载）才消费——转屏重建时弹窗还在。
+    // **不挂 onboardingSeen 闸**：引导在顶层时本窗口天然被盖住（独立窗口、不透明）；
+    // 而老用户设备上没有那个键（2026-09-30 才加、只服务新安装），挂上会让他们的
+    // 自动提醒永远不弹。
+    UpdateAvailableDialogHost(enabled = !showSyncOutcome)
 
     // 「我的 → 显示设置」跨 Tab 触发已于 2026-09-20 删除（DESIGN §3.1）：
     // 显示设置唯一入口 = 课表页顶栏眼睛图标，「我的」侧属重复入口，

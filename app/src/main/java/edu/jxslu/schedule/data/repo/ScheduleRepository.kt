@@ -855,6 +855,21 @@ class ScheduleRepository(
     suspend fun setQuietHoursWindows(windows: List<QuietWindow>) =
         prefs.setQuietHoursWindows(windows)
 
+    // ---- 启动自动检查更新（DESIGN §3.3，2026-10-08）：开关 + 已忽略版本号。
+    // 独立单流（combine 已满员，口径同上）。消费方 = 冷启动检查链（first()）
+    // 与关于页开关（collect + setter）。
+
+    /** 启动自动检查更新开关，默认开。关 = 冷启动检查链零网络空跑。 */
+    val autoUpdateCheckEnabled: Flow<Boolean> = prefs.autoUpdateCheckEnabled
+
+    suspend fun setAutoUpdateCheckEnabled(value: Boolean) =
+        prefs.setAutoUpdateCheckEnabled(value)
+
+    /** 「已忽略的版本号」（空 = 没有忽略；**手动检查不读它**）。 */
+    suspend fun ignoredUpdateVersion(): String = prefs.ignoredUpdateVersion()
+
+    suspend fun setIgnoredUpdateVersion(value: String) = prefs.setIgnoredUpdateVersion(value)
+
     // ---- AI 调课（DESIGN §4.39，2026-10-06）----
     // 四条偏好各自单独成流，不进 baseDisplayPrefs（combine 已满员）。
     // API Key 不在 Repository 暴露：它走 AiCredentialStore，只由 AI 页面/配置页直接读。

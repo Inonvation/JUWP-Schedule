@@ -76,6 +76,29 @@ class UpdateCheckTest {
         assertFalse(UpdateCheck.isNewer("2.3.0", "bad"))
     }
 
+    // ---------- 自动检查的忽略过滤（shouldAutoPrompt） ----------
+
+    @Test
+    fun `没忽略过任何版本时自动弹`() {
+        assertTrue(UpdateCheck.shouldAutoPrompt("2.3.0", ""))
+    }
+
+    @Test
+    fun `空白忽略值视为未忽略`() {
+        assertTrue(UpdateCheck.shouldAutoPrompt("2.3.0", "   "))
+    }
+
+    @Test
+    fun `忽略的版本不再自动弹`() {
+        assertFalse(UpdateCheck.shouldAutoPrompt("2.3.0", "2.3.0"))
+    }
+
+    @Test
+    fun `出现不同版本恢复自动弹`() {
+        // 忽略的是旧版本、清单已到更高版本：恢复弹（手动检查本来就不经过这里）
+        assertTrue(UpdateCheck.shouldAutoPrompt("2.4.0", "2.3.0"))
+    }
+
     // ---------- 下载链接 ----------
 
     private val manifest = UpdateCheck.parseManifest(

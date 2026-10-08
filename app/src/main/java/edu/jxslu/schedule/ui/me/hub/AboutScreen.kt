@@ -1,31 +1,22 @@
 package edu.jxslu.schedule.ui.me.hub
 
-import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,9 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -52,20 +41,21 @@ import edu.jxslu.schedule.domain.FirstRunNotices
 import androidx.core.content.FileProvider
 import edu.jxslu.schedule.domain.NoticeConsent
 import edu.jxslu.schedule.domain.RechargeDisclaimer
-import edu.jxslu.schedule.domain.UpdateCheck
 import edu.jxslu.schedule.domain.UpdateManifest
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
-import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.DisclaimerDialog
 import edu.jxslu.schedule.ui.common.LicensesDialog
 import edu.jxslu.schedule.ui.common.NoticeDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.me.MeViewModel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Agreement01
 import me.rerere.hugeicons.stroke.Alert02
@@ -76,20 +66,12 @@ import me.rerere.hugeicons.stroke.Megaphone01
 import me.rerere.hugeicons.stroke.Refresh
 import me.rerere.hugeicons.stroke.Shield01
 import me.rerere.hugeicons.stroke.SoftwareLicense
+import me.rerere.hugeicons.stroke.SystemUpdate01
 
 /** 公开仓库地址（MIT）；「开源仓库」点击后经系统浏览器打开。 */
 private const val REPO_URL = "https://github.com/Inonvation/JUWP-Schedule"
 
-private fun openUrl(context: Context, url: String): String? = try {
-    // 二级页窗口拉起外部应用统一走 startActivityOutsideApp：抑制右推入过渡，
-    // 不然从浏览器回来时本页会凭空重放一次入场动画（devlog 4.26 的「页面跳动」）
-    context.startActivityOutsideApp(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    null
-} catch (_: ActivityNotFoundException) {
-    "没有可打开链接的应用"
-}
-
-/** 我的 → 关于（DESIGN §3.3）：版本 / 检查更新 / 免责声明 / 开源仓库 / 权限设置。 */
+/** 我的 → 关于（DESIGN §3.3）：版本 / 检查更新（手动 + 自动检查开关）/ 免责声明 / 开源仓库 / 权限设置。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(
@@ -112,6 +94,13 @@ fun AboutScreen(
     }.collectAsStateWithLifecycle(initialValue = NoticeConsentRecord(version = 0, atMs = 0L))
     val userNoticeConfirmed =
         NoticeConsent.isConsented(userNoticeConsent.version, FirstRunNotices.VERSION)
+    // 启动自动检查更新（DESIGN §3.3，2026-10-08）：默认开的全局项，独立单流
+    // （baseDisplayPrefs combine 已满员）；首帧阻塞读一次避免先按默认渲染再跳
+    // （口径同 WidgetCalendarHubScreen 的提醒开关）。
+    val repo = remember { Graph.repository(context) }
+    val autoUpdateCheck by remember { repo.autoUpdateCheckEnabled }.collectAsStateWithLifecycle(
+        initialValue = remember { runBlocking { repo.autoUpdateCheckEnabled.first() } },
+    )
     var showDisclaimer by remember { mutableStateOf(false) }
     var showUserNotice by remember { mutableStateOf(false) }
     var showRechargeNotice by remember { mutableStateOf(false) }
@@ -122,10 +111,11 @@ fun AboutScreen(
         }
     }
 
-    // 检查更新（DESIGN §3.3）：仅手动触发——点行才拉仓库镜像 latest.json，无冷启动任务、
-    // 不落盘、不弹通知。行状态机 idle / checking / result；结果里「有更新」保留清单，
-    // 点行直接重开下载弹窗，其余两态展示完即回 idle。网络走 IO 调度器，页面离开随
-    // scope 取消。
+    // 检查更新（DESIGN §3.3）：手动路径——点行才拉仓库镜像 latest.json。行状态机
+    // idle / checking / result；结果里「有更新」保留清单，点行直接重开下载弹窗，
+    // 其余两态展示完即回 idle。网络走 IO 调度器，页面离开随 scope 取消。
+    // （自动路径在冷启动链（JuwApplication）检查、经 UpdateAvailableBus 落主界面
+    //   根层宿主 UpdateAvailableDialogHost；弹窗组件 UpdateAvailableDialog 两处共用。）
     val updateClient = remember { UpdateCheckClient() }
     var updateChecking by remember { mutableStateOf(false) }
     var updateAvailable by remember { mutableStateOf<UpdateManifest?>(null) }
@@ -226,6 +216,15 @@ fun AboutScreen(
                         if (updateAvailable != null) showUpdateDialog = true else checkForUpdate()
                     },
                 )
+                SettingSwitchRow(
+                    title = "自动检查更新",
+                    subtitle = "启动时静默检查新版本；发现更新弹窗提醒，可忽略此版本",
+                    checked = autoUpdateCheck,
+                    onCheckedChange = { value ->
+                        scope.launch { repo.setAutoUpdateCheckEnabled(value) }
+                    },
+                    icon = HugeIcons.SystemUpdate01,
+                )
                 SettingItem(
                     title = "用户须知",
                     subtitle = "非官方 · 数据只存本机 · 第三方接口可能随时失效",
@@ -310,91 +309,27 @@ fun AboutScreen(
     if (showLicenses) {
         LicensesDialog(onDismiss = { showLicenses = false })
     }
-    // 发现新版本：日志正文 + SHA-256（镜像通道的核对凭据）+ 双通道下载。
-    // 检查失败/已是最新不走弹窗，走 Snackbar（见 checkForUpdate）。
+    // 发现新版本：日志正文 + SHA-256（镜像通道的核对凭据）+ 双通道下载 + 忽略此版本。
+    // 检查失败/已是最新不走弹窗，走 Snackbar（见 checkForUpdate）；弹窗内的反馈
+    // （已复制 / 打不开链接）由弹窗自己出——Snackbar 穿不透弹窗窗口。
     if (showUpdateDialog) {
         updateAvailable?.let { manifest ->
             UpdateAvailableDialog(
                 manifest = manifest,
                 onDismiss = { showUpdateDialog = false },
-                onNotice = showNotice,
+                onIgnore = {
+                    showUpdateDialog = false
+                    scope.launch { repo.setIgnoredUpdateVersion(manifest.version) }
+                    scope.launch {
+                        snackbar.showSnackbar(
+                            AppNoticeVisuals(
+                                "已忽略该版本，启动时不再自动提醒",
+                                tone = NoticeTone.Success,
+                            ),
+                        )
+                    }
+                },
             )
         }
     }
-}
-
-/**
- * 「发现新版本」弹窗：更新日志可滚（长日志小屏不裁切）+ SHA-256 行（点按复制）+
- * 双通道动作。镜像链接来自仓库镜像清单里维护的 `mirrorPrefix`，前缀缺失/不合法时
- * 只出「GitHub 下载」一个出口。两键都是 `ACTION_VIEW` 交给浏览器下载，App 不落 APK。
- */
-@Composable
-private fun UpdateAvailableDialog(
-    manifest: UpdateManifest,
-    onDismiss: () -> Unit,
-    onNotice: (String) -> Unit,
-) {
-    DialogWindowFadeEffect()
-    val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    val mirrorUrl = UpdateCheck.mirrorDownloadUrl(manifest)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("发现新版本 v${manifest.version}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (manifest.notes.isNotBlank()) {
-                    Text(
-                        manifest.notes,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier
-                            .heightIn(max = 320.dp)
-                            .verticalScroll(rememberScrollState()),
-                    )
-                }
-                if (UpdateCheck.hasUsableDigest(manifest)) {
-                    Text(
-                        "SHA-256：${manifest.sha256}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                clipboard.setText(AnnotatedString(manifest.sha256))
-                                onNotice("已复制 SHA-256")
-                            }
-                            .padding(vertical = 2.dp),
-                    )
-                    Text(
-                        "点按复制 · 镜像下载为第三方通道，可核对此值确认安装包完整",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            if (mirrorUrl != null) {
-                TextButton(onClick = {
-                    onDismiss()
-                    openUrl(context, mirrorUrl)?.let(onNotice)
-                }) { Text("通过国内镜像下载") }
-            } else {
-                TextButton(onClick = {
-                    onDismiss()
-                    openUrl(context, UpdateCheck.githubDownloadUrl(manifest))?.let(onNotice)
-                }) { Text("GitHub 下载") }
-            }
-        },
-        dismissButton = {
-            if (mirrorUrl != null) {
-                TextButton(onClick = {
-                    onDismiss()
-                    openUrl(context, UpdateCheck.githubDownloadUrl(manifest))?.let(onNotice)
-                }) { Text("GitHub 下载") }
-            } else {
-                TextButton(onClick = onDismiss) { Text("知道了") }
-            }
-        },
-    )
 }
