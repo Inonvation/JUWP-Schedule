@@ -73,9 +73,9 @@ class JuwApplication : Application() {
             // 调课检测 channel 的清理（功能已移除，2026-09-24）：
             // 老版本升级用户设备上留着「调课检测」channel，删掉避免设置页残留死通道
             deleteLegacyDetectChannel(this@JuwApplication)
-            // 余额提醒（DESIGN §3.10 / §3.13）：排每日核对（09:00 前后一次），两个开关都关时
-            // 内部会撤销任务；冷启动再补核一次，兜住「周期任务今天还没跑」的当天提醒。
-            // 已成功检查过的来源当天不会重复打第三方接口（闸门在 check 内部）。
+            // 余额提醒（DESIGN §3.10 / §3.13）：排周期核对（间隔 = 两链设置的最小档），
+            // 两个开关都关时内部会撤销任务；冷启动再补核一次，兜住「间隔闸门已到期」的核对。
+            // 未到间隔的来源不会重复打第三方接口（闸门在 check 内部）。
             BalanceAlertReminder.ensurePeriodicWork(this@JuwApplication)
             BalanceAlertReminder.enqueueCheck(this@JuwApplication)
             // 成绩/考试变动提醒（DESIGN §4.33）：排周期核对（间隔 = 设置档位），两个开关

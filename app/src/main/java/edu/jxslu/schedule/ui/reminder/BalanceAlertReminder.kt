@@ -108,10 +108,14 @@ object BalanceAlertReminder {
                 prefs.setBalancePeriodicInterval(0)
                 return
             }
-            val intervalHours = minOf(
-                BalanceAlert.coerceIntervalHours(prefs.powerAlertIntervalHours.first()),
-                BalanceAlert.coerceIntervalHours(prefs.yktAlertIntervalHours.first()),
-            )
+            // 只在**开关开着**的链里取最小档：只开一链且是 48h 档时，不该让关着的那条
+            // 默认 6h 把周期任务拖到 6h 一醒（醒来的核对会被那路的闸门挡住，白耗电）。
+            val powerOn = prefs.powerAlertEnabled.first()
+            val yktOn = prefs.yktAlertEnabled.first()
+            val intervalHours = listOfNotNull(
+                if (powerOn) BalanceAlert.coerceIntervalHours(prefs.powerAlertIntervalHours.first()) else null,
+                if (yktOn) BalanceAlert.coerceIntervalHours(prefs.yktAlertIntervalHours.first()) else null,
+            ).min()
             val request = PeriodicWorkRequestBuilder<BalanceAlertCheckWorker>(intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(connectedConstraint())
                 .build()
@@ -154,7 +158,7 @@ object BalanceAlertReminder {
     }
 
     /**
-     * 核对一次：逐个来源判断「今天还没成功检查过」→ 取数 → 落日期 → 低于阈值才发通知。
+     * 核对一次：逐个来源判断间隔闸门（`shouldAttemptAt`）→ 取数 → 落时刻 → 低于阈值才发通知。
      * 整体兜异常：后台任务里任何失败都不该让 Worker 报错重试（重试会再打一次第三方接口）。
      */
     suspend fun check(context: Context) {
@@ -229,8 +233,9 @@ object BalanceAlertReminder {
             meter.remain?.let { append("（%.2f 度）".format(it)) }
             append("，低于提醒线 ¥$threshold，记得充值")
         }
-        // 收件箱留痕：状态型消息，固定一条（balance|power|low），每日复核刷新并
-        // 重新置未读；回升即被上面的 clearState 移除。
+        // 收件箱留痕：状态型消息，固定一条（balance|power|low），每轮核对刷新并
+        // 重新置未读（偏低期间只此一轮，之后被下方 notified 闸门挡住）；回升即被
+        // 上面的 clearState 移除。
         Graph.inboxRepository(context).post(
             kind = InboxKind.POWER_LOW,
             dedupeKey = InboxKeys.POWER_LOW,
@@ -440,7 +445,7 @@ object BalanceAlertReminder {
 /**
  * 余额核对 Worker。**类名不要改**：WorkManager 把类名存进自己的库，老版本排下的周期任务
  * 在应用升级后仍是这个名字；改名会让那些任务实例化失败，而 `KEEP` 策略又不会重排，
- * 每日兜底就永久消失了（同 `EbikeFreeRideCheckWorker` 的理由）。
+ * 周期兜底就永久消失了（同 `EbikeFreeRideCheckWorker` 的理由）。
  */
 class BalanceAlertCheckWorker(
     appContext: Context,

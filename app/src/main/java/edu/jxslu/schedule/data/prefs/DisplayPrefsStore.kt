@@ -1563,7 +1563,7 @@ class DisplayPrefsStore(private val context: Context) {
      *
      * 它是小时级间隔的闸门（判据 `AutoSyncRules.shouldAttemptAt`，同成绩/考试链）。
      * 读取回退：millis 键没写过（2026-10-07 前的老用户）时看旧日期键——旧日期是
-     * **今天** 就按今天零点算（升级当轮不会立刻重打第三方平台），否则按没查过；
+     * **今天** 就按今天零点算（升级当轮的检查频率仍受间隔闸门约束），否则按没查过；
      * 只读不写，下次成功检查自然落新键。旧键无一次性迁移、不再写入。
      */
     suspend fun balanceAlertCheckMillis(source: BalanceAlertSource): Long {
