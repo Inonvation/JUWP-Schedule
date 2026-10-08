@@ -101,6 +101,12 @@ data class BikeMapUiState(
     val userLat: Double? = null,
     val userLng: Double? = null,
     /**
+     * 蓝点的罗盘朝向（度，0–360，北 = 0 顺时针，按屏幕顶边计；2026-10-08）。
+     * null = 没有朝向（无磁力计 / 还没读到），蓝点只画圆点不画扇形。
+     * 只影响扇形绘制，与移镜头 / 重查 / 挪点互不相干。
+     */
+    val userHeading: Float? = null,
+    /**
      * 只看可用的车（离线、电量低于运营方阈值的都不显示）。
      * 默认开（2026-09-24 用户拍板）：找车就是要找能骑的；开关态进 DataStore，下次进页保持。
      */
@@ -629,6 +635,18 @@ class BikeMapViewModel(
         locatedOnce = true
         _uiState.update { it.copy(userLat = lat, userLng = lng) }
         rebuildClusters()
+    }
+
+    /**
+     * 罗盘朝向的最新读数（2026-10-08）：**只转蓝点的朝向扇形**。
+     *
+     * 与 [onUserLocationChanged] 同一条纪律——不移镜头、不重查、不动参照点。
+     * 传感器流已在 `BikeCompass` 内做过低通 + 节流（>2° 且 ≥100ms 才发），
+     * 到这里的频率对 `MapOverlayInputs` 的值比对与整幅重绘都是安全的。
+     */
+    fun onUserHeadingChanged(degrees: Float) {
+        if (!degrees.isFinite()) return
+        _uiState.update { it.copy(userHeading = degrees) }
     }
 
     /**

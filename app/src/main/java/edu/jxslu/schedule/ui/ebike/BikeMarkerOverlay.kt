@@ -87,6 +87,12 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     var userPoint: GcjPoint? = null
 
     /**
+     * 蓝点的罗盘朝向（度，0–360，北 = 0 顺时针；来自 [BikeCompass]，按屏幕顶边计）。
+     * null = 没有朝向（无磁力计 / 还没读到），只画无方向的蓝点。
+     */
+    var userHeading: Float? = null
+
+    /**
      * 当前用车的车位置（GCJ-02，来自 `queryUnderwayOrder`；快趣坐标与地图瓦片同基准，
      * **不要再过 Gcj02 转换**）；null = 没有进行中的订单。
      */
@@ -309,6 +315,12 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
             mapView.project(point.lat, point.lng, out)
             val x = out.x.toFloat()
             val y = out.y.toFloat()
+            // 朝向扇形（2026-10-08）：蓝点后方的锥形光带，先画、垫在圆点底下。
+            // 罗盘朝向画在屏幕坐标——它与地图北方对齐，不随瓦片投影变形，
+            // 坐标基准也不相干（方向角不是坐标，不过 Gcj02）。
+            userHeading?.let { heading ->
+                drawHeadingWedge(canvas, x, y, heading)
+            }
             fill.color = colors.userHalo
             canvas.drawCircle(x, y, 13f * density, fill)
             fill.color = colors.userDot
@@ -373,6 +385,34 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         canvas.drawLine(x + 3.4f * d, wheelY, x + 5.9f * d, y - 3.6f * d, glyphStroke)
         canvas.drawLine(x + 4.2f * d, y - 3.6f * d, x + 7.2f * d, y - 3.6f * d, glyphStroke)
     }
+
+    /**
+     * 蓝点的朝向扇形光晕（2026-10-08，DESIGN §3.9「蓝点朝向」）。
+     *
+     * 画在蓝点本体之前（垫底）：两层同心锥形——外层更大更淡、内层同色但更实
+     * （不透明度从外晕色推导），近似「光带根部渐实」的观感，不引入渐变 Shader
+     * （省一次 SweepGradient 的每帧重建）。角度以蓝点为轴心旋转：0° = 正北
+     * （屏幕正上方），顺时针，与 [BikeCompass] 的方位角同口径。
+     */
+    private fun drawHeadingWedge(canvas: Canvas, x: Float, y: Float, heading: Float) {
+        // Canvas.rotate 的角度基准是「3 点钟方向为 0、顺时针为正」，罗盘是「12 点为 0、
+        // 顺时针为正」——先转 -90° 把基准挪到正上方，再叠加朝向角。
+        canvas.save()
+        canvas.rotate(heading - 90f, x, y)
+        // 外层：半径约 20dp、半开角 30°（60° 锥形），比外晕（13dp）探出去一圈
+        fill.color = colors.userHalo
+        canvas.drawArc(setArcRect(x, y, WEDGE_OUTER_RADIUS_DP * density), -30f, 60f, true, fill)
+        // 内层：同色更实（约 1.6 倍不透明度），给光带一点根部渐实的层次。
+        // alpha 换算直接位运算（ARGB int），不引 ColorUtils
+        val innerAlpha = (Color.alpha(colors.userHalo) * 1.6f).toInt().coerceIn(0, 255)
+        fill.color = (colors.userHalo and 0x00FFFFFF) or (innerAlpha shl 24)
+        canvas.drawArc(setArcRect(x, y, WEDGE_INNER_RADIUS_DP * density), -30f, 60f, true, fill)
+        canvas.restore()
+    }
+
+    /** 把矩形按圆心/半径落位（drawArc 用，逐帧复用 [tmpRect]）。 */
+    private fun setArcRect(cx: Float, cy: Float, radius: Float): RectF =
+        tmpRect.set(cx - radius, cy - radius, cx + radius, cy + radius).let { tmpRect }
 
     /**
      * 还车点 / 禁停区图层（DESIGN §3.9）：先禁停区（深灰，底）再还车点（红框 + P 图标）。
@@ -563,6 +603,12 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         canvas.drawPath(pinPath, pinFill)
     }
 }
+
+/** 朝向扇形外层半径（dp）：比外晕（13dp）探出一圈，光带尖端离蓝点约一指宽。 */
+private const val WEDGE_OUTER_RADIUS_DP = 20f
+
+/** 朝向扇形内层半径（dp）：更实的内层，做「根部渐实」的层次。 */
+private const val WEDGE_INNER_RADIUS_DP = 13f
 
 /** 图层包围盒剔除的余量（度）：约 220 米，比任何一块还车点 / 禁停区都大。 */
 private const val ZONE_CULL_PADDING_DEG = 0.002

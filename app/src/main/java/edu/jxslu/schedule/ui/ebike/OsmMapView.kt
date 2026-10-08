@@ -152,6 +152,8 @@ private data class MapOverlayInputs(
     val clusters: List<BikeCluster>,
     val selectedKey: String?,
     val userPoint: GcjPoint?,
+    /** 蓝点的罗盘朝向（度，0–360）；null = 不画扇形。新绘制输入必须进这份比对（红线）。 */
+    val userHeading: Float?,
     val ridePoint: GcjPoint?,
     val highlightPoint: GcjPoint?,
     val highlightLabel: String?,
@@ -179,6 +181,7 @@ private class DrawnOverlayInputs(var value: MapOverlayInputs? = null)
  * @param camera 待执行的镜头移动（定位 / 回到校区）；按 `nonce` 触发，连点同一个坐标也生效。
  * @param onCameraApplied 镜头移动执行完的回调；调用方据此把请求清掉，别让它被重放。
  * @param userLat / userLng 已取到的用户位置（GCJ-02），画成蓝点；null 不画。
+ * @param userHeading 蓝点的罗盘朝向（度，0–360，来自 [BikeCompass]）；null 不画朝向扇形。
  * @param rideLat / rideLng 当前用车的车位置（GCJ-02，与瓦片同基准），画成「我的车」标记；null 不画。
  * @param onRideTap 点中「我的车」标记（把镜头移过去）。
  * @param zones 还车点 / 禁停区图层（只读；空 = 不画）。「P」**不接点击**（只作信息展示）。
@@ -189,6 +192,8 @@ internal fun OsmMapView(
     selectedKey: String?,
     userLat: Double?,
     userLng: Double?,
+    /** 蓝点的罗盘朝向（度，0–360，北 = 0 顺时针；null = 不画朝向扇形）。 */
+    userHeading: Float? = null,
     rideLat: Double?,
     rideLng: Double?,
     /** 识别高亮车的坐标（GCJ-02）；null = 没有要高亮的车。 */
@@ -300,6 +305,7 @@ internal fun OsmMapView(
                 } else {
                     null
                 },
+                userHeading = userHeading,
                 ridePoint = if (rideLat != null && rideLng != null) {
                     GcjPoint(rideLat, rideLng)
                 } else {
@@ -319,6 +325,7 @@ internal fun OsmMapView(
                 overlay.clusters = inputs.clusters
                 overlay.selectedKey = inputs.selectedKey
                 overlay.userPoint = inputs.userPoint
+                overlay.userHeading = inputs.userHeading
                 overlay.ridePoint = inputs.ridePoint
                 overlay.highlightPoint = inputs.highlightPoint
                 overlay.highlightLabel = inputs.highlightLabel

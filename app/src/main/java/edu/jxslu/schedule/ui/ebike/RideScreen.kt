@@ -426,12 +426,21 @@ fun RideScreen(
         }
     }
     // 蓝点实时更新：只挪蓝点与「距你」距离，不移镜头、不重查接口
+    // 罗盘朝向（2026-10-08）挂同一段生命周期：只转蓝点的朝向扇形，同样不移镜头、不重查。
+    // 两条流都先发过 BikeCompass / BikeLocator 内部的过滤，到这里频率对地图重绘是安全的
     LaunchedEffect(lifecycleOwner, locationGranted) {
         if (!locationGranted) return@LaunchedEffect
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            BikeLocator.updates(context).collect { result ->
-                if (result is LocateResult.Ok) {
-                    viewModel.onUserLocationChanged(result.lat, result.lng)
+            launch {
+                BikeLocator.updates(context).collect { result ->
+                    if (result is LocateResult.Ok) {
+                        viewModel.onUserLocationChanged(result.lat, result.lng)
+                    }
+                }
+            }
+            launch {
+                BikeCompass.heading(context).collect { heading ->
+                    viewModel.onUserHeadingChanged(heading)
                 }
             }
         }
@@ -618,6 +627,7 @@ fun RideScreen(
                         selectedKey = state.expandedKey,
                         userLat = state.userLat,
                         userLng = state.userLng,
+                        userHeading = state.userHeading,
                         rideLat = rideMarkerLat,
                         rideLng = rideMarkerLng,
                         highlightLat = state.highlightedCar?.lat,
