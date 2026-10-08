@@ -60,10 +60,12 @@
   - **动作区分两层，动画只作用在上层**（2026-09-30 用户口径「做成底部窗口升起的过渡动画，
     没有组件跳变」）：
     - **上区**（`RideActionUpper`）= 状态相关的额外内容（车辆卡的头行与详情、骑行指标、
-      结算明细）。换状态时走 `slideInVertically { it } + fadeIn` / `slideOutVertically`，
-      像底部窗口一样**从下沿升起来、沉回去**（`BAR_RISE_MS` 240 / `BAR_FALL_MS` 190，
-      缓动 `FastOutSlowInEasing`）；容器高度也走同一条曲线（`ContentTransform.using(SizeTransform)`，
-      **`AnimatedContent` 没有 `sizeTransform` 参数**，别往那里塞）。
+      结算明细）。换状态时**直接竖直升起**（2026-10-08 用户口径「从右下角升起有点丑，
+      直接上升就行」）：进 = 全高 `slideInVertically { it }` + 快速淡入（[BAR_FADE_IN_MS]）；
+      出 = **原地淡出**（[BAR_FADE_OUT_MS] 120ms），不再向下沉——旧版进出两块反向滑动叠上
+      容器长高（`SizeTransform` 240ms），合成的运动轨迹发斜、看着像"从右下角冒出来"。
+      **别把退场改回滑动**；容器高度动画两个方向都是 `BAR_RISE_MS` 240，页面靠它冻结
+      地图让位高度，落位时机分流见 [barBlockShrinks]。
       **车辆卡的 key 带车号**（`car:100000398`）：换一辆车时上区要重走一遍升起动画，
       不然只有文字原地换掉。车号**从 key 里取**（`carNumOf`），别读外层那个 `pickedCar`
       ——退场那一份读的是最新值，会跟着变成新车、两层画同一张卡。
@@ -244,8 +246,8 @@
   空档，然后一次跳变猛地补齐」——用户报的抽搐就是它。现在 `barBlockShrinks(prev, next)`
   （`RidePanels`，`RideBarKeyTest` 钉住）判出下沉时落位提前到块落底（升起余量 60ms、
   下沉余量 `SHRINK_SETTLE_MS` 10ms，落位基数都是 `BAR_RISE_MS`）。**前提别弄反**：
-  容器高度动画（`SizeTransform`）**两个方向都是 `BAR_RISE_MS`**，`BAR_FALL_MS` 只是
-  退场内容的滑动时长、**不是**沉底时刻——落位基数别换成它，也别把两个余量并成一个
+  容器高度动画（`SizeTransform`）**两个方向都是 `BAR_RISE_MS`**；上区退场 2026-10-08 起
+  只是 120ms 原地淡出（见上），**不参与**高度动画——落位基数别换、也别把两个余量并成一个
   （升起多等无害、下沉多等就是多露空档）。**地图 resize 仍只发生一次，别改成逐帧
   resize**（那是 10-01 修掉的掉帧来源）；结算卡与车辆卡谁高不一定，两者互切按
   「没变矮」处理走稳妥路径，别给它们编方向。
@@ -638,11 +640,22 @@
   **骑行卡动作区三槽位固定**（2026-10-08 用户口径「参考官方、位置别变」）：左=开锁位
   （文案随状态：开锁 / 解锁 / 重试开锁）、中=锁车（全态常驻可点）、右=还车；三态只换
   左位文案，位置/样式不变。别把三枚合成一枚，也别恢复「按状态分流到一枚」的旧排版。
-  **整卡状态色包裹**（同日）：「已解锁 / 已锁 / 悬置」三态各配底色+描边（整卡含
-  倒计时与指标行），判据 `ridingCardTone(locked, unlockPending, lockPending)` 是纯函数
-  （`RidingCardToneTest` 钉住）；换色走 `animateColorAsState`，**不动 barKey、不触发
-  升降动画与地图让位**（三态高度恒定）。判不出（无订单 / 锁状态缺失且无悬置）不套色
-  不摆胶囊（小程序计时态保持原样）。
+  **整卡状态色包裹**（同日；**同日二轮收口**）：「已解锁 / 已锁 / 悬置 / 未知」四态各配底色+描边
+  （整卡含倒计时与指标行），判据 `ridingCardTone(locked, unlockPending, lockPending)` 是**纯函数、
+  且是全函数**（`RidingCardToneTest` 钉住，穷举 12 个组合）；换色走 `animateColorAsState`
+  （`RIDING_TONE_MS` 200ms，与面板 Crossfade 同节拍），**不动 barKey、不触发升降动画与地图让位**
+  （四态高度恒定）。**没有"判不出"这一档**——锁状态缺失归 `RidingCardTone.Unknown`（中性底色 +
+  胶囊写「锁状态未知」，仍可点现查）。二轮修的就是旧版"判不出返回 null → 不套壳不摆胶囊"：
+  同一张卡在「已锁」与「锁状态未知」之间**整体平移 12dp、尾部「更新于 hh:mm」被切掉半个字**
+  （用户报「解锁状态和锁车状态信息卡片都不一致，有些地方还被挡住」）。三条硬口径：
+  ① **上区三种形态共用一个卡片容器** `RideUpperCard`（车辆卡 / 骑行仪表盘 / 结算卡；规格取
+  `AppCardDefaults` 的圆角与内边距，**别在本文件另抄一份**），`tone = null` 只表示"无状态可报"
+  （车辆卡 / 结算卡 / 小程序计时卡），**不是**"换一套排版"；② 胶囊文案抽成纯函数
+  `ridingStateChipText(querying, locked, unlockPending, lockPending)`（`RidingStateChipTextTest`
+  钉住），与 `ridingCardTone` 同一条短路链；③ **上区任何一行都不许再用"左端不参与分配 +
+  中间 `Spacer(weight(1f))` + 右端接剩余"**——右端的时刻 / 说明必须**先量**（只占固有宽度），
+  左端给 `weight(1f)` 不够就省略号（标题行同理：车号用 `weight(1f, fill = false)`，
+  右侧图标组先量，长车号不许把图标挤没）。
 - **还车结果卡**（`RideSettledBar`，动作区里，2026-09-29 由 AlertDialog 改过来）：还车后给
   时长 / 费用 / 结算状态 + 「继续找车」。数据取**还车前最后一次拉到的订单快照**
   （快趣没有最终账单接口），卡上写明「金额与结算以快趣小程序为准」——别把快照当账单，
@@ -783,9 +796,10 @@
   参数与响应形态无参考，别照接口名猜协议）。权威来源是在案订单的 `lockStatus`——
   `queryLockState` 现查 `queryUnderwayOrder` 并把答案说出来（「车辆已锁上；订单还在，计费继续」
   /「车辆未锁，正在计费」，`KvcxRideControllerTest` 钉住）。UI = 骑行卡**状态胶囊可点**
-  （2026-10-08 由锁徽标升级：四态文案 + 圆点 + 状态色底），查询中胶囊原位翻成
-  「查询中…」（不跳位置；busy 复用同一 single-flight）；锁车待确认时胶囊显
-  「锁车确认中…」、开锁待确认显「开锁未确认」。
+  （2026-10-08 由锁徽标升级：五态文案 + 圆点 + 状态色底 + 颜色渐变，文案判据
+  `ridingStateChipText`），查询中胶囊原位翻成「查询中…」（不跳位置；busy 复用同一
+  single-flight）；锁车待确认时胶囊显「锁车确认中…」、开锁待确认显「开锁未确认」、
+  订单没带锁状态时显「锁状态未知」（**不隐藏胶囊**，见上「整卡状态色包裹」）。
 - **单车详情**（`queryOneCar` v2，`KqcxSessionRepository.queryCarDetail` → `BikeNearby.parseSingle`）：
   只用于 `focusCar` 在附近列表里找不到目标车时的兜底（`fetchCarDetail`：查到就高亮 + 移镜头 +
   车辆卡带电量，车辆卡**优先认这份查回来的车**）；查不到退回「移动地图或点刷新」旧提示。

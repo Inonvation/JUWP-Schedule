@@ -8,14 +8,12 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -26,6 +24,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -98,6 +97,7 @@ import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcxParkSpot
 import edu.jxslu.schedule.domain.NearbyBike
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.EmptyHint
@@ -196,31 +196,59 @@ internal fun rideBarKey(
 }
 
 /**
- * 骑行卡的状态色调（2026-10-08 用户口径「状态色包裹车辆信息卡片」）：整卡底色/描边
- * 与头行状态胶囊共用这一份判据。
+ * 骑行卡的状态色调（2026-10-08 用户口径「状态色包裹车辆信息卡片」；2026-10-08 二轮收口）：
+ * 整卡底色/描边与头行状态胶囊共用这一份判据。**四态齐全，没有"无态"这一档**。
  *
  * - [Pending]（开锁未确认 / 锁车确认中）：指令已发、上报未到，**不是失败**——
  *   警示色提示用户留意，直到刷新到确定态才消解；
  * - [Locked] / [Unlocked]：按在案订单的 `lockStatus`；
- * - 判不出（无订单 / 锁状态缺失且无悬置）返回 null：不套色、不摆胶囊（保持原样）。
+ * - [Unknown]：在案订单没带锁状态（老数据 / 字段缺失）。**它不是"没有状态"**——
+ *   整卡与胶囊照常摆出来（底色取中性），胶囊写「锁状态未知」且可点现查。
+ *
+ * 二轮修的是**同一张卡在两态之间变形**：此前"判不出"返回 null，调用方据此去掉内边距与
+ * 胶囊——于是「已锁」那张缩进 12dp、「锁状态未知」那张贴着屏幕边，文字与图标整体平移、
+ * 「更新于 15:09」还被切掉半个字，看着像两个不同的组件（用户报「解锁状态和锁车状态信息
+ * 卡片都不一致，有些地方还被挡住」）。现在**容器与内边距恒定**，只有颜色与胶囊文案变。
  */
-internal enum class RidingCardTone { Unlocked, Locked, Pending }
+internal enum class RidingCardTone { Unlocked, Locked, Pending, Unknown }
 
 /**
  * [RidingCardTone] 的构造规则（与胶囊文案同一判据链，逐级短路）：
  * 开锁悬置最优先 → 已锁快照次之（锁定是权威结果，锁车悬置的残留瞬态让位）→
- * 锁车悬置 → 未锁快照；全无（无订单 / 锁状态缺失）返回 null。
+ * 锁车悬置 → 未锁快照 → 其余（锁状态缺失）归 [RidingCardTone.Unknown]。
+ *
+ * **全函数**（无 null 分支）：调用方不该再按"有没有态"分两套排版——那正是卡片变形的来路。
  */
 internal fun ridingCardTone(
     locked: Boolean?,
     unlockPending: Boolean,
     lockPending: Boolean,
-): RidingCardTone? = when {
+): RidingCardTone = when {
     unlockPending -> RidingCardTone.Pending
     locked == true -> RidingCardTone.Locked
     lockPending -> RidingCardTone.Pending
     locked == false -> RidingCardTone.Unlocked
-    else -> null
+    else -> RidingCardTone.Unknown
+}
+
+/**
+ * 状态胶囊的文案（与 [ridingCardTone] 同一条判据链，逐级短路）。
+ *
+ * 现查中（[querying]）优先于一切：胶囊**原位**翻成「查询中…」，不跳位置、不换颜色
+ * （它就是最近一次快照的说明，查完再落回真实态）。
+ */
+internal fun ridingStateChipText(
+    querying: Boolean,
+    locked: Boolean?,
+    unlockPending: Boolean,
+    lockPending: Boolean,
+): String = when {
+    querying -> "查询中…"
+    unlockPending -> "开锁未确认"
+    lockPending && locked != true -> "锁车确认中…"
+    locked == true -> "已锁"
+    locked == false -> "已解锁"
+    else -> "锁状态未知"
 }
 
 /**
@@ -291,20 +319,17 @@ internal fun RideActionArea(
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
         // 上区：**状态相关的额外内容**（车辆卡的头行与详情、骑行指标、结算明细…）。
-        // 换状态时它像底部窗口那样**从下沿升起来**，而不是原地换一块
-        // （2026-09-30 用户口径「做成底部窗口升起的过渡动画」）。
+        // 换形态时**直接竖直升起**（2026-10-08 用户口径「从右下角升起有点丑，直接上升就行」）：
+        // 进 = 全高上滑 + 快速淡入；出 = **原地淡出**、不再向下沉——旧版进出两块同时反向滑动
+        // 叠上容器长高，合成的运动轨迹发斜、看着像"从角落冒出来"。容器高度仍走同一条缓动
+        // （`SizeTransform`，页面靠它冻结地图让位高度），节奏不变。
         AnimatedContent(
             targetState = barKey,
             transitionSpec = {
-                // 进：从下沿升起，减速停住（FastOutSlowIn 是 Material 的标准缓动）；
-                // 出：沉回去。两个方向都要有，只做进不出会像"啪"地换掉。
                 val enter = slideInVertically(
                     animationSpec = tween<IntOffset>(BAR_RISE_MS, easing = FastOutSlowInEasing),
-                ) { it } + fadeIn(animationSpec = tween(BAR_RISE_MS, easing = LinearOutSlowInEasing))
-                val exit = slideOutVertically(
-                    animationSpec = tween<IntOffset>(BAR_FALL_MS, easing = FastOutSlowInEasing),
-                ) { it } + fadeOut(animationSpec = tween(BAR_FALL_MS))
-                // 容器高度也走同一条缓动曲线（默认的弹簧会让收起来那一下显得很急）
+                ) { it } + fadeIn(animationSpec = tween(BAR_FADE_IN_MS))
+                val exit = fadeOut(animationSpec = tween(BAR_FADE_OUT_MS))
                 (enter togetherWith exit).using(
                     SizeTransform(clip = true) { _, _ ->
                         tween<IntSize>(BAR_RISE_MS, easing = FastOutSlowInEasing)
@@ -316,10 +341,10 @@ internal fun RideActionArea(
             contentAlignment = Alignment.BottomStart,
             modifier = Modifier.fillMaxWidth(),
         ) { key ->
-            // 退场那份还会继续组合 [BAR_FALL_MS]，而它读到的外层参数在切换那一刻已被
-            // 清空（还车后 `ride` 变 null、点「继续找车」时 `summary` 变 null、结束计时
-            // 时 `timerActive` 变 false）——直接画就是"内容先没了、区域再收回去"。
-            // 所以：**当前档逐轮记账「最近一次实时值」，退场那份只读**（普通持有者，
+            // 退场那份还会继续组合一小段（[BAR_FADE_OUT_MS] 的原地淡出），而它读到的外层
+            // 参数在切换那一刻已被清空（还车后 `ride` 变 null、点「继续找车」时 `summary`
+            // 变 null、结束计时时 `timerActive` 变 false）——直接画就是"内容先没了、区域
+            // 再收回去"。所以：**当前档逐轮记账「最近一次实时值」，退场那份只读**（普通持有者，
             // 不驱动重组，页面里 `DpHolder` 同法）。别退回"入场快照"——`remember(key)`
             // 只记首帧，会让「已骑」回跳、悬置色复活（2026-10-08 复核修）。
             val isCurrent = key == barKey
@@ -338,7 +363,7 @@ internal fun RideActionArea(
                 state = state,
                 // 当前档一律实时值（重试成功、到点撤卡要立刻消解；∪ 快照会冻住它们，
                 // 2026-10-08 复核抓到「开锁未确认进骑行档后重试成功，胶囊不消」）；
-                // 退场那份才读 stash（切换前最后一帧，190ms 里不清、不闪）。
+                // 退场那份才读 stash（切换前最后一帧，淡出的 120ms 里不清、不闪）。
                 ride = if (isCurrent) ride else stash.ride,
                 rideFetchedAt = rideFetchedAt,
                 busy = busy,
@@ -393,14 +418,31 @@ internal fun RideActionArea(
     }
 }
 
-/** 上区升起 / 收回的时长；下区不参与，所以只有这两个值在管"窗口升降"的手感。 */
-/** 动作区上区升起 / 容器高度过渡的时长。**RideScreen 也用它**（冻结地图让位高度要等这么久）。 */
+/**
+ * 动作区上区升起 / 容器高度过渡的时长。**RideScreen 也用它**（冻结地图让位高度要等这么久）。
+ */
 internal const val BAR_RISE_MS = 240
+
+/**
+ * 上区之外那一套"升降"的退场时长（停车点卡展开收起、滚动落定的时间上限余量）。
+ *
+ * 2026-10-08 起上区自己的退场**不再用它**（改为 [BAR_FADE_OUT_MS] 原地淡出——用户口径
+ * 「从右下角升起有点丑，直接上升就行」：进出两块反向滑动叠上容器长高，合成轨迹发斜）；
+ * 它仍管列表侧的收起动画，数值与手感保持不变。
+ */
 internal const val BAR_FALL_MS = 190
 
 /** 动作条状态之间做交叉淡入，别让内容"啪"地换一块。 */
 private const val BAR_FADE_IN_MS = 200
 private const val BAR_FADE_OUT_MS = 120
+
+/**
+ * 状态色（整卡底 / 描边 / 胶囊）渐变时长。
+ *
+ * 比动作区升降那 240ms 略短：颜色是"同一块地方换了个色"，不该看着比内容升降还慢；
+ * 与面板内容 Crossfade（[BAR_FADE_IN_MS]）同档，全页的颜色过渡只有这一个节拍。
+ */
+private const val RIDING_TONE_MS = 200
 
 private const val BAR_FINDING_PLAIN = "finding-plain"
 private const val BAR_FINDING_CODE = "finding-code"
@@ -648,13 +690,21 @@ private fun RideActionButtons(
                 )
             }
         } else if (timerCanEnd) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // 右边那句是说明、不是动作：**它吃剩余宽度**（旧版左边按钮 + `Spacer(weight)` +
+            // 右边不参与分配，窄屏 / 大字体下会被切掉尾巴）。单行放不下就换行，不省略号——
+            // 「开车 / 还车在微信小程序里完成」被截成半句比多占一行更糟。
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 TextButton(onClick = onEndTimer) { Text("结束计时") }
-                Spacer(Modifier.weight(1f))
                 Text(
                     text = "开车 / 还车在微信小程序里完成",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                    textAlign = TextAlign.End,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -675,6 +725,61 @@ private fun RideActionButtons(
             )
         }
     }
+}
+
+/**
+ * 动作区上区三种形态（车辆卡 / 骑行仪表盘 / 结算卡）**共用的卡片容器**。
+ *
+ * 2026-10-08 二轮统一：此前只有骑行卡套壳（且只在判得出锁状态时套），车辆卡与结算卡是
+ * 裸文本块、骑行卡"判不出"时也是裸的——同一块位置三种长相，换状态就像换了个页面。
+ * 现在三处共用这一个容器，规格与全项目唯一的 [AppCard] 同源（圆角、描边宽度、内边距都取
+ * `AppCardDefaults`）：**要改规格就改那一处**，别在本文件另抄一份。
+ *
+ * [tone] = 状态色（骑行卡用，底色/描边随锁状态渐变，见 [RidingCardTone]）；
+ * null = 无状态可报（车辆卡 / 结算卡 / 小程序计时卡）→ 中性底色。
+ * **内边距与圆角与 [tone] 无关**：两态之间高度、缩进都不许变（这就是这张卡要修的事）。
+ */
+@Composable
+private fun RideUpperCard(
+    modifier: Modifier = Modifier,
+    tone: RidingCardTone? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val semantic = MaterialTheme.semanticColors
+    val background by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> scheme.primary.copy(alpha = 0.07f)
+            RidingCardTone.Locked -> scheme.onSurface.copy(alpha = 0.045f)
+            RidingCardTone.Pending -> semantic.warning.copy(alpha = 0.08f)
+            // 中性态（含"锁状态未知"与无状态）：比页面底深一档的淡底 + outlineVariant 描边，
+            // 与 AppCard 同一套描边语言（它底取 surface、靠描边成形；这里是浮在地图边缘的
+            // 一块常驻卡，淡底比纯描边更容易读成"一张卡"）
+            else -> scheme.onSurface.copy(alpha = 0.03f)
+        },
+        animationSpec = tween(RIDING_TONE_MS),
+        label = "rideUpperCardBg",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> scheme.primary.copy(alpha = 0.18f)
+            RidingCardTone.Locked -> scheme.onSurface.copy(alpha = 0.08f)
+            RidingCardTone.Pending -> semantic.warning.copy(alpha = 0.22f)
+            else -> scheme.outlineVariant
+        },
+        animationSpec = tween(RIDING_TONE_MS),
+        label = "rideUpperCardBorder",
+    )
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(AppCardDefaults.Shape)
+            .background(background)
+            .border(1.dp, borderColor, AppCardDefaults.Shape)
+            .padding(AppCardDefaults.Padding),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        content = content,
+    )
 }
 
 /**
@@ -706,56 +811,58 @@ private fun RideCarUpper(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
-            .padding(top = 10.dp),
-        // 头行 / 详情 / 次级入口三段，10dp 与骑行仪表盘同一个呼吸（8dp 三段挤在一起）
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(top = 10.dp, bottom = 2.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                HugeIcons.ScooterElectric,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(9.dp))
-            Text(
-                text = "车 $carNum",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            if (bike != null) {
-                IconButtonSmall(
-                    icon = HugeIcons.MapsLocation02,
-                    label = "在地图上定位这辆车",
+        RideUpperCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    HugeIcons.ScooterElectric,
+                    contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    onClick = { onFocus(carNum) },
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    text = "车 $carNum",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (bike != null) {
+                    IconButtonSmall(
+                        icon = HugeIcons.MapsLocation02,
+                        label = "在地图上定位这辆车",
+                        tint = MaterialTheme.colorScheme.primary,
+                        onClick = { onFocus(carNum) },
+                    )
+                }
+                IconButtonSmall(HugeIcons.Cancel01, "收起车辆卡", onClick = onDismiss)
+            }
+            Text(
+                text = if (bike != null && bikeInfo != null) {
+                    buildAnnotatedString {
+                        append(bike.siteName.ifBlank { bike.campusName.ifBlank { "位置未知" } })
+                        append(" · ")
+                        append(bikeInfo)
+                    }
+                } else {
+                    AnnotatedString("这辆车不在附近这批结果里；用「按车号」输入车号后可以在地图上找它")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = detailColor,
+            )
+            // 账号方式：支付分免押的账号开不了锁，只能出码去微信扫，所以这一枚要留着。
+            // **做小 + 居中**：整宽描边按钮太占高度，一枚居中的小文字按钮就够了。
+            if (caps.inAppRide) {
+                RideTextAction(
+                    icon = HugeIcons.QrCode01,
+                    text = "生成乘车码",
+                    onClick = { onGenerate(carNum) },
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
                 )
             }
-            IconButtonSmall(HugeIcons.Cancel01, "收起车辆卡", onClick = onDismiss)
-        }
-        Text(
-            text = if (bike != null && bikeInfo != null) {
-                buildAnnotatedString {
-                    append(bike.siteName.ifBlank { bike.campusName.ifBlank { "位置未知" } })
-                    append(" · ")
-                    append(bikeInfo)
-                }
-            } else {
-                AnnotatedString("这辆车不在附近这批结果里；用「按车号」输入车号后可以在地图上找它")
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = detailColor,
-        )
-        // 账号方式：支付分免押的账号开不了锁，只能出码去微信扫，所以这一枚要留着。
-        // **做小 + 居中**：整宽描边按钮太占高度，一枚居中的小文字按钮就够了。
-        if (caps.inAppRide) {
-            RideTextAction(
-                icon = HugeIcons.QrCode01,
-                text = "生成乘车码",
-                onClick = { onGenerate(carNum) },
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
         }
     }
 }
@@ -780,53 +887,24 @@ private fun RideRidingUpper(
     onLocateCar: () -> Unit,
     onTimerExpired: () -> Unit,
 ) {
-    // 状态色整卡（2026-10-08 用户口径「用状态颜色包裹车辆信息卡片」）：底与描边随锁
-    // 状态渐变，三态布局完全一致——只换颜色与胶囊文案、高度恒定（不触发地图让位那套）。
-    // 判不出（无订单 / 锁状态缺失且无悬置）时不套卡不摆胶囊（小程序计时态与老数据保持原样）。
+    // 状态色整卡（2026-10-08 用户口径「用状态颜色包裹车辆信息卡片」；同日二轮收口）：
+    // 底与描边随锁状态渐变，**四态布局完全一致**——只换颜色与胶囊文案，高度恒定
+    // （不触发地图让位那套）。判不出锁状态时走 [RidingCardTone.Unknown]：卡与胶囊照摆，
+    // 不再退回"无壳 + 无胶囊"那套（那正是两态之间卡片变形、文字被切的原因）。
     val tone = ridingCardTone(
         locked = ride?.locked,
         unlockPending = unlockPending,
         lockPending = lockPending,
-    )
-    val cardShape = RoundedCornerShape(16.dp)
-    val cardBackground by animateColorAsState(
-        targetValue = when (tone) {
-            RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primary.copy(alpha = 0.07f)
-            RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.045f)
-            RidingCardTone.Pending -> MaterialTheme.semanticColors.warning.copy(alpha = 0.08f)
-            null -> Color.Transparent
-        },
-        animationSpec = tween(220),
-        label = "ridingCardBg",
-    )
-    val cardBorderColor by animateColorAsState(
-        targetValue = when (tone) {
-            RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-            RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-            RidingCardTone.Pending -> MaterialTheme.semanticColors.warning.copy(alpha = 0.22f)
-            null -> Color.Transparent
-        },
-        animationSpec = tween(220),
-        label = "ridingCardBorder",
     )
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
             .padding(top = 10.dp)
-            // 卡片与下区按钮之间留 10dp（按钮容器自带 8dp 上边距，这里补 2dp；
-            // 恒 2dp，不随 tone 有无跳变）
+            // 卡片与下区按钮之间留 10dp（按钮容器自带 8dp 上边距，这里补 2dp）
             .padding(bottom = 2.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(cardShape)
-                .background(cardBackground)
-                .border(1.dp, cardBorderColor, cardShape)
-                .padding(if (tone != null) 12.dp else 0.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        RideUpperCard(tone = tone) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     HugeIcons.ScooterElectric,
@@ -835,33 +913,40 @@ private fun RideRidingUpper(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(9.dp))
-                Text(
-                    text = ride?.let { "车 ${it.carNum}" } ?: "骑行计时中",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    // 窄屏 / 大字体下的防溢出：标题先省略号，别把尾部图标挤没
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                tone?.let { current ->
-                    Spacer(Modifier.width(8.dp))
-                    // 状态胶囊**可点**（2026-09-30 能力保留）：它显示的是最近一次拉取的
-                    // 快照，点它 = 现查一次并把答案说出来（查询中在原地翻文案，不跳位置）
-                    RidingStateChip(
-                        tone = current,
-                        text = when {
-                            busy == KvcxAction.QUERY_LOCK -> "查询中…"
-                            // 悬置态说清是「确认中」而不是失败；点击/刷新就是核实手段
-                            unlockPending -> "开锁未确认"
-                            lockPending && ride?.locked != true -> "锁车确认中…"
-                            ride?.locked == true -> "已锁"
-                            else -> "已解锁"
-                        },
-                        enabled = busy == null,
-                        onClick = onQueryLock,
+                // 车号 + 胶囊同住左侧那一段（`weight(1f)` 的盒子），右侧整块留给图标组：
+                // 标题用 `weight(1f, fill = false)` 先量（够长就省略号），胶囊紧贴标题之后，
+                // 图标**永远不会被长车号挤没**（旧版标题不参与分配、三个图标排在最后接剩余，
+                // 车号一长就先丢图标）。
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = ride?.let { "车 ${it.carNum}" } ?: "骑行计时中",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    // 状态胶囊**可点**（2026-09-30 能力保留）：它显示的是最近一次拉取的
+                    // 快照，点它 = 现查一次并把答案说出来（查询中在原地翻文案，不跳位置）。
+                    // 只有"连订单都没有"（小程序计时态）才不摆——那时没有任何状态可报。
+                    if (ride != null) {
+                        Spacer(Modifier.width(8.dp))
+                        RidingStateChip(
+                            tone = tone,
+                            text = ridingStateChipText(
+                                querying = busy == KvcxAction.QUERY_LOCK,
+                                locked = ride.locked,
+                                unlockPending = unlockPending,
+                                lockPending = lockPending,
+                            ),
+                            enabled = busy == null,
+                            onClick = onQueryLock,
+                        )
+                    }
                 }
-                Spacer(Modifier.weight(1f))
                 if (ride != null) {
                     IconButtonSmall(
                         icon = HugeIcons.MapsLocation02,
@@ -885,6 +970,10 @@ private fun RideRidingUpper(
                     )
                 }
             }
+            // 倒计时块按「有没有在案计时」**整块进出、不做动画**：barKey 不变时页面不冻结地图
+            // 让位高度，卡内高度若逐帧变化，`mapReserveDp` 就逐帧跟随 → 每帧 resize 一次地图
+            // （osmdroid 每帧整幅重绘，就是 2026-10-01 修掉的那个掉帧来源）。要给它加过渡，
+            // 得先让页面把这段动画也纳入冻结窗口。
             if (timerActive) {
                 RideCountdown(
                     startAt = timerStartAt,
@@ -894,8 +983,14 @@ private fun RideRidingUpper(
             }
             if (ride != null) {
                 val elapsed = rememberRideElapsed(ride, rideFetchedAt)
-                // 指标压成一行小字（2026-10-08）：原来三列「标签 + 值」把整卡顶得太高
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // 指标压成一行小字（2026-10-08）：原来三列「标签 + 值」把整卡顶得太高。
+                // **左边那段吃剩余宽度、右端时刻只占自己的固有宽度**：旧版左边不参与分配、
+                // 中间塞一根 `Spacer(weight)`，右端「更新于 15:09」在窄屏上被切掉半个字
+                // （用户报「有些地方还被挡住」）。现在右边的时刻先量、永不裁，左边不够就省略号。
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Text(
                         text = buildString {
                             append("已骑 ${elapsed ?: "--"}")
@@ -913,8 +1008,8 @@ private fun RideRidingUpper(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.weight(1f))
                     Text(
                         text = "更新于 ${clockText(rideFetchedAt)}",
                         style = MaterialTheme.typography.labelSmall,
@@ -934,7 +1029,13 @@ private fun RideRidingUpper(
     }
 }
 
-/** 骑行卡头行的**状态胶囊**（[RidingCardTone] 三态配色的唯一出处；点它=现查锁状态）。 */
+/**
+ * 骑行卡头行的**状态胶囊**（[RidingCardTone] 四态配色的唯一出处；点它 = 现查锁状态）。
+ *
+ * 底色 / 文字 / 圆点都走 `animateColorAsState`（[RIDING_TONE_MS]，与整卡那层同一个节拍），
+ * 文案走一层 `AnimatedContent` 交叉淡入：解锁 ↔ 已锁 ↔ 悬置之间切换时胶囊是**渐变**过去的
+ * （此前颜色与文案都是硬切，正好与整卡那层渐变并排，一个渐变一个跳，反而更显眼）。
+ */
 @Composable
 private fun RidingStateChip(
     tone: RidingCardTone,
@@ -942,27 +1043,45 @@ private fun RidingStateChip(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val background = when (tone) {
-        RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primaryContainer
-        RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
-        RidingCardTone.Pending -> MaterialTheme.semanticColors.warning.copy(alpha = 0.18f)
-    }
-    val foreground = when (tone) {
-        RidingCardTone.Unlocked -> MaterialTheme.colorScheme.onPrimaryContainer
-        RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-        RidingCardTone.Pending -> MaterialTheme.semanticColors.warning
-    }
-    val dot = when (tone) {
-        RidingCardTone.Unlocked -> MaterialTheme.colorScheme.primary
-        RidingCardTone.Locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-        RidingCardTone.Pending -> MaterialTheme.semanticColors.warning
-    }
+    val scheme = MaterialTheme.colorScheme
+    val semantic = MaterialTheme.semanticColors
+    val background by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> scheme.primaryContainer
+            RidingCardTone.Locked -> scheme.onSurface.copy(alpha = 0.07f)
+            RidingCardTone.Pending -> semantic.warning.copy(alpha = 0.18f)
+            RidingCardTone.Unknown -> scheme.onSurface.copy(alpha = 0.06f)
+        },
+        animationSpec = tween(RIDING_TONE_MS),
+        label = "chipBg",
+    )
+    val foreground by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> scheme.onPrimaryContainer
+            RidingCardTone.Locked -> scheme.onSurface.copy(alpha = 0.72f)
+            RidingCardTone.Pending -> semantic.warning
+            RidingCardTone.Unknown -> scheme.onSurface.copy(alpha = 0.6f)
+        },
+        animationSpec = tween(RIDING_TONE_MS),
+        label = "chipFg",
+    )
+    val dot by animateColorAsState(
+        targetValue = when (tone) {
+            RidingCardTone.Unlocked -> scheme.primary
+            RidingCardTone.Locked -> scheme.onSurface.copy(alpha = 0.45f)
+            RidingCardTone.Pending -> semantic.warning
+            RidingCardTone.Unknown -> scheme.onSurface.copy(alpha = 0.3f)
+        },
+        animationSpec = tween(RIDING_TONE_MS),
+        label = "chipDot",
+    )
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(9.dp))
             .background(background)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 3.dp),
+            // 竖向内边距 5dp（≈27dp 高）：胶囊要能被稳定点到，又不把整行撑高
+            .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -972,60 +1091,73 @@ private fun RidingStateChip(
                 .background(dot),
         )
         Spacer(Modifier.width(6.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = foreground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        AnimatedContent(
+            targetState = text,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(BAR_FADE_IN_MS)) togetherWith
+                    fadeOut(animationSpec = tween(BAR_FADE_OUT_MS))
+            },
+            label = "chipText",
+        ) { current ->
+            Text(
+                text = current,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = foreground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
-/** 结算态的**上区**：时长 / 费用 / 结算状态。两个出路在下区。 */
+/** 结算态的**上区**：时长 / 费用 / 结算状态。两个出路在下区。容器与骑行卡同一份。 */
 @Composable
 private fun RideSettledUpper(summary: KvcxReturnSummary) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
-            .padding(top = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(top = 10.dp, bottom = 2.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "已还车",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            summary.carNum?.let { car ->
+        RideUpperCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "车 $car",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    text = "已还车",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                summary.carNum?.let { car ->
+                    Text(
+                        text = "车 $car",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        maxLines = 1,
+                    )
+                }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                summary.durationText?.let { LabeledValue(label = "本次骑行", value = it) }
+                summary.feeText?.let { LabeledValue(label = "费用", value = it) }
+            }
+            Text(
+                text = summary.settleText,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (summary.settleWarning) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                },
+            )
+            Text(
+                text = "金额与结算以快趣小程序为准。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
-            summary.durationText?.let { LabeledValue(label = "本次骑行", value = it) }
-            summary.feeText?.let { LabeledValue(label = "费用", value = it) }
-        }
-        Text(
-            text = summary.settleText,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (summary.settleWarning) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-            },
-        )
-        Text(
-            text = "金额与结算以快趣小程序为准。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-        )
     }
 }
 

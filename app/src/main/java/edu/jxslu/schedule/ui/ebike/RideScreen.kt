@@ -86,6 +86,7 @@ import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -349,7 +350,7 @@ fun RideScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is BikeMapEvent.Notice ->
-                    snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
                 BikeMapEvent.Unlocked -> haptics.success()
             }
         }
@@ -358,7 +359,7 @@ fun RideScreen(
         ebikeViewModel.events.collect { event ->
             when (event) {
                 is EbikeEvent.Notice ->
-                    snackbar.showSnackbar(AppNoticeVisuals(event.text, tone = event.tone))
+                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
             }
         }
     }
@@ -393,7 +394,7 @@ fun RideScreen(
     // 每次进页面都会白申请一次、再弹一句「已拒绝」，那就成了骚扰。
     var locationGranted by remember { mutableStateOf(BikeLocator.hasPermission(context)) }
     val notifyLocateIssue: suspend (String) -> Unit = { message ->
-        val outcome = snackbar.showSnackbar(
+        val outcome = snackbar.showNotice(
             AppNoticeVisuals(
                 message = message,
                 actionLabel = "去设置",
@@ -522,8 +523,8 @@ fun RideScreen(
         blockAnimating = true
         // 落位时机按方向分流（2026-10-07 修用户报的「还车后点继续找车，地图突然抽搐」）。
         // 前提：容器高度动画（SizeTransform）**两个方向都是 BAR_RISE_MS**——它不看初末
-        // 尺寸，块的实际高度 240ms 才落底；BAR_FALL_MS 只是退场内容的滑动时长，
-        // **不是**沉底时刻，别把落位基数换成它。
+        // 尺寸，块的实际高度 240ms 才落底；上区退场现在只是 120ms 原地淡出（2026-10-08
+        // 用户口径「直接上升」），**不参与**高度动画，落位基数仍是 BAR_RISE_MS。
         // - **升起**（块变高）：等满程 + 标准余量。动画里地图不动、被升起来的块盖住，
         //   落位时缩小的那截在块后面，看不见——2026-10-01 的修法，保持。
         // - **下沉**（块变矮，如结算卡 → 继续找车）：动画一落底（[SHRINK_SETTLE_MS] 小余量）

@@ -12,11 +12,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.repo.AppCacheCleaner
 import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.UpdateCheckClient
 import edu.jxslu.schedule.data.repo.UpdateCheckResult
@@ -52,6 +56,8 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
+import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.ebike.EbikeMapCache
 import edu.jxslu.schedule.ui.me.MeViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -60,6 +66,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Agreement01
 import me.rerere.hugeicons.stroke.Alert02
 import me.rerere.hugeicons.stroke.Bug01
+import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.Github
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Megaphone01
@@ -107,7 +114,7 @@ fun AboutScreen(
     var showLicenses by remember { mutableStateOf(false) }
     val showNotice: (String) -> Unit = { message ->
         scope.launch {
-            snackbar.showSnackbar(AppNoticeVisuals(message, tone = NoticeTone.Warning))
+            snackbar.showNotice(AppNoticeVisuals(message, tone = NoticeTone.Warning))
         }
     }
 
@@ -133,7 +140,7 @@ fun AboutScreen(
                     showUpdateDialog = true
                 }
                 is UpdateCheckResult.UpToDate -> scope.launch {
-                    snackbar.showSnackbar(
+                    snackbar.showNotice(
                         AppNoticeVisuals(
                             "当前 v${BuildConfig.VERSION_NAME} 已是最新版本",
                             tone = NoticeTone.Success,
@@ -144,10 +151,41 @@ fun AboutScreen(
             }
         }
     }
+    // 清理缓存（DESIGN §3.3，2026-10-08）：进页统计一次占用，点行二次确认后清。
+    // 清理中按钮禁用；弹窗先关再 Snackbar（红线上明确：Snackbar 穿不透弹窗窗口）。
+    // 顺带 bump crashRefresh——崩溃记录在清理清单里，导出行的份数要跟着归零。
+    var cacheBytes by remember { mutableStateOf<Long?>(null) }
+    var showClearCache by remember { mutableStateOf(false) }
+    var clearingCache by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        cacheBytes = AppCacheCleaner.measure(context)
+    }
     // 崩溃留痕（CrashReporter）：列表驱动条目文案；分享走系统 ACTION_SEND（用户自己选
     // 去哪儿——微信/邮件/文件管理，App 不经手网络，符合隐私口径）
-    val crashFiles = remember { CrashReporter.listFiles(context) }
+    // crashRefresh 是清理缓存的刷新键：crash/ 在清理清单里，清完 bump 重读份数
+    // （原来是 remember{} 一次性读，清完后「导出诊断日志」行会一直显示旧份数）。
+    var crashRefresh by remember { mutableStateOf(0) }
+    val crashFiles = remember(crashRefresh) { CrashReporter.listFiles(context) }
     val crashFileCount = crashFiles.size
+    fun runClearCache() {
+        clearingCache = true
+        scope.launch {
+            val result = AppCacheCleaner.clear(context)
+            cacheBytes = AppCacheCleaner.measure(context)
+            crashRefresh++
+            clearingCache = false
+            showClearCache = false
+            scope.launch {
+                snackbar.showNotice(
+                    AppNoticeVisuals(
+                        if (result.allOk) "已清理缓存" else "部分缓存没清干净，可稍后重试",
+                        tone = if (result.allOk) NoticeTone.Success else NoticeTone.Warning,
+                    ),
+                )
+            }
+        }
+    }
+
     var shareLatestCrash by remember { mutableStateOf(false) }
     LaunchedEffect(shareLatestCrash) {
         if (!shareLatestCrash) return@LaunchedEffect
@@ -265,6 +303,15 @@ fun AboutScreen(
                     onClick = onOpenPermissionSettings,
                 )
                 SettingItem(
+                    title = "清理缓存",
+                    subtitle = buildString {
+                        append("网页缓存 · 地图瓦片 · 崩溃记录等")
+                        cacheBytes?.let { append(" · 共 ").append(EbikeMapCache.sizeLabel(it)) }
+                    },
+                    icon = HugeIcons.Delete02,
+                    onClick = { showClearCache = true },
+                )
+                SettingItem(
                     title = "导出诊断日志",
                     subtitle = crashFileCount.takeIf { it > 0 }?.let { "$it 份崩溃记录 · 经系统分享发送" }
                         ?: "没有崩溃记录",
@@ -309,6 +356,40 @@ fun AboutScreen(
     if (showLicenses) {
         LicensesDialog(onDismiss = { showLicenses = false })
     }
+    // 清理缓存确认：交代清什么与不清什么——清缓存最容易被误解成「数据没了」
+    // （范式照抄快趣出行「清除地图缓存」；实现与清单见 data/repo/AppCacheCleaner）。
+    if (showClearCache) {
+        AlertDialog(
+            onDismissRequest = { if (!clearingCache) showClearCache = false },
+            title = { Text("清理缓存？") },
+            text = {
+                Text(
+                    buildString {
+                        append("将删除网页缓存与登录状态、离线地图瓦片、崩溃记录、校历图片等临时数据")
+                        cacheBytes?.let { append("（共 ").append(EbikeMapCache.sizeLabel(it)).append("）") }
+                        append("。不影响课表成绩、笔记作业、账号密码等数据；下次打开教务网页需要重新登录。")
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { runClearCache() },
+                    enabled = !clearingCache,
+                ) {
+                    Text(
+                        text = if (clearingCache) "清理中…" else "清理",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearCache = false },
+                    enabled = !clearingCache,
+                ) { Text("取消") }
+            },
+        )
+    }
     // 发现新版本：日志正文 + SHA-256（镜像通道的核对凭据）+ 双通道下载 + 忽略此版本。
     // 检查失败/已是最新不走弹窗，走 Snackbar（见 checkForUpdate）；弹窗内的反馈
     // （已复制 / 打不开链接）由弹窗自己出——Snackbar 穿不透弹窗窗口。
@@ -321,7 +402,7 @@ fun AboutScreen(
                     showUpdateDialog = false
                     scope.launch { repo.setIgnoredUpdateVersion(manifest.version) }
                     scope.launch {
-                        snackbar.showSnackbar(
+                        snackbar.showNotice(
                             AppNoticeVisuals(
                                 "已忽略该版本，启动时不再自动提醒",
                                 tone = NoticeTone.Success,
