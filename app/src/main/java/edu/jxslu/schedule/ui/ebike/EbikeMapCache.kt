@@ -68,8 +68,8 @@ internal object EbikeMapCache {
         // 回滚日志（cache.db-journal）顺手清掉：purge 的写事务提交成功，就说明库里没有未决
         // 事务——真有条热日志，SQLite 在打开那一刻就回滚并消费掉了，之后不会再用它；而它会以
         // 高水位留在磁盘上（真机实测 512 KB），让"已清除"看起来没清干净。purge 失败时不动它
-        // （那时它可能是唯一能恢复库的东西）。时序上也安全：清除只从出码页发起，地图页已退出，
-        // 没有在跑的事务。
+        // （那时它可能是唯一能恢复库的东西）。时序上也安全：清除只从地图页之外的入口发起
+        // （2026-10-08 起第二个入口是关于页「清理缓存」，清前骑行页已退出），没有在跑的事务。
         if (purged) runCatching { File(dbFile.absolutePath + JOURNAL_SUFFIX).delete() }
         Graph.zoneCacheStore(context).delete()
         purged

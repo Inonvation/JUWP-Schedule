@@ -74,7 +74,7 @@
       `AnimatedContent` 交叉淡入（`RideActionButton`：整行 46dp 胶囊，主次只差实心 / 描边；
       旧的 `RidePrimaryButton` 已并进它）。
     **加新形态时把内容分进这两层**，别把主动作塞回上区——塞回去就又开始跳了。
-    **退场那一份会继续组合 190ms**，它读的是外层参数的**最新值**：还车时 `ride` 变 null、
+    **退场那一份会继续组合 120ms（`BAR_FADE_OUT_MS`，原地淡出）**，它读的是外层参数的**最新值**：还车时 `ride` 变 null、
     点「继续找车」时 `summary` 变 null、结束计时时 `timerActive` 变 false，退场路上那半秒
     就画不出东西（看着是"内容先没了、区域再收回去"）。所以 `RideActionArea` 里按 key
     留了一份 `RideUpperStash`（普通持有者、不驱动重组，页面里 `DpHolder` 同法）：
@@ -807,6 +807,19 @@
   缺数据不该标成失联（`BikeNearbyTest` 钉住；在线/停用字段**明确给了**时照旧生效）。
   token 允许空（免凭证读接口，与 `zonesJson` 同口径，小程序方式也能用）；连点只放一个在飞
   （`carDetailJob`），查不到就停，**不轮询**。
+- **识别高亮要随骑行态吞掉**（2026-10-08 修「开始骑的位置残留一个奇怪的圆圈」）：
+  高亮（`highlightCarNum` / `highlightedCar`，画成双层圈 + 车号标签）是「找这辆车」的指示，
+  只对"车还停在那儿"成立；车一旦成了在骑的这辆，它跟着人走，「我的车」标记已经表达它在哪，
+  旧坐标上的高亮圈只剩误导。清的理由很具体：高亮按车号在最近一次查询结果里重找，而骑行中
+  不轮询、结果不换批，它就会一直钉在开骑前的位置。落点两处、同一判据（`kvcx.state` 的
+  在案订单车号 == 高亮车号）：① VM init 里 collect 骑行快照，命中即 `clearHighlight()`
+  （标记 + `fetchedCarDetail` 一起清——详情兜底会在后续重算里把旧坐标画回来）；
+  ② `focusCar` 入口撞上在骑车辆时直接清掉并返回（不设新高亮、不把镜头拽向过期位置）。
+  骑的是**另一辆**车时高亮保留不动——那辆车确实还停在那儿。还车后 ride 归 null、
+  高亮早已清掉不会复活；此时再 focusCar 照常定位。**还车点「继续找车」要触发一次
+  `viewModel.refresh()`**（`RideScreen.onContinue`）：列表还停在骑前那批快照，刚还的车
+  可能仍按「可用」挂在开骑前的旧位置上；刷新由这个点击驱动，符合「刷新只由用户动作触发」。
+  别把高亮清理挪进页面层（`pickedCar` 是页面自己的车辆卡形态，与地图高亮是两回事）。
 - **账户资产**（`getUserInfo` + `queryUserCoupon` + `queryUserMemberCoupon` 三接口**并行**，
   `KqcxSessionRepository.queryAssets`）：展示在快趣账号页「快趣资产」区（`AssetsSection`），
   **只读**——充值 / 退押 / 买卡是微信收银台流程，App 不碰支付，区标题下一行就把出路说清，

@@ -50,6 +50,7 @@ import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DisclaimerDialog
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.LicensesDialog
 import edu.jxslu.schedule.ui.common.NoticeDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
@@ -168,6 +169,7 @@ fun AboutScreen(
     val crashFiles = remember(crashRefresh) { CrashReporter.listFiles(context) }
     val crashFileCount = crashFiles.size
     fun runClearCache() {
+        if (clearingCache) return // 闸在挂起点之前：清理在飞时按钮虽禁用，程序化重入也不放行
         clearingCache = true
         scope.launch {
             val result = AppCacheCleaner.clear(context)
@@ -294,14 +296,6 @@ fun AboutScreen(
                     icon = HugeIcons.SoftwareLicense,
                     onClick = { showLicenses = true },
                 )
-            }
-            SettingsSection(title = "系统") {
-                SettingItem(
-                    title = "权限设置",
-                    subtitle = "通知 · 日历 · 定位 · 电池优化 · 自启动",
-                    icon = HugeIcons.Shield01,
-                    onClick = onOpenPermissionSettings,
-                )
                 SettingItem(
                     title = "清理缓存",
                     subtitle = buildString {
@@ -310,6 +304,14 @@ fun AboutScreen(
                     },
                     icon = HugeIcons.Delete02,
                     onClick = { showClearCache = true },
+                )
+            }
+            SettingsSection(title = "系统") {
+                SettingItem(
+                    title = "权限设置",
+                    subtitle = "通知 · 日历 · 定位 · 电池优化 · 自启动",
+                    icon = HugeIcons.Shield01,
+                    onClick = onOpenPermissionSettings,
                 )
                 SettingItem(
                     title = "导出诊断日志",
@@ -359,6 +361,7 @@ fun AboutScreen(
     // 清理缓存确认：交代清什么与不清什么——清缓存最容易被误解成「数据没了」
     // （范式照抄快趣出行「清除地图缓存」；实现与清单见 data/repo/AppCacheCleaner）。
     if (showClearCache) {
+        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { if (!clearingCache) showClearCache = false },
             title = { Text("清理缓存？") },

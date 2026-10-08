@@ -258,15 +258,14 @@ internal fun ridingStateChipText(
  * （`RideScreen` 里面板之下），不随列表滚动，也不浮在地图上。
  *
  * 形态随状态换：找车（默认 / 车辆卡）、骑行、结算。切换走上区升起、下区常驻那套
- * （见 [RideActionUpper] / [RideActionButtons] 的分工）。
+ * （见 [RideActionUpper] / [RideActionButtons] 的分工）。**形态只由 [barKey] 决定**
+ * （phase / 选中车都已经折进 key 里），本组件不再单独收这几个参数——2026-10-08 复查
+ * 删掉了三个只透传不消费的死参数。
  */
 @Composable
 internal fun RideActionArea(
-    phase: RidePhase,
     caps: EbikeCapabilities,
-    loggedIn: Boolean,
     state: BikeMapUiState,
-    pickedCar: String?,
     ride: KqcxAuth.Ride?,
     rideFetchedAt: Long,
     busy: KvcxAction?,
@@ -480,8 +479,8 @@ private const val BUSY_LONG_WAIT_SECONDS = 20
  * 退场动画期间要用的「最近一次实时值」持有者（在 [RideActionArea] 里按 key 记）。
  *
  * **不是入场快照**：当前档（key == barKey）逐轮把实时值记账进来，退场那份（还会继续
- * 组合 [BAR_FALL_MS]）只读——切换那一刻外层参数已被清空，读到的就是最后一帧的真实
- * 状态。普通持有者，不驱动重组（页面里 `DpHolder` 同法）。
+ * 组合 [BAR_FADE_OUT_MS]，原地淡出）只读——切换那一刻外层参数已被清空，读到的就是最后
+ * 一帧的真实状态。普通持有者，不驱动重组（页面里 `DpHolder` 同法）。
  */
 private class RideUpperStash {
     var ride: KqcxAuth.Ride? = null

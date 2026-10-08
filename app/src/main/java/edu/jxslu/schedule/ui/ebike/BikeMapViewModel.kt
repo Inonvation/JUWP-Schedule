@@ -331,6 +331,20 @@ class BikeMapViewModel(
     private var locatedOnce = false
 
     init {
+        // 骑行态吞掉识别高亮（2026-10-08 修「开始骑的位置残留一个奇怪的圆圈」）：
+        // 高亮是「找这辆车」的指示（双层圈 + 车号标签），只对"车还停在那儿"成立；
+        // 车一旦成了在骑的这辆，它就跟着人走了——「我的车」标记（未锁时并到蓝点）已经
+        // 表达"车在哪"，旧坐标上的高亮圈只剩误导。高亮按车号在最近一次查询结果里重找，
+        // 骑行中不轮询、结果不换批，它就会一直钉在开骑前的位置——所以在案订单快照
+        // 带出车号时比对一次、命中即清。还车后 ride 归 null，高亮早已清掉不会复活；
+        // 若骑的是另一辆车，高亮说的是"那辆还停在那儿"，保留不动。
+        viewModelScope.launch {
+            kvcx.state.collect { snapshot ->
+                val rideCar = snapshot.ride?.carNum ?: return@collect
+                val num = _uiState.value.highlightCarNum ?: return@collect
+                if (num == rideCar) clearHighlight()
+            }
+        }
         // 图层缓存先读回来（几十 KB 的文件，毫秒级）：进页那一刻就把上次那片还车点摆上，
         // 命中的话连请求都不发（判定在 domain/ZoneCache）。与下面几条并行，互不依赖
         viewModelScope.launch {
@@ -508,6 +522,13 @@ class BikeMapViewModel(
     /** 找一辆车（按完整车号）并展开所在簇、把镜头移过去；列表里没有就向快趣点名查一次。 */
     fun focusCar(carNum: String) {
         if (!carNum.isNotBlank()) return
+        // 这辆车就是在骑的这辆：不再按旧结果的坐标画高亮、也不把镜头拽向过期位置——
+        // 车随人走，「我的车」标记已经表达它在哪（与 init 里骑行吞高亮同一条判据）。
+        // 还车之后 ride 已归 null，从这里带车号进来仍照常定位（车又停回某个点位了）。
+        if (kvcx.state.value.ride?.carNum == carNum) {
+            clearHighlight()
+            return
+        }
         _uiState.update { it.copy(highlightCarNum = carNum) }
         rebuildClusters()
         val cluster = _uiState.value.clusters.firstOrNull { c -> c.bikes.any { it.carNum == carNum } }
@@ -538,6 +559,17 @@ class BikeMapViewModel(
      */
     private var fetchedCarDetail: NearbyBike? = null
     private var carDetailJob: Job? = null
+
+    /**
+     * 清掉识别高亮（骑行吞高亮 / focusCar 撞上在骑车辆时走这里）：
+     * 标记、按号查回的那份单车详情一起清——详情兜底会在后续重算里把旧坐标再画回来。
+     */
+    private fun clearHighlight() {
+        if (_uiState.value.highlightCarNum == null) return
+        val num = _uiState.value.highlightCarNum
+        if (fetchedCarDetail?.carNum == num) fetchedCarDetail = null
+        _uiState.update { it.copy(highlightCarNum = null, highlightedCar = null) }
+    }
 
     private fun fetchCarDetail(carNum: String) {
         val session = kqcx ?: run {

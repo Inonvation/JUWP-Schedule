@@ -765,11 +765,8 @@ fun RideScreen(
                             .navigationBarsPadding(),
                     ) {
                         RideActionArea(
-                            phase = phase,
                             caps = caps,
-                            loggedIn = kvcxLoggedIn,
                             state = state,
-                            pickedCar = pickedCar,
                             ride = ride,
                             rideFetchedAt = kvcxState.fetchedAt,
                             busy = kvcxState.busy,
@@ -826,11 +823,15 @@ fun RideScreen(
                             haptics.tap()
                             pickedCar = null
                             viewModel.kvcx.dismissReturnSummary()
+                            // 还完车接着找下一辆（这个出口的本意）：列表还停在骑前那批快照
+                            // ——刚还的这辆车可能仍按「可用」挂在开骑前的旧位置上。
+                            // 刷新由这个点击驱动，符合「刷新只由用户动作触发」的纪律
+                            viewModel.refresh()
                         },
                         // 形态 key 由页面算（唯一出处 rideBarKey）：页面靠它冻结地图让位高度
                         barKey = barKey,
                         modifier = Modifier.fillMaxWidth(),
-                    )
+                        )
                         Text(
                             text = "车辆数据来自快趣接口，可能延迟或不准，以运营平台为准。",
                             style = MaterialTheme.typography.labelSmall,
