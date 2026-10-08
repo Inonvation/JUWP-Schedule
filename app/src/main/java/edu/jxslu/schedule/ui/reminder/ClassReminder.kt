@@ -358,8 +358,10 @@ internal object ReminderNotifications {
      * 上课类通知正文（2026-10-08）：`metaLine`（时刻 · @地点 · 教师）+ 备注
      * （有备注才换行追加，无备注维持原样）；备注过 [remarkPreview] 截断，
      * 通知 BigText 能放多行但用户手写的备注长短不受控，与卡片共用一个上限。
+     * internal：RemarkPreviewTest 直调钉住「通知带备注」契约（private 测不到，
+     * 同文件 ReminderNotifications 已有 internal 先例）。
      */
-    private fun notificationLine(slots: List<TimeSlot>, course: Course): String {
+    internal fun notificationLine(slots: List<TimeSlot>, course: Course): String {
         val meta = metaLine(slots, course)
         val remark = remarkPreview(course.remark) ?: return meta
         return "$meta\n$remark"

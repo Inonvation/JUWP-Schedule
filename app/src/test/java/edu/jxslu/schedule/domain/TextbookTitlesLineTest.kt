@@ -27,6 +27,12 @@ class TextbookTitlesLineTest {
     }
 
     @Test
+    fun `leading blank title leaves single real book`() {
+        // 首本空白被滤掉后只剩一本：单本直显，不带「等 N 本」
+        assertEquals("线性代数", textbookTitlesLine(listOf("  ", "线性代数")))
+    }
+
+    @Test
     fun `all blank gives null`() {
         assertNull(textbookTitlesLine(listOf("", "  ")))
         assertNull(textbookTitlesLine(emptyList()))

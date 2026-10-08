@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.domain
 
+import edu.jxslu.schedule.ui.reminder.ReminderNotifications
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -40,7 +41,17 @@ class RemarkPreviewTest {
         assertEquals(exact, remarkPreview(exact))
     }
 
-    /** 通知正文契约：metaLine 在前、备注换行在后、无备注只有 meta（与 ClassReminder 同构）。 */
+    @Test
+    fun `truncation never splits surrogate pair`() {
+        // 19 个 BMP 字符 + 一个 emoji（代理对，2 个 code unit）：截断点落在代理对中间
+        val remark = "字".repeat(19) + "\uD83D\uDE00"
+        val out = remarkPreview(remark)!!
+        // 末位不是孤立高代理（孤立半对渲染成替换符）
+        org.junit.Assert.assertFalse(Character.isHighSurrogate(out[out.length - 2]))
+        assertEquals("字".repeat(19) + "…", out)
+    }
+
+    /** 通知正文契约（直调 [ReminderNotifications.notificationLine]）：meta 在前、备注换行在后、无备注只有 meta。 */
     @Test
     fun `notification line appends remark after meta`() {
         val slots = listOf(
@@ -51,15 +62,28 @@ class RemarkPreviewTest {
             id = 0, name = "高等数学", teacher = "", position = "南B302", day = 1,
             startSection = 1, endSection = 2, weeks = (1..16).toSet(), remark = "带课本",
         )
-        val noRemark = withRemark.copy(remark = "")
+        val noRemark = withRemark.copy(remark = "  ")
 
         assertEquals(
-            metaLine(slots, withRemark) + "\n带课本",
-            metaLine(slots, withRemark).let { m -> remarkPreview(withRemark.remark)?.let { "$m\n$it" } ?: m },
+            "${metaLine(slots, withRemark)}\n带课本",
+            ReminderNotifications.notificationLine(slots, withRemark),
+        )
+        // 无备注（含纯空白）= 原文 meta，一个字都不多
+        assertEquals(metaLine(slots, noRemark), ReminderNotifications.notificationLine(slots, noRemark))
+    }
+
+    /** 通知里的备注同样受 20 字截断：长备注带省略号进通知。 */
+    @Test
+    fun `notification line truncates long remark`() {
+        val slots = listOf(TimeSlot(1, "08:30", "09:10"))
+        val course = Course(
+            id = 0, name = "高等数学", teacher = "", position = "南B302", day = 1,
+            startSection = 1, endSection = 1, weeks = (1..16).toSet(),
+            remark = "字".repeat(REMARK_PREVIEW_LIMIT + 5),
         )
         assertEquals(
-            metaLine(slots, noRemark),
-            metaLine(slots, noRemark).let { m -> remarkPreview(noRemark.remark)?.let { "$m\n$it" } ?: m },
+            "${metaLine(slots, course)}\n${"字".repeat(REMARK_PREVIEW_LIMIT)}…",
+            ReminderNotifications.notificationLine(slots, course),
         )
     }
 }

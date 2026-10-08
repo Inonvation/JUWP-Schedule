@@ -123,10 +123,15 @@ const val REMARK_PREVIEW_LIMIT = 20
 fun remarkPreview(remark: String): String? {
     val cleaned = remark.trim()
     if (cleaned.isEmpty()) return null
-    return if (cleaned.length <= REMARK_PREVIEW_LIMIT) {
-        cleaned
-    } else {
-        cleaned.take(REMARK_PREVIEW_LIMIT) + "…"
+    if (cleaned.length <= REMARK_PREVIEW_LIMIT) return cleaned
+    var cut = cleaned.take(REMARK_PREVIEW_LIMIT)
+    // 截断点落在代理对中间（备注含 emoji 等增补平面字符）时少取一位，
+    // 不产出孤立半对——渲染层会把它画成替换符
+    if (Character.isHighSurrogate(cut.last()) &&
+        cleaned.getOrNull(REMARK_PREVIEW_LIMIT)?.let { Character.isLowSurrogate(it) } == true
+    ) {
+        cut = cut.dropLast(1)
     }
+    return "$cut…"
 }
 
