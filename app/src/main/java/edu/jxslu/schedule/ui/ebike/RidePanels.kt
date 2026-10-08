@@ -216,6 +216,8 @@ internal fun RideActionArea(
     /** [busy] 的起始时刻（按钮「已等 N 秒」走秒的基准；0 = 无 busy）。 */
     busyAt: Long,
     unlockPending: Boolean,
+    /** 锁车指令已发但未确认到（2026-10-08）：徽标显「锁车确认中…」，不是失败。 */
+    lockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
     timerCanEnd: Boolean,
@@ -306,6 +308,7 @@ internal fun RideActionArea(
                 ride = ride ?: held.ride,
                 rideFetchedAt = rideFetchedAt,
                 busy = busy,
+                lockPending = lockPending,
                 // 计时中用实时值（骑行中途换车会换起点）；退场那一份用快照把倒计时留住
                 timerActive = timerActive || held.timerActive,
                 timerStartAt = if (timerActive) timerStartAt else held.timerStartAt,
@@ -435,6 +438,8 @@ private fun RideActionUpper(
     ride: KqcxAuth.Ride?,
     rideFetchedAt: Long,
     busy: KvcxAction?,
+    /** 锁车确认中（2026-10-08）：锁徽标据此显「锁车确认中…」。 */
+    lockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
     summary: KvcxReturnSummary?,
@@ -452,6 +457,7 @@ private fun RideActionUpper(
             ride = ride,
             rideFetchedAt = rideFetchedAt,
             busy = busy,
+            lockPending = lockPending,
             timerActive = timerActive,
             timerStartAt = timerStartAt,
             showEstimateNote = caps.wechatScan,
@@ -709,6 +715,8 @@ private fun RideRidingUpper(
     ride: KqcxAuth.Ride?,
     rideFetchedAt: Long,
     busy: KvcxAction?,
+    /** 锁车指令已发但未确认到（2026-10-08）：锁徽标显「锁车确认中…」。 */
+    lockPending: Boolean,
     timerActive: Boolean,
     timerStartAt: Long,
     /** 小程序方式（`caps.wechatScan`）：倒计时是预估的，进度线下写明以小程序为准。 */
@@ -754,6 +762,9 @@ private fun RideRidingUpper(
                     Text(
                         text = when {
                             busy == KvcxAction.QUERY_LOCK -> "查询中…"
+                            // 锁车确认中（2026-10-08）：指令已发、上报未到，不是失败——
+                            // 徽标说清状态，点击仍可现查（查询本身就是核实手段）
+                            lockPending && locked != true -> "锁车确认中…"
                             locked -> "已锁"
                             else -> "未锁"
                         },

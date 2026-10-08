@@ -1,6 +1,7 @@
 package edu.jxslu.schedule
 
 import edu.jxslu.schedule.data.kqcx.KvcxRideSession
+import edu.jxslu.schedule.data.kqcx.LockOutcome
 import edu.jxslu.schedule.data.kqcx.UnlockOutcome
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcBusinessError
@@ -55,6 +56,9 @@ class KvcxRideControllerTest {
 
         var settled: suspend () -> KqcxAuth.UnpayState? = { KqcxAuth.UnpayState.Settled }
 
+        /** 临时锁车的返回（默认确认成功）；测「未确认」时改成 Unconfirmed。 */
+        var lockResult: LockOutcome = LockOutcome.Locked(ride(locked = true))
+
         var unlockCalls = 0
         var retryCalls = 0
         var lockCalls = 0
@@ -77,9 +81,9 @@ class KvcxRideControllerTest {
             return unlockResult()
         }
 
-        override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): KqcxAuth.Ride {
+        override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome {
             lockCalls++
-            return underway ?: error("测试里没有在案订单")
+            return lockResult
         }
 
         override suspend fun returnBike(
@@ -264,7 +268,7 @@ class KvcxRideControllerTest {
     // ---------- 锁车 / 解锁继续骑 ----------
 
     @Test
-    fun `临时锁车清悬置并提示计费继续`() {
+    fun `临时锁车确认成功清悬置并提示计费继续`() {
         val session = FakeSession()
         val kvcx = controller(session)
 
@@ -272,7 +276,59 @@ class KvcxRideControllerTest {
 
         assertEquals(1, session.lockCalls)
         assertFalse(kvcx.state.value.unlockPending)
+        assertFalse(kvcx.state.value.lockPending)
         assertTrue(notices.single().first.contains("计费继续"))
+        assertEquals(NoticeTone.Info, notices.single().second)
+    }
+
+    @Test
+    fun `锁车未确认不是错误而是确认中`() {
+        // 2026-10-08 修「开锁后临时锁车容易失败」：上报慢是常态，超窗不该报 Error——
+        // 那会把用户推去反复点（那几次多半只是命中幂等早退）。置 lockPending + Warning。
+        val session = FakeSession()
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = ride(locked = false))
+        val kvcx = controller(session)
+
+        kvcx.tempLock()
+
+        assertEquals(1, session.lockCalls)
+        assertTrue(kvcx.state.value.lockPending)
+        assertEquals(NoticeTone.Warning, notices.single().second)
+        assertTrue(notices.single().first.contains("车辆回报稍慢"))
+        assertTrue(notices.single().first.contains("再点一次锁车"))
+    }
+
+    @Test
+    fun `锁车确认中刷新到已锁即消解`() {
+        val session = FakeSession()
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = ride(locked = false))
+        val kvcx = controller(session)
+        kvcx.tempLock()
+        assertTrue(kvcx.state.value.lockPending)
+
+        // 车辆上报到达：刷新看到已锁，悬置解除
+        session.underway = ride(locked = true)
+        kvcx.query(quiet = true)
+
+        assertFalse(kvcx.state.value.lockPending)
+    }
+
+    @Test
+    fun `锁车确认中刷新到未锁保持悬置等上报`() {
+        // 语义与 unlockPending 一致（刷新到目标态才消解）：上报慢时"未锁快照"不代表
+        // 锁车失败——那正是本次修复的立论；保持悬置，出口是再点一次锁车（幂等重发）
+        val session = FakeSession()
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = null)
+        val kvcx = controller(session)
+        kvcx.tempLock()
+        assertTrue(kvcx.state.value.lockPending)
+
+        session.underway = ride(locked = false)
+        kvcx.query(quiet = true)
+
+        assertTrue(kvcx.state.value.lockPending)
+        // 「点刷新核实」走的也是公共 query：这条测试同时证明两条刷新路径共用同一份裁决
+        assertEquals(1, session.lockCalls)
     }
 
     @Test

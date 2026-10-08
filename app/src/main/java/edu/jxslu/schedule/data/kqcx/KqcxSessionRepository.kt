@@ -117,9 +117,16 @@ class KqcxSessionRepository(
             awaitRide { it != null }
             return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true)
         }
-        // 开锁指令：16015 = 服务端要求先取头盔（官方同款分支）
+        // 开锁指令：16015 = 服务端要求先取头盔（官方同款分支）。
+        // **catch 必须包住 awaitRide**（2026-10-08 修死代码）：`parseCreatedOrder` 只看
+        // `helmet/helmetConfig`，头盔标志不全的车型会在 unlock 这一步才回 16015——
+        // 旧版 catch 只包住 unlock 调用本身，awaitRide 抛的 16015 落不进分支、被当
+        // 普通失败抛走，头盔流程永远走不到。
         try {
             server { client.unlockJson(token, gcjLat, gcjLng, LOCATION_SOURCE) }
+            awaitRide { it != null && it.locked != true }?.let {
+                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = false)
+            } ?: return UnlockOutcome.Unconfirmed(created.carNum)
         } catch (error: KvcBusinessError) {
             if (error.errorCode == CODE_HELMET_REQUIRED) {
                 server { client.helmetUnlockJson(token) }
@@ -127,11 +134,6 @@ class KqcxSessionRepository(
                 return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true)
             }
             throw error
-        }
-        return if (awaitRide { it != null && it.locked != true } != null) {
-            UnlockOutcome.Unlocked(created.carNum, helmetFlow = false)
-        } else {
-            UnlockOutcome.Unconfirmed(created.carNum)
         }
     }
 
@@ -153,19 +155,33 @@ class KqcxSessionRepository(
 
     /**
      * 临时锁车（官方骑行面板「锁车」）：订单与计费继续，仅物理锁车。
-     * 已锁时为幂等 no-op。返回确认后的订单状态。
+     * 已锁时为幂等 no-op。
+     *
+     * **确认窗按动作分流（2026-10-08）**：锁车用 [LOCK_CONFIRM_ATTEMPTS]（8 次 ≈ 12 秒），
+     * 比默认的 4 次长一倍——车把"已锁"上报服务端是异步的（落锁后 IoT 上报常见 3~15 秒），
+     * 尤其**开锁后紧接着锁车**（没骑就走）时，上报还排在解锁上报之后，默认窗口几乎必然
+     * 等不到，之前被误报成"锁车失败"（用户再点一次时状态已同步，幂等早退假性"成功"）。
+     * 锁车免确认、无新增计费后果，多等几秒换确定性是划算的。
+     *
+     * 指令响应过 [KqcxAuth.parseSuccess]：服务端明确拒绝（车辆离线 / 指令处理中）时
+     * 给出具体文案，而不是把一切吞成笼统的"未确认"。
+     * 超窗返回 [LockOutcome.Unconfirmed]（**不抛错**）——那是可自愈的中间态。
      */
-    override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): KqcxAuth.Ride {
+    override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome {
         ensureSession()
         val before = queryUnderway() ?: throw KvcBusinessError(null, "没有进行中的骑行")
-        if (before.locked == true) return before
-        server { client.lockJson(requireToken(), gcjLat, gcjLng, LOCATION_SOURCE) }
-        return awaitRide { it?.locked == true }
-            ?: throw KvcBusinessError(
-                null,
-                "锁车指令已发送，但未确认车辆已锁；请留意车辆提示音，或点刷新确认",
-            )
+        if (before.locked == true) return LockOutcome.Locked(before)
+        server { KqcxAuth.parseSuccess(client.lockJson(requireToken(), gcjLat, gcjLng, LOCATION_SOURCE)) }
+        val confirmed = awaitRide(attempts = LOCK_CONFIRM_ATTEMPTS) { it?.locked == true }
+        return if (confirmed != null) {
+            LockOutcome.Locked(confirmed)
+        } else {
+            LockOutcome.Unconfirmed(lastKnown = awaitRideLastKnown())
+        }
     }
+
+    /** 确认窗走完后补拉一次现状（尽力而为）：给 [LockOutcome.Unconfirmed] 带上最新快照。 */
+    private suspend fun awaitRideLastKnown(): KqcxAuth.Ride? = runCatching { queryUnderway() }.getOrNull()
 
     /**
      * 还车：未锁先静默锁（`muteCarLock`，尽力而为）→ `endTheOrder`。
@@ -413,6 +429,13 @@ class KqcxSessionRepository(
 
         /** 动作后落地确认的查询间隔（官方 1 秒级节奏取整）。 */
         const val CONFIRM_INTERVAL_MS = 1_500L
+
+        /**
+         * 临时锁车的确认次数（× [CONFIRM_INTERVAL_MS] ≈ 12 秒）：车把"已锁"上报服务端
+         * 是异步的（3~15 秒常态），默认 4 次窗口几乎必然等不到（2026-10-08 修
+         * 「开锁后临时锁车容易失败」）。只放宽锁车——开锁/还车保持官方同款 4 次。
+         */
+        const val LOCK_CONFIRM_ATTEMPTS = 8
 
         /** 还车后扣款确认的轮询间隔。 */
         const val SETTLE_POLL_INTERVAL_MS = 2_500L

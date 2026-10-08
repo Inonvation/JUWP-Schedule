@@ -1655,9 +1655,9 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 | 动作 | 调用序列（POST form） |
 |------|----------------------|
 | 开锁 | `createOrder {carNum, lat, lng, clientType:1, clientVersion:V6.0.0, locationSource}` → 官方 `helmet==1&&helmetConfig==1`（或开锁返 16015）走 `helmetUnLock {}`，否则 `greenCarUnlock {lng, lat, locationSource}` |
-| 临时锁车 | `greenCarLock {lng, lat, locationSource}`（官方骑行面板「锁车」，订单与计费继续） |
+| 临时锁车 | `greenCarLock {lng, lat, locationSource}`（官方骑行面板「锁车」，订单与计费继续）；响应过 `parseSuccess`（2026-10-08 起解析信封——旧版把响应整个丢弃，服务端明确拒绝被吞成笼统"未确认"） |
 | 还车 | 未锁先 `muteCarLock`（静默锁，尽力而为）→ `endTheOrder {lat, lng, locationValid:1, locationSource, locationTime(秒), bdStatus:0, bdPileStatus:0, bluetoothName:"", dispatchFlag:2}` |
-| 落地确认 | 每动作后**有界**查询 `queryUnderwayOrder`（≤4 次、1.5 秒间隔，官方同款节奏），非常驻轮询 |
+| 落地确认 | 每动作后**有界**查询 `queryUnderwayOrder`（1.5 秒间隔，官方同款节奏），非常驻轮询。**开锁/还车 4 次**（官方同款）；**临时锁车 8 次 ≈ 12 秒**（2026-10-08 放宽，见下） |
 | 还车后 | `queryUnPayOrder {}`：`12004`=已结清；有欠费把 `unPayMoney` 显示出来 + 给「去微信结清」（把我们能做的做到头，**支付本身不做**） |
 | 定位 | 官方 `wx.getLocation type:"gcj02"` → App 用 `BikeLocator.currentLocation`（已是 GCJ-02），`locationSource:"realtime"` |
 
@@ -1675,6 +1675,20 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 分支，定位前置仍排在它前面——四道闸里只有这一道允许用户自己关。**弹窗状态的读取收在
 `KvcxConfirmHost` 里**（2026-10-01，用户报「点确认开锁后卡一下」）：读在页面函数体里会让开关
 弹窗重组整页、连带地图走一遍 `AndroidView` update，那几帧本来就在做关窗口 + 切 busy + 发请求）。
+**临时锁车的"未确认"不是失败**（2026-10-08，修用户报的「开锁后临时锁车特别容易失败，
+第二次点就能成功」）：车把"已锁"上报服务端是**异步**的（落锁后 IoT 上报常见 3~15 秒，
+开锁后紧接着锁车——没骑就走——上报还排在解锁上报之后），旧版确认窗只有 4×1.5s ≈ 6 秒，
+几乎必然等不到，被抛成 Error 红字；用户再点的那次其实状态已同步、命中幂等早退
+（已锁直接返回），假性"成功"。修后三件——**确认窗按动作分流**（锁车 8 次 ≈ 12 秒
+`LOCK_CONFIRM_ATTEMPTS`，开锁/还车保持官方同款 4 次——锁车免确认、无新增计费后果，
+多等几秒换确定性）；**超窗不抛错**，返回 `LockOutcome.Unconfirmed`（形态镜像
+`UnlockOutcome`，含 `lastKnown` 快照），控制器置 `lockPending` + **Warning** 提示
+「车辆回报稍慢；可点刷新核实，车没锁上就再点一次锁车」，锁徽标显「锁车确认中…」；
+**悬置裁决与快照落库收成一份**（`KvcxRideState.withRideSnapshot`，`query()` 与
+`refreshInternal()` 共用）：刷新到已锁即消解，刷新到未锁**保持悬置**等下一次快照
+（"未锁快照"不代表失败，那正是本条立论；出口是再点一次锁车，仓库层幂等兜底），
+订单消失也解除。**别把"确认不到"当"失败"报**——同类异步确认（开锁 `Unconfirmed`、
+还车结算轮询）都是同一语义家族。
 **弹窗开关带过渡，不瞬间抽动**（2026-10-03，用户口径「不要有突变跳动」）：material3 1.3.0 的
 `AlertDialog` 没有 compose 侧动画、compose 的 Dialog 窗口也没配 `windowAnimationStyle`，
 开与关都是硬切；现在由 `ui/common/DialogWindowFade.kt` 的 `DialogWindowFadeEffect` 把

@@ -9,6 +9,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.kqcx.KvcxRideSession
+import edu.jxslu.schedule.data.kqcx.LockOutcome
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.data.kqcx.UnlockOutcome
 import edu.jxslu.schedule.domain.KqcxAuth
@@ -69,6 +70,14 @@ data class KvcxRideState(
     val busyAt: Long = 0L,
     /** 开锁指令已发但未确认；确认开锁/还车/刷新到已开时清掉。 */
     val unlockPending: Boolean = false,
+    /**
+     * 临时锁车指令已发但窗口内未确认到"已锁"（2026-10-08）：**不是失败**——车辆把
+     * "已锁"上报服务端是异步的（3~15 秒常态，开锁后立刻锁车更慢）。UI 显示
+     * 「锁车确认中」并给刷新/再点一次锁车的出路；快照刷新到已锁即消解
+     * （裁决在 [withRideSnapshot]，与 `unlockPending` 同一份）。与 [unlockPending]
+     * 在真实订单里天然互斥（已锁 ↔ 未开锁），清彼不需要连带清此。
+     */
+    val lockPending: Boolean = false,
     /**
      * 该账号为微信支付分免押、开锁需在微信内授权（本次会话内命中过 11035）。
      * **只是会话内标记**（进程重启后允许再试）：`wxpayScoreUse` 是微信客户端专属 API，
@@ -216,15 +225,15 @@ class KvcxRideController internal constructor(
      * 查询出问题不该打扰用户）；手动刷新传 false，失败给提示。
      *
      * **不轮询**：调用点只有进页、回页、用户动作、动作完成、手动刷新。
+     * 快照落库统一走 [withRideSnapshot]——「点刷新核实」要能消解锁车/开锁悬置态，
+     * 这条路径与动作后刷新必须是同一份裁决。
      */
     fun query(quiet: Boolean = true) {
         val session = session ?: return
         if (!session.loggedIn.value) return
         scope.launch {
             runCatching { session.queryUnderway() }
-                .onSuccess { ride ->
-                    _state.update { it.copy(ride = ride, fetchedAt = System.currentTimeMillis()) }
-                }
+                .onSuccess { ride -> _state.update { it.withRideSnapshot(ride) } }
                 .onFailure { if (!quiet) onNotice(kvcxErrorText(it), NoticeTone.Error) }
         }
     }
@@ -305,13 +314,30 @@ class KvcxRideController internal constructor(
         refreshInternal()
     }
 
-    /** 临时锁车（订单与计费继续，仅物理锁车）。 */
+    /**
+     * 临时锁车（订单与计费继续，仅物理锁车）。
+     *
+     * 确认到已锁 → 常规成功提示；窗口内未确认 → 置 [KvcxRideState.lockPending] 并给
+     * **Warning**（不是 Error）：上报慢是常态、锁车免确认无计费后果，"失败"这个词
+     * 会把用户推去反复点（那几次多半只是命中幂等早退）。出口两条：点刷新核实状态、
+     * 车真没锁时再点一次锁车（仓库层幂等）。
+     */
     fun tempLock() = run(KvcxAction.LOCK) { session ->
         val point = locateOrNotice() ?: return@run
-        session.temporaryLock(point.first, point.second)
-        // 车已锁，开锁未确认的悬置状态自然消解
-        _state.update { it.copy(unlockPending = false) }
-        onNotice("已临时锁车；订单与计费继续，用完记得还车", NoticeTone.Info)
+        when (val outcome = session.temporaryLock(point.first, point.second)) {
+            is LockOutcome.Locked -> {
+                // 车已锁，开锁未确认的悬置状态自然消解
+                _state.update { it.copy(unlockPending = false, lockPending = false) }
+                onNotice("已临时锁车；订单与计费继续，用完记得还车", NoticeTone.Info)
+            }
+            is LockOutcome.Unconfirmed -> {
+                _state.update { it.copy(lockPending = true) }
+                onNotice(
+                    "锁车指令已发送，车辆回报稍慢；可点刷新核实，车没锁上就再点一次锁车",
+                    NoticeTone.Warning,
+                )
+            }
+        }
         refreshInternal()
     }
 
@@ -436,18 +462,24 @@ class KvcxRideController internal constructor(
             }
         }
 
+    /**
+     * 骑行状态快照落库 + 悬置态裁决（[query] 与 [refreshInternal] 共用，别各写一份）：
+     * - 开锁未确认：刷新到「已锁」才消解——上报慢时"未锁快照"不代表失败，保持悬置等
+     *   下一次快照（与 `unlockPending` 原语义一致，镜像自官方「重试开锁」出口）；
+     * - 锁车确认中：同样刷新到「已锁」即确认成功；订单消失（还车/其他端结束）也解除。
+     */
+    private fun KvcxRideState.withRideSnapshot(ride: KqcxAuth.Ride?): KvcxRideState = copy(
+        ride = ride,
+        fetchedAt = System.currentTimeMillis(),
+        unlockPending = unlockPending && ride?.locked == true,
+        lockPending = lockPending && ride != null && ride.locked == false,
+    )
+
     /** 动作成功后的状态刷新：失败不动旧值（动作本身已成功，刷新失败不打扰）。 */
     private suspend fun refreshInternal() {
         val session = session ?: return
         runCatching { session.queryUnderway() }.onSuccess { ride ->
-            _state.update {
-                it.copy(
-                    ride = ride,
-                    fetchedAt = System.currentTimeMillis(),
-                    // 刷新到「已开锁」（未锁状态）时，开锁未确认的悬置状态自然消解
-                    unlockPending = it.unlockPending && ride?.locked == true,
-                )
-            }
+            _state.update { it.withRideSnapshot(ride) }
         }
     }
 }

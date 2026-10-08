@@ -14,6 +14,23 @@ sealed interface UnlockOutcome {
 }
 
 /**
+ * 临时锁车结果（2026-10-08）。**形态镜像 [UnlockOutcome]**：车把"已锁"上报服务端是异步的
+ * （落锁后 IoT 上报常见 3~15 秒），确认窗口内没等到 ≠ 锁车失败——锁车无新增计费后果、
+ * 且仓库层幂等（已锁再点直接返回），"未确认"应该是一个**可自愈的中间态**而不是错误：
+ * 调用方置「锁车确认中」，后续刷新到已锁即消解；用户再点一次锁车也无害。
+ */
+sealed interface LockOutcome {
+    /** 已确认车辆锁上（拿到确认后的订单状态）。 */
+    data class Locked(val ride: KqcxAuth.Ride) : LockOutcome
+
+    /**
+     * 窗口内未确认到"已锁"。[lastKnown] = 窗口内最后一次拉到的订单快照（无则 null），
+     * 供调用方刷新 UI；**不要**把它当"锁车失败"的事实。
+     */
+    data class Unconfirmed(val lastKnown: KqcxAuth.Ride?) : LockOutcome
+}
+
+/**
  * 还车点 / 禁停区图层的数据源（DESIGN §3.9，2026-09-28）：地图页专用，只读。
  * 与 [KvcxRideSession] 分开是因为用途不同（一个是骑行状态与写动作，一个是地图图层）。
  */
@@ -51,8 +68,12 @@ interface KvcxRideSession {
     /** 对**在案订单**重发解锁指令（临时锁车后继续骑 / 开锁未确认时重试，同一调用两种文案）。 */
     suspend fun retryUnlock(gcjLat: Double, gcjLng: Double): UnlockOutcome
 
-    /** 临时锁车（订单与计费继续，仅物理锁车）。 */
-    suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): KqcxAuth.Ride
+    /**
+     * 临时锁车（订单与计费继续，仅物理锁车）。已锁时幂等 no-op。
+     * 返回 [LockOutcome.Locked] = 已确认锁上；[LockOutcome.Unconfirmed] = 指令已发但
+     * 窗口内未确认到（**不是失败**——上报慢是常态，见 [LockOutcome] 的说明）。
+     */
+    suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome
 
     /** 还车：静默锁 + 结束订单。调度费/出围栏由实现方抛错降级官方渠道。 */
     suspend fun returnBike(gcjLat: Double, gcjLng: Double): KqcxAuth.EndOutcome.Ended
