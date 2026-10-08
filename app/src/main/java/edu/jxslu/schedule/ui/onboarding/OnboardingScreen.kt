@@ -52,8 +52,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -96,6 +98,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -116,6 +119,7 @@ import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.FirstRunNotices
 import edu.jxslu.schedule.domain.NoticeConsent
 import edu.jxslu.schedule.domain.QzxySessionLink
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeDialog
 import edu.jxslu.schedule.ui.common.NoticeFeedback
@@ -213,6 +217,7 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     // 也不写同意记录（看过 ≠ 首启确认过）。
     var noticeQueue by remember { mutableStateOf<List<FirstRunNotice>>(emptyList()) }
     var browseNotice by remember { mutableStateOf<FirstRunNotice?>(null) }
+    var showSkipAllConfirm by remember { mutableStateOf(false) }
 
     // 首启要弹哪几份：按落盘的「已同意版本」比对（`domain/NoticeConsent.pendingNotices`），
     // 全部同意过就是一个空队列。`first()` 会挂到 DataStore 首次发射——不能拿流的初值 0
@@ -372,7 +377,7 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
                 showSegments = !startAtJw,
                 filledSegments = step.index,
                 showSkip = step != Step.Done,
-                onSkipAll = { finish() },
+                onSkipAll = { showSkipAllConfirm = true },
             )
             AnimatedContent(
                 targetState = step,
@@ -471,6 +476,35 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
             onDismiss = { browseNotice = null },
         )
     }
+
+    // 顶栏「全部跳过」的二次确认（2026-10-08）：跳过 = 写 seen 标记收整个引导，
+    // 此后这个窗口不再自动出现——先把后果说清，也点出「先跳过」这条只跳本步的出路。
+    if (showSkipAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showSkipAllConfirm = false },
+            title = { Text("全部跳过？") },
+            text = {
+                // 窗口动画样式必须挂在弹窗窗口自己的组合里（此时 LocalView = DialogLayout）；
+                // 放在 AlertDialog 调用外面拿到的是页面窗口，取不到 dialog window，会静默失效。
+                DialogWindowFadeEffect()
+                Text(
+                    "跳过整个配置引导，之后这个窗口不会再自动打开。没配置的账号" +
+                        "（教务、一卡通、胖乖生活、趣智校园）都能在「我的」页随时补上，" +
+                        "课表也可以之后从教务导入。\n\n只跳过当前这一步的话，用底部的「先跳过」。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showSkipAllConfirm = false; finish() }) {
+                    Text("全部跳过")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSkipAllConfirm = false }) {
+                    Text("继续配置")
+                }
+            },
+        )
+    }
 }
 
 // ---------------------------------------------------------------- 顶栏
@@ -517,7 +551,7 @@ private fun OnboardingTopBar(
         }
         if (showSkip) {
             TextButton(onClick = onSkipAll) {
-                Text("跳过", color = MaterialTheme.colorScheme.primary)
+                Text("全部跳过", color = MaterialTheme.colorScheme.primary)
             }
         } else {
             Spacer(Modifier.width(12.dp))
@@ -884,7 +918,7 @@ private fun StepActions(
     }
 }
 
-/** 密码输入框：带可见性切换。 */
+/** 密码输入框：带可见性切换。`placeholder` = 聚焦后的灰色框内提示（Material 惯例，空态聚焦才显示）。 */
 @Composable
 private fun PasswordField(
     label: String,
@@ -893,6 +927,9 @@ private fun PasswordField(
     numeric: Boolean = false,
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    imeAction: ImeAction = ImeAction.Default,
+    onImeAction: (() -> Unit)? = null,
 ) {
     var visible by remember { mutableStateOf(false) }
     var fieldModifier = modifier
@@ -902,10 +939,17 @@ private fun PasswordField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
+        placeholder = if (placeholder != null) {
+            { Text(placeholder) }
+        } else {
+            null
+        },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = if (numeric) KeyboardType.NumberPassword else KeyboardType.Password,
+            imeAction = imeAction,
         ),
+        keyboardActions = imeKeyboardActions(onImeAction),
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
         trailingIcon = {
             IconButton(onClick = { visible = !visible }, modifier = Modifier.size(40.dp)) {
@@ -922,7 +966,7 @@ private fun PasswordField(
     )
 }
 
-/** 普通单行输入框：统一 14dp 圆角与可选自动聚焦。 */
+/** 普通单行输入框：统一 14dp 圆角与可选自动聚焦；`imeAction` 配 `onImeAction` 接键盘动作键。 */
 @Composable
 private fun OnboardingTextField(
     label: String,
@@ -931,6 +975,8 @@ private fun OnboardingTextField(
     keyboardType: KeyboardType? = null,
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
+    imeAction: ImeAction = ImeAction.Default,
+    onImeAction: (() -> Unit)? = null,
 ) {
     var fieldModifier = modifier.fillMaxWidth()
     if (focusRequester != null) fieldModifier = fieldModifier.focusRequester(focusRequester)
@@ -939,7 +985,11 @@ private fun OnboardingTextField(
         onValueChange = onValueChange,
         label = { Text(label) },
         singleLine = true,
-        keyboardOptions = keyboardType?.let { KeyboardOptions(keyboardType = it) } ?: KeyboardOptions(),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = keyboardType ?: KeyboardType.Text,
+            imeAction = imeAction,
+        ),
+        keyboardActions = imeKeyboardActions(onImeAction),
         shape = RoundedCornerShape(14.dp),
         modifier = fieldModifier,
     )
@@ -953,6 +1003,17 @@ private fun FocusOnEnter(requester: FocusRequester) {
         runCatching { requester.requestFocus() }
     }
 }
+
+/**
+ * IME 动作键包装（2026-10-08）：给了回调就把「下一项 / 完成」都接到它
+ * （Next 用于手动移焦点，完成用于触发该步提交）；没给就保持系统默认行为。
+ */
+private fun imeKeyboardActions(onImeAction: (() -> Unit)?): KeyboardActions =
+    if (onImeAction != null) {
+        KeyboardActions(onNext = { onImeAction() }, onDone = { onImeAction() })
+    } else {
+        KeyboardActions.Default
+    }
 
 /**
  * 成功触感工厂：CONFIRM 在 API 30 才有，低版本退回 KEYBOARD_TAP。
@@ -1178,6 +1239,7 @@ private fun JwStep(
     var successMessage by remember { mutableStateOf<String?>(null) }
     var errorTick by remember { mutableIntStateOf(0) }
     val usernameFocus = remember { FocusRequester() }
+    val passwordFocus = remember { FocusRequester() }
     FocusOnEnter(usernameFocus)
     val successHaptic = rememberSuccessHaptic()
 
@@ -1282,11 +1344,17 @@ private fun JwStep(
                             value = username,
                             onValueChange = { username = it.trim() },
                             focusRequester = usernameFocus,
+                            imeAction = ImeAction.Next,
+                            onImeAction = { passwordFocus.requestFocus() },
                         )
                         PasswordField(
                             label = "统一认证密码",
                             value = password,
                             onValueChange = { password = it },
+                            focusRequester = passwordFocus,
+                            placeholder = "统一认证密码即为教务系统密码",
+                            imeAction = ImeAction.Done,
+                            onImeAction = { submit() },
                         )
                         NoticeSlot(notice, successMessage)
                     }
@@ -1324,6 +1392,7 @@ private fun YktStep(
     var successMessage by remember { mutableStateOf<String?>(null) }
     var errorTick by remember { mutableIntStateOf(0) }
     val usernameFocus = remember { FocusRequester() }
+    val passwordFocus = remember { FocusRequester() }
     FocusOnEnter(usernameFocus)
     val successHaptic = rememberSuccessHaptic()
 
@@ -1409,12 +1478,18 @@ private fun YktStep(
                             value = username,
                             onValueChange = { username = it.trim() },
                             focusRequester = usernameFocus,
+                            imeAction = ImeAction.Next,
+                            onImeAction = { passwordFocus.requestFocus() },
                         )
                         PasswordField(
                             label = "查询密码",
                             value = password,
                             onValueChange = { password = it.filter { c -> c.isDigit() } },
                             numeric = true,
+                            focusRequester = passwordFocus,
+                            placeholder = "默认为身份证号后六位",
+                            imeAction = ImeAction.Done,
+                            onImeAction = { submit() },
                         )
                         Text(
                             passwordHint,
@@ -1474,6 +1549,7 @@ private fun QiekjStep(
         }
     }
     val phoneFocus = remember { FocusRequester() }
+    val codeFocus = remember { FocusRequester() }
     val tokenFocus = remember { FocusRequester() }
     // 进屏与切登录方式都把焦点带过去（等转场落定再弹键盘）
     LaunchedEffect(tokenMode) {
@@ -1620,6 +1696,8 @@ private fun QiekjStep(
                                     value = tokenInput,
                                     onValueChange = { tokenInput = it },
                                     focusRequester = tokenFocus,
+                                    imeAction = ImeAction.Done,
+                                    onImeAction = { submitToken() },
                                 )
                                 NoticeSlot(notice, successMessage)
                             }
@@ -1631,6 +1709,8 @@ private fun QiekjStep(
                                     onValueChange = { phone = it.filter { c -> c.isDigit() }.take(11) },
                                     keyboardType = KeyboardType.Phone,
                                     focusRequester = phoneFocus,
+                                    imeAction = ImeAction.Next,
+                                    onImeAction = { codeFocus.requestFocus() },
                                 )
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1641,9 +1721,15 @@ private fun QiekjStep(
                                         onValueChange = { code = it.filter { c -> c.isDigit() } },
                                         label = { Text("验证码") },
                                         singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = KeyboardType.Number,
+                                            imeAction = ImeAction.Done,
+                                        ),
+                                        keyboardActions = imeKeyboardActions { submitPhone() },
                                         shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .focusRequester(codeFocus),
                                     )
                                     TextButton(
                                         onClick = { sendCode() },
@@ -1718,6 +1804,8 @@ private fun QzxyStep(
         }
     }
     val phoneFocus = remember { FocusRequester() }
+    val passwordFocus = remember { FocusRequester() }
+    val codeFocus = remember { FocusRequester() }
     val sessionFocus = remember { FocusRequester() }
     // 进屏与切登录方式都把焦点带过去（等转场落定再弹键盘）
     LaunchedEffect(mode) {
@@ -1920,6 +2008,10 @@ private fun QzxyStep(
                                 onValueChange = { phone = it.filter { c -> c.isDigit() }.take(11) },
                                 keyboardType = KeyboardType.Phone,
                                 focusRequester = phoneFocus,
+                                imeAction = ImeAction.Next,
+                                onImeAction = {
+                                    if (mode == QzxyMode.Sms) codeFocus.requestFocus() else passwordFocus.requestFocus()
+                                },
                             )
                             if (mode == QzxyMode.Sms) {
                                 Row(
@@ -1931,9 +2023,15 @@ private fun QzxyStep(
                                         onValueChange = { code = it.filter { c -> c.isDigit() }.take(6) },
                                         label = { Text("短信验证码") },
                                         singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = KeyboardType.Number,
+                                            imeAction = ImeAction.Done,
+                                        ),
+                                        keyboardActions = imeKeyboardActions { submitPhone() },
                                         shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .focusRequester(codeFocus),
                                     )
                                     TextButton(
                                         onClick = { sendCode() },
@@ -1953,6 +2051,9 @@ private fun QzxyStep(
                                     label = "密码",
                                     value = password,
                                     onValueChange = { password = it },
+                                    focusRequester = passwordFocus,
+                                    imeAction = ImeAction.Done,
+                                    onImeAction = { submitPhone() },
                                 )
                             }
                         }
