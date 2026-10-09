@@ -27,6 +27,14 @@ class DisplayPrefsDefaultsTest {
     }
 
     @Test
+    fun fontScaleIsLockedByDefault() {
+        assertTrue(
+            "字体缩放默认锁定（「固定字体大小」默认开，不随系统「字体大小」缩放）",
+            DisplayPrefs().fontScaleLocked,
+        )
+    }
+
+    @Test
     fun startPageDefaultsToToday() {
         assertEquals("启动页默认今日（DESIGN §3.3）", StartPage.Today, DisplayPrefs().startPage)
     }

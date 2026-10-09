@@ -113,6 +113,11 @@ fun DisplaySettingsContent(
             // 之上（见 DisplaySettingsOverlay），这里再扣一次就是滚动末尾一段凭空空白。
             .padding(bottom = 28.dp),
     ) {
+        // 「跟随」槽的措辞跟着字体缩放锁定走：锁定开启时跟随的不是系统而是 App 基准
+        // （课名基准 × 0.9×），「跟随系统」名不副实，改用「默认」
+        val lockedFollow = prefs.fontScaleLocked
+        val followWord = if (lockedFollow) "默认" else "跟随"
+        val systemFollowHint = if (lockedFollow) "默认" else "跟随系统"
         CollapsibleSection(title = "字号") {
             GridFontSizeRow(
                 title = "课程名字号",
@@ -120,7 +125,8 @@ fun DisplaySettingsContent(
                 baseSp = { GridFont.baseNameSp(days) },
                 minDp = GridFont.MinDp,
                 maxDp = GridFont.MaxDp,
-                followHint = "跟随系统",
+                followHint = systemFollowHint,
+                followLabel = followWord,
                 onChange = viewModel::setGridFontDp,
             )
             GridFontSizeRow(
@@ -147,7 +153,8 @@ fun DisplaySettingsContent(
                 baseSp = { GridFont.baseRailSp(days) },
                 minDp = GridFont.MinRailDp,
                 maxDp = GridFont.MaxRailDp,
-                followHint = "跟随系统",
+                followHint = systemFollowHint,
+                followLabel = followWord,
                 onChange = viewModel::setGridRailDp,
             )
             GridFontSizeRow(
@@ -156,7 +163,8 @@ fun DisplaySettingsContent(
                 baseSp = { GridFont.baseDateSp(days) },
                 minDp = GridFont.MinRailDp,
                 maxDp = GridFont.MaxRailDp,
-                followHint = "跟随系统",
+                followHint = systemFollowHint,
+                followLabel = followWord,
                 onChange = viewModel::setGridDateDp,
             )
         }
@@ -466,6 +474,9 @@ private fun CourseFilterRow(
  * 「跟随」控件的**高度恒定**是本行的关键约束：dp==null 时显示提示文案、设置过时
  * 显示可点的「跟随」按钮——两者必须占同一固定高度（[FollowSlot]），否则第一次
  * 拖动滑块时文案变按钮、行高突增，整面板内容随之下坠（真机反馈的体验问题）。
+ *
+ * 措辞（[followHint] / [followLabel]）由调用方按字体缩放锁定态给：锁定时「跟随系统」
+ * 名不副实（跟随的是 App 基准），传「默认」。
  */
 @Composable
 private fun GridFontSizeRow(
@@ -475,10 +486,13 @@ private fun GridFontSizeRow(
     minDp: Float,
     maxDp: Float,
     followHint: String,
+    /** 「跟随」按钮的措辞；锁定态由调用方传「默认」。 */
+    followLabel: String = "跟随",
     onChange: (Float?) -> Unit,
 ) {
-    val systemFontScale = LocalDensity.current.fontScale
-    val effective = (dp ?: baseSp() * systemFontScale).coerceIn(minDp, maxDp)
+    // 当前生效的字体缩放（锁定开启时恒为 0.9×）——与真实渲染同源，读数才不骗人
+    val effectiveFontScale = LocalDensity.current.fontScale
+    val effective = (dp ?: baseSp() * effectiveFontScale).coerceIn(minDp, maxDp)
     Column(Modifier.padding(vertical = RowVerticalPadding)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -486,7 +500,12 @@ private fun GridFontSizeRow(
         ) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.weight(1f))
-            FollowSlot(following = dp == null, followHint = followHint, onFollow = { onChange(null) })
+            FollowSlot(
+                following = dp == null,
+                followHint = followHint,
+                followLabel = followLabel,
+                onFollow = { onChange(null) },
+            )
             Text(
                 GridFont.dpLabel(effective),
                 style = MaterialTheme.typography.labelLarge,
@@ -557,7 +576,7 @@ private val FollowSlotHeight = 28.dp
 /**
  * 固定高度的跟随态槽位。
  * 跟随中（[following]=true）：显示 [followHint] 提示文案（不可点，本就处于跟随态）；
- * 设置过：显示「跟随」按钮，点按清掉用户值回到跟随态。两态占同一 [FollowSlotHeight]，
+ * 设置过：显示 [followLabel] 按钮，点按清掉用户值回到跟随态。两态占同一 [FollowSlotHeight]，
  * 切换不再引起行高变化。
  *
  * 文案那一态居中显示（`Box` + `contentAlignment`）：`Modifier.height` 直接挂在 `Text` 上时
@@ -567,6 +586,7 @@ private val FollowSlotHeight = 28.dp
 private fun FollowSlot(
     following: Boolean,
     followHint: String,
+    followLabel: String,
     onFollow: () -> Unit,
 ) {
     if (following) {
@@ -586,7 +606,7 @@ private fun FollowSlot(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
             modifier = Modifier.height(FollowSlotHeight),
         ) {
-            Text("跟随", style = MaterialTheme.typography.labelSmall)
+            Text(followLabel, style = MaterialTheme.typography.labelSmall)
         }
     }
 }

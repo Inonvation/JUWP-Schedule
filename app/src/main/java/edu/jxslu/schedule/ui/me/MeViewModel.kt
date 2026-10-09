@@ -391,6 +391,14 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setHapticsEnabled(value) }
     }
 
+    /**
+     * 字体缩放锁定（「固定字体大小」，全局，默认开）。
+     * 即时生效：Compose 根（JuwRoot）跟着 displayPrefs 重组，覆盖 LocalDensity。
+     */
+    fun setFontScaleLocked(value: Boolean) {
+        viewModelScope.launch { repo.setFontScaleLocked(value) }
+    }
+
     /** 通知强提醒开关（入口在「提醒与桌面」hub，2026-10-07 迁入；语义见 [strongReminderVibration]）。 */
     fun setStrongReminderVibration(value: Boolean) {
         viewModelScope.launch { repo.setStrongReminderVibration(value) }

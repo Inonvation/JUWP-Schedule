@@ -16,7 +16,9 @@ import androidx.compose.ui.unit.dp
  *
  * 口径：一行 `Text` 的实测高度就等于样式的 `lineHeight`，所以直接换算 sp → dp
  * （乘 `fontScale` 即可；`sp → px` 乘 `fontScale × density`，`px → dp` 再除 `density`，
- * 两步里的 `density` 抵消）。样式没声明 `lineHeight` 时退回 [fallback]。
+ * 两步里的 `density` 抵消）。这里的 `fontScale` 是**当前生效**的那份：Compose 根在
+ * 「固定字体大小」锁定开启时恒为 0.9×（`domain/FontScalePolicy`），与真实文字同源，
+ * 骨架几何自动跟着走。样式没声明 `lineHeight` 时退回 [fallback]。
  */
 @Composable
 @ReadOnlyComposable

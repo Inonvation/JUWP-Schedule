@@ -44,21 +44,21 @@ data class TimetablePrefs(
     val showWeekend: Boolean = true,
     val showNonCurrentWeek: Boolean = false,
     val courseFilter: CourseFilter = CourseFilter.All,
-    /** 课名目标字号（dp）；null = 跟随系统。范围与换算见 [GridFont]。 */
+    /** 课名目标字号（dp）；null = 跟随（锁定开启 = 基准 × 0.9，关闭锁定跟随系统）。范围与换算见 [GridFont]。 */
     val gridFontDp: Float? = null,
     /** 地点目标字号（dp）；null = 按课名倍率等比缩放。 */
     val gridRoomDp: Float? = null,
     /** 教师目标字号（dp）；null = 按课名倍率等比缩放。 */
     val gridTeacherDp: Float? = null,
     /**
-     * 时间轴（左侧节次号 + 起止时间）目标字号（dp）；null = 跟随系统。
+     * 时间轴（左侧节次号 + 起止时间）目标字号（dp）；null = 跟随（同课名口径）。
      *
      * 根因：时间轴此前和课名共用同一个 `gridScale`（由 [gridFontDp] 换算），
      * 于是「课程名字号」的滑块会连带把左上角月份、左侧节次与时间一起放大/缩小——
      * 两处关注点不同（课名要看得清，时间轴只是定位参照），必须拆开。
      */
     val gridRailDp: Float? = null,
-    /** 月份/日期表头目标字号（dp）；null = 跟随系统。与时间轴同理，独立于课名字号。 */
+    /** 月份/日期表头目标字号（dp）；null = 跟随（同课名口径）。与时间轴同理，独立于课名字号。 */
     val gridDateDp: Float? = null,
     /**
      * 左侧时间轴栏宽（dp）。默认 48dp；决定列宽 =（可用宽 − 栏宽）/ 列数，

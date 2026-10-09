@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -89,6 +90,7 @@ import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.week.WeekScreen
 import edu.jxslu.schedule.ui.week.ScheduleBackgroundLayer
 import edu.jxslu.schedule.domain.BgScale
+import edu.jxslu.schedule.domain.FontScalePolicy
 import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.ThemePalette
@@ -249,11 +251,16 @@ internal const val ROUTE_QZXY_START = "qzxy_start"
  *
  * 与 [floatingNavBarEffective] 的区别：主题**不冻结**——它本就实时生效，快照只在
  * 首帧与真值之间垫一脚；用户改完配色，下一个窗口的首帧就用新值。
+ *
+ * 2026-10-09 起「固定字体大小」（字体缩放锁定）也吃这份快照：它与主题同属
+ * 「首帧就得按真值渲染」的即时项，关掉开关的用户不该先看到一帧固定字号再跳。
  */
 private data class ThemeSnapshot(
     val themeMode: ThemeMode,
     val dynamicColor: Boolean,
     val palette: ThemePalette,
+    /** 字体缩放锁定（「固定字体大小」）：首帧也要用真值，否则关掉开关的窗口会先渲染一帧固定字号。 */
+    val fontScaleLocked: Boolean,
 )
 
 private var themeSnapshot: ThemeSnapshot? = null
@@ -275,7 +282,7 @@ private fun startupPrefsBlocking(): DisplayPrefs = startupPrefs ?: runCatching {
 }.getOrDefault(DisplayPrefs()).also { startupPrefs = it }
 
 private fun readThemeSnapshotBlocking(): ThemeSnapshot = startupPrefsBlocking().let {
-    ThemeSnapshot(it.themeMode, it.dynamicColor, it.themePalette)
+    ThemeSnapshot(it.themeMode, it.dynamicColor, it.themePalette, it.fontScaleLocked)
 }
 
 /**
@@ -292,9 +299,10 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
     val themeMode = prefs?.themeMode ?: snapshot.themeMode
     val dynamicColor = prefs?.dynamicColor ?: snapshot.dynamicColor
     val palette = prefs?.themePalette ?: snapshot.palette
+    val fontScaleLocked = prefs?.fontScaleLocked ?: snapshot.fontScaleLocked
     // 真值到达（或用户改了）就回写快照，供下一个窗口的首帧直接用
     if (prefs != null) {
-        themeSnapshot = ThemeSnapshot(themeMode, dynamicColor, palette)
+        themeSnapshot = ThemeSnapshot(themeMode, dynamicColor, palette, fontScaleLocked)
     }
     val darkTheme = when (themeMode) {
         ThemeMode.Light -> false
@@ -307,7 +315,36 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
         dynamicColor = dynamicColor,
         palette = palette,
     ) {
+        // 字体缩放锁定（「固定字体大小」，默认开）：全 App 唯一的字形缩放覆盖点。
+        // 立即生效：开关一动，displayPrefs 发射，这里跟着重组
+        ProvideFixedFontScale(locked = fontScaleLocked) {
+            content()
+        }
+    }
+}
+
+/**
+ * 字体缩放锁定（「固定字体大小」）：把 Compose 树的 `fontScale` 钉在
+ * [FontScalePolicy.effectiveFontScale] 的结果上（固定 0.9×）。
+ *
+ * 只覆盖 `fontScale`——密度（dp/px）原样透传，图标、间距、命中区、自适应行高
+ * 等一切按 dp 的几何都不受影响；`sp` 的换算从此与系统「字体大小」设置脱钩。
+ * 弹层 / 底部弹层 / 下拉菜单是同一合成树的子组合，继承这层 `LocalDensity`，无需各自处理。
+ *
+ * 未锁定时与系统值恒等，不额外包一层 Provider（避免无谓的 Density 实例）。
+ */
+@Composable
+private fun ProvideFixedFontScale(locked: Boolean, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val scale = FontScalePolicy.effectiveFontScale(locked, density.fontScale)
+    if (scale == density.fontScale) {
         content()
+    } else {
+        CompositionLocalProvider(
+            LocalDensity provides Density(density.density, scale),
+        ) {
+            content()
+        }
     }
 }
 

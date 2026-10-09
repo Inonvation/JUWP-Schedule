@@ -15,8 +15,10 @@ import kotlin.math.roundToInt
  * 倍率 = 目标课名字号 / 当前列数模式下的课名基准字号（[baseNameSp]），
  * 网格内其余文字（时间轴、地点、教师）按同一倍率等比缩放，保证层级关系不变。
  *
- * 取值规则：**用户调过就用用户的值，没调过就跟随系统**（课名基准 × 系统倍率，再夹取）。
- * 只收住网格；页面其余部分（顶栏、弹层、今日页）仍跟随系统设置。
+ * 取值规则：**用户调过就用用户的值，没调过就跟随当前生效的字体缩放**
+ * （课名基准 × 系统倍率，再夹取）。「当前生效的缩放」由全局的「固定字体大小」开关决定
+ * （[FontScalePolicy]，默认锁定 0.9× → 跟随档 = 课名基准 × 0.9）；网格是双保险——
+ * 即使关掉锁定跟随系统，这里的夹取也让网格不受极端字号档位破坏。
  */
 object GridFont {
 
@@ -68,34 +70,35 @@ object GridFont {
     fun baseDateSp(days: Int): Float = if (days > 5) 12f else 13f
 
     /**
-     * 有效课名字号（dp）：用户没调过（null）就跟随系统（基准 × 系统倍率），调过就听用户的；
+     * 有效课名字号（dp）：用户没调过（null）就跟随**当前生效的字体缩放**
+     * （基准 × 缩放值，锁定开启时该值为 0.9×），调过就听用户的；
      * 两者都夹进 [MinDp, MaxDp]。
      */
-    fun resolveDp(systemFontScale: Float, userDp: Float?, days: Int): Float =
-        resolveDp(systemFontScale, userDp, baseNameSp(days), MinDp, MaxDp)
+    fun resolveDp(effectiveFontScale: Float, userDp: Float?, days: Int): Float =
+        resolveDp(effectiveFontScale, userDp, baseNameSp(days), MinDp, MaxDp)
 
     /**
      * 有效详情行字号（dp）：规则与课名一致，基准/区间换成详情行自己的
      * （[baseDetailSp] / [MinDetailDp, MaxDetailDp]）。
      */
-    fun resolveDetailDp(systemFontScale: Float, userDp: Float?, days: Int): Float =
-        resolveDp(systemFontScale, userDp, baseDetailSp(days), MinDetailDp, MaxDetailDp)
+    fun resolveDetailDp(effectiveFontScale: Float, userDp: Float?, days: Int): Float =
+        resolveDp(effectiveFontScale, userDp, baseDetailSp(days), MinDetailDp, MaxDetailDp)
 
     /** 有效时间轴字号（dp）：独立于课名，规则同上。 */
-    fun resolveRailDp(systemFontScale: Float, userDp: Float?, days: Int): Float =
-        resolveDp(systemFontScale, userDp, baseRailSp(days), MinRailDp, MaxRailDp)
+    fun resolveRailDp(effectiveFontScale: Float, userDp: Float?, days: Int): Float =
+        resolveDp(effectiveFontScale, userDp, baseRailSp(days), MinRailDp, MaxRailDp)
 
     /** 有效日期表头字号（dp）：独立于课名，规则同上。 */
-    fun resolveDateDp(systemFontScale: Float, userDp: Float?, days: Int): Float =
-        resolveDp(systemFontScale, userDp, baseDateSp(days), MinRailDp, MaxRailDp)
+    fun resolveDateDp(effectiveFontScale: Float, userDp: Float?, days: Int): Float =
+        resolveDp(effectiveFontScale, userDp, baseDateSp(days), MinRailDp, MaxRailDp)
 
     private fun resolveDp(
-        systemFontScale: Float,
+        effectiveFontScale: Float,
         userDp: Float?,
         baseSp: Float,
         minDp: Float,
         maxDp: Float,
-    ): Float = (userDp ?: baseSp * systemFontScale).coerceIn(minDp, maxDp)
+    ): Float = (userDp ?: baseSp * effectiveFontScale).coerceIn(minDp, maxDp)
 
     /** 课名字号（dp）→ 网格字体倍率，供 `GridTypography` 注入 fontScale 用。 */
     fun scaleFromDp(dp: Float, days: Int): Float =

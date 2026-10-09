@@ -95,6 +95,14 @@ data class DisplayPrefs(
      */
     val hapticsEnabled: Boolean = true,
     /**
+     * 字体缩放锁定（「固定字体大小」）。全局项，**默认开**：App 内文字按固定 0.9×
+     * 渲染，不随系统「字体大小」缩放，避免不同机器的字号档位把组件文字挤占。
+     * 关 = 完全回到旧行为（全 App 跟随系统；课表网格另有收敛，见
+     * [edu.jxslu.schedule.domain.GridFont]）。即时生效——由 Compose 根覆盖
+     * `LocalDensity`，无重启要求（口径见 [edu.jxslu.schedule.domain.FontScalePolicy]）。
+     */
+    val fontScaleLocked: Boolean = true,
+    /**
      * 开水按钮需双击确认。全局项，默认开：一键出水误触代价高，
      * 双击挡单击误触；嫌麻烦可在「我的 → 胖乖生活」改回单击。
      */
@@ -117,7 +125,8 @@ data class DisplayPrefs(
     /** 只看某类课程。默认全部：实验课和理论课都是要去上的课，不该被默认藏起来。 */
     val courseFilter: CourseFilter = CourseFilter.All,
     /**
-     * 课名目标字号（dp）。null = 跟随系统字体设置（未拖过滑块）。
+     * 课名目标字号（dp）。null = 跟随（未拖过滑块；锁定开启时 = 课名基准 × 0.9，
+     * 关闭「固定字体大小」则跟随系统）。
      * 取值范围与含义见 [edu.jxslu.schedule.domain.GridFont]。
      */
     val gridFontDp: Float? = null,
@@ -125,9 +134,9 @@ data class DisplayPrefs(
     val gridRoomDp: Float? = null,
     /** 教师目标字号（dp）；null = 按课名倍率等比缩放。 */
     val gridTeacherDp: Float? = null,
-    /** 时间轴（节次号 + 起止时间）目标字号（dp）；null = 跟随系统。独立于课名字号。 */
+    /** 时间轴（节次号 + 起止时间）目标字号（dp）；null = 跟随（同课名口径）。独立于课名字号。 */
     val gridRailDp: Float? = null,
-    /** 月份 / 日期表头目标字号（dp）；null = 跟随系统。独立于课名字号。 */
+    /** 月份 / 日期表头目标字号（dp）；null = 跟随（同课名口径）。独立于课名字号。 */
     val gridDateDp: Float? = null,
     /** 格子高度倍率，乘在自适应行高上；1.1f = 默认（比自适应高 10%）。范围见滑块（0.5–1.5）。 */
     val rowHeightScale: Float = 1.1f,
@@ -364,6 +373,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 触感反馈开关。全局项：交互手感属于设备级偏好，不随课表切换。 */
     val hapticsEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_HAPTICS_ENABLED] ?: true
+    }
+
+    /** 字体缩放锁定（「固定字体大小」）。全局项，默认开；见 [DisplayPrefs.fontScaleLocked]。 */
+    val fontScaleLocked: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_FONT_SCALE_LOCKED] ?: true
     }
 
     /** 动态取色（Material You）。全局项，默认开；关 = 用回内置配色方案。 */
@@ -1440,6 +1454,10 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_HAPTICS_ENABLED] = value }
     }
 
+    suspend fun setFontScaleLocked(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_FONT_SCALE_LOCKED] = value }
+    }
+
     suspend fun setDynamicColor(value: Boolean) {
         context.displayDataStore.edit { it[KEY_DYNAMIC_COLOR] = value }
     }
@@ -1992,6 +2010,8 @@ class DisplayPrefsStore(private val context: Context) {
         // ---- 全局项（现行有效） ----
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
+        /** 字体缩放锁定（「固定字体大小」）：缺省 = true（锁定）。 */
+        val KEY_FONT_SCALE_LOCKED = booleanPreferencesKey("font_scale_locked")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
         val KEY_THEME_PALETTE = stringPreferencesKey("theme_palette")
         val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")

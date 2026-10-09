@@ -68,7 +68,8 @@
 `PowerUsageTest`（用电统计：差分/充值折算/退款扣回/单价缺失两分支/算不出的段跳过/跨天均摊/周月桶/房间过滤）、
 `LifeFeedTest`（一卡通与电费流水分段：按来源分组、段内倒序、限量按段算、同刻稳定、
 解析失败沉底、只有一段有内容不算空态）、
-`DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约）、
+`DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约 + 字体缩放默认锁定）、
+`FontScalePolicyTest`（字体缩放锁定：锁定 = 固定 0.9× / 解锁 = 透传系统）、
 `StartPageTest`（启动页：显示名/选项顺序/生活页关掉时不列/落回今日/脏值回退）、
 `PowerClientUrlTest`（缴费页/账单页深链形态与 feeitemid 钉子）、
 `BalanceAlertTest`（余额提醒：档位表/夹取/下标/文案、电费元换算三态、阈值边界、每日闸门）

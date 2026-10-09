@@ -485,6 +485,12 @@ class ScheduleRepository(
         val qzxyCardEnabled: Boolean,
     )
 
+    /** 杂项单值的收拢切片：校园卡开关 + 字体缩放锁定（combine 参数上限的同款处理）。 */
+    private data class MiscPrefs(
+        val campusCard: Boolean,
+        val fontScaleLocked: Boolean,
+    )
+
     // ------------------------------------------------------------------
     // 课表清单与当前课表
     // ------------------------------------------------------------------
@@ -547,7 +553,12 @@ class ScheduleRepository(
             prefs.ebikeUseMode,
             ::EbikePrefs,
         ),
-        prefs.campusCardEnabled,
+        // 校园卡开关 + 字体缩放锁定：两个单值并一槽（外层 combine 五参已满）
+        combine(
+            prefs.campusCardEnabled,
+            prefs.fontScaleLocked,
+            ::MiscPrefs,
+        ),
         prefs.viewPrefs,
         // 外壳类偏好（DESIGN §3.3 今日页抽屉 / §4.22 悬浮导航栏 / §3.13 生活页）：
         // 最外层 combine 的第 5 个参数
@@ -559,12 +570,13 @@ class ScheduleRepository(
             prefs.qzxyCardEnabled,
             ::ShellPrefs,
         ),
-    ) { global, ebike, campusCard, p, shell ->
+    ) { global, ebike, misc, p, shell ->
         // 夹取沿用旧 DataStore 读路径的防线：旧数据/手改数据超出收紧后的滑块范围会让 Slider 抛异常
         DisplayPrefs(
             themeMode = global.theme,
             dynamicColor = global.dynamicColor,
             hapticsEnabled = global.haptics,
+            fontScaleLocked = misc.fontScaleLocked,
             waterRequireDoubleClick = global.waterDouble,
             waterCardEnabled = global.waterCard,
             qzxyCardEnabled = shell.qzxyCardEnabled,
@@ -572,7 +584,7 @@ class ScheduleRepository(
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
             ebikeUseMode = ebike.useMode,
-            campusCardEnabled = campusCard,
+            campusCardEnabled = misc.campusCard,
             floatingNavBar = shell.floatingNavBar,
             todayDockExpanded = shell.todayDockExpanded,
             lifeTabEnabled = shell.lifeTabEnabled,
@@ -713,17 +725,17 @@ class ScheduleRepository(
     suspend fun setCourseFilter(value: CourseFilter) =
         updateViewPrefs { it.copy(courseFilter = value) }
 
-    /** null = 清掉覆盖，回到跟随系统。 */
+    /** null = 清掉覆盖，回到跟随（口径同 gridFontDp）。 */
     suspend fun setGridFontDp(value: Float?) = updateViewPrefs { it.copy(gridFontDp = value) }
 
     suspend fun setGridRoomDp(value: Float?) = updateViewPrefs { it.copy(gridRoomDp = value) }
 
     suspend fun setGridTeacherDp(value: Float?) = updateViewPrefs { it.copy(gridTeacherDp = value) }
 
-    /** 时间轴字号；null = 跟随系统（独立于课名）。 */
+    /** 时间轴字号；null = 跟随（同课名口径，独立于课名）。 */
     suspend fun setGridRailDp(value: Float?) = updateViewPrefs { it.copy(gridRailDp = value) }
 
-    /** 月份 / 日期表头字号；null = 跟随系统（独立于课名）。 */
+    /** 月份 / 日期表头字号；null = 跟随（同上）。 */
     suspend fun setGridDateDp(value: Float?) = updateViewPrefs { it.copy(gridDateDp = value) }
 
     suspend fun setRowHeightScale(value: Float) = updateViewPrefs { it.copy(rowHeightScale = value) }
@@ -813,6 +825,9 @@ class ScheduleRepository(
 
     /** 触感反馈开关（全局）。 */
     suspend fun setHapticsEnabled(value: Boolean) = prefs.setHapticsEnabled(value)
+
+    /** 字体缩放锁定（「固定字体大小」，默认开）。即时生效，无重启要求。 */
+    suspend fun setFontScaleLocked(value: Boolean) = prefs.setFontScaleLocked(value)
 
     /** 开水双击确认（全局，默认开）。 */
     suspend fun setWaterRequireDoubleClick(value: Boolean) = prefs.setWaterRequireDoubleClick(value)

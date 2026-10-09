@@ -71,6 +71,7 @@ import me.rerere.hugeicons.stroke.Palette
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.SwatchBook
+import me.rerere.hugeicons.stroke.TextFont
 import me.rerere.hugeicons.stroke.Vibrate
 import me.rerere.hugeicons.stroke.Wallet03
 
@@ -185,6 +186,15 @@ fun GeneralSettingsScreen(
                     checked = state.displayPrefs.dynamicColor,
                     onCheckedChange = viewModel::setDynamicColor,
                     icon = HugeIcons.ColorPicker,
+                )
+                // 字体缩放锁定（默认开）：App 内字号不随系统「字体大小」缩放。
+                // 即时生效（Compose 根覆盖 LocalDensity），不用挂「重启生效」tag
+                SettingSwitchRow(
+                    title = "固定字体大小",
+                    subtitle = "不随系统「字体大小」缩放，避免布局被挤占；关闭后跟随系统",
+                    checked = state.displayPrefs.fontScaleLocked,
+                    onCheckedChange = viewModel::setFontScaleLocked,
+                    icon = HugeIcons.TextFont,
                 )
                 // 悬浮导航栏自「布局」节并入（2026-10-07）：同一份观感语言
                 SettingSwitchRow(
