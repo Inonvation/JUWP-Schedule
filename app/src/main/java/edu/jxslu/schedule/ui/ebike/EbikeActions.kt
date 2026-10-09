@@ -13,12 +13,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import edu.jxslu.schedule.startActivityOutsideApp
-import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
-import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.common.postNotice
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 
 /**
  * 快趣出行的跨页面动作与提示出口（DESIGN §3.9）。
@@ -27,14 +25,14 @@ import kotlinx.coroutines.launch
  * 这三件事在快趣出行页的多个位置都要用，各写一份迟早漂移（提示语气、失败兜底文案都是口径）。
  */
 
-/** 页内一次性提示（Snackbar）的统一出口。 */
+/** 页内一次性提示（Snackbar）的统一出口；发送走 [postNotice]（单开协程、不等它收场）。 */
 internal fun showNotice(
     scope: CoroutineScope,
     snackbar: SnackbarHostState,
     message: String,
     tone: NoticeTone = NoticeTone.Warning,
 ) {
-    scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
+    scope.postNotice(snackbar, message, tone)
 }
 
 /**

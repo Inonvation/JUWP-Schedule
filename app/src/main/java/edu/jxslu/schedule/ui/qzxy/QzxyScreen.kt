@@ -82,6 +82,7 @@ import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import androidx.compose.runtime.rememberCoroutineScope
 import edu.jxslu.schedule.ui.common.showNotice
@@ -172,9 +173,9 @@ fun QzxyScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is QzxyEvent.Notice -> snackbar.showNotice(
-                    AppNoticeVisuals(event.text, tone = event.tone),
-                )
+                // 事件流用 postNotice 单开协程发：收集协程不卡在「等这条提示收场」上，
+                // 事件成串来时新的提示才能当场顶掉旧的（见 AppNotice.kt）
+                is QzxyEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
             }
         }
     }

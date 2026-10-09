@@ -83,7 +83,8 @@
 自愈防页面 meta 晚到、撤销还原原文并摘掉自愈观察者与四条监听、登录页绝不覆盖、
 关掉时与引入前逐字一致）
 、`AppNoticeTest`（提示顶替：`showNotice` 新提示当场顶掉旧条 / M3 原生排队语义的对照 /
-带 `actionLabel` 的条不让位 / 字符串重载默认时长与 M3 逐字一致）
+带 `actionLabel` 的条不让位 / 字符串重载默认时长与 M3 逐字一致 / `postNotice` 连发即时顶替
+与「收集协程里直接 await 会串行」的正反对照）
 、`JwWebBackTest`（教务窗口返回语义：同址条目 / 同址不同 fragment / CAS·SSO·登录页一律跳过，
 跳无可跳返回 null = 关窗口）
 、`PowerBillTest`（电费账单按月归集：按缴费日期归档/充值退款分列/倒序/月窗口跨年）

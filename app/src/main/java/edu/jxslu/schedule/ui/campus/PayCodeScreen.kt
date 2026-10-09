@@ -50,12 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SkeletonBox
 import edu.jxslu.schedule.ui.common.lineHeightDp
+import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
-import edu.jxslu.schedule.ui.common.showNotice
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.CreditCard
@@ -98,8 +97,9 @@ fun PayCodeScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is PayCodeEvent.Notice ->
-                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
+                // 事件流用 postNotice 单开协程发：收集协程不卡在「等这条提示收场」上，
+                // 事件成串来时新的提示才能当场顶掉旧的（见 AppNotice.kt）
+                is PayCodeEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
             }
         }
     }

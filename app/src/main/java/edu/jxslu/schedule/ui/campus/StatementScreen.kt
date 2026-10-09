@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,7 +52,6 @@ import edu.jxslu.schedule.data.ykt.YktModels
 import edu.jxslu.schedule.ui.common.AppBarChart
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
-import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppRatioBar
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.BarChartItem
@@ -59,8 +59,8 @@ import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.MonthNavRow
 import edu.jxslu.schedule.ui.common.MonthPickerDialog
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
-import edu.jxslu.schedule.ui.common.showNotice
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -94,6 +94,7 @@ fun StatementScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val haptics = rememberAppHaptics()
+    val scope = rememberCoroutineScope()
 
     // 枚举名存 String：rememberSaveable 不认自定义枚举，存名字最省事
     var filterName by rememberSaveable { mutableStateOf(StatementFilter.All.name) }
@@ -105,8 +106,9 @@ fun StatementScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is StatementEvent.Notice ->
-                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
+                // 事件流用 postNotice 单开协程发：收集协程不卡在「等这条提示收场」上，
+                // 事件成串来时新的提示才能当场顶掉旧的（见 AppNotice.kt）
+                is StatementEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
             }
         }
     }

@@ -101,6 +101,13 @@
   **只有带 `actionLabel` 的那条不让位**（撤销 / 去设置：顶掉它等于把出口静默收走），
   它自己最长 `SnackbarDuration.Long` 就会过期，等待有界。判据是 `AppNotice.kt` 里那两个
   `showNotice` 重载，`AppNoticeTest` 钉住（含「M3 原样排队」的对照用例）。
+- **事件流（`collect { }`）里发提示用 `postNotice`，别直接写 `showNotice`**（2026-10-09）：`showNotice`
+  是挂起调用，要挂到这条提示收场（超时 / 被顶掉 / 点动作）才返回——直接写在收集协程里，
+  下一条事件还没轮到发送，顶替逻辑没机会执行，又回到「新提醒要等旧提醒的提醒时间过」
+  （用户再报的就是它）。`postNotice`（`ui/common/AppNotice.kt`）给每条提示单开协程；
+  用户点击触发、本来就在自己 `scope.launch { }` 里的提示照旧直接 `showNotice`；
+  带 `actionLabel` 的提示不走 `postNotice`（要读返回的 `SnackbarResult`）。判据是
+  `AppNoticeTest` 的正反两条新用例（`postNotice` 连发当场顶替 / 收集协程里直接 await 会串行）。
 - 「一条一条播」的队列要自己搭（如 `OutcomeQueue`）：**别指望提示宿主排队**——它现在只画当前
   那一条，节奏由发送侧「上一条返回后再发下一条」决定。
 

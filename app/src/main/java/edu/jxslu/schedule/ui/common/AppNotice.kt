@@ -32,6 +32,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.ui.theme.semanticColors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Alert02
 import me.rerere.hugeicons.stroke.Cancel01
@@ -94,6 +96,10 @@ class AppNoticeVisuals(
  * 其余（纯信息、带关闭键、`Indefinite` 的进行中提示）一律让位：`Indefinite` 尤其不能让，
  * 否则它后面的每一条都会挂死（`CampusCardSettingsScreen` 那条「正在发起充值…请稍候」是
  * 显式 cancel 掉再发结果的，本来就不靠排队）。
+ *
+ * **注意这是一个挂起调用**：它要挂到这条提示收场（超时 / 被下一条顶掉 / 用户点动作）才返回。
+ * 写在流收集（`viewModel.events.collect { }`）里时收集协程会被卡住——下一条事件轮不到发送，
+ * 顶替逻辑没机会执行。事件流里请用 [postNotice]。
  */
 suspend fun SnackbarHostState.showNotice(visuals: SnackbarVisuals): SnackbarResult {
     currentSnackbarData?.takeIf { it.visuals.actionLabel == null }?.dismiss()
@@ -121,6 +127,28 @@ suspend fun SnackbarHostState.showNotice(
         duration = duration,
     ),
 )
+
+/**
+ * 事件流里的提示出口：**给每条提示单开一个协程**发，发送方不等它收场。
+ *
+ * 为什么要有它（2026-10-09 用户报「底部胶囊的新提醒盖不掉旧的，要等旧提醒的时间过」）：
+ * [showNotice] 是挂起调用，要挂到这条提示**收场**才返回。直接把它写在
+ * `viewModel.events.collect { }` 里，收集协程就卡在等它——下一条事件还没轮到发送，
+ * 「新的顶掉旧的」压根没机会执行，看到的正是「新提醒要等旧提醒的提醒时间过」。
+ * 事件成串到来时（开锁 → 已解锁、开水 → 出水成功、逐条对账……）必现。
+ *
+ * 判据：写在流收集（`collect { }` / `collectLatest { }`）里的播报一律走这里；
+ * 用户点击触发、本来就在自己 `scope.launch { }` 里的提示直接 [showNotice] 即可。
+ * 只用于纯播报——带 `actionLabel` 的提示要读返回的 [SnackbarResult]，本来就该待在自己
+ * 那条协程里等（且按 [showNotice] 的规则不被顶掉），别用它。
+ */
+fun CoroutineScope.postNotice(
+    snackbar: SnackbarHostState,
+    message: String,
+    tone: NoticeTone = NoticeTone.Info,
+) {
+    launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
+}
 
 /**
  * 全 App 统一的提示宿主：替代各页 Scaffold 里的 `SnackbarHost(snackbar)`。

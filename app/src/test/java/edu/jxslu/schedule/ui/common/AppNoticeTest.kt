@@ -3,10 +3,14 @@ package edu.jxslu.schedule.ui.common
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
@@ -64,6 +68,54 @@ class AppNoticeTest {
         awaitUntil { state.currentSnackbarData?.visuals?.message == "第二条" }
         assertEquals("第二条", state.currentSnackbarData?.visuals?.message)
         second.cancel()
+    }
+
+    /**
+     * 事件流用 [postNotice]：每条提示各在自己的协程里，第二条**当场**顶掉第一条
+     * （先到的那条 `dismiss()` 后返回，收集协程不卡在它上面）。
+     */
+    @Test
+    fun postedNoticesReplaceEachOtherInBurst() = runBlocking {
+        val state = SnackbarHostState()
+        // 独立 Job：这两个发送协程不挂在 runBlocking 的 Job 上（收尾用 cancel）
+        val scope = CoroutineScope(coroutineContext + Job())
+        scope.postNotice(state, "第一条", tone = NoticeTone.Info)
+        awaitUntil { state.currentSnackbarData?.visuals?.message == "第一条" }
+
+        scope.postNotice(state, "第二条")
+        awaitUntil { state.currentSnackbarData?.visuals?.message == "第二条" }
+
+        assertEquals("第二条", state.currentSnackbarData?.visuals?.message)
+        scope.cancel()
+    }
+
+    /**
+     * 反面钉住「为什么要有 [postNotice]」：把 [showNotice] 直接写在收集协程里连着发两条，
+     * 第二条**根本发不出去**——发送协程还挂在等第一条收场上。用户报的「新提醒要等旧提醒的
+     * 提醒时间过」就是这副样子；事件成串的流（开锁 → 已解锁、开水 → 出水成功）必须走
+     * `postNotice`，见 [postedNoticesReplaceEachOtherInBurst]。
+     */
+    @Test
+    fun awaitingSenderSerializesUntilPreviousNoticeIsGone() = runBlocking {
+        val state = SnackbarHostState()
+        val sender = async {
+            state.showNotice(AppNoticeVisuals("第一条", duration = SnackbarDuration.Indefinite))
+            state.showNotice(AppNoticeVisuals("第二条", duration = SnackbarDuration.Indefinite))
+        }
+        awaitUntil { state.currentSnackbarData?.visuals?.message == "第一条" }
+        awaitUntil(steps = 16) { state.currentSnackbarData?.visuals?.message == "第二条" }
+
+        // 第一条还挂着：发送协程还挂在第一个 showNotice 上，第二条没轮到发送
+        assertEquals("第一条", state.currentSnackbarData?.visuals?.message)
+        assertFalse(sender.isCompleted)
+
+        // 把第一条收掉，发送协程才走到第二条
+        state.currentSnackbarData?.dismiss()
+        awaitUntil { state.currentSnackbarData?.visuals?.message == "第二条" }
+        assertEquals("第二条", state.currentSnackbarData?.visuals?.message)
+        state.currentSnackbarData?.dismiss()
+        // 显式 Unit：runBlocking 的返回值不能是 SnackbarResult（JUnit 用例必须 void）
+        assertEquals(SnackbarResult.Dismissed, sender.await())
     }
 
     /** 等用户动作的那条不让位：新提示只能排队（「撤销」不会因为别的播报被静默收走）。 */

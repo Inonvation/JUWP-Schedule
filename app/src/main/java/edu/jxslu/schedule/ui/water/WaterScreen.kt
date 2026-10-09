@@ -85,6 +85,7 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
+import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.me.MeViewModel
@@ -152,9 +153,9 @@ fun WaterScreen(
             when (event) {
                 // 登录/出水/查询的结果都在页面自己的提示卡里显示（不再用系统 Toast 的黑框）；
                 // 事件都源自页面内的点击与随后的异步回调，此刻不会有我们的弹层盖在上面
-                is WaterEvent.Notice -> snackbar.showNotice(
-                    AppNoticeVisuals(event.text, tone = event.tone),
-                )
+                // postNotice 单开协程发：收集协程不卡在「等这条提示收场」上，
+                // 事件成串来时新的提示才能当场顶掉旧的（见 AppNotice.kt）
+                is WaterEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
             }
         }
     }

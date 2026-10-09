@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,7 +50,6 @@ import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.RideRecord
 import edu.jxslu.schedule.domain.capabilities
-import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
@@ -58,7 +58,7 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
-import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -94,6 +94,7 @@ fun KvcxScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val records by viewModel.rideRecords.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     // 使用方式（DESIGN §3.9 / §4.32）：初值阻塞读一次，页面不该先按另一档画一帧
     val ebikePrefs = remember(context) { Graph.displayPrefs(context) }
     val useMode by ebikePrefs.ebikeUseMode.collectAsStateWithLifecycle(
@@ -105,8 +106,9 @@ fun KvcxScreen(
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is KvcxEvent.Notice ->
-                    snackbar.showNotice(AppNoticeVisuals(event.text, tone = event.tone))
+                // 事件流用 postNotice 单开协程发：收集协程不卡在「等这条提示收场」上，
+                // 事件成串来时新的提示才能当场顶掉旧的（见 AppNotice.kt）
+                is KvcxEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
             }
         }
     }
