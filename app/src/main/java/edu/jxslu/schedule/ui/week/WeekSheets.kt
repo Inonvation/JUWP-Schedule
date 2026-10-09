@@ -39,6 +39,7 @@ import me.rerere.hugeicons.stroke.File02
 import me.rerere.hugeicons.stroke.FileExport
 import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.Import
+import me.rerere.hugeicons.stroke.ImageDownload
 import me.rerere.hugeicons.stroke.CalendarSync
 
 /**
@@ -227,9 +228,9 @@ fun ImportEntrySheet(
 }
 
 /**
- * 课表页顶栏「分享」入口弹层（DESIGN §4.12）：日历同步 / CSV / JSON。
+ * 课表页顶栏「分享」入口弹层（DESIGN §4.12）：日历同步 / CSV / JSON / 导出为图片。
  *
- * 形态与 [ImportEntrySheet] 一致（标题 + 三行入口）；具体动作在 WeekScreen 接线。
+ * 形态与 [ImportEntrySheet] 一致（标题 + 四行入口）；具体动作在 WeekScreen 接线。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -237,6 +238,7 @@ fun ShareEntrySheet(
     onSyncCalendar: () -> Unit,
     onExportCsv: () -> Unit,
     onExportJson: () -> Unit,
+    onShareImage: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -269,6 +271,12 @@ fun ShareEntrySheet(
                 title = "导出为 JSON",
                 subtitle = "完整课表数据，可在其他设备导入水贝贝",
                 onClick = onExportJson,
+            )
+            ImportEntryRow(
+                icon = { Icon(HugeIcons.ImageDownload, contentDescription = null, modifier = Modifier.size(22.dp)) },
+                title = "导出为图片",
+                subtitle = "生成一张只含本周课表的图，可保存到相册或直接分享",
+                onClick = onShareImage,
             )
         }
     }

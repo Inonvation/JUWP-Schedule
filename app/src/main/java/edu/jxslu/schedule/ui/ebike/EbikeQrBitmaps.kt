@@ -1,13 +1,12 @@
 package edu.jxslu.schedule.ui.ebike
 
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Environment
-import android.provider.MediaStore
 import edu.jxslu.schedule.domain.EbikeQr
+import edu.jxslu.schedule.ui.common.GallerySaveResult
+import edu.jxslu.schedule.ui.common.saveBitmapToGallery
 import java.io.File
-import java.io.FileOutputStream
 
 /**
  * 共享单车二维码的位图落盘（DESIGN §3.9 / §4.18）。
@@ -35,50 +34,28 @@ object EbikeQrBitmaps {
      * 保存到系统相册（`Pictures/水贝贝`）。API 29+ 走 MediaStore，无需权限；
      * 26–28 走公共目录 File 直写（manifest 已声明 legacy 外存权限）。
      * 成功返回 [SaveResult.Saved]（附待焚毁 key，扫完即焚用）；失败返回 [SaveResult.Failed]。
+     *
+     * 落盘本身委托给共用的 [saveBitmapToGallery]（课表导出图片 §4.12 同一条路）；
+     * 本对象只保留「待焚毁 key」这段与共享单车绑定的语义。
      */
     fun saveToGallery(context: Context, bitmap: Bitmap, bikeId: String): SaveResult {
-        return try {
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, "ebike-$bikeId.jpg")
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    put(
-                        MediaStore.Images.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/水贝贝",
-                    )
-                }
-                val uri = context.contentResolver.insert(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    values,
-                ) ?: return SaveResult.Failed("相册创建失败（系统拒绝写入）")
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)) {
-                        // 编码失败要回收已 insert 的空行：留着就是相册里一张 0 字节
-                        // 孤儿图，且没进焚毁记录，永远清不掉
-                        runCatching { context.contentResolver.delete(uri, null, null) }
-                        return SaveResult.Failed("图片编码失败")
-                    }
-                } ?: return SaveResult.Failed("相册创建失败（系统拒绝写入）")
-                SaveResult.Saved(EbikeQr.pendingMediaKey(uri.toString()))
-            } else {
-                @Suppress("DEPRECATION")
-                val dir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                    "水贝贝",
-                )
-                if (!dir.exists() && !dir.mkdirs()) return SaveResult.Failed("无法创建相册目录")
-                val file = File(dir, "ebike-$bikeId.jpg")
-                FileOutputStream(file).use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)) {
-                        return SaveResult.Failed("图片编码失败")
-                    }
-                }
-                SaveResult.Saved(EbikeQr.pendingFileKey(file.absolutePath))
-            }
-        } catch (e: SecurityException) {
-            SaveResult.Failed("没有相册写入权限")
-        } catch (e: Exception) {
-            SaveResult.Failed("保存失败：${e.message ?: "未知错误"}")
+        return when (
+            val result = saveBitmapToGallery(
+                context = context,
+                bitmap = bitmap,
+                displayName = "ebike-$bikeId.jpg",
+                format = Bitmap.CompressFormat.JPEG,
+                quality = 90,
+            )
+        ) {
+            is GallerySaveResult.Saved -> SaveResult.Saved(
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    EbikeQr.pendingMediaKey(result.location)
+                } else {
+                    EbikeQr.pendingFileKey(result.location)
+                },
+            )
+            is GallerySaveResult.Failed -> SaveResult.Failed(result.message)
         }
     }
 

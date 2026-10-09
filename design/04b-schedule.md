@@ -59,15 +59,50 @@
 
 ### 4.12 课表分享与日历同步（2026-09-18，P6）
 
-入口：课表页顶栏**分享图标**（眼睛图标左侧）→ 分享弹层，三个去向。
+入口：课表页顶栏**分享图标**（眼睛图标左侧）→ 分享弹层，四个去向。
 
-#### 三种去向
+#### 四种去向
 
 | 去向 | 形态 | 说明 |
 |------|------|------|
 | 一键同步到手机日历 | `WRITE_CALENDAR`/`READ_CALENDAR` + ContentResolver | 写入系统日历 Provider，含课程名/教室/教师，提前提醒时长默认 20 分钟、可在「我的 → 日历同步」改 |
 | 导出为 CSV（日历格式） | SAF 另存为（`text/csv`，UTF-8 + BOM） | **Google 日历导入格式**，可直接 calendar.google.com 导入 |
 | 导出为 JSON | SAF 另存为（`application/json`） | 复用 `repo.exportJson()`，格式即 4.3，与其他设备互导 |
+| 导出为图片 | 二级页 `SCHEDULE_SHARE` 预览 → 保存到相册 / 分享 | 一张只含本周课表的 PNG（见下节） |
+
+#### 导出为图片（2026-10-09）
+
+需求：把「本周课表」导成一张图发给同学。图里只要课表本身——星期表头、左侧节次时间、
+课程色块；**顶栏 / 底栏 / 悬浮按钮 / Snackbar 等 App 要素一律不进图**。
+
+- **入口与承载**：分享弹层第 4 行「导出为图片」→ 二级页 `SubpageScreen.SCHEDULE_SHARE`
+  （`ui/week/ScheduleShareScreen.kt`，复用 `WeekViewModel` 取全量状态）。`focusItemId` 复用为
+  「进页预览哪一周」；页内 `◀/▶` 切周是**页内局部状态**，不动主页面当前周。
+  **不做成弹层**：实测该 Compose 版本下 Dialog 窗口的内容约束比可视区高一个状态栏，
+  底部按钮被挤出屏幕（`decorFitsSystemWindows` 开关无效）；二级页的 Activity 窗口 insets
+  是本项目已经跑通的形态（与其余二级页一致）。
+- **板（`ShareBoard`）**：可选背景图 + 板头（课表名 / 第 N 周 / 日期范围）+ `TimeRail` + `WeekPage`
+  + 可选脚注（`水贝贝 · 非官方课表工具，内容仅供参考`——对外文案纪律）。板固定
+  `rowHeightScale = 1f`、不画非本周灰态与当前时刻线、`tapBlankToAdd = false`；其余样式
+  （字号 / 圆角 / 不透明度 / 描边 / 教师 / 网格线）沿用用户显示设置。板对触摸屏蔽
+  （同级覆盖层，不消费事件 → 外层滚动照常）：网格课块自带 `clickable`，而预览只是一张图。
+- **截图**：`rememberGraphicsLayer()` + `record { drawContent() }` + `drawLayer(layer)` +
+  `toImageBitmap()`（Compose 1.7）。`drawWithContent` **必须挂修饰符链最外层**，否则
+  `clip`/`background`/背景图不在图层里，底色变透明。
+- **尺寸口径**：板宽 = 预览可用宽 − `BoardPadding × 2`（列宽按**减掉内边距**的宽算，
+  否则最后一列被挤出板外）；行高由 `domain/ScheduleShare.boardRowHeightDp` 从可用高度反推、
+  夹在 44–64dp（大屏不摊太高、小屏不压到课名放不下）。预览按可用区缩放，**缩放只走
+  `graphicsLayer`**（不改布局）→ 截图仍是板原始分辨率（实测 954×1759 @ 1080 屏）。
+- **两个开关**：「保留课表背景图」（**仅设置了背景图时出现**，默认**关**——分享图默认干净、
+  也避免默认带走个人照片）、「包含「水贝贝」脚注」（默认**开**）。背景位图解码中禁用两个动作按钮，
+  避免截到半张背景。
+- **出口两条**：保存到相册 = `ui/common/BitmapSave.kt`（`saveBitmapToGallery`，MediaStore
+  `Pictures/水贝贝`，API 29+ 免权限 / 26–28 legacy 直写；与共享单车出码共用同一实现）；
+  分享 = `data/repo/ScheduleShareStore.kt`（`cacheDir/schedule_share/` 落 PNG + FileProvider
+  内容 Uri，只留最近 5 份；**落 cache 不进云备份**，也省掉备份排除 xml 的一条）。
+- **红线**：不写 `courses` 表（纯渲染）；不新增权限（相册写入复用 manifest 里已有的
+  `WRITE_EXTERNAL_STORAGE` `maxSdkVersion=28`）；`file_paths.xml` 只多一个 `cache-path` 根。
+
 
 #### 事件展开口径（`domain/ScheduleExporter.kt`，纯 JVM）
 

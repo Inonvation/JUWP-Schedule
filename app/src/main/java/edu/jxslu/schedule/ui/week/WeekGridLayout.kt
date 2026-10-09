@@ -54,6 +54,20 @@ internal data class GridLayout(
     fun heightOf(startSection: Int, endSection: Int): Dp = bottomOf(endSection) - topOf(startSection)
 }
 
+/**
+ * 网格全部行间距之和（大节内 [IntraGap]、大节之间 [InterGap]）。
+ *
+ * 与 [buildGridLayout] 里累加 `y` 的那段是**同一口径**：那里决定网格实际占多高，
+ * 这里把它单独暴露出来，给「导出为图片」反推行高用（板高 = 表头 + 行高 × 节数 + 本值）。
+ */
+internal fun gridGapsTotal(sectionCount: Int): Dp {
+    var gaps = 0.dp
+    for (section in 1 until sectionCount) {
+        gaps += if (ScheduleCalculator.isBigSectionEnd(section)) InterGap else IntraGap
+    }
+    return gaps
+}
+
 internal fun buildGridLayout(
     maxHeight: Dp,
     maxWidth: Dp,

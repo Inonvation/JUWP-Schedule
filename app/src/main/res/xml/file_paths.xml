@@ -3,7 +3,9 @@
      成绩单含姓名学号证件照，分享/打开都走临时授权的内容 Uri，不给 FileProvider
      任何多余的根（多一个根就多一份被别的应用读到的可能）。
      crash/（2026-10-02，体检第三批）：崩溃留痕的导出走同一个 provider——堆栈里没有
-     凭证，但同样只给临时授权的内容 Uri，不写公共目录。 -->
+     凭证，但同样只给临时授权的内容 Uri，不写公共目录。
+     schedule_share/（2026-10-09，DESIGN §4.12）：课表导出图片的「分享」出口。图是一次性的，
+     落在 cacheDir（不进备份），同样只给临时授权的内容 Uri。 -->
 <paths>
     <files-path
         name="transcripts"
@@ -11,4 +13,7 @@
     <files-path
         name="crash"
         path="crash/" />
+    <cache-path
+        name="schedule_share"
+        path="schedule_share/" />
 </paths>

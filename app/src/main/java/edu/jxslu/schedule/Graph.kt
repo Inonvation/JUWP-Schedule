@@ -52,6 +52,7 @@ import edu.jxslu.schedule.data.repo.RideRecordStore
 import edu.jxslu.schedule.data.repo.ScheduleBackgroundStore
 import edu.jxslu.schedule.data.repo.ScheduleBaselineStore
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.data.repo.ScheduleShareStore
 import edu.jxslu.schedule.data.repo.ScheduleSync
 import kotlinx.coroutines.sync.Mutex
 import edu.jxslu.schedule.data.repo.ScholarProgressRepository
@@ -225,6 +226,9 @@ object Graph {
 
     @Volatile
     private var scheduleBackgroundStore: ScheduleBackgroundStore? = null
+
+    @Volatile
+    private var scheduleShareStore: ScheduleShareStore? = null
 
     @Volatile
     private var campusCalendarStore: CampusCalendarStore? = null
@@ -493,6 +497,16 @@ object Graph {
         scheduleBackgroundStore ?: synchronized(this) {
             scheduleBackgroundStore ?: ScheduleBackgroundStore(context.applicationContext)
                 .also { scheduleBackgroundStore = it }
+        }
+
+    /**
+     * 课表导出图片的分享落盘单例（DESIGN §4.12）：cacheDir/schedule_share，
+     * 分享用的内容 Uri 走 FileProvider 临时授权，只留最近几份。
+     */
+    fun scheduleShareStore(context: Context): ScheduleShareStore =
+        scheduleShareStore ?: synchronized(this) {
+            scheduleShareStore ?: ScheduleShareStore(context.applicationContext)
+                .also { scheduleShareStore = it }
         }
 
     /**

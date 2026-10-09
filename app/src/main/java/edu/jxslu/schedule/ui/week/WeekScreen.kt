@@ -74,11 +74,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.repo.ImportPreview
 import edu.jxslu.schedule.data.repo.ImportResult
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseFilter
-import edu.jxslu.schedule.domain.GridFont
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ScheduleOverrides
@@ -357,36 +358,16 @@ fun WeekScreen(
     }
 
     // ---- 网格字号换算（不依赖可用约束，提到 Scaffold 外）----
-    // systemFontScale/gridScale 及各字号 sp 只由设置与列数决定，与 BoxWithConstraints 的
-    // 可用宽高无关；上提到函数级是因为「表头高度」的动态下限 headerMinDp 要同时喂给两处：
+    // 换算口径收敛在 rememberGridTypeSpec（与「导出为图片」共用同一份，避免两处漂移）；
+    // 上提到函数级是因为「表头高度」的动态下限 headerMinDp 要同时喂给两处：
     // 布局（渲染兜底防日期文字截断）与显示设置弹层（滑块 valueRange 从有效下限起步）。
-    val systemFontScale = LocalDensity.current.fontScale
-    // 网格字号：课名目标字号 dp（用户设置或跟随系统）→ 网格内统一倍率，换算规则见 GridFont
-    val gridScale = GridFont.scaleFromDp(
-        GridFont.resolveDp(systemFontScale, state.gridFontDp, days),
-        days,
-    )
-    // 教室/教师：用户设置过目标 dp 时换算成卡片内的实际 sp——网格还套着 gridScale
-    // 的密度倍率，预除一次才能让净渲染值等于目标 dp；未设置传 null，跟随课名等比（旧行为）
-    val roomFontSp = state.gridRoomDp?.let {
-        GridFont.resolveDetailDp(systemFontScale, it, days) / gridScale
-    }
-    val teacherFontSp = state.gridTeacherDp?.let {
-        GridFont.resolveDetailDp(systemFontScale, it, days) / gridScale
-    }
-    // 时间轴 / 日期表头：与课名**完全解耦**。二者不在 gridScale 的语义范围内
-    // （它们是定位参照，不是内容），但仍渲染在 GridTypography 提供的密度里，
-    // 所以要把课名倍率除回去，使净渲染值只由自己的设置决定。
-    //
-    // 根因：这里不能写成 `state.gridRailDp?.let{...}`——用户没拖过滑块时结果是 null，
-    // TimeRail 便回落到硬编码 sp，而那仍会被 gridScale 乘一遍，
-    // 于是「调课名字号，时间轴/日期跟着变」的老问题在默认态下根本没被修掉。
-    // 方案：无论用户是否设置过都解析出一个值——null 走 resolveXxxDp 的
-    // 「基准 × 系统倍率」分支（跟随系统、与课名无关），设置过则取用户值。
-    val railFontSp = GridFont.resolveRailDp(systemFontScale, state.gridRailDp, days) / gridScale
-    val dateFontSp = GridFont.resolveDateDp(systemFontScale, state.gridDateDp, days) / gridScale
-    // 表头高度有效下限：装得下两行日期文字的最小高度（已夹进滑块范围）
-    val headerMinDp = minHeaderHeightForDateFont(dateFontSp)
+    val typeSpec = rememberGridTypeSpec(state, days)
+    val gridScale = typeSpec.gridScale
+    val roomFontSp = typeSpec.roomFontSp
+    val teacherFontSp = typeSpec.teacherFontSp
+    val railFontSp = typeSpec.railFontSp
+    val dateFontSp = typeSpec.dateFontSp
+    val headerMinDp = typeSpec.headerMinDp
 
     Scaffold(
         // 底色透明（DESIGN §4.22）：背景图由 JuwApp 铺在外层 Scaffold 之下（要盖到状态栏与底栏），
@@ -639,6 +620,16 @@ fun WeekScreen(
                 shareOpen = false
                 jsonExportLauncher.launch("水贝贝课表_$fileDateTag.json")
             },
+            onShareImage = {
+                // 先关弹层再开二级页：弹层是独立窗口，盖在二级页之上会挡住它
+                shareOpen = false
+                SubpageActivity.start(
+                    context,
+                    SubpageScreen.SCHEDULE_SHARE,
+                    // focusItemId 复用为「进页时预览哪一周」（与 SHORTCUTS / RIDE 同纪律）
+                    focusItemId = state.week.toString(),
+                )
+            },
             onDismiss = { shareOpen = false },
         )
     }
@@ -864,10 +855,14 @@ private val DAY_NAMES = listOf("一", "二", "三", "四", "五", "六", "日")
 
 /**
  * 把网格区域的字号倍率收进可排版区间。
- * 只包住网格本身——顶栏、弹层、空态提示仍跟随系统字体设置。
+ * 只包住网格本身——顶栏、弹层、空态提示按全局的字体缩放渲染（「固定字体大小」
+ * 锁定默认开，恒为 0.9×；关掉锁定则跟随系统，见 `domain/FontScalePolicy`）。
+ *
+ * `internal`（原 private）：导出为图片的预览板（`ScheduleShareDialog`）要用同一份，
+ * 两处网格排版必须同源。
  */
 @Composable
-private fun GridTypography(fontScale: Float, content: @Composable () -> Unit) {
+internal fun GridTypography(fontScale: Float, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     CompositionLocalProvider(
         LocalDensity provides Density(density.density, fontScale),

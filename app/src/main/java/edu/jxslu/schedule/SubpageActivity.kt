@@ -61,6 +61,7 @@ import edu.jxslu.schedule.ui.ujing.UjingHistoryScreen
 import edu.jxslu.schedule.ui.ujing.UjingOrderScreen
 import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
+import edu.jxslu.schedule.ui.week.ScheduleShareScreen
 import edu.jxslu.schedule.ui.wenqu.WenquRecordsScreen
 import edu.jxslu.schedule.ui.wenqu.WenquScreen
 import edu.jxslu.schedule.ui.wenqu.WenquSettingsScreen
@@ -182,6 +183,8 @@ enum class SubpageScreen {
     AI_HISTORY,
     /** 今日页「+」→ 收件箱（考试/成绩/调课/轮次/余额的留痕，DESIGN §3.24 / §4.38） */
     INBOX,
+    /** 课表页分享弹层第 4 行 → 导出为图片（预览本周课表，保存到相册 / 分享，DESIGN §4.12，2026-10-09） */
+    SCHEDULE_SHARE,
 }
 
 /**
@@ -380,6 +383,12 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.AI_SETTINGS -> AiSettingsScreen(onBack = onBack)
             SubpageScreen.AI_HISTORY -> AiHistoryScreen(onBack = onBack)
             SubpageScreen.INBOX -> InboxScreen(onBack = onBack)
+            // focusItemId 对 SCHEDULE_SHARE 复用为「进页时预览哪一周」（课表页分享弹层第 4 行）
+            SubpageScreen.SCHEDULE_SHARE ->
+                ScheduleShareScreen(
+                    onBack = onBack,
+                    initialWeek = focusItemId?.toIntOrNull(),
+                )
             SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(
                 onBack = onBack,
                 // 功能开关节 → 快捷方式编辑页（2026-09-28 自扩展服务迁入）

@@ -40,6 +40,29 @@
   `WaterAutoStart` 同一纪律）：**不要**改用 `SubpageRequest` 的字段——窗口链恢复会把请求
   重放，等于用户没点又被推进下单页。
 
+## 课表网格导出为图片（2026-10-09，DESIGN §4.12）
+
+- 入口在课表页分享弹层第 4 行 → 二级页 `SubpageScreen.SCHEDULE_SHARE`（`ui/week/ScheduleShareScreen.kt`）。
+  `focusItemId` 复用为「进页预览哪一周」；页内切周是**局部状态**，不动主页面当前周。
+- 截图只有一处：`ShareBoard` 根节点上的 `rememberGraphicsLayer()` + `record {}` + `drawLayer`。
+  **`drawWithContent` 必须挂在修饰符链最外层**——`record { drawContent() }` 只记录它内部的绘制，
+  把 `clip`/`background`/背景图放在它之前，截出来的图底色就是透明的。
+- 板 = 可选背景图 + 板头（课表名 / 第 N 周 / 日期范围）+ `TimeRail` + `WeekPage` + 可选脚注；
+  **顶栏、底栏、悬浮按钮、Snackbar 一律不进图**。板固定 `rowHeightScale = 1f`、不画非本周灰态与
+  当前时刻线、空白格不可点（`tapBlankToAdd = false`）。
+- 尺寸：板宽 = 预览可用宽 − `BoardPadding × 2`（列宽必须按**减掉内边距**的宽度算，否则最后一列被
+  内边距挤出板外）；行高由 `ScheduleShare.boardRowHeightDp` 从可用高度反推并夹在 44–64dp。
+  预览按可用区缩放，**缩放只走 `graphicsLayer`**（不改布局）→ 截图仍是板原始分辨率，别用会改布局的
+  缩放（`size()`/`requiredSize` 组合错一处，预览与导出图就对不上）。
+- 出口两条：保存到相册 = `ui/common/BitmapSave.kt`（MediaStore `Pictures/水贝贝`，与单车出码共用）；
+  分享 = `data/repo/ScheduleShareStore.kt`（`cacheDir/schedule_share/` + FileProvider 的
+  `schedule_share` 根，只留最近 5 份）。
+- **不要把这个页面做成弹层（Dialog）**：实测该 Compose 版本下 Dialog 窗口的内容约束比可视区高一个
+  状态栏，底部按钮被挤出屏幕，`decorFitsSystemWindows` 开关无效。二级页的 Activity 窗口 insets
+  是本项目已经跑通的形态。
+- 网格排版参数走 `rememberGridTypeSpec`（`ui/week/GridTypeSpec.kt`）——页面与导出板**必须**同一份，
+  两处各算一遍必然漂移。
+
 ## 可见星期序列
 
 - 可见星期序列以 `ScheduleCalculator.visibleDays` 为唯一来源、`columnOf` 取列下标；
