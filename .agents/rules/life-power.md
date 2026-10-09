@@ -101,6 +101,8 @@
   生活页才迟到弹出）；弹窗以金额大字（`AmountHeroText`）为主（见 `ui-common.md`）；
   命中那一刻在 `PayCodeViewModel` 里**直接震一次**（不挂开关——即时操作反馈，不是打扰型
   提醒；放页面层会被 STARTED 闸门挂起、晚到亮屏才响），那条链路别断。
+- **付款成功后余额自动刷新**（2026-10-09 用户报「弹了支付成功，一卡通余额不会立即更新，还得手动刷新」）：宿主收到这笔消费时（`CampusPayResultDialogHost` 里调 `CampusBalanceSync.refreshAfterPayment(context)`）做一次**进程级、单次**强拉——作废 `YktRepository` 的正式卡余额缓存，`Graph.appScope` 拉一次 `queryCard` 写回缓存并推桌面小组件，成功后 `CampusBalanceSync.revision` 自增；生活页 / 校园卡设置页的 `CampusCardViewModel` 订阅 revision 用 `force = false` 重建快照（吃刚写入的缓存，**零额外请求**）。**别改成各 VM 各自 force 强拉**：付款码页 + 生活页 + 设置页三处的 VM 可能同时活着，一次消费会打 4–6 条；触发点放宿主而不是 `PayCodeViewModel` 检测那一刻——宿主消费结果时用户刚回到页面前，离看余额最近。电子账户缓存不动（刷卡只动正式卡）；失败静默不重试（卡片维持旧值，下次进页 / 手动刷新照旧是新值）。同一份余额还会交给 `BalanceAlertReminder.evaluateYktBalance` 当场评估一次余额提醒（付款把余额刷低不必等下一个检查档；开关关 / 免扰 / 「偏低只提醒一次」规则都在提醒侧，零额外请求）。
+- **余额快照统一出口、连点去重与失败态**（2026-10-09）：`CampusCardViewModel` 的四类快照写入（进页与手动刷新 / 开启验证 / 到账判定 / 电子账户到账补刷）统一走 `applySnapshot()`——写 `_balance` 的同时顺手推桌面小组件（零额外请求；此前只有付款码页在推，充值到账 / 手动刷新要等 2 小时闸门才上小组件）。`CampusCardViewModel.refreshBalance` 与 `PayCodeViewModel.loadBalance` 有「取数中忽略重复触发」闸，连点不叠请求别删；付款码页余额行的「获取中 / 暂不可用」两态由 `PayCodeViewModel.balanceLoaded` 区分（失败转「余额暂不可用（点击重试）」，与设置页 2026-10-07 的口径对齐）。
 - **钱包卡两栏靠 `IntrinsicSize.Min` + 栏内 `weight(1f)` 空隙等高**（两个「充值」按钮落在
   同一水平线），取数时刻写在各自栏标题行右侧，说明合并在卡头的「钱包说明」弹窗里。
   栏内 `clickable` 刷新、按钮自己吃点击，改的时候别把这两个点击合成一个。
@@ -265,7 +267,7 @@
   1005/1006，两边落点 intent 都指向 MainActivity 无 action，filterEquals 相同——
   requestCode 撞了会被 `FLAG_UPDATE_CURRENT` 改写落点（2026-09-24 修的真 bug）。
   **给通知加落点前先全局 grep 现有 requestCode**（上课 0、作业 1002/1003、
-  骑行 2000/2005/2006、余额 3005/3006），撞了就是静默的点击错页。
+  骑行 2000/2005/2006、余额 3005/3006），撞了就是静默的点击错页。**2026-10-09 加事件入口**：付款码消费命中后由 `CampusBalanceSync` 把刚拉到的正式卡余额交给 `evaluateYktBalance` 当场评估一次（同样落「上次成功检查」；开关 / 免扰 / 只提醒一次口径不变）。
 - 一卡通设置页的学号输入框**明文回填**已保存的学号（2026-09-24 用户拍板）；
   改回空框 = 不显示，会被用户当成「凭证丢了」，别当隐私优化删掉。
 - **开启不再是一个 Switch**（2026-09-28 用户拍板，DESIGN §3.10）：填学号 + 查询密码后点

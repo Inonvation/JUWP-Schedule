@@ -46,8 +46,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 sealed class PayCodeUiState {
 
     /**
-     * 未取码（生活页内嵌用法，DESIGN §3.13）：占位态，点了才登录取码。
-     * 付款码页（§3.10）自己不用这个态——它进页就 [PayCodeViewModel.load]。
+     * 首帧占位（进页就 [PayCodeViewModel.load]，正常看不到）。
+     *
+     * 内嵌码位时代留下的「未取码」态，现仅作 `_uiState` 的初值——视觉上等价加载中。
      */
     data object Idle : PayCodeUiState()
 
@@ -122,14 +123,22 @@ class PayCodeViewModel(
         val cardFen: Long,
         /** 电子账户余额（ACCOUNT 行，2026-09-23 实测与 CARD 同接口返回）。 */
         val accountFen: Long,
-        /** 兼容字段：此前「水电账户」口径（queryCard 的 elec_accamt），与 accountFen 不同源。 */
-        val elecFen: Long,
         /** 快照生成时刻（生活页卡片更新时间行用，2026-09-24）。 */
         val fetchedAtMs: Long = System.currentTimeMillis(),
     )
 
     private val _balance = MutableStateFlow<BalanceSnapshot?>(null)
     val balance: StateFlow<BalanceSnapshot?> = _balance.asStateFlow()
+
+    /**
+     * 余额是否**已确定**（尝试过加载、成功或失败都算；无凭证的页面不算尝试）。
+     * 余额行据此区分「获取中」与「暂不可用」，口径同 `CampusCardViewModel.balanceLoaded`。
+     */
+    private val _balanceLoaded = MutableStateFlow(false)
+    val balanceLoaded: StateFlow<Boolean> = _balanceLoaded.asStateFlow()
+
+    /** 余额取数进行中：连点刷新不叠加请求（2026-10-09）。 */
+    private var balanceLoading = false
 
     /** 深色主题（码配色与页面观感一致）。 */
     val dark: StateFlow<Boolean> = combine(prefs.themeMode) { theme ->
@@ -147,6 +156,8 @@ class PayCodeViewModel(
         loaded = true
         val credentials = credentialStore.read()
         if (credentials == null) {
+            // 没有凭证 = 余额没有可等的东西，余额行直接落「暂不可用」
+            _balanceLoaded.value = true
             _uiState.value = PayCodeUiState.Error(
                 "凭证未配置或已清除，请在「我的 → 校园卡」重新开启",
                 canRetry = false,
@@ -203,19 +214,24 @@ class PayCodeViewModel(
      *
      * 进页路径默认 `force = false` 吃 60 秒缓存（2026-10-04 风控优化）：付款码页的
      * 余额是锦上添花，用户多半刚从生活页过来，缓存里的值足够新——省 2 条 queryCard；
-     * 手动刷新才强拉。
+     * 手动刷新才强拉。[balanceLoading] 挡连点：一次取数没回来之前不重复发起。
      */
     private fun loadBalance(username: String, password: String, force: Boolean = false) {
+        if (balanceLoading) return
+        balanceLoading = true
         viewModelScope.launch {
             try {
                 val cards = repo.cards(username, password, force = force)
                 if (cards.isNotEmpty()) {
-                loadBalanceSnapshot(cards)
+                    loadBalanceSnapshot(cards)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // 静默：余额取不到不影响出示付款码
+            } finally {
+                balanceLoading = false
+                _balanceLoaded.value = true
             }
         }
     }
@@ -240,7 +256,6 @@ class PayCodeViewModel(
             totalFen = cards.sumOf { it.cardBalanceFen },
             cardFen = cards.sumOf { it.cardBalanceFen },
             accountFen = detail?.second ?: 0L,
-            elecFen = cards.sumOf { it.elecBalanceFen },
         )
         _balance.value = snapshot
         // 桌面生活小组件（DESIGN §3.6 二条目改版）：余额数据已经在手上，顺手推一次
@@ -248,21 +263,6 @@ class PayCodeViewModel(
         runCatching {
             LifeWidgetSync.pushCampusBalance(Graph.appContext, cardFen = snapshot.cardFen)
         }
-    }
-
-    /**
-     * 收起码（生活页内嵌用法，DESIGN §3.13）：丢掉手上这批码、停掉消费检测，回到 [PayCodeUiState.Idle]。
-     *
-     * 码只在「展开期间」存在——位图立刻回收，下次展开重新取一批，窗口里不留旧码。
-     */
-    fun collapse() {
-        payWatchJob?.cancel()
-        payWatchJob = null
-        loaded = false
-        _bitmaps.value?.qr?.recycle()
-        _bitmaps.value?.barcode?.recycle()
-        _bitmaps.value = null
-        _uiState.value = PayCodeUiState.Idle
     }
 
     // ------------------------------------------------------------------

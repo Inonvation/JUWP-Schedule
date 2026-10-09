@@ -29,8 +29,8 @@
   只走 `BalanceAlert.remainingYuan`。
 - **码不预取**：合并卡只是启动器，出码 / `FLAG_SECURE` / 亮度 / 扫码自动退出仍只在
   付款码页（DESIGN §3.10「只有一处出码」）；别往小组件里塞取码逻辑。
-- 推送点 = App 内成功取数的地方顺手推（付款码页 `PayCodeViewModel` / 生活页
-  `LifeViewModel` / 缴费账单页 / 余额提醒 `BalanceAlertReminder`），外加 15 分钟
+- 推送点 = App 内成功取数的地方顺手推（付款码页 `PayCodeViewModel` / 生活页与设置页的
+  `CampusCardViewModel.applySnapshot` / 缴费账单页 / 余额提醒 `BalanceAlertReminder`），外加 15 分钟
   Worker tick（`WidgetRefreshWorker` → `LifeWidgetSync.onPeriodicTick`）与冷启动
   （`JuwApplication` → `onColdStart`）。给新取数路径接桌面镜像时从这几处挑，别新起调度。
 

@@ -42,7 +42,9 @@ import java.util.concurrent.TimeUnit
  *
  * 与上课/作业提醒（[ClassReminder]）的差别：那两个是**时间点**驱动（到点即发，闹钟为主），
  * 这里是**状态**驱动（余额低了才发），没有可预排的时刻，所以只有一条路：
- * WorkManager 周期核对（间隔 = 两链设置的最小档）+ 冷启动补查 + 设置变更后立即评估。
+ * WorkManager 周期核对（间隔 = 两链设置的最小档）+ 冷启动补查 + 设置变更后立即评估；
+ * 另有事件入口 [evaluateYktBalance]（付款码消费命中后拿刚拉到的余额当场评估，
+ * 2026-10-09——付款把余额刷低不必等下一个检查档）。
  * 不用 `setAlarmClock`——那会在状态栏挂一枚闹钟图标，对「余额低了」是错的语义。
  *
  * 三条口径（改之前先读）：
@@ -308,13 +310,53 @@ object BalanceAlertReminder {
         }.getOrNull() ?: return // 失败不落时刻：间隔闸门保持开着，下一轮还有补查机会
         prefs.setBalanceAlertCheckMillis(BalanceAlertSource.Ykt, nowMillis)
 
-        // 口径 = **正式卡**余额（付款码实际扣款的那个钱包）。电子账户是线上缴费用的
-        // 独立钱包（DESIGN §3.10 账户口径），混进同一个阈值会让「还剩多少能刷」失去意义。
         if (cards.isEmpty()) return
+        val cardFen = cards.sumOf { it.cardBalanceFen }
         // 桌面生活小组件（DESIGN §3.6 二条目改版）：日检本来就取到了余额，顺手推一次
         // （零额外请求）
-        runCatching { LifeWidgetSync.pushCampusBalance(context, cards.sumOf { it.cardBalanceFen }) }
-        val cardYuan = cards.sumOf { it.cardBalanceFen } / 100.0
+        runCatching { LifeWidgetSync.pushCampusBalance(context, cardFen) }
+        evaluateYkt(context, prefs, cardFen, toLife, notificationsEnabled)
+    }
+
+    /**
+     * 付款码消费后的即时评估（2026-10-09）：余额刚在 App 里强拉过一次
+     * （`ui/campus/CampusBalanceSync`），把已知的正式卡余额直接交给判定，**零额外请求**——
+     * 付款把余额刷低时不必等下一个检查档（默认 6 小时）。
+     *
+     * 开关关 / 无凭证直接跳过（与 [check] 的前置一致）；这次评估记成「上次成功检查」，
+     * 间隔闸门的下一个周期由此起算。整体兜异常，后台链路不许打崩。
+     */
+    suspend fun evaluateYktBalance(context: Context, cardFen: Long) {
+        runCatching {
+            val prefs = Graph.displayPrefs(context)
+            if (!prefs.yktAlertEnabled.first()) return
+            Graph.yktCredentialStore(context).read() ?: return
+            prefs.setBalanceAlertCheckMillis(BalanceAlertSource.Ykt, System.currentTimeMillis())
+            evaluateYkt(
+                context = context,
+                prefs = prefs,
+                cardFen = cardFen,
+                toLife = prefs.lifeTabEnabled.first(),
+                notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled(),
+            )
+        }.onFailure { Log.w(TAG, "evaluateYktBalance failed", it) }
+    }
+
+    /**
+     * 一卡通余额的判定与出通知（**不取数**，取数由调用方负责：周期核对经
+     * [checkYkt]，付款码消费后走 [evaluateYktBalance]）。
+     *
+     * 口径 = **正式卡**余额（付款码实际扣款的那个钱包）。电子账户是线上缴费用的
+     * 独立钱包（DESIGN §3.10 账户口径），混进同一个阈值会让「还剩多少能刷」失去意义。
+     */
+    private suspend fun evaluateYkt(
+        context: Context,
+        prefs: DisplayPrefsStore,
+        cardFen: Long,
+        toLife: Boolean,
+        notificationsEnabled: Boolean,
+    ) {
+        val cardYuan = cardFen / 100.0
         val threshold = prefs.yktAlertYuan.first()
         if (!BalanceAlert.isLow(cardYuan, threshold)) {
             // 状态消解（收件箱 §4.38）：同电费——取数成功且不再偏低才撤消息，并重置提醒标记。

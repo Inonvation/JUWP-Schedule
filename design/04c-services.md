@@ -487,7 +487,8 @@ JSON 后连 2024 年的过期单也能删（平台**不自动清理** `status=0`
 | 项 | 规格 |
 |----|------|
 | 余额缓存 | `YktRepository.cards` 与 `rechargeAccountDetail` 各留一份内存缓存，TTL **60 秒**（`BALANCE_CACHE_TTL_MS`）。生活页进页传 `force = false`，一次进页从两条请求降到 0 条 |
-| 余额的强制穿透 | 点余额卡、生活页下拉刷新、开启流程验证、**到账判定**（`checkArrivalOnce` / `refreshBalanceSilently`）一律 `force = true`。到账判定吃旧值会把「已到账」永远判成「还没到」，这条比省请求重要 |
+| 余额的强制穿透 | 点余额卡、生活页下拉刷新、开启流程验证、**到账判定**（`checkArrivalOnce` / `refreshBalanceSilently`）一律 `force = true`。到账判定吃旧值会把「已到账」永远判成「还没到」，这条比省请求重要；刷新入口有「取数中忽略重复触发」闸，连点不叠请求（2026-10-09） |
+| 付款码命中后的余额刷新（2026-10-09） | 一笔付款码消费 = 正式卡余额已确定变化。宿主弹「支付成功」时触发 `CampusBalanceSync.refreshAfterPayment`：作废 60 秒缓存 → `Graph.appScope` 单次强拉 `queryCard`（写回缓存、推桌面小组件）→ `revision` 自增，生活页 / 设置页的余额快照用 `force = false` 就地重建。**只取一次数**——两个页面的 VM 都活着也不各自强拉（那会变成一次消费 4–6 条请求）；失败静默不重试；同一份余额再交给 `BalanceAlertReminder.evaluateYktBalance` 当场评估一次（付款把余额刷低不必等下一个检查档） |
 | 流水闸门 | `YktSyncGate`（进程级单例，10 分钟最小间隔，`MIN_INTERVAL_MS`）。生活页与消费流水页各建一个 `YktTurnoverSyncer`，闸门必须放在单例里，否则「刚在生活页同步过」对消费流水页无效 |
 | 流水的强制穿透 | 消费流水页下拉/重试、到账核对（`checkTurnoverArrival`）、**扫码消费检测**（`PayCodeViewModel` 的每轮同步）传 `force = true`。这三处问的都是「刚刚发生了什么」 |
 | 付款码不缓存 | 那是一批**一次性凭证**（一次取 10 个，扫完即弃），缓存旧码比多打一次请求更糟。现有口径已是最省：不预取（展开才取）、收起即丢、位图立即回收 |

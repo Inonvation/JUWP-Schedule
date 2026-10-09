@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,6 +19,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -27,8 +27,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.Spacer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.domain.YktPayment
 import edu.jxslu.schedule.ui.common.AmountHeroText
@@ -40,8 +38,7 @@ import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
  * 设置页与生活页弹窗共用：[RechargeSheet]（金额弹层+二次确认）与
  * [CampusArrivalDialog]（到账成功弹窗）都是无状态组件，下单/到账逻辑在
  * [CampusCardViewModel]；付款码扣款结果由 [CampusPayResultDialogHost] 一处收尾
- * （MainActivity 根层 + 校园卡设置页两个挂点）；[CampusEntrySheet] 是历史遗留的功能入口弹层
- * （今日页一卡通卡已移除，仅保留组件待后续删除）。
+ * （MainActivity 根层 + 校园卡设置页两个挂点）。
  *
  * **弹层输入框的键盘遮挡与退场时序见 [ImeAwareModalBottomSheet]**（`skipPartiallyExpanded`
  * 与「先收键盘、键盘收完再滑走」两段退场都收在那份容器里）：内容固定不可滚
@@ -376,66 +373,17 @@ fun CampusPaymentDialog(
 @Composable
 fun CampusPayResultDialogHost() {
     val payResult by PayCodeResultBus.result.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var paid by remember { mutableStateOf<YktPayment?>(null) }
     LaunchedEffect(payResult) {
         payResult?.let {
             paid = it
             PayCodeResultBus.consume()
+            // 钱刚动过：后台强拉一次余额（生活页钱包卡 / 设置页 / 桌面小组件跟着更新），
+            // 别让用户回到页面看到的还是扣款前的数字（2026-10-09，见 CampusBalanceSync）
+            CampusBalanceSync.refreshAfterPayment(context)
         }
     }
     paid?.let { CampusPaymentDialog(payment = it, onDismiss = { paid = null }) }
 }
 
-/**
- * 今日页点余额弹出的功能入口弹层（DESIGN §3.10）：当前余额 + 充值/消费流水/认证码三入口。
- * 卡片整体点击仍直达付款码页（不变）。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CampusEntrySheet(
-    balanceFen: Long?,
-    onDismiss: () -> Unit,
-    onOpenRecharge: () -> Unit,
-    onOpenStatement: () -> Unit,
-    onOpenPayCode: () -> Unit,
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("水宝宝一卡通", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                text = balanceFen?.let { "当前卡余额 ¥%.2f".format(it / 100.0) } ?: "余额获取中…",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            EntryRow("充值", "微信充值，支付完成后自动检测到账", onOpenRecharge)
-            EntryRow("消费流水", "当月收支与交易记录", onOpenStatement)
-            EntryRow("认证码（付款码）", "出示后扫码消费，等同现金", onOpenPayCode)
-        }
-    }
-}
-
-@Composable
-private fun EntryRow(title: String, subtitle: String, onClick: () -> Unit) {
-    androidx.compose.material3.Surface(
-        onClick = onClick,
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        }
-    }
-}

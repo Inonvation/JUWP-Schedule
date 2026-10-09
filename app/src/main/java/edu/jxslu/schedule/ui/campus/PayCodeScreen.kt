@@ -78,6 +78,7 @@ fun PayCodeScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val bitmaps by viewModel.bitmaps.collectAsStateWithLifecycle()
     val balance by viewModel.balance.collectAsStateWithLifecycle()
+    val balanceLoaded by viewModel.balanceLoaded.collectAsStateWithLifecycle()
     val payment by viewModel.detectedPayment.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
@@ -158,7 +159,7 @@ fun PayCodeScreen(
             )
 
             // 余额行 + 流水入口（DESIGN §4.19 B3/B4）：取到才显示余额；流水入口恒在
-            BalanceRow(balance, onOpenStatement = {
+            BalanceRow(balance, balanceLoaded = balanceLoaded, onOpenStatement = {
                 haptics.tap()
                 onOpenStatement()
             }, onRefresh = { viewModel.refreshBalance() })
@@ -178,6 +179,7 @@ fun PayCodeScreen(
 @Composable
 private fun BalanceRow(
     balance: PayCodeViewModel.BalanceSnapshot?,
+    balanceLoaded: Boolean,
     onOpenStatement: () -> Unit,
     onRefresh: () -> Unit,
 ) {
@@ -194,7 +196,7 @@ private fun BalanceRow(
         Column(Modifier.weight(1f)) {
             if (balance == null) {
                 Text(
-                    text = "余额获取中…（点击刷新）",
+                    text = if (balanceLoaded) "余额暂不可用（点击重试）" else "余额获取中…（点击刷新）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )

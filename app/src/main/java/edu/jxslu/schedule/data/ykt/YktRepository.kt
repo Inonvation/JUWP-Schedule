@@ -545,6 +545,19 @@ class YktRepository(
     }
 
     /**
+     * 作废正式卡余额缓存（2026-10-09，付款码消费命中后调用，见
+     * [edu.jxslu.schedule.ui.campus.CampusBalanceSync]）。
+     *
+     * 付款码刷过一笔 = 卡余额已经变了，60 秒缓存里那个数字不再可信。清掉之后，
+     * 任何 `force = false` 的读取（生活页进页 / 付款码页进页）都会去拿新值，
+     * 不会再把扣款前的数字端出来。电子账户是另一个钱包、与刷卡无关，那份缓存不动。
+     */
+    fun invalidateCardBalanceCache() {
+        cachedCards = null
+        cachedCardsAtMs = 0L
+    }
+
+    /**
      * 余额快照的内存缓存（DESIGN §4.24「请求节流」）。
      *
      * 生活页一次进页原本要打两条余额请求（`queryCard` + `queryCard?scene=recharge`），

@@ -88,6 +88,7 @@ import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
+import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.life.PowerRoomPickerSheet
@@ -103,6 +104,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -976,6 +978,8 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
  * （DESIGN §4.24「请求节流」）。用户点卡片 / 下拉刷新传 true，照旧拿实时值。
      */
     fun refreshBalance(force: Boolean = true) {
+        // 取数中忽略重复触发（连点余额卡 / 反复下拉不再叠请求，2026-10-09）
+        if (_balanceRefreshing.value) return
         viewModelScope.launch { fetchBalance(notify = false, force = force) }
     }
 
@@ -1007,7 +1011,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
                 val accountFen = async { accountFenOf(saved.username, saved.password, force) }
                 val cards = repo.cards(saved.username, saved.password, force = force)
                 if (cards.isNotEmpty()) {
-                    _balance.value = snapshotOf(cards, accountFen.await())
+                    applySnapshot(snapshotOf(cards, accountFen.await()))
                     // 账号条姓名（DESIGN §3.3）：queryCard 原生带持卡人姓名，
                     // 首张非空即落库；班级仍归教务学籍卡管（一卡通没有这个字段）。
                     prefs.setProfile(cards.firstOrNull { it.ownerName.isNotBlank() }?.ownerName, null)
@@ -1058,11 +1062,26 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         totalFen = cards.sumOf { it.cardBalanceFen },
         cardFen = cards.sumOf { it.cardBalanceFen },
         accountFen = accountFen,
-        elecFen = cards.sumOf { it.elecBalanceFen },
     )
 
+    /**
+     * 写余额快照 + 顺手推桌面小组件（2026-10-09）。
+     *
+     * 小组件的口径是「App 内每次成功取到余额都推一次（零额外请求）」（DESIGN §3.6
+     * 二条目改版），此前只有付款码页那条链路在推——充值到账、生活页手动刷新拿到的
+     * 新数字要等 2 小时兜底闸门才上小组件。四类快照写入（进页/手动刷新、开启验证、
+     * 到账判定、电子账户到账补刷）都收口到这里，别再单独写 `_balance.value`。
+     */
+    private fun applySnapshot(snapshot: PayCodeViewModel.BalanceSnapshot) {
+        _balance.value = snapshot
+        viewModelScope.launch {
+            runCatching { LifeWidgetSync.pushCampusBalance(appContext, snapshot.cardFen) }
+        }
+    }
+
     init {
-        // 今日页也挂本 VM（卡片余额+弹窗充值）；开关关时绝不发起任何一卡通网络动作
+        // 生活页与校园卡设置页各挂一份本 VM（余额快照 + 到账轮询 + 充值）；
+        // 开关关时绝不发起任何一卡通网络动作
         if (credentialStore.read() != null) {
             viewModelScope.launch {
                 fetchBalance(notify = true)
@@ -1086,6 +1105,16 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         } else {
             // 没有凭证 = 没有余额可等，直接算「已确定」：卡片副行落「点击出示付款码」
             _balanceLoaded.value = true
+        }
+
+        // 付款码消费命中后（宿主弹「支付成功」的同一刻）：余额已由 CampusBalanceSync
+        // 在后台强拉并写回仓库缓存，这里按信号重建一次快照——force = false 吃刚写入的
+        // 缓存，零额外请求（2026-10-09 用户反馈：付款成功后卡上数字要等手动刷新才变）。
+        // 订阅不设前置条件：无凭证时 fetchBalance 自己短路，开启凭证后照常生效。
+        viewModelScope.launch {
+            CampusBalanceSync.revision.drop(1).collect {
+                fetchBalance(notify = false, force = false)
+            }
         }
     }
 
@@ -1144,7 +1173,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             return NoticeFeedback("该账号下没有可用的校园卡账户，无法出示付款码", NoticeTone.Error)
         }
         cards?.let {
-            _balance.value = buildSnapshot(it)
+            applySnapshot(buildSnapshot(it))
         }
         credentialStore.save(user, pwd)
         prefs.setCampusCardEnabled(true)
@@ -1348,7 +1377,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             } else {
                 val cards = repo.cards(username, password, force = true)
                 if (cards.isNotEmpty()) {
-                    _balance.value = buildSnapshot(cards)
+                    applySnapshot(buildSnapshot(cards))
                     val arrivedFen = YktArrival.balanceArrival(
                         account = _arrivalAccount,
                         balanceBeforeFen = _arrivalBaseFen,
@@ -1374,7 +1403,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         viewModelScope.launch {
             runCatching {
                 val cards = repo.cards(username, password, force = true)
-                if (cards.isNotEmpty()) _balance.value = buildSnapshot(cards)
+                if (cards.isNotEmpty()) applySnapshot(buildSnapshot(cards))
             }
         }
     }
