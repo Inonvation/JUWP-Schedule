@@ -97,13 +97,26 @@ object KqcxAuth {
 
     private fun JsonObject.int(key: String): Int? = long(key)?.toInt()
 
-    /** 布尔宽容：`true` / `"true"` / `1` / `"1"` 都收。 */
-    private fun JsonObject.bool(key: String): Boolean? =
-        when ((this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()) {
+    /**
+     * 布尔宽容：`true` / `"true"` / `1` / `"1"` 都收。
+     *
+     * 2026-10-09 补**带小数点的数值形态**（`1.0` / `0.0` / `"1.0"`）：与 [long] 同源的
+     * 类型不稳定（见文件头），落在这条上的 `lockStatus` 会被整段解成 null——骑行卡
+     * 就显示「锁状态未知」。只认 0/1 两种值，其余（`2` 这类没见过的取值）仍按未知，
+     * **不猜**。
+     */
+    private fun JsonObject.bool(key: String): Boolean? {
+        val content = (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() ?: return null
+        return when (content) {
             "1", "true" -> true
             "0", "false" -> false
-            else -> null
+            else -> when (content.toDoubleOrNull()) {
+                0.0 -> false
+                1.0 -> true
+                else -> null
+            }
         }
+    }
 
     // ---------- 登录 ----------
 

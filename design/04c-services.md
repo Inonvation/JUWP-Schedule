@@ -1714,6 +1714,22 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 成功文案按调用前锁状态分流（已锁→「已解锁，继续骑行」/未锁重发→「已确认开锁」），
 成功即清 `lockPending`。**别把"确认不到"当"失败"报**——同类异步确认（开锁 `Unconfirmed`、
 还车结算轮询）都是同一语义家族。
+**骑行状态的时序纪律**（2026-10-09，修用户报的「开车后要冷却才能锁车还车 / 骑行中显示
+锁状态未知 / 同车还车后立即再开、骑行时长有概率丢失」）：五件收口——① **开锁冷却 3 秒**
+（`UNLOCK_COOLDOWN_MS`）：开锁类动作（`unlock` / `retryUnlock` / `resumeRide`）**成功**才落
+`unlockCooldownUntil`（未确认不落，用户仍可锁车兜底），页面把锁车 / 还车置灰，开锁位不冷却
+（车侧「已解锁」上报异步，紧接着发物理写指令容易两头落空）；② **确认快照采纳**：
+`UnlockOutcome.Unlocked` 带上确认那一刻的订单快照（仓库层三处返回都带），`unlock` 直接摆上
+卡片（`adoptConfirmedUnlock`：没报「已锁」就按「已解锁」落位，与「无信息不保持悬置」同口径）；
+③ **有界补全**（`syncAfterUnlock`，替换 `unlock` 成功路径的单次 `refreshInternal`——那份在
+服务端回空时会把刚确认的订单抹掉）：最多 `UNLOCK_SYNC_ATTEMPTS` 拍、快照带上 `totalDate`
+即收工（常见路径 0 次查询）、单拍为空不写状态、报回「已锁」照实采纳并停；④ **缺锁字段沿用**
+（`carryLocked`）：同车新快照 `locked == null` 时沿用上一份的已知值，但悬置待核实期间
+（`unlockPending` / `lockPending`）不沿用——那一刻未知比旧值诚实，悬置裁决仍按快照原文判；
+⑤ **查询时序闸**（`snapshotSeq`）：写动作 / 锁状态现查开始时 +1，`query()` 落地序号不一致即
+丢弃、busy 期间直接跳过——晚到的旧包（回页查询撞上动作）不许覆盖动作后的新状态。另：还车
+时长按**订单结束时刻**（`endedAt`）算，不按动作后刷新时刻（扣款确认轮询最多 ~7.5 秒会把
+时长与本机记录多算一截）。
 **弹窗开关带过渡，不瞬间抽动**（2026-10-03，用户口径「不要有突变跳动」）：material3 1.3.0 的
 `AlertDialog` 没有 compose 侧动画、compose 的 Dialog 窗口也没配 `windowAnimationStyle`，
 开与关都是硬切；现在由 `ui/common/DialogWindowFade.kt` 的 `DialogWindowFadeEffect` 把

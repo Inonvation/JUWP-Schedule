@@ -275,6 +275,11 @@ internal fun RideActionArea(
     unlockPending: Boolean,
     /** 锁车指令已发但未确认到（2026-10-08）：胶囊显「锁车确认中…」，不是失败。 */
     lockPending: Boolean,
+    /**
+     * 开锁成功后的动作冷却截止时刻（epoch ms；0 = 无）。
+     * 冷却期「锁车 / 还车」置灰（2026-10-09 用户口径「开车后冷却三秒」），见 [KvcxRideState.unlockCooldownUntil]。
+     */
+    unlockCooldownUntil: Long,
     timerActive: Boolean,
     timerStartAt: Long,
     timerCanEnd: Boolean,
@@ -397,6 +402,7 @@ internal fun RideActionArea(
                 busy = busy,
                 busyAt = busyAt,
                 unlockPending = unlockPending,
+                unlockCooldownUntil = unlockCooldownUntil,
                 timerCanEnd = timerCanEnd,
                 summary = summary,
                 onWechatScan = onWechatScan,
@@ -582,6 +588,8 @@ private fun RideActionButtons(
     /** [busy] 起始时刻（「已等 N 秒」走秒基准；0 = 无）。 */
     busyAt: Long,
     unlockPending: Boolean,
+    /** 开锁后的动作冷却截止时刻（epoch ms；0 = 无）：冷却期锁车 / 还车置灰（2026-10-09）。 */
+    unlockCooldownUntil: Long,
     timerCanEnd: Boolean,
     summary: KvcxReturnSummary?,
     onWechatScan: () -> Unit,
@@ -614,6 +622,9 @@ private fun RideActionButtons(
     } else {
         ""
     }
+    // 开锁冷却（[KvcxRideState.unlockCooldownUntil]）：到点一次性翻闸、不做逐秒走时
+    // （冷却只决定按钮 enabled，不需要中间帧）。无条件调用，见上面 busyNow 的纪律。
+    val cooling = rememberUnlockCooldown(unlockCooldownUntil)
     when {
         key == BAR_FINDING_PLAIN ->
             RideActionButton("按车号生成乘车码", onOpenCarNumber, icon = HugeIcons.QrCode01)
@@ -674,17 +685,20 @@ private fun RideActionButtons(
                         modifier = Modifier.weight(1f),
                     )
                 }
+                // 锁车 / 还车是物理写动作：开锁后的冷却期内（[KvcxRideState.unlockCooldownUntil]）
+                // 置灰——车侧「已解锁」上报还没走完，紧接着发指令容易两头落空（2026-10-09）。
+                // 左位开锁不冷却（重发解锁是安全的，见冷却口径的说明）
                 RideActionButton(
                     text = if (busy == KvcxAction.LOCK) "锁车中…" + waitedText else "锁车",
                     onClick = onTempLock,
-                    enabled = busy == null,
+                    enabled = busy == null && !cooling,
                     modifier = Modifier.weight(1f),
                     filled = false,
                 )
                 RideActionButton(
                     text = if (busy == KvcxAction.RETURN) "还车中…" + waitedText else "还车",
                     onClick = onReturn,
-                    enabled = busy == null,
+                    enabled = busy == null && !cooling,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -724,6 +738,25 @@ private fun RideActionButtons(
             )
         }
     }
+}
+
+/**
+ * 开锁后的「锁车 / 还车」冷却闸（2026-10-09 用户口径「开车后冷却三秒」）。
+ *
+ * [until] = 冷却截止时刻（epoch ms；0 = 无冷却），返回 true = 仍在冷却中。
+ * 用**一次性**的 `delay` 到点翻闸，不做逐秒走时：冷却只决定按钮的 enabled，不需要中间帧
+ * （每秒重组这一行是白花的）。`until` 变化（又开了一次锁）即以新截止点重启；
+ * 钳一下负数（时钟回拨等）保证不空等。
+ */
+@Composable
+private fun rememberUnlockCooldown(until: Long): Boolean {
+    var cooling by remember(until) { mutableStateOf(until > System.currentTimeMillis()) }
+    LaunchedEffect(until) {
+        val remain = until - System.currentTimeMillis()
+        if (remain > 0L) delay(remain)
+        cooling = false
+    }
+    return cooling
 }
 
 /**

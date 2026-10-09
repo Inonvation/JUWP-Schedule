@@ -113,6 +113,31 @@ class KqcxAuthTest {
     }
 
     @Test
+    fun `布尔字段带小数点也收（lockStatus 真机形态）`() {
+        // 2026-10-09：文档口径「数值可能带小数点的 number」同样落在布尔字段上——
+        // lockStatus 回 0.0 / 1.0 时旧解析整段成 null，骑行卡就显示「锁状态未知」
+        val unlocked = KqcxAuth.parseUnderway(
+            """{"resultCode":1,"errorCode":0,"result":{"carNum":"100000669","lockStatus":0.0}}""",
+        )!!
+        assertEquals(false, unlocked.locked)
+        val locked = KqcxAuth.parseUnderway(
+            """{"resultCode":1,"errorCode":0,"result":{"carNum":"100000669","lockStatus":"1.0"}}""",
+        )!!
+        assertEquals(true, locked.locked)
+        // 没见过的取值（2）仍按未知，不猜
+        val unknown = KqcxAuth.parseUnderway(
+            """{"resultCode":1,"errorCode":0,"result":{"carNum":"100000669","lockStatus":2}}""",
+        )!!
+        assertNull(unknown.locked)
+        // 还车信封同款宽容：needPay 1.0 = 要支付、wechatScore 0.0 = 不要
+        val ended = KqcxAuth.parseEndOrder(
+            """{"resultCode":1,"errorCode":0,"result":{"needPay":1.0,"wechatScore":0.0}}""",
+        ) as KqcxAuth.EndOutcome.Ended
+        assertEquals(true, ended.needPay)
+        assertEquals(false, ended.wechatScore)
+    }
+
+    @Test
     fun `骑行订单完整字段`() {
         // 字段名与单位来自小程序骑行页消费代码：totalDate 秒、payMoney 分、lockStatus 1=锁
         val json = """{"resultCode":1,"errorCode":0,"result":{

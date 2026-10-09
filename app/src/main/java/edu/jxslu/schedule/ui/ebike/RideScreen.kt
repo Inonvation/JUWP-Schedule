@@ -773,6 +773,7 @@ fun RideScreen(
                             busyAt = kvcxState.busyAt,
                             unlockPending = kvcxState.unlockPending,
                             lockPending = kvcxState.lockPending,
+                            unlockCooldownUntil = kvcxState.unlockCooldownUntil,
                             timerActive = timerActive,
                             timerStartAt = prefs.rideStartAt,
                             timerCanEnd = ride == null,

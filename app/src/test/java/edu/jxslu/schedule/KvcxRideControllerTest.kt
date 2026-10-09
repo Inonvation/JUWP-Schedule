@@ -11,6 +11,7 @@ import edu.jxslu.schedule.ui.ebike.KvcxReturnSummary
 import edu.jxslu.schedule.ui.ebike.KvcxRideController
 import edu.jxslu.schedule.ui.ebike.KvcxSideEffects
 import edu.jxslu.schedule.ui.ebike.LocateResult
+import edu.jxslu.schedule.ui.ebike.UNLOCK_COOLDOWN_MS
 import edu.jxslu.schedule.ui.ebike.kvcxConfirmDialog
 import edu.jxslu.schedule.ui.ebike.rideElapsedSeconds
 import kotlinx.coroutines.CompletableDeferred
@@ -48,6 +49,14 @@ class KvcxRideControllerTest {
         /** 查到的进行中订单；还车前调用方会把它置成 null（模拟服务端已结束）。 */
         var underway: KqcxAuth.Ride? = ride(carNum = "100000669")
 
+        /** 查询脚本：非空时逐次从队首取（模拟服务端前后返回不同快照，如"先缺字段后补齐"）；取空后回 [underway]。 */
+        var queryScript: ArrayDeque<KqcxAuth.Ride?>? = null
+
+        /** 一次性查询闸门：挂住某次查询、稍后放行（测「旧包晚到」与「动作期不发查询」）。 */
+        var queryGate: CompletableDeferred<Unit>? = null
+
+        var queryCalls = 0
+
         var unlockResult: suspend () -> UnlockOutcome = {
             UnlockOutcome.Unlocked("100000669", helmetFlow = false)
         }
@@ -70,7 +79,13 @@ class KvcxRideControllerTest {
         var queryError: Throwable? = null
 
         override suspend fun queryUnderway(): KqcxAuth.Ride? {
+            queryCalls++
+            queryGate?.let { gate ->
+                queryGate = null
+                gate.await()
+            }
             queryError?.let { throw it }
+            queryScript?.let { script -> if (script.isNotEmpty()) return script.removeFirst() }
             return underway
         }
 
@@ -143,6 +158,8 @@ class KvcxRideControllerTest {
         onUnlocked = { unlockedSignals++ },
         locate = { located },
         effects = effects,
+        // 补全重拉的间隔在单测里取 0：Unconfined 下 delay(0) 不挂起，断言不需要等真时间
+        unlockSyncIntervalMs = 0L,
     )
 
     // ---------- 开锁 ----------
@@ -206,6 +223,181 @@ class KvcxRideControllerTest {
         assertEquals(0, effects.startedTimer)
         assertEquals(NoticeTone.Warning, notices.single().second)
         assertTrue(notices.single().first.contains("重试开锁"))
+        // 未确认不算"开车"：不进冷却，用户仍可锁车 / 还车兜底
+        assertEquals(0L, kvcx.state.value.unlockCooldownUntil)
+    }
+
+    @Test
+    fun `开锁成功采纳确认快照并进入三秒冷却`() {
+        val session = FakeSession()
+        // 确认那一刻就带数据：卡片不必等下一次刷新，补全一轮也不发（首拍直接收工）
+        session.unlockResult = {
+            UnlockOutcome.Unlocked(
+                "100000669",
+                helmetFlow = false,
+                ride = ride(totalDateSeconds = 12, locked = false),
+            )
+        }
+        val kvcx = controller(session)
+        val before = System.currentTimeMillis()
+
+        kvcx.unlock("100000669")
+
+        val state = kvcx.state.value
+        assertEquals(12L, state.ride?.totalDateSeconds)
+        assertEquals(false, state.ride?.locked)
+        assertTrue(state.fetchedAt >= before)
+        // 冷却截止时刻 = 开锁确认时刻 + 3 秒（页面据此把锁车 / 还车置灰）
+        assertTrue(state.unlockCooldownUntil >= before + UNLOCK_COOLDOWN_MS)
+        assertEquals(0, session.queryCalls)
+    }
+
+    @Test
+    fun `开锁确认快照缺字段时有界补全`() {
+        // 新订单在服务端异步落账：确认快照可能缺已骑时长 / 锁状态——不轮询的前提下，
+        // 一次刷新落空就会一直挂在骑行卡上（「已骑 --」「锁状态未知」），所以有界补拍
+        val session = FakeSession()
+        session.unlockResult = {
+            UnlockOutcome.Unlocked(
+                "100000669",
+                helmetFlow = false,
+                ride = ride(totalDateSeconds = null, locked = null),
+            )
+        }
+        session.queryScript = ArrayDeque(listOf(ride(totalDateSeconds = 5, locked = false)))
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+
+        val state = kvcx.state.value
+        assertEquals(5L, state.ride?.totalDateSeconds)
+        assertEquals(false, state.ride?.locked)
+        assertEquals(1, session.queryCalls)
+    }
+
+    @Test
+    fun `开锁后刷新落空不清掉刚确认的订单`() {
+        // 同一辆车刚还完就再开：服务端要先后走完结束与新建两条账，那几拍里查询可能落空——
+        // 空回包不许写状态（写下去正是「骑行时长等信息丢失」），恢复后照常落位
+        val session = FakeSession()
+        session.unlockResult = {
+            UnlockOutcome.Unlocked(
+                "100000669",
+                helmetFlow = false,
+                ride = ride(totalDateSeconds = null, locked = false),
+            )
+        }
+        session.queryScript = ArrayDeque(
+            listOf(null, ride(totalDateSeconds = 8, locked = false)),
+        )
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+
+        assertEquals(8L, kvcx.state.value.ride?.totalDateSeconds)
+        assertEquals(2, session.queryCalls)
+    }
+
+    @Test
+    fun `解锁类动作成功都进三秒冷却`() {
+        // resume（临时锁车后继续骑）
+        val resumeSession = FakeSession()
+        val kvcxResume = controller(resumeSession)
+        resumeSession.underway = ride(carNum = "100000669", locked = true)
+        kvcxResume.query(quiet = true)
+        kvcxResume.resumeRide()
+        assertTrue(kvcxResume.state.value.unlockCooldownUntil > 0L)
+
+        // retryUnlock（开锁未确认后的重试）
+        val retrySession = FakeSession()
+        val kvcxRetry = controller(retrySession)
+        retrySession.underway = ride(carNum = "100000669", locked = true)
+        kvcxRetry.query(quiet = true)
+        kvcxRetry.retryUnlock()
+        assertTrue(kvcxRetry.state.value.unlockCooldownUntil > 0L)
+    }
+
+    @Test
+    fun `同车快照缺锁字段沿用上一份`() {
+        // 2026-10-09 修「骑行中却显示锁状态未知」：快趣字段类型不稳定 + 新订单异步落账，
+        // 缺 lockStatus 的快照是常态——拿不到新事实不把已知事实降级成未知
+        val session = FakeSession()
+        val kvcx = controller(session)
+        session.underway = ride(locked = false)
+        kvcx.query(quiet = true)
+        assertEquals(false, kvcx.state.value.ride?.locked)
+
+        session.underway = ride(locked = null)
+        kvcx.query(quiet = true)
+        assertEquals(false, kvcx.state.value.ride?.locked)
+
+        // 新事实照旧覆盖沿用的值
+        session.underway = ride(locked = true)
+        kvcx.query(quiet = true)
+        assertEquals(true, kvcx.state.value.ride?.locked)
+
+        // 换了车：无从沿用，仍按未知
+        session.underway = ride(carNum = "100000999", locked = null)
+        kvcx.query(quiet = true)
+        assertNull(kvcx.state.value.ride?.locked)
+    }
+
+    @Test
+    fun `锁车确认中缺锁字段不沿用`() {
+        // 悬置待核实期间正是"还没对上账"的时刻：未知比旧值诚实，别拿旧快照充数
+        val session = FakeSession()
+        val kvcx = controller(session)
+        session.underway = ride(carNum = "100000669", locked = false)
+        kvcx.query(quiet = true)
+
+        session.lockResult = LockOutcome.Unconfirmed(lastKnown = null)
+        kvcx.tempLock()
+        assertTrue(kvcx.state.value.lockPending)
+
+        session.underway = ride(carNum = "100000669", locked = null)
+        kvcx.query(quiet = true)
+        assertNull(kvcx.state.value.ride?.locked)
+    }
+
+    @Test
+    fun `动作前发出的查询晚到不覆盖动作后的状态`() {
+        val session = FakeSession()
+        val kvcx = controller(session)
+        // 一条查询先发出、挂在闸门上；它拿到的会是一条「还车之前」的旧订单快照
+        val gate = CompletableDeferred<Unit>()
+        session.queryGate = gate
+        kvcx.query(quiet = true)
+
+        // 动作先完成：还车（脚本首项 = 订单结束，供还车自己的对账消费）
+        session.queryScript = ArrayDeque(
+            listOf(null, ride(carNum = "100000669", locked = true)),
+        )
+        kvcx.returnBike()
+        assertNull(kvcx.state.value.ride)
+        assertNotNull(kvcx.state.value.returnSummary)
+
+        // 旧查询此刻才落地：结果必须被丢弃（否则会把已结束的订单画回骑行卡）
+        gate.complete(Unit)
+
+        assertNull(kvcx.state.value.ride)
+    }
+
+    @Test
+    fun `写动作进行中查询直接跳过`() {
+        val session = FakeSession()
+        val unlockGate = CompletableDeferred<UnlockOutcome>()
+        session.unlockResult = { unlockGate.await() }
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+        assertEquals(KvcxAction.UNLOCK, kvcx.state.value.busy)
+
+        val before = session.queryCalls
+        kvcx.query(quiet = false)
+        assertEquals(before, session.queryCalls)
+
+        unlockGate.complete(UnlockOutcome.Unlocked("100000669", helmetFlow = false))
+        assertNull(kvcx.state.value.busy)
     }
 
     @Test

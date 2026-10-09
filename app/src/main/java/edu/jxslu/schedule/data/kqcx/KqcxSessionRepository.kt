@@ -114,8 +114,8 @@ class KqcxSessionRepository(
         if (created.helmetFlowRequired) {
             // 官方头盔流程：此路开头盔锁，车锁随头盔流程放开
             server { client.helmetUnlockJson(token) }
-            awaitRide { it != null }
-            return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true)
+            val confirmed = awaitRide { it != null }
+            return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true, ride = confirmed)
         }
         // 开锁指令：16015 = 服务端要求先取头盔（官方同款分支）。
         // **catch 必须包住 awaitRide**（2026-10-08 修死代码）：`parseCreatedOrder` 只看
@@ -124,14 +124,16 @@ class KqcxSessionRepository(
         // 普通失败抛走，头盔流程永远走不到。
         try {
             server { client.unlockJson(token, gcjLat, gcjLng, LOCATION_SOURCE) }
+            // 确认那份快照一并带回（[UnlockOutcome.Unlocked.ride]）：刚创建的订单可能
+            // 还没落全字段，但车号 / 坐标 / 有了的字段先给卡片用，别白等下一次刷新
             awaitRide { it != null && it.locked != true }?.let {
-                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = false)
+                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = false, ride = it)
             } ?: return UnlockOutcome.Unconfirmed(created.carNum)
         } catch (error: KvcBusinessError) {
             if (error.errorCode == CODE_HELMET_REQUIRED) {
                 server { client.helmetUnlockJson(token) }
-                awaitRide { it != null }
-                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true)
+                val confirmed = awaitRide { it != null }
+                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true, ride = confirmed)
             }
             throw error
         }

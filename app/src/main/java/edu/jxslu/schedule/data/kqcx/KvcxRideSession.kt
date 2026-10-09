@@ -6,8 +6,19 @@ import kotlinx.coroutines.flow.StateFlow
 
 /** 开锁结果（车锁确认是异步的：指令发出 ≠ 车开了）。 */
 sealed interface UnlockOutcome {
-    /** 已确认开锁。[helmetFlow] = 走的是头盔流程（UI 提示「取下车盔」）。 */
-    data class Unlocked(val carNum: String, val helmetFlow: Boolean) : UnlockOutcome
+    /**
+     * 已确认开锁。[helmetFlow] = 走的是头盔流程（UI 提示「取下车盔」）。
+     *
+     * [ride] = 确认那一刻查到的订单快照（2026-10-09）。可能**数据不全**（刚创建的订单
+     * 在服务端异步落账：时长 / 锁状态缺字段）——`KvcxRideController.unlock` 采纳它把
+     * 骑行卡立刻摆全，随后再做有界对账（`syncAfterUnlock`）；`retryUnlock` / `resumeRide`
+     * 走各自的乐观翻转口径，不消费它。
+     */
+    data class Unlocked(
+        val carNum: String,
+        val helmetFlow: Boolean,
+        val ride: KqcxAuth.Ride? = null,
+    ) : UnlockOutcome
 
     /** 订单已创建，但车锁未确认打开——调用方提示并提供「重试开锁」出口（官方同款）。 */
     data class Unconfirmed(val carNum: String) : UnlockOutcome
