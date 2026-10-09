@@ -28,6 +28,9 @@ class QiekjDebugDumpTest {
         assertTrue(isQiekjDumpTarget("goods/normal/skus"))
         assertTrue(isQiekjDumpTarget("goods/water/sync"))
         assertTrue(isQiekjDumpTarget("goods/water/unlock"))
+        // 结算链路（2026-10-09 加）：确认会话关闭后建单读账单的原始返回
+        assertTrue(isQiekjDumpTarget("order/afterPay/creating"))
+        assertTrue(isQiekjDumpTarget("order/detail"))
     }
 
     @Test

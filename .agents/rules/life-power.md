@@ -37,7 +37,8 @@
   进剪贴板，snackbar 按「账号通行证，只粘到本应用的『Token 登录』」口径提示
   （对齐趣智「复制会话串」）。这是 token 唯一的主动出 App 通道，别再加别的口。
 - **设备状态样本靠 debug 落盘**（2026-10-05）：`goods/latestUsed`、`goods/normal/details`、
-  `goods/normal/skus`、`goods/water/sync`、`goods/water/unlock` 五个端点的**响应体原文**
+  `goods/normal/skus`、`goods/water/sync`、`goods/water/unlock`、`order/afterPay/creating`、
+  `order/detail` 七个端点的**响应体原文**（后两个 2026-10-09 补，为确认会话关闭后结算两步的返回）
   在 debug 包落 `filesDir/qiekj_debug/`（`data/qiekj/QiekjDebugDumpInterceptor.kt`；
   每个端点只留最新 40 份，落盘前把 `token` / `phone` 字段替换成 `<redacted>`；
   `Graph.qiekj` 按 `BuildConfig.DEBUG` 传目录，release 一个字节都不写）。
@@ -56,6 +57,16 @@
   （HTTP 200、业务码 -1），社区文档记新版 1.139.0 要求 `deviceId` 头与双签，这套 1.60.3 凑不齐。
   能判的只有**结束态**：`status==5` 且 `amount>0` 才算真的出过水。为实验加过的只读探测
   （`QiekjProbe` / `probeDeviceState`）已随收尾删除，别再照那个思路加回来。
+- **设备侧「结算」后 sync 回 `data:null`，是「会话已结束」不是错误**（2026-10-09 实测 + 修复）：
+  用户在饮水机上点「结算」后平台会关闭会话，轮询可能先收到
+  `{"code":0,"msg":"成功","data":null}`（HTTP 200、业务成功、无数据），也可能随后一拍再收到
+  `status=5 / amount=N` 的收尾样本——两种形态都实测出现过。处置按 `noDataPollAction`
+  （`data/qiekj/QiekjModels.kt`）：见过出水（`workStatus==2`）→ **连续两次空数据**判会话
+  已结束，用最后已知单号照常走 `afterPay/creating → order/detail` 读账单；从未见到会话 →
+  等约 20 秒再报「设备未启动或未响应」。**别再退回 `requireData` 把空 data 当致命错误**
+  ——那正是「未知错误（code: -1）」的根因（异常里没有错误码，诊断回退文案就是 code -1），
+  且账单读不到、订单快照丢。轮询改用 `throwIfFailed` + 判空后，业务失败（code 非 0/200）
+  的诊断口径不变。
 - **上述结论的用户侧口径**（2026-10-08 用户要求）：今日页开水面板
   （`ui/water/WaterEntrySheet.kt`）底部常驻一行说明「软件无法识别设备是否在线，仅提供
   开水接口，请确保靠近设备且在线」（`bodySmall` + 0.55），别删——失败时用户先看到它，

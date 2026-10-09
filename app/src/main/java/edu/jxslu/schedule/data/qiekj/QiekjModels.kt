@@ -130,6 +130,38 @@ fun isSessionFinished(sync: SyncData?): Boolean = sync?.status == SESSION_FINISH
 fun shouldSettleOnManualStop(sync: SyncData?): Boolean =
     isSessionFinished(sync) && !sync?.identify.isNullOrBlank()
 
+/**
+ * 轮询里 sync 无 data 时的处置（2026-10-09 实测）。
+ *
+ * 设备侧点「结算」后平台关闭会话，`goods/water/sync` 会回
+ * `{"code":0,"msg":"成功","data":null}`——HTTP 200、业务成功、无数据。**这不是错误**：
+ * 旧代码把无 data 当致命错误（`requireData` 抛「接口未返回 data」，诊断拿不到错误码
+ * 显示「未知错误（code: -1）」），账单读不到、订单快照丢。
+ */
+enum class NoDataPollAction {
+    /** 继续轮询：会话记录可能还没建立（设备尚未被平台登记）。 */
+    KeepWaiting,
+
+    /** 见过出水 → 会话已由设备侧结束，跳出轮询去建单读账单。 */
+    Settle,
+
+    /** 从未见过会话且持续无数据 → 按设备未启动 / 离线报错。 */
+    AbortOffline,
+}
+
+/** 见过出水后，连续几次「无 data」就按会话已结束收尾（两次确认，防单次抖动）。 */
+const val QIEKJ_EMPTY_DATA_SETTLE_STREAK = 2
+
+/** 从未见到会话时，连续几次「无 data」就报设备未响应（轮询间隔 1s，约 20 秒）。 */
+const val QIEKJ_EMPTY_DATA_ABORT_STREAK = 20
+
+/** [NoDataPollAction] 的判定规则（纯函数，单测钉住；调用方按它决定继续等 / 收尾 / 报错）。 */
+fun noDataPollAction(everWorked: Boolean, emptyStreak: Int): NoDataPollAction = when {
+    everWorked && emptyStreak >= QIEKJ_EMPTY_DATA_SETTLE_STREAK -> NoDataPollAction.Settle
+    emptyStreak >= QIEKJ_EMPTY_DATA_ABORT_STREAK -> NoDataPollAction.AbortOffline
+    else -> NoDataPollAction.KeepWaiting
+}
+
 @Serializable
 data class AfterPayCreatingData(
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val orderId: String? = null,

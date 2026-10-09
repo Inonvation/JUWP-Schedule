@@ -55,6 +55,10 @@ private val QIEKJ_DUMP_PATHS = setOf(
     "goods/normal/skus",
     "goods/water/sync",
     "goods/water/unlock",
+    // 结算链路（2026-10-09 加）：设备侧「结算」关会话后 sync 回 data=null，收尾改走
+    // 「建单读账单」——要确认这两步在会话关闭后的原始返回，只能把它们也落盘
+    "order/afterPay/creating",
+    "order/detail",
 )
 
 /** 每个端点最多留多少份样本：轮询 sync 一秒一条，不设上限会堆出几千个文件。 */

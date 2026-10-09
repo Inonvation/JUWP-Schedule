@@ -736,6 +736,11 @@ Graph.kt                     增 qiekjRepository(context) 单例
    delay，随协程取消；须记录「曾经出过水」（`everWorked`）区分设备未启动。
    **`workStatus` 判不了设备死活**（2026-10-05 实测：设备拔电 15 分钟后仍回 `status=1 / workStatus=2`，
    服务端 165s 超时也不翻状态）。会话是否结束只看 `status==5`，见 `isSessionFinished`。
+   **无 data 不是错误**（2026-10-09 实测 + 修复）：设备在机上点「结算」后平台关闭会话，sync 回
+   `{"code":0,"msg":"成功","data":null}`——见过出水的按「会话已结束」收尾（连续两次空数据判死，
+   用最后已知单号走建单读账单），从未见到的等约 20 秒再报设备未响应；判定在 `noDataPollAction`
+   （纯函数，`QiekjModelsTest` 钉住）。旧行为（`requireData` 把空 data 当致命错误）会产生
+   「未知错误（code: -1）」且账单读不到，别再退回。
 6. **网络层**：复用工程 Retrofit 2.11 + OkHttp 4.12；`HttpLoggingInterceptor` BASIC 级（不打 header，
    token/sign 不进日志）；共享单例 client（20s 超时）。
 

@@ -4,12 +4,16 @@ import edu.jxslu.schedule.data.qiekj.ApiEnvelope
 import edu.jxslu.schedule.data.qiekj.BalanceData
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.LoginData
+import edu.jxslu.schedule.data.qiekj.NoDataPollAction
 import edu.jxslu.schedule.data.qiekj.OrderDetailData
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
+import edu.jxslu.schedule.data.qiekj.QIEKJ_EMPTY_DATA_ABORT_STREAK
+import edu.jxslu.schedule.data.qiekj.QIEKJ_EMPTY_DATA_SETTLE_STREAK
 import edu.jxslu.schedule.data.qiekj.QiekjJson
 import edu.jxslu.schedule.data.qiekj.SyncData
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
 import edu.jxslu.schedule.data.qiekj.isSessionFinished
+import edu.jxslu.schedule.data.qiekj.noDataPollAction
 import edu.jxslu.schedule.data.qiekj.shouldSettleOnManualStop
 import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
@@ -178,6 +182,42 @@ class QiekjModelsTest {
         // 还在出水 → 未确认收尾
         assertFalse(shouldSettleOnManualStop(SyncData(status = 1, workStatus = 2, identify = "NO")))
         assertFalse(shouldSettleOnManualStop(null))
+    }
+
+    // ── 轮询无 data 的处置（2026-10-09 实测：设备侧结算后 sync 回 code=0 / data=null） ──
+
+    @Test
+    fun 轮询响应_无data不是业务失败() {
+        // 设备侧结算后的响应原文形态：HTTP 200、code=0、msg=成功、data=null
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<SyncData>>(
+            """{"code":0,"msg":"成功","data":null}""",
+        )
+        env.throwIfFailed()
+        assertNull(env.data)
+    }
+
+    @Test
+    fun 轮询无数据_见过出水后连续两次才判定会话结束() {
+        // 单次空数据按抖动处理，不急着收尾
+        assertEquals(NoDataPollAction.KeepWaiting, noDataPollAction(everWorked = true, emptyStreak = 1))
+        assertEquals(
+            NoDataPollAction.Settle,
+            noDataPollAction(everWorked = true, emptyStreak = QIEKJ_EMPTY_DATA_SETTLE_STREAK),
+        )
+    }
+
+    @Test
+    fun 轮询无数据_从未见到会话时先等满阈值再报设备未响应() {
+        // 设备可能还没被平台登记：阈值内继续轮询，不误报
+        assertEquals(NoDataPollAction.KeepWaiting, noDataPollAction(everWorked = false, emptyStreak = 1))
+        assertEquals(
+            NoDataPollAction.KeepWaiting,
+            noDataPollAction(everWorked = false, emptyStreak = QIEKJ_EMPTY_DATA_ABORT_STREAK - 1),
+        )
+        assertEquals(
+            NoDataPollAction.AbortOffline,
+            noDataPollAction(everWorked = false, emptyStreak = QIEKJ_EMPTY_DATA_ABORT_STREAK),
+        )
     }
 
     // ── 订单快照序列化往返 ──

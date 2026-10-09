@@ -27,6 +27,8 @@ class NotLoggedInException(message: String = "请先登录") : Exception(message
  * latestUsed → skus → sync(预检，可失败) → details(imei) → 积分风控 → 开后付 →
  * 位置风控 → unlock → 轮询 sync(等 workStatus 离开 2) → afterPay/creating → order/detail →
  * 写本地订单快照。前置步骤里风控/后付/位置任一失败都阻断；预检失败仅记录不阻断。
+ * 轮询遇到 sync 无 data（设备侧结算关闭会话，2026-10-09 实测）按「会话已结束」收尾，
+ * 不当致命错误，见 [noDataPollAction]。
  *
  * debug 包另挂 [QiekjDebugDumpInterceptor]，把只读查询与开水链路的响应体原文落到
  * `filesDir/qiekj_debug/`（2026-10-05，为确认设备状态字段而加）。
@@ -186,34 +188,59 @@ class QiekjRepository(
         // 注意 workStatus 说的是「服务端会话开着」，设备断电时也一直回 2
         // （2026-10-05 实测，15 分钟不变）。会话真结束的标志是 status==5，
         // 见 isSessionFinished / shouldSettleOnManualStop。
-        var lastStatus: SyncData
+        //
+        // 无 data 的响应不是错误（2026-10-09 实测）：设备侧点「结算」后平台关闭会话，
+        // sync 回 {code:0,msg:"成功",data:null}。处置见 [noDataPollAction]——
+        // 见过出水就收尾走结算（用最后已知单号），从未见到才按设备未响应报错。
+        var lastStatus: SyncData? = null
         var everWorked = false
         var attempts = 0
-        do {
-            lastStatus = diagnosed(
+        var emptyStreak = 0
+        while (true) {
+            val envelope = diagnosed(
                 step = "设备状态轮询",
-            ) { api.syncWater(skuId = skuId, token = token).requireData() }
-            if (lastStatus.workStatus == 2) everWorked = true
+            ) {
+                api.syncWater(skuId = skuId, token = token).also { it.throwIfFailed() }
+            }
             attempts++
+            val sync = envelope.data
+            if (sync == null) {
+                emptyStreak++
+                when (noDataPollAction(everWorked, emptyStreak)) {
+                    NoDataPollAction.Settle -> break
+                    NoDataPollAction.AbortOffline ->
+                        throw diagnosedOf(Exception("设备未启动或未响应，可能已离线"), "设备状态轮询")
+                    NoDataPollAction.KeepWaiting -> Unit
+                }
+                if (attempts >= MAX_POLL_ATTEMPTS) {
+                    throw diagnosedOf(Exception("设备使用超时（${MAX_POLL_ATTEMPTS} 秒）"), "设备状态轮询")
+                }
+                delay(1_000)
+                continue
+            }
+            emptyStreak = 0
+            lastStatus = sync
+            if (sync.workStatus == 2) everWorked = true
             if (attempts >= MAX_POLL_ATTEMPTS) {
                 throw diagnosedOf(Exception("设备使用超时（${MAX_POLL_ATTEMPTS} 秒）"), "设备状态轮询")
             }
             // 手动结束（2026-10-05）：刚拿到的这条如果已经是结束态就照常结算，
             // 否则按「未确认用水」收尾——设备没回报过结束，建单也没账单可读
             if (stopSignal?.isRequested == true) {
-                if (!shouldSettleOnManualStop(lastStatus)) throw UnlockStoppedException()
+                if (!shouldSettleOnManualStop(sync)) throw UnlockStoppedException()
                 break
             }
+            if (sync.workStatus != 2) break
             onStep("设备工作中，正在等待完成")
             delay(1_000)
-        } while (lastStatus.workStatus == 2)
+        }
 
         if (!everWorked) {
             throw diagnosedOf(Exception("设备未启动或未响应，可能已离线"), "设备状态轮询")
         }
 
         onStep("正在创建后付订单")
-        val finalOrderNo = lastStatus.identify ?: orderNo
+        val finalOrderNo = lastStatus?.identify ?: orderNo
         val orderId = api.createAfterPay(orderNo = finalOrderNo, token = token)
             .requireData().orderId ?: error("未获取到 orderId")
 

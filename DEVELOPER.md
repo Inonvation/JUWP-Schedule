@@ -207,6 +207,13 @@ workStatus=1 / amount=275`。**`status==5` 是判「设备回报过结束」的�
 debug 包把只读与开水链路的响应原文落到 `filesDir/qiekj_debug/`（机制与取文件命令见
 `.agents/rules/life-power.md`「胖乖」节）。
 
+**会话关闭是第四种状态（2026-10-09 实测）**：设备侧点「结算」后平台关闭会话，`sync` 回
+`{"code":0,"msg":"成功","data":null}`——HTTP 200、业务成功、无数据；可能先出这一条、隔一拍
+再出 `status=5` 的收尾样本，也可能交替出现。**无 data 不是错误**：轮询要按「会话已结束」
+收尾，用最后已知单号继续 `order/afterPay/creating → order/detail` 读账单；把空 data 当
+致命错误，就是「未知错误（code: -1）+ 账单读不到」的来源。结算两步的响应也已进 debug
+落盘白名单。
+
 **设备在线检测：实测判不了（2026-10-05）**。同一台饮水机在「通电正常」与「拔掉电源」两种状态下，
 `sync` 都回 `status=1 / workStatus=2`（会话已开、等设备回报），`latestUsed.workStatus` 都是 10，
 `details.deviceErrorCode` 都是 null。差别只在通电那次 19 秒后收到设备回报的
