@@ -48,6 +48,7 @@ import edu.jxslu.schedule.domain.Homework
 import edu.jxslu.schedule.domain.HomeworkCourseGroup
 import edu.jxslu.schedule.domain.courseHomeworkOrder
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.SectionHeader
@@ -65,6 +66,8 @@ import java.time.LocalDate
  *
  * 每门课程一张 [AppCard]：头行 = 课程色点 + 课程名 + 未完成计数，点行展开/收起
  * 该课程的作业列表（AnimatedVisibility：高度展开/收起 + 淡入淡出，250ms/200ms）。
+ * 展开区条目是**平铺行**（2026-10-09，`HomeworkRow(embedded = true)`）：组卡里再套一张张卡片
+ * 就是「气泡套气泡」，行间与头行下改走卡内细线。
  * 行内勾选照旧；点条目进详情；头行右侧「＋」直接进该课程的新建页。
  * 「最近更新」区块移除（用户拍板 2026-09-23）。
  *
@@ -155,6 +158,7 @@ fun HomeworkLibraryScreen(
 
 /**
  * 课程分组折叠卡（作业库与作业中心共用，2026-09-23）：头行 + AnimatedVisibility 条目列表。
+ * 条目是平铺行（2026-10-09，组卡里不再套卡），行间与头行下走 [AppCardDivider]。
  * [onAdd] 为 null 时隐藏「＋」（作业中心不需要新建入口）。
  */
 @Composable
@@ -222,15 +226,16 @@ internal fun HomeworkCourseCard(
             enter = expandVertically(animationSpec = tween(250)) + fadeIn(tween(250)),
             exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(200)),
         ) {
-            Column(
-                modifier = Modifier.padding(start = 32.dp, end = 14.dp, bottom = 10.dp),
-            ) {
-                items.forEach { homework ->
+            Column(modifier = Modifier.padding(bottom = 6.dp)) {
+                AppCardDivider()
+                items.forEachIndexed { index, homework ->
+                    if (index > 0) AppCardDivider()
                     HomeworkRow(
                         homework = homework,
                         today = today,
                         onClick = { onOpenItem(homework.id) },
                         onToggle = { done -> onToggleItem(homework.id, done) },
+                        embedded = true,
                     )
                 }
             }

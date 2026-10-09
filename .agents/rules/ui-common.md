@@ -56,6 +56,11 @@
   点击涟漪与触感由 `AppCard` 统一给，调用方不要在外面再包一层 `clickable`。
   区块标题同理走 `ui/common/SectionHeader.kt`（「今天还有 N 节」「明天 · 周二」
   与笔记/作业库的「最近更新」「按课程」共用一套规格）。
+- **卡片里放列表用平铺行，不许再套卡**（2026-10-09，用户反馈笔记/作业库「气泡套气泡」）：
+  组卡展开区的条目走 `NoteRow(embedded = true)` / `HomeworkRow(embedded = true)` 这类
+  平铺行——无卡底、无描边、整行涟漪，行间与头行下用 `AppCardDivider` 分隔
+  （同口径的既有实现：流水 `TurnoverRow`、电费明细 `BillRow`，卡内直排 + 细线）。
+  平铺行自己 `clickable` + `rememberAppHaptics`，不要再包 `AppCard` / `AppCardRow`。
 
 ## 金额大字只有一处定义
 

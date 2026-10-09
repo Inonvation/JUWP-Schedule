@@ -46,6 +46,7 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.Note
 import edu.jxslu.schedule.domain.NoteCourseGroup
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.SectionHeader
@@ -62,6 +63,9 @@ import me.rerere.hugeicons.stroke.ArrowDown01
  * 每门课程一张 [AppCard]：头行 = 课程色点 + 课程名 + 篇数，点行展开/收起该课程的笔记列表
  * （AnimatedVisibility：高度展开/收起 + 淡入淡出，250ms/200ms）。点条目直达详情；
  * 头行右侧「＋」直接在该课程下新建。
+ * 展开区条目是**平铺行**（2026-10-09，`NoteRow(embedded = true)`）：组卡里再套一张张卡片
+ * 就是「气泡套气泡」，行间与头行下改走卡内细线。
+ *
  * 「最近更新」区块原样保留（作业库不要，笔记库未明确要求移除）。
  *
  * 展开状态存 [mutableStateMapOf]（内存，退出页面重置为全收起）。
@@ -198,13 +202,14 @@ private fun NoteGroupCard(
             enter = expandVertically(animationSpec = tween(250)) + fadeIn(tween(250)),
             exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(200)),
         ) {
-            Column(
-                modifier = Modifier.padding(start = 32.dp, end = 14.dp, bottom = 10.dp),
-            ) {
-                courseNotes.forEach { note ->
+            Column {
+                AppCardDivider()
+                courseNotes.forEachIndexed { index, note ->
+                    if (index > 0) AppCardDivider()
                     NoteRow(
                         note = note,
                         onClick = { onOpenItem(note.id) },
+                        embedded = true,
                     )
                 }
             }

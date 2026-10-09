@@ -867,6 +867,10 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
   收起 200ms），箭头随展开态旋转 180°。头行右侧「＋」**直接在该课程下新建**
   （跳详情页 itemId=0，不用先展开）。展开状态只存内存（`mutableStateMapOf`），
   退出页面重置为全收起——展开是临时浏览动作，不做持久化。
+  **展开区里是平铺行**（2026-10-09，用户反馈「气泡套气泡」）：条目不再各套一张
+  `AppCard` / `AppCardRow`，走 `NoteRow(embedded = true)` / `HomeworkRow(embedded = true)`
+  ——无卡底、无描边、整行涟漪，行间与头行下用 `AppCardDivider` 分隔；笔记行左缘缩进
+  32dp 与课程名对齐，作业行保留勾选框。顶层列表（`NOTES_COURSE` / `HOMEWORK_COURSE`）仍是卡片行。
   笔记库保留「最近更新」3 条区块；作业库不要（用户拍板 2026-09-23）。
 - 课程子页（`NOTES_COURSE` / `HOMEWORK_COURSE`）保留：今日页/课表页的课程详情弹窗
   仍跳这两页

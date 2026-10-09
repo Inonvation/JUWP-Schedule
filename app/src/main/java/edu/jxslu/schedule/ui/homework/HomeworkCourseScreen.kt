@@ -4,12 +4,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Checkbox
@@ -118,7 +122,13 @@ fun HomeworkCourseScreen(
     }
 }
 
-/** 作业列表行：勾选框（勾上即完成，像待办）+ 标题 + 截止 chip；完成后置灰 + 删除线。 */
+/**
+ * 作业列表行：勾选框（勾上即完成，像待办）+ 标题 + 截止 chip；完成后置灰 + 删除线。
+ *
+ * [embedded] = true 时画成**组卡展开区的平铺行**（2026-10-09）：无卡底、无描边，只有整行涟漪
+ * ——作业库 / 作业中心的课程折叠卡里每条再套一张卡就是「气泡套气泡」。顶层列表（某课程的作业页）
+ * 仍是 [AppCardRow]。
+ */
 @Composable
 internal fun HomeworkRow(
     homework: Homework,
@@ -126,53 +136,96 @@ internal fun HomeworkRow(
     onClick: () -> Unit,
     onToggle: (Boolean) -> Unit,
     showCourseName: Boolean = false,
+    embedded: Boolean = false,
 ) {
     val haptics = rememberAppHaptics()
     val label = dueLabel(homework.dueDate, today)
     val overdue = homework.dueDate?.isBefore(today) == true && !homework.done
-    AppCardRow(
-        onClick = onClick,
-        // 勾选框自带 M3 的 48dp 触达区与内边距，卡片内间距向它让位（左右不对称是有意的）
-        contentPadding = PaddingValues(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
-    ) {
-        Checkbox(
-            checked = homework.done,
-            onCheckedChange = { checked ->
-                haptics.toggle()
-                onToggle(checked)
+    val toggle: (Boolean) -> Unit = { checked ->
+        haptics.toggle()
+        onToggle(checked)
+    }
+    if (embedded) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // 不自己 clip：涟漪由外层组卡的 14dp 圆角裁形
+                .clickable {
+                    haptics.tap()
+                    onClick()
+                }
+                // 勾选框自带 M3 的 48dp 触达区与内边距，行内间距向它让位（左右不对称是有意的）
+                .padding(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HomeworkRowBody(
+                homework = homework,
+                label = label,
+                overdue = overdue,
+                showCourseName = showCourseName,
+                onToggle = toggle,
+            )
+        }
+    } else {
+        AppCardRow(
+            onClick = onClick,
+            // 勾选框自带 M3 的 48dp 触达区与内边距，卡片内间距向它让位（左右不对称是有意的）
+            contentPadding = PaddingValues(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+        ) {
+            HomeworkRowBody(
+                homework = homework,
+                label = label,
+                overdue = overdue,
+                showCourseName = showCourseName,
+                onToggle = toggle,
+            )
+        }
+    }
+}
+
+/** [HomeworkRow] 的内容本体（勾选框 + 标题 / 副行），平铺态与卡片态共用。 */
+@Composable
+private fun RowScope.HomeworkRowBody(
+    homework: Homework,
+    label: String?,
+    overdue: Boolean,
+    showCourseName: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    Checkbox(
+        checked = homework.done,
+        onCheckedChange = onToggle,
+    )
+    Spacer(Modifier.width(4.dp))
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = homeworkDisplayTitle(homework.detail),
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (homework.done) {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            } else {
+                MaterialTheme.colorScheme.onSurface
             },
+            textDecoration = if (homework.done) TextDecoration.LineThrough else null,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.width(4.dp))
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        val sub = buildList {
+            if (showCourseName) add(homework.courseName)
+            label?.let { add(if (overdue) it else "截止 $it") }
+        }.joinToString(" · ")
+        if (sub.isNotBlank()) {
             Text(
-                text = homeworkDisplayTitle(homework.detail),
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (homework.done) {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                text = sub,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (overdue) {
+                    MaterialTheme.colorScheme.error
                 } else {
-                    MaterialTheme.colorScheme.onSurface
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
                 },
-                textDecoration = if (homework.done) TextDecoration.LineThrough else null,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val sub = buildList {
-                if (showCourseName) add(homework.courseName)
-                label?.let { add(if (overdue) it else "截止 $it") }
-            }.joinToString(" · ")
-            if (sub.isNotBlank()) {
-                Text(
-                    text = sub,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (overdue) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }
