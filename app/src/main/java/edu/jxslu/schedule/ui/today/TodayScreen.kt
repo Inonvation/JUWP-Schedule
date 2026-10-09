@@ -99,6 +99,7 @@ import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
 import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
 import edu.jxslu.schedule.ui.qzxy.QzxyUiState
+import edu.jxslu.schedule.ui.qzxy.WateringReconcileEffect
 import edu.jxslu.schedule.ui.qzxy.isQzxyWateringExpired
 import edu.jxslu.schedule.ui.qzxy.rememberQzxyWateringClock
 import edu.jxslu.schedule.ui.common.AppPermissions
@@ -238,6 +239,12 @@ fun TodayScreen(
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
     val qzxyCardEnabled by viewModel.qzxyCardEnabled.collectAsStateWithLifecycle()
     val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
+    // 趣智用水对账（DESIGN §3.18）：今日页可见（含开水面板打开）期间把本地记账与
+    // 设备核对——自动关停后自动结算 / 记账切「待核对」。页面侧（SubpageActivity）
+    // 有自己的同款驱动，repeatOnLifecycle(RESUMED) 保证同一时刻只有前台那个在跑
+    qzxyViewModel?.let { vm ->
+        WateringReconcileEffect(viewModel = vm, enabled = qzxyEntryState.watering != null)
+    }
     // 免费时长计时的两个值直接读偏好仓库：`DisplayPrefs` 那层合并读模型不带它们，
     // 而快趣卡只是展示（与 RideScreen / RideViewModel 读同一个单例）
     val context = LocalContext.current
@@ -1595,8 +1602,9 @@ private fun QzxyCard(
         onClickLabel = "打开趣智校园开热水页",
         contentPadding = spacing.contentPadding,
         // 用水中把整卡点亮（主色描边）：副行那行小字在半行宽度上不够显眼，
-        // 水开着却看不出来是要花钱的
-        highlighted = state.watering != null,
+        // 水开着却看不出来是要花钱的。**过期的记账是「待核对」不点亮**——
+        // 水其实已经停了，点亮反而在喊「水开着」
+        highlighted = state.watering?.let { !isQzxyWateringExpired(it.startedAtMillis) } == true,
     ) {
         Icon(
             // 花洒：趣智校园是「洗澡开热水」，不是喝水（2026-09-27 用户拍板）
@@ -1677,8 +1685,9 @@ private fun QzxyCardSubtitle(state: QzxyUiState, loggedIn: Boolean) {
     val text: String
     if (watering != null) {
         text = if (isQzxyWateringExpired(watering.startedAtMillis)) {
-            // 过期的残留（ViewModel 会清掉 store，这一帧先显示待处理文案）
-            "上次用水待结算"
+            // 过期的记账是「待核对」（2026-10-09 起不再被静默清掉）：
+            // 设备那次用水可能已结束，点卡进页面对账 / 结算
+            "上次用水待核对"
         } else {
             "用水中 ${rememberQzxyWateringClock(watering.startedAtMillis)}"
         }

@@ -209,8 +209,9 @@ fun QzxyEntrySheet(
                                 },
                             )
 
-                            is QzxySheetContent.Watering -> WateringBlock(
+                            is QzxySheetContent.Watering -> WateringStatusBlock(
                                 watering = content.watering,
+                                deviceEnded = state.wateringDeviceEnded,
                                 failure = state.flow as? QzxyFlowState.Failed,
                                 onStop = {
                                     haptics.tap()
@@ -220,6 +221,11 @@ fun QzxyEntrySheet(
                                     haptics.tap()
                                     onAbandon()
                                 },
+                                onClearDeviceRecord = {
+                                    haptics.tap()
+                                    onClearDeviceRecord()
+                                },
+                                modifier = Modifier.padding(top = 0.dp),
                             )
 
                             is QzxySheetContent.Failed -> FailureBlock(
@@ -233,6 +239,10 @@ fun QzxyEntrySheet(
                                 onClear = {
                                     haptics.tap()
                                     onClearDeviceRecord()
+                                },
+                                onSettle = {
+                                    haptics.tap()
+                                    onStop()
                                 },
                                 onDetail = { failureDetail = content.failure },
                             )
@@ -332,140 +342,6 @@ private fun WorkingBlock(step: String) {
     }
 }
 
-/**
- * 「用水中」徽标：左侧一枚呼吸的圆点。
- *
- * 面板里唯一的常驻动画，只改透明度、不动尺寸（走 `graphicsLayer` 的 lambda 形式，
- * 动画值在绘制阶段读，不触发重组），也不是骨架流光那套（那个在
- * `ui/common/Skeleton.kt`）。呼吸给的是「水还在流」的现场感。
- */
-@Composable
-private fun WateringBadge() {
-    val scheme = MaterialTheme.colorScheme
-    val transition = rememberInfiniteTransition(label = "qzxy-watering")
-    val dotAlpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "qzxy-watering-dot",
-    )
-    Row(
-        modifier = Modifier
-            .background(scheme.primaryContainer, RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .graphicsLayer { alpha = dotAlpha }
-                .background(scheme.primary, CircleShape),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = "用水中",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = scheme.onPrimaryContainer,
-        )
-    }
-}
-@Composable
-private fun WateringBlock(
-    watering: QzxyWatering,
-    failure: QzxyFlowState.Failed?,
-    onStop: () -> Unit,
-    onAbandon: () -> Unit,
-) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    if (isQzxyWateringExpired(watering.startedAtMillis)) {
-        // 过期的那一帧（store 清理在 ViewModel 侧异步完成）显示待处理文案，
-        // 不显示进行中的计时
-        Text(
-            text = "上次用水已超过 1 小时，点「结束用水」核对设备记录",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.error,
-        )
-        Button(
-            onClick = onStop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-                .height(48.dp),
-        ) {
-            Text("结束用水")
-        }
-        return
-    }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        WateringBadge()
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "开始于 ${QzxyWateringFormat.clockText(watering.startedAtMillis)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = onSurface.copy(alpha = 0.55f),
-        )
-    }
-    Text(
-        text = rememberQzxyWateringClock(watering.startedAtMillis),
-        // 等宽数字，避免每秒刷新时整行抽动
-        style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"),
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 6.dp),
-    )
-    Text(
-        text = watering.preDeductMilli?.let {
-            "服务端预扣 ${QzxyWateringFormat.money(it)}，按实际用量结算"
-        } ?: "结束后按实际用量结算",
-        style = MaterialTheme.typography.bodySmall,
-        color = onSurface.copy(alpha = 0.6f),
-        modifier = Modifier.padding(top = 2.dp),
-    )
-    if (failure != null) {
-        Text(
-            text = failure.reason,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.padding(top = 10.dp),
-        )
-        failure.detail?.let { detail ->
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-    Button(
-        onClick = onStop,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp)
-            .height(48.dp),
-    ) {
-        Text(if (failure != null) "重试结束用水" else "结束用水")
-    }
-    Text(
-        text = "结算要走蓝牙，点之前先站到热水器旁边",
-        style = MaterialTheme.typography.bodySmall,
-        color = onSurface.copy(alpha = 0.55f),
-        modifier = Modifier.padding(top = 8.dp),
-    )
-    TextButton(onClick = onAbandon) {
-        Text("水已经停了，标记为已结束")
-    }
-}
-
 @Composable
 private fun SettlementBlock(
     settlement: QzxySettlement,
@@ -530,6 +406,7 @@ private fun FailureBlock(
     canClear: Boolean,
     onRetry: () -> Unit,
     onClear: () -> Unit,
+    onSettle: () -> Unit,
     onDetail: () -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -550,14 +427,15 @@ private fun FailureBlock(
         )
     }
     Button(
-        onClick = onRetry,
+        // 开阀被「未结算的老记录」挡住时，主出口是先去结算（与趣智页失败卡同一口径）
+        onClick = { if (failure.settleRecovery) onSettle() else onRetry() },
         enabled = canRetry,
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 12.dp)
             .height(48.dp),
     ) {
-        Text("重试开阀")
+        Text(if (failure.settleRecovery) "结算设备记录" else "重试开阀")
     }
     Row(
         modifier = Modifier

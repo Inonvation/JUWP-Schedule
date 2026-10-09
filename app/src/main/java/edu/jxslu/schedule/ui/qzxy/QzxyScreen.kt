@@ -199,6 +199,10 @@ fun QzxyScreen(
         if (state.loggedIn) viewModel.loadBillsOnce()
     }
 
+    // 页面可见期间对账（DESIGN §3.18）：设备自动关停后自动结算 / 记账切「待核对」。
+    // 没有本地记账时不跑；页面进前台的每一拍由它驱动（见 WateringReconcileEffect）
+    WateringReconcileEffect(viewModel = viewModel, enabled = state.watering != null)
+
     // 充值在支付宝里完成，回到本页（ON_RESUME）时余额要重拉，否则还显示充值前的数。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -445,10 +449,12 @@ private fun UnsettledNotice(watering: QzxyWatering, viewModel: QzxyViewModel) {
     SettingsSection(
         title = "上次开阀还没结算",
         subtitle = "${QzxyWateringFormat.clockText(watering.startedAtMillis)} 在" +
-            "「${watering.deviceName}」开的阀。登录后点「结束用水」按实际用量结算。",
+            "「${watering.deviceName}」开的阀。登录后到设备旁点「结算核对」；" +
+            "记录已不在的话，这笔单由平台统一处理——「消费记录」里先显示 ¥0、" +
+            "处理后显示实际金额（一般次日）。",
     ) {
         TextButton(onClick = { viewModel.abandonWatering() }) {
-            Text("水已经停了，标记为已结束")
+            Text("已到账或不再处理，清除本地记账")
         }
     }
 }
@@ -549,14 +555,19 @@ private fun AccountRow(
 /**
  * 设备一行 + 「更换」。
  *
- * 用水中不给换：那一台正在放水，切到别的设备会让结束用水的按钮连错机器。
+ * 只有**真正用水中**（记账没过期、设备也没被确认结束）不给换：那一台正在放水，
+ * 切到别的设备会让结束用水的按钮连错机器。过期的记账是「待核对」——水已经停了，
+ * 结算核对按记账里的地址走（不是按选中），换设备不受它挡。
  */
 @Composable
 private fun DeviceCard(state: QzxyUiState, onPick: () -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
     val onSurface = MaterialTheme.colorScheme.onSurface
     val watering = state.watering
-    val name = watering?.deviceName
+    val wateringActive = watering != null &&
+        !state.wateringDeviceEnded &&
+        !isQzxyWateringExpired(watering.startedAtMillis)
+    val name = (if (wateringActive) watering?.deviceName else null)
         ?: state.selected?.let { device ->
             state.deviceInfos[device.addressKey]?.deviceName?.takeIf { it.isNotBlank() }
                 ?: device.name
@@ -564,15 +575,16 @@ private fun DeviceCard(state: QzxyUiState, onPick: () -> Unit) {
         // 没选中也要认得上次那台：进页面时设备名是空的会让人以为绑定丢了
         ?: state.lastUsedDevice?.name
     val subtitle = when {
-        watering != null -> "用水中，暂时不能换设备"
+        wateringActive -> "用水中，暂时不能换设备"
         state.flow is QzxyFlowState.Working -> "正在处理，等这一步跑完再换"
+        watering != null -> "上次用水待核对 · 点右侧可换"
         state.selected != null -> "已选中 · 点右侧可换"
         state.lastUsedDevice != null -> "上次用过 · 点右侧可换"
         else -> "还没选设备，点右侧挑一台"
     }
     // 进行中不许换：换设备会走 preconnect，它会把正在用的那条链路关掉重建，
     // 把开阀/结算打断在半路——而那时服务端可能已经下过单、扣过预扣
-    val canPick = watering == null && state.flow !is QzxyFlowState.Working
+    val canPick = !wateringActive && state.flow !is QzxyFlowState.Working
     AppCardRow(
         modifier = Modifier.fillMaxWidth(),
         onClick = if (canPick) onPick else null,
@@ -665,7 +677,15 @@ private fun StatusCard(
                         is QzxyStatusContent.Settlement ->
                             SettlementBlock(content.settlement, state, viewModel)
                         is QzxyStatusContent.Watering ->
-                            WateringBlock(content.watering, state.flow, viewModel)
+                            WateringStatusBlock(
+                                watering = content.watering,
+                                deviceEnded = state.wateringDeviceEnded,
+                                failure = state.flow as? QzxyFlowState.Failed,
+                                onStop = { viewModel.stopWater() },
+                                onAbandon = { viewModel.abandonWatering() },
+                                onClearDeviceRecord = { viewModel.clearDeviceRecord() },
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
                         is QzxyStatusContent.Failed -> FailureBlock(
                             failure = content.failure,
                             state = state,
@@ -718,7 +738,10 @@ private fun statusContentOf(state: QzxyUiState): QzxyStatusContent {
 private fun statusSubtitle(state: QzxyUiState): String = when {
     state.flow is QzxyFlowState.Working -> "正在处理，别离开这一页"
     state.lastSettlement != null -> "本次用水已结算"
-    state.watering != null -> "设备在放水，用完点结束用水结算"
+    state.watering != null && !state.wateringDeviceEnded &&
+        !isQzxyWateringExpired(state.watering.startedAtMillis) ->
+        "设备在放水，用完点结束用水结算"
+    state.watering != null -> "上次用水待核对，站到设备旁点「结算核对」"
     state.flow is QzxyFlowState.Failed -> "上一次操作没成功，按下面的提示来"
     !state.hasUsableDevice -> "先在上面选一台热水器"
     else -> "站在热水器旁边点开始用水"
@@ -798,97 +821,6 @@ private fun WorkingBlock(step: String) {
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
         modifier = Modifier.padding(top = 8.dp),
     )
-}
-
-/**
- * 用水中。计时是这一块的主角：它同时回答「水还开着吗」与「开了多久」，
- * 也是用户判断该不该去结算的依据。
- */
-@Composable
-private fun WateringBlock(
-    watering: QzxyWatering,
-    flow: QzxyFlowState,
-    viewModel: QzxyViewModel,
-) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val clock = rememberQzxyWateringClock(watering.startedAtMillis)
-    val failed = flow as? QzxyFlowState.Failed
-
-    Row(
-        modifier = Modifier.padding(top = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "用水中",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier
-                .background(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(50),
-                )
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "开始于 ${QzxyWateringFormat.clockText(watering.startedAtMillis)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = onSurface.copy(alpha = 0.55f),
-        )
-    }
-    Text(
-        text = clock,
-        // 等宽数字（tnum）：默认字体的「1」比「8」窄，每秒刷新会让整行左右抽动，
-        // 还会连带触发上面那个高度动画
-        style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"),
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 6.dp),
-    )
-    Text(
-        text = watering.preDeductMilli?.let {
-            "服务端预扣 ${QzxyWateringFormat.money(it)}，结束后按实际用量结算，多扣的部分退回"
-        } ?: "结束后按实际用量结算，多扣的部分退回",
-        style = MaterialTheme.typography.bodySmall,
-        color = onSurface.copy(alpha = 0.6f),
-        modifier = Modifier.padding(top = 2.dp),
-    )
-    if (failed != null) {
-        Text(
-            text = failed.reason,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.padding(top = 10.dp),
-        )
-        failed.detail?.let { detail ->
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-    Button(
-        onClick = { viewModel.stopWater() },
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp)
-            .height(48.dp),
-    ) {
-        Text(if (failed != null) "重试结束用水" else "结束用水")
-    }
-    Text(
-        text = "结算要走蓝牙，点之前先站到热水器旁边",
-        style = MaterialTheme.typography.bodySmall,
-        color = onSurface.copy(alpha = 0.55f),
-        modifier = Modifier.padding(top = 8.dp),
-    )
-    TextButton(onClick = { viewModel.abandonWatering() }) {
-        Text("水已经停了，标记为已结束")
-    }
 }
 
 @Composable
@@ -972,14 +904,16 @@ private fun FailureBlock(
         )
     }
     Button(
-        onClick = { viewModel.openValveFromCard() },
+        // 开阀被「未结算的老记录」挡住时，主出口是先去结算——提示让点「结束用水」，
+        // 这里就必须真的给出那个按钮（旧版只有「重试开阀」，用户只能卡住）
+        onClick = { if (failure.settleRecovery) viewModel.stopWater() else viewModel.openValveFromCard() },
         enabled = state.hasUsableDevice,
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 12.dp)
             .height(48.dp),
     ) {
-        Text("重试开阀")
+        Text(if (failure.settleRecovery) "结算设备记录" else "重试开阀")
     }
     Row(
         modifier = Modifier

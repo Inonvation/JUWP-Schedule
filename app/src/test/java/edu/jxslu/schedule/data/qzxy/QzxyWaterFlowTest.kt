@@ -9,8 +9,8 @@ import org.junit.Test
 
 /**
  * 用水流程状态机。全部走假链路与假网关，网络与蓝牙都不碰——
- * 这里钉的是分支判定（状态 3 跳过停阀、候选命中即停、连续无回包提前收手），
- * 不是收发本身。
+ * 这里钉的是分支判定（状态 3 跳过停阀、候选命中即停、连续无回包提前收手、
+ * **上报失败不清设备记录**），不是收发本身。
  */
 class QzxyWaterFlowTest {
 
@@ -18,16 +18,13 @@ class QzxyWaterFlowTest {
 
     /** 可编程的假链路：按功能码回包，没登记的功能码视为超时。 */
     private inner class FakeLink : QzxyWaterFlow.Link {
-        var connected = true
         val sent = mutableListOf<Int>()
 
-        /** 查询响应的状态值；每次查询后按脚本推进。 */
+        /** 查询响应的状态值；每次查询后按脚本推进。脚本为空 = 设备不回包。 */
         val states = ArrayDeque<Int>()
 
         /** 各功能码的回包数据体；0x85 默认回一条最小记录，其余默认成功标记。 */
         val bodies = mutableMapOf<Int, ByteArray>()
-
-        override fun isConnectedTo(address: String): Boolean = connected
 
         override suspend fun request(
             functionCode: Int,
@@ -68,14 +65,18 @@ class QzxyWaterFlowTest {
         var lastXfData: String? = null
         var clData: String? = null
 
+        /** 非空 = 上报失败，原因原样带回（真机网关同样不抛异常）。 */
+        var failWith: String? = null
+
         override suspend fun uploadConsume(
             xfData: String,
             randomNumber: String,
             protocolType: String,
-        ): String? {
+        ): QzxyWaterFlow.Upload {
             calls += 1
             lastXfData = xfData
-            return clData
+            return failWith?.let { QzxyWaterFlow.Upload(error = it) }
+                ?: QzxyWaterFlow.Upload(clData = clData, consumeMoney = "43")
         }
     }
 
@@ -150,10 +151,45 @@ class QzxyWaterFlowTest {
         val outcome = stopOutcome(flow(link, FakeGateway()))
 
         assertTrue(outcome is QzxyWaterFlow.Outcome.Settled)
+        val settled = outcome as QzxyWaterFlow.Outcome.Settled
+        assertEquals(true, settled.uploaded)
+        assertEquals(true, settled.cleared)
         // 状态 3 发 0x22 会被回 81 01（实测），所以序列里没有停阀
         assertEquals(false, link.sent.contains(QzxyProtocol.END_RATE))
         assertTrue(link.sent.contains(QzxyProtocol.COLLECT_CONSUME))
         assertTrue(link.sent.contains(QzxyProtocol.CLEAR_CONSUME))
+    }
+
+    @Test
+    fun `结束用水_上报失败不清设备记录_留着重试的凭证`() {
+        val link = FakeLink().apply {
+            states += QzxyProtocol.STATE_FINISHED_UNCOLLECTED
+            bodies[QzxyProtocol.COLLECT_CONSUME] = consumeBody()
+        }
+        val gateway = FakeGateway().apply { failWith = "未找到订单" }
+        val outcome = stopOutcome(flow(link, gateway)) as QzxyWaterFlow.Outcome.Settled
+
+        assertEquals(false, outcome.uploaded)
+        assertEquals("未找到订单", outcome.uploadError)
+        assertEquals(false, outcome.cleared)
+        // 上报失败时清除命令一条都不该发：记录是重试结算的唯一凭证，
+        // 旧实现「失败也清」会把还能救回来的钱一次毁掉
+        assertEquals(false, link.sent.contains(QzxyProtocol.CLEAR_CONSUME))
+    }
+
+    @Test
+    fun `阶段耗时回调覆盖各段`() {
+        val link = FakeLink().apply {
+            states += QzxyProtocol.STATE_FINISHED_UNCOLLECTED
+            bodies[QzxyProtocol.COLLECT_CONSUME] = consumeBody()
+            states += QzxyProtocol.STATE_IDLE
+        }
+        val flow = flow(link, FakeGateway())
+        val labels = mutableListOf<String>()
+        flow.onTiming = { label, _ -> labels += label }
+        stopOutcome(flow)
+
+        assertTrue(labels.containsAll(listOf("读状态", "读记录", "上报", "清除")))
     }
 
     @Test
@@ -226,7 +262,8 @@ class QzxyWaterFlowTest {
 
     @Test
     fun `查询超时按没有回应处理`() {
-        val link = FakeLink().apply { connected = false }
+        // 脚本为空 = 第一帧查询就没有回包
+        val link = FakeLink()
         val outcome = openOutcome(flow(link, FakeGateway())) as QzxyWaterFlow.Outcome.Blocked
         assertEquals("设备没有回应可解析的数据", outcome.reason)
     }
