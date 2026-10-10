@@ -1274,6 +1274,21 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 「使用前须知」的上次弹出时刻（epoch 毫秒，`domain/LegalNotice`）。0 = 从没弹过。
+     *
+     * 与首启声明的同意记录不同：这份是**周期必弹**——这里只记"上次什么时候弹的"，
+     * 弹不弹由 `LegalNotice.shouldShow` 判，没有"已同意就不再弹"的语义（点同意也会在
+     * `LegalNotice.INTERVAL_MS` 后再弹）。
+     */
+    val legalNoticeLastShownAt: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_LEGAL_NOTICE_LAST_SHOWN_AT] ?: 0L
+    }.distinctUntilChanged()
+
+    suspend fun markLegalNoticeShown(atMs: Long = System.currentTimeMillis()) {
+        context.displayDataStore.edit { it[KEY_LEGAL_NOTICE_LAST_SHOWN_AT] = atMs }
+    }
+
+    /**
      * 首启声明的同意记录（DESIGN §3.16）：读某一份须知的「同意过哪一版 + 什么时候」。
      *
      * 读路径两处：首启引导决定还要不要弹（`domain/NoticeConsent.pendingNotices`），
@@ -2089,6 +2104,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
         val KEY_RECHARGE_DISCLAIMER_SUPPRESS_UNTIL = longPreferencesKey("recharge_disclaimer_suppress_until")
         val KEY_RECHARGE_DISCLAIMER_SEEN_AT = longPreferencesKey("recharge_disclaimer_seen_at")
+        val KEY_LEGAL_NOTICE_LAST_SHOWN_AT = longPreferencesKey("legal_notice_last_shown_at")
         // 首启声明的同意记录（DESIGN §3.16）：每份须知各一对「同意过的版本 / 确认时刻」。
         // 版本号用来判要不要重弹（文案改了 bump `FirstRunNotices.VERSION`），时刻用来展示与核对。
         val KEY_USER_NOTICE_VERSION = intPreferencesKey("user_notice_version")

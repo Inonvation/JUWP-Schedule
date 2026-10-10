@@ -158,6 +158,18 @@
 欢迎页底部那个「查看免责声明」按钮保留，走它打开的那次**不锁**、也不写同意记录——
 用户主动再看一遍不该被罚等。
 
+**「使用前须知」周期声明（2026-10-10 新增）**：与首启那两份**相互独立**——首启两份只在
+引导里弹一次（同意过就不再弹），这一份是**周期性**的：`domain/LegalNotice` 的
+`INTERVAL_MS = 3 天`，每满 3 天必弹，**没有「不再提醒」出口**（用户口径：不能永久关闭）。
+标题「使用前须知」+ 4 条正文在 `domain/LegalNotice.ITEMS`，`**…**` 是加粗标记、由
+`LegalNotice.parseBold` 解析成 `AnnotatedString`（纯函数，`LegalNoticeTest` 钉住）。
+宿主 `ui/common/LegalNoticeHost` 挂在 `MainActivity` 根层（`JuwApp` 之后），冷启动
+（`LaunchedEffect`，等偏好读到真值才判）与每次回前台（`LifecycleEventEffect(ON_RESUME)`）
+各判一次 `LegalNotice.shouldShow`；弹出即写 `DisplayPrefsStore.legalNoticeLastShownAt`
+（**只记「上次弹出时刻」，没有「已同意」语义**）。弹窗 `ui/common/LegalNoticeDialog`
+字号比首启那份大一档（标题 `titleLarge` / 正文 `bodyLarge`），重点加粗。
+新用户走完首启回到主界面时 `ON_RESUME` 触发，所以**首启也弹**，与首启两份时间上错开。
+
 **两个第三方服务排在学校账号之后**：胖乖生活（第 4 步）与趣智校园（第 5 步）都是
 第三方账号，与学校体系无关。先让用户把「学号 + 密码」一次解决，再处理这两处——
 插在中间会打断节奏，也会让以为「一个账号走天下」的用户困惑。
