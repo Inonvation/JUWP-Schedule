@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /**
- * 一卡通（慧新e校）响应模型（DESIGN §4.19）。字段对齐 2026-09-20 Python 实测抓包，
+ * 一卡通（慧新e校）响应模型（DESIGN §4.19）。字段对齐 2026-09-20 实测，
  * 只建模用到的部分；消息字段 `msg`/`message`/`error_description` 三处都可能出，统一收口。
  */
 @Serializable

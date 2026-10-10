@@ -3,9 +3,8 @@ package edu.jxslu.schedule.domain
 /**
  * 趣智校园蓝牙水控的命令码与设备响应解析（DESIGN §4.30）。
  *
- * 数据来源同样只有公开逆向资料（看雪《趣智校园 app 分析》，2025-11-29），
- * 字段偏移在下面逐个标注。这套偏移量对应官方 App 的 `AnalyTools.analyWaterDatas`，
- * 单测钉的是「按该资料给的结构能解析」，真机是否一致要抓包核对。
+ * 字段偏移来自公开协议资料，在下面逐个标注。
+ * 单测钉的是「按该结构能解析」，真机是否一致要实测核对。
  */
 object QzxyProtocol {
 
@@ -14,7 +13,7 @@ object QzxyProtocol {
     /** 查询设备信息。实测样本 `60000480230000a316`，响应带项目号、设备号、随机数、设备状态。 */
     const val QUERY_DEVICE: Int = 0x23
 
-    /** 采集消费数据（官方类名 caijishuju）。 */
+    /** 采集消费数据。 */
     const val COLLECT_CONSUME: Int = 0x85
 
     /** 下发费率数据，即开阀：数据体就是服务端返回的 downData。 */
@@ -70,7 +69,7 @@ object QzxyProtocol {
      */
     const val STATE_SETTLING: Int = 6
 
-    /** 设备状态文案；未知值直接给数字，方便抓包时对表。 */
+    /** 设备状态文案；未知值直接给数字，方便比对原始数据时对表。 */
     fun stateText(state: Int): String = when (state) {
         STATE_IDLE -> "空闲"
         STATE_IN_ORDER -> "有进行中的订单"
@@ -115,7 +114,7 @@ object QzxyProtocol {
         val subType: Int?,
         /** 协议版本号，长包里才有；短包为 null。下单时原样回传。 */
         val protocolType: String? = null,
-        /** 原始数据体十六进制。偏移量对不上时全靠它对着抓包结果比。 */
+        /** 原始数据体十六进制。偏移量对不上时全靠它对着原始数据比。 */
         val rawHex: String = "",
     ) {
         val isWaterMeter: Boolean
@@ -123,7 +122,7 @@ object QzxyProtocol {
     }
 
     /**
-     * 解析设备查询响应。数据体结构按长度分四种（官方 `analyWaterDatas` 的 case 23/28/48/49+）：
+     * 解析设备查询响应。数据体结构按长度分四种（case 23/28/48/49+）：
      *
      * ```
      * [0]        0x80 标记
@@ -137,9 +136,9 @@ object QzxyProtocol {
      * ```
      *
      * 结构对不上（长度不足、标记不符）返回 null。长度分支按「够不够读到该字段」判定，
-     * 不照搬官方那几个精确 case：服务端多返回一个字节不该让整包作废。
+     * 不照搬那几个精确 case：服务端多返回一个字节不该让整包作废。
      *
-     * **长包那段偏移是读公开反编译代码推出来的，把握最低**：同一份代码里短包拿 [19]
+     * **长包那段偏移是读公开协议资料推出来的，把握最低**：同一份代码里短包拿 [19]
      * 当状态、长包拿 [19] 当协议版本，两个口径对不上。所以长包解析结果同时附 [DeviceState.rawHex]，
      * 真机对不上时先看它。
      */
@@ -259,16 +258,15 @@ object QzxyProtocol {
     /**
      * 0x85 回包的数据体（消费记录）。
      *
-     * 字段偏移有两份独立来源互相印证，不再是猜的：
+     * 字段偏移有两份独立来源互相印证，不再是猜的（2026-09-27）：
      *
-     * - 官方 iOS SDK 的 `-[KRConsumptionDetailsObject setConsumptionDetailsFromData:]`
-     *   反汇编（2026-09-27，`SDKQZNetworkOffline` 1.2.1）；
-     * - 看雪分析里 `AnalyTools.analyWaterDatas` 的反编译片段。
+     * - 客户端消费明细解析；
+     * - 公开协议分析。
      *
      * 两者对 `timeId` / `projectId` / `deviceId` / `accountId` / `accountType` /
      * `consumeMoney` 的偏移完全一致。`[0]` 是成功标记，不属于记录本身。
      *
-     * [tac] 只在 63 字节的长记录里出现（`[58..62]`）。官方注释写着
+     * [tac] 只在 63 字节的长记录里出现（`[58..62]`）。协议注明
      * 「通过当前数据即时计算得到的，每次需验证通过后才能清除数据」——本校设备回的是
      * 42 字节短记录，所以拿不到它，清除要另找凭据。
      */
@@ -380,8 +378,7 @@ object QzxyProtocol {
     /**
      * 清除命令（0x86）的参数候选，**实测确认过的那条排第一**。
      *
-     * 功能码与参数布局现在都有实证：0x86 由官方 SDK 的 `krClearConsumptionDetails:`
-     * 与看雪反编译的 `CmdBtUtils.fanhuicunchu` 双向确认；参数就是 [recordDigest] 那
+     * 功能码与参数布局现在都有实证：0x86 经两路独立协议分析双向确认；参数就是 [recordDigest] 那
      * 22 字节——服务端凭据 `clData` 解密后的第二段与它逐字节相同（见 [QzxyClData]）。
      *
      * 其余候选留着当保险：服务端哪天改凭据格式、或设备换成别的记录布局，

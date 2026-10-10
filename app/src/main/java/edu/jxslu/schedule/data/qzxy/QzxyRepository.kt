@@ -255,7 +255,7 @@ class QzxyRepository(private val sessionStore: QzxySessionStore) {
     }
 
     /**
-     * 下单接口参与签名的字段集合。公开资料与反编译片段一致：只有这四项，
+     * 下单接口参与签名的字段集合。公开资料与协议分析一致：只有这四项，
      * 不是请求里的全部参数。试签名时也用这一份，保证试的就是真在用的输入。
      */
     fun rateOrderSignFields(

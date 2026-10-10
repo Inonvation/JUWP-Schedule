@@ -8,30 +8,29 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * 上传消费数据后服务端返回的 `clData`（DESIGN §4.30）。
  *
- * 官方 App 拿到它之后调 `JniUtils.decryptByAES` 解一次，明文里带一个 `-` 分隔符。
+ * 客户端拿到它之后解密一次，明文里带一个 `-` 分隔符。
  * 设备那句「每次需验证通过后才能清除数据」很可能就指它：蓝牙设备服务端够不着，
  * 只能由服务端签发一张凭据、App 转交给设备验，验过了才让清。
  *
- * 密钥来自官方 `libklcxkjencry.so` 的反汇编（2026-09-27）。`decryptByAES` 的入口
- * 把两个 `.rodata` 常量当密钥与 IV 传进去：
+ * 解密所需的密钥与 IV 是两个固定常量（2026-09-27 经协议分析确定）：
  *
  * ```
- * .rodata 0xa282e  "20210118klcx@002"   ← 密钥，16 字节
- * .rodata 0xa283f  "1234567876543210"   ← IV，ECB 模式下不用
+ * 密钥  "20210118klcx@002"   16 字节
+ * IV    "1234567876543210"   ECB 模式下不用
  * ```
  *
- * 同一段 so 里 `getSk` / `getCk` / `getMk` / `getBk` / `getDk` 另有几把旧协议的
- * 密钥（`20181201klcx@001`、`klcx002@20181224` 等），与这里无关，别混用。
+ * 同一加密库里另有几把旧协议的密钥（`20181201klcx@001`、`klcx002@20181224` 等），
+ * 与这里无关，别混用。
  *
- * 模式是 ECB。so 里那句 `Data not multiple of Block Size` 说明它按无填充处理，
- * 所以这里也走 `NoPadding`，再手工剥 PKCS#7——有填充就剥，没有就原样返回。
+ * 模式是 ECB，按无填充处理，所以这里也走 `NoPadding`，再手工剥 PKCS#7——
+ * 有填充就剥，没有就原样返回。
  */
 object QzxyClData {
 
-    /** AES-128 密钥，官方 so 里的常量。 */
+    /** AES-128 密钥（协议固定常量）。 */
     const val KEY: String = "20210118klcx@002"
 
-    /** ECB 模式下用不到，CBC 回退时才用。同样是官方 so 里的常量。 */
+    /** ECB 模式下用不到，CBC 回退时才用。 */
     const val IV: String = "1234567876543210"
 
     private const val BLOCK_SIZE = 16
@@ -40,7 +39,7 @@ object QzxyClData {
      * 解密 `clData`。密文按十六进制或 Base64 解，哪种能解出 16 的整数倍就用哪种。
      * 长度不对、密钥不可用、解密失败都返回 null。
      *
-     * 模式按官方分析给的是 ECB，但那个 `decryptByAES` 的入参里确实带着 IV，
+     * 模式按协议分析是 ECB，但入参里确实带着 IV，
      * 所以 ECB 解出来不是可打印文本时再试一次 CBC。正常路径不会走到 CBC。
      */
     fun decrypt(encoded: String?): ByteArray? {

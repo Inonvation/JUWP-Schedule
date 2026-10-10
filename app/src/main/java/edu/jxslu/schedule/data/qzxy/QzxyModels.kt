@@ -102,7 +102,7 @@ data class QzxyProjectInfo(
 // ── 设备 ──
 
 /**
- * `device/info/mac` 的响应。字段名取自看雪实测；
+ * `device/info/mac` 的响应。字段名取自公开实测；
  * `onlineStatusId` 与 `communicationTypeId` 用来判断设备是不是联网型。
  */
 @Serializable

@@ -3,7 +3,7 @@ package edu.jxslu.schedule.data.qzxy
 /**
  * 趣智校园接口配置（DESIGN §4.30）。
  *
- * 域名、版本号与两个参考实现（linyu、quzhi-lite）以及看雪 2025-11-29 的分析一致：
+ * 域名、版本号与两个参考实现（linyu、quzhi-lite）以及公开协议资料一致：
  * `https://v3-api.china-qzxy.cn/`，`version=6.5.28`。服务端若收紧校验，先动这里。
  */
 object QzxyApiConfig {

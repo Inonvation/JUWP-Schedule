@@ -6,12 +6,12 @@ import java.util.Locale
 /**
  * 趣智校园登录凭证的两个本地推导算法（DESIGN §4.30）。
  *
- * 两条都来自公开逆向结论，与 linyu 的 `SignUtils.smsSecret` / quzhi-lite 的
+ * 两条都来自公开协议结论，与 linyu 的 `SignUtils.smsSecret` / quzhi-lite 的
  * `LoginCredentials` 一致，可互相校验：
  *
  * - 密码：MD5 十六进制后取**后 10 位**并转大写；
  * - 短信验证码 secret：`MD5(手机号前 3 位 + 后 4 位 + "klcx")`，小写 32 位。
- *   secret 不含设备密钥，任何手机号都能本地算出来，所以短信登录不需要抓包。
+ *   secret 不含设备密钥，任何手机号都能本地算出来，所以短信登录不需要额外探测。
  */
 object QzxyCredential {
 

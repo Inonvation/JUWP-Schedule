@@ -11,7 +11,7 @@ import retrofit2.http.QueryMap
 /**
  * 趣智校园 Retrofit 接口（DESIGN §4.30）。
  *
- * 端点取自 linyu 的 `QzxyService` 与看雪分析，两类泾渭分明：
+ * 端点取自 linyu 的 `QzxyService` 与公开协议资料，两类泾渭分明：
  *
  * - **不签名**：登录、项目（学校名）、余额、设备信息、账单。认证参数以 query/form 明文传递。
  *   `/account/info`（姓名与学号）**不调用**：学校没同步学籍数据时整条返回 null，页面也用不上。

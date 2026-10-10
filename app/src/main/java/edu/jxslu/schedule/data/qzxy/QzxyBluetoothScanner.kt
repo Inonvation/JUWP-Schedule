@@ -39,7 +39,7 @@ data class QzxyScannedDevice(
  * 这条过滤规则来自两个参考实现与公开的设备样本，其它厂商的水控器扫不出来也不误报。
  *
  * 与参考实现的差别：这里保留完整广播名与 [QzxyScannedDevice.deviceKey] 两个值，
- * 上一版参考实现只取其一，抓包对不上时没法回看原始名字。
+ * 上一版参考实现只取其一，对不上原始数据时没法回看原始名字。
  */
 class QzxyBluetoothScanner(context: Context) {
     private val appContext = context.applicationContext

@@ -115,7 +115,7 @@ class UjingApi private constructor(private val http: OkHttpClient) {
      * 可选字段按「服务端声明需要才发」落（实机验证：五基础字段即可过）：
      * - `washTemperatureId`：仅洗衣机业务（type != 2）且机型开放水温时带；
      * - `wp_detergentGearId` / `wp_disinfectantGearId`：强制投放机型带标准档
-     *   （档位枚举 1 = 洗涤剂标准、4 = 消毒液标准，社区逆向口径）；
+     *   （档位枚举 1 = 洗涤剂标准、4 = 消毒液标准，社区实测口径）；
      * - `dryTime`：仅烘干机（type == 2），协议事实 = 模式时长 / 10。
      */
     suspend fun createOrder(
@@ -176,7 +176,7 @@ class UjingApi private constructor(private val http: OkHttpClient) {
     )
 
     /**
-     * 订单详情。`additional=price` 照抄官方抓包形态（社区实测用它取 `payPrice`）。
+     * 订单详情。`additional=price` 照抄实测形态（社区实测用它取 `payPrice`）。
      */
     suspend fun orderDetail(token: String, orderId: String): UjingEnvelope = request(
         method = "GET",

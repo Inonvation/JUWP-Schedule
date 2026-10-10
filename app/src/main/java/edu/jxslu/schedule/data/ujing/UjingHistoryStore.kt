@@ -13,7 +13,7 @@ import org.json.JSONObject
  *
  * 口径：记**本 App 发起**的每一笔订单——下单即入账，刷新随状态更新，取消也算一笔
  * （状态标注「已取消」）。服务端的账单接口没有可用的协议样本（`docs/ujing-plan.md`
- * 的端点表里只有 `orders/running`），不猜端点，先落本地；等拿到官方抓包样本再评估
+ * 的端点表里只有 `orders/running`），不猜端点，先落本地；等拿到协议样本再评估
  * 换成服务端账单源。
  *
  * 选型与 `UjingOrderStore` / `UjingHouseStore` 同一理由：普通 prefs 存 JSON 数组

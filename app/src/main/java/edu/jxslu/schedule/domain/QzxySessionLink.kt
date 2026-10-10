@@ -9,7 +9,7 @@ import edu.jxslu.schedule.data.qzxy.QzxySession
  * `telephone` 凑成一份完整会话才能调接口。所以「粘贴登录」粘的是一整串，不是一个 token
  * ——这一点与胖乖不同，那边的 token 单独就能用。
  *
- * 认三种写法，都是抓包或导出时最容易拿到的形态：
+ * 认三种写法，都是实测或导出时最容易拿到的形态：
  *
  * ```
  * {"loginCode":"…","projectId":"…","accountId":"…","userId":"…","telephone":"…"}  登录响应原文

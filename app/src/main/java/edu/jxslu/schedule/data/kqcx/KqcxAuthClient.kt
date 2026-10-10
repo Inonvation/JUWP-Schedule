@@ -15,9 +15,8 @@ import java.util.concurrent.TimeUnit
  * 快趣出行「账号 + 用车」接口客户端（DESIGN §4.32，2026-09-28）。
  *
  * 形态与 [KqcxBikeClient] 同款（裸 OkHttp、私有构造 + `create()`、只做请求与失败
- * 分类，解析交 `domain/KqcxAuth`），同域名 `api.kvcoogo.com`。协议口径来自快趣
- * 小程序逆向（`docs/kvcoo-miniprogram-analysis.md`）：form POST、**无签名**、
- * 鉴权只有 `token` 头。
+ * 分类，解析交 `domain/KqcxAuth`），同域名 `api.kvcoogo.com`。协议口径来自对快趣
+ * 小程序行为的分析：form POST、**无签名**、鉴权只有 `token` 头。
  *
  * 红线：
  * - **无日志拦截器**——token 与密码凭据绝不进 Logcat（对齐一卡通/电费）；

@@ -4,7 +4,7 @@ package edu.jxslu.schedule.domain
  * U净（美的校园洗衣）纯逻辑（DESIGN §4.37）：扫码徽标、看板聚合、金额格式化。
  *
  * 无 Android 依赖，直接 JVM 测（`UjingStateTest`）。协议事实来自社区多份独立
- * 逆向成果交叉核对；判定规则与文案集中在这里，UI 不另写 if。
+ * 实测交叉核对；判定规则与文案集中在这里，UI 不另写 if。
  */
 object UjingState {
 
@@ -63,7 +63,7 @@ object UjingState {
     // ── 订单 ──
 
     /**
-     * 订单状态 → 中文（依据社区逆向的 orderDetail 文案表；`status` 是字符串）。
+     * 订单状态 → 中文（依据协议文案表；`status` 是字符串）。
      * 服务端 `statusRemark` 非空时优先展示服务端文案，本地表作兜底。
      */
     fun statusText(status: String): String = when (status) {

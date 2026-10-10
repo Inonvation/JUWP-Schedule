@@ -63,7 +63,7 @@ import java.time.LocalDate
  *
  * Glance 不是完整的 Compose 运行时：`provideContent` 会**挂起到会话关闭**，组合里既没有
  * `LaunchedEffect` 也没有 `rememberCoroutineScope`。而会话（`AppWidgetSession`）对状态的
- * 处理有两个硬约束（反编译 1.2.0 源码核实，是桌面不显示课程的根因）：
+ * 处理有两个硬约束（对照 Glance 1.2.0 源码核实，是桌面不显示课程的根因）：
  *
  * 1. **会话的 `LocalState` 只在组合开始时读一次 DataStore，且先于 `provideGlance`**——
  *    在 `provideGlance` 里写状态，首帧组合读不到，要等下一次 `update()` 推
