@@ -185,6 +185,23 @@ class WeekGridLayoutTest {
         assertTrue(minHeaderHeightForDateFont(14f) > minHeaderHeightForDateFont(7f))
     }
 
+    /**
+     * 导出板的网格可用高 = 课表页同一笔预算（窗口 − 状态栏 − 顶栏 − 底部净空）。
+     * 契约：减干净、且减没了也落在 0（下游是除式，负高度会把行高算崩）。
+     * 与页面对得上，靠的就是「同一份输入 → 同一份 buildGridLayout」——
+     * 这正是 2026-10-10 用户报「图里教室被截断、格子文字偏大」的修复口径。
+     */
+    @Test
+    fun shareBoardGridHeightMatchesPageBudget() {
+        // 1080 级屏实况：窗口 986 − 状态栏 30 − 顶栏 56 − 底部净空（胶囊 64 + 底距 12 + 手势条 20）
+        assertDpEquals(
+            986.dp - 30.dp - 56.dp - 96.dp,
+            shareBoardGridHeightDp(986.dp, 30.dp, 56.dp, 96.dp),
+        )
+        // 窗口小到减没了：0，不是负数
+        assertDpEquals(0.dp, shareBoardGridHeightDp(100.dp, 40.dp, 56.dp, 96.dp))
+    }
+
     /** 作息表最后一节（第 11 小节）的结束分钟数，作 dayEndMinutes 哨兵保持「挂满全天」的旧语义 */
     private val scheduleEndMinutes = 21 * 60 + 10
 

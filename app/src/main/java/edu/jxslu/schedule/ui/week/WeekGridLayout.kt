@@ -55,18 +55,21 @@ internal data class GridLayout(
 }
 
 /**
- * 网格全部行间距之和（大节内 [IntraGap]、大节之间 [InterGap]）。
+ * 导出板（`ScheduleShareScreen`）的网格可用高度 —— **与课表页同一个口径**：
+ * 窗口高 − 状态栏 − 顶栏 − 底部净空。这几段正是课表页给网格让出来的位置
+ * （顶栏自取状态栏 inset + [TopBarHeight]，网格 Box 再垫底部净空），
+ * 导出板的输入与页面一致，行高就与页面逐 dp 相同（列宽同理 = 窗口宽）。
  *
- * 与 [buildGridLayout] 里累加 `y` 的那段是**同一口径**：那里决定网格实际占多高，
- * 这里把它单独暴露出来，给「导出为图片」反推行高用（板高 = 表头 + 行高 × 节数 + 本值）。
+ * [bottomChrome] = 悬浮底栏那一圈（胶囊 + 底距）**加**手势条，由调用方现读 inset 后传入；
+ * 普通底栏形态差几 dp，落成行高零点几 dp，不分模式。
+ * 下限 0：窗口小到减没了也不会把下游的除式带成负数。
  */
-internal fun gridGapsTotal(sectionCount: Int): Dp {
-    var gaps = 0.dp
-    for (section in 1 until sectionCount) {
-        gaps += if (ScheduleCalculator.isBigSectionEnd(section)) InterGap else IntraGap
-    }
-    return gaps
-}
+internal fun shareBoardGridHeightDp(
+    windowHeight: Dp,
+    statusBarHeight: Dp,
+    topBarHeight: Dp,
+    bottomChrome: Dp,
+): Dp = (windowHeight - statusBarHeight - topBarHeight - bottomChrome).coerceAtLeast(0.dp)
 
 internal fun buildGridLayout(
     maxHeight: Dp,

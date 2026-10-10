@@ -3,21 +3,14 @@ package edu.jxslu.schedule.domain
 import java.time.LocalDate
 
 /**
- * 课表导出为图片（DESIGN §4.12）的纯逻辑：文件名、周次日期范围、导出板行高。
+ * 课表导出为图片（DESIGN §4.12）的纯逻辑：文件名、周次日期范围。
  *
- * 渲染与截图在 ui 层（`ui/week/ScheduleShareDialog.kt`），这里只放能 JVM 测的部分——
+ * 渲染与截图在 ui 层（`ui/week/ScheduleShareScreen.kt`），这里只放能 JVM 测的部分——
  * 与 `ScheduleExporter` 同一纪律：日期算术落在 domain，不反向引用 ui 包。
+ * 板的网格几何（列宽 / 行高）**不在这里**：2026-10-10 起与课表页同源，
+ * 走 `ui/week` 的 `buildGridLayout`（见 `shareBoardGridHeightDp` 与 ScheduleShareScreen 的注释）。
  */
 object ScheduleShare {
-
-    /** 导出图片的行高下限（dp）。再矮课名放不下。 */
-    const val MIN_ROW_HEIGHT_DP = 44f
-
-    /**
-     * 导出图片的行高上限（dp）。
-     * 不设上限的话大屏上 11 行会被摊得过高：图变长、行距松散，分享出去比例也难看。
-     */
-    const val MAX_ROW_HEIGHT_DP = 64f
 
     /** 导出文件名：`水贝贝课表_20261009_第3周.png`。[dateTag] 形如 `yyyyMMdd`。 */
     fun exportFileName(dateTag: String, week: Int): String =
@@ -32,24 +25,5 @@ object ScheduleShare {
     fun weekRangeText(start: LocalDate?, end: LocalDate?): String? {
         if (start == null || end == null) return null
         return "${start.format(SHORT_DAY_FORMAT)} – ${end.format(SHORT_DAY_FORMAT)}"
-    }
-
-    /**
-     * 导出板的行高（dp）：把可用高度尽量摊给 [sectionCount] 行，再夹进 [minDp]..[maxDp]。
-     *
-     * [fixedHeightDp] = 不参与「摊」的固定占用（表头高度 + 全部行间距），由调用方按
-     * 布局常量算好传入——间距口径（大节内 3dp / 大节间 6dp）只有 `WeekGridLayout` 一处，
-     * 不在 domain 里重算。
-     */
-    fun boardRowHeightDp(
-        availableHeightDp: Float,
-        fixedHeightDp: Float,
-        sectionCount: Int,
-        minDp: Float = MIN_ROW_HEIGHT_DP,
-        maxDp: Float = MAX_ROW_HEIGHT_DP,
-    ): Float {
-        if (sectionCount <= 0) return minDp
-        val raw = (availableHeightDp - fixedHeightDp) / sectionCount
-        return raw.coerceIn(minDp, maxDp)
     }
 }

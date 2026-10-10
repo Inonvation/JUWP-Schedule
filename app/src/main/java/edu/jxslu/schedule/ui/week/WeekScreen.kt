@@ -129,7 +129,9 @@ private val fullDateFmt = DateTimeFormatter.ofPattern("yyyy/M/d")
 // 顶栏高度保留本文件定义；时间轴栏宽 / 表头高度已用户可调（显示设置滑块），
 // 默认值与滑块范围统一收敛到 TimetablePrefs companion（单一来源），几何唯一来源是
 // buildGridLayout（WeekGridLayout.kt）产出的 GridLayout（railWidth / dayHeaderHeight 字段）。
-private val TopBarHeight = 56.dp
+// internal：导出为图片要按「课表页的网格可用高」反推板的行高，顶栏是那笔预算的一段
+//（见 WeekGridLayout.shareBoardGridHeightDp）——单一来源，别在两处各写一个 56。
+internal val TopBarHeight = 56.dp
 
 /**
  * 周课表：小节 × 星期网格。

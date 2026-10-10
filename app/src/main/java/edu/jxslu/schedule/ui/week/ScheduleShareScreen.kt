@@ -14,13 +14,16 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -60,6 +63,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -110,15 +114,36 @@ private val BoardFooterGap = 6.dp
 private const val BoardFooterText = "水贝贝 · 非官方课表工具，内容仅供参考"
 
 /**
+ * 板减掉的「页面底部净空」里与底栏形态无关的那一段：悬浮胶囊高 64 + 离底间距 12
+ * （手势条另算，现读 inset）。与 MainActivity 的 `FloatingPillHeight` / `FloatingBarBottomMargin`
+ * 同一口径——那两枚是主壳私有常量，这里按值复刻；普通底栏形态是 80 + inset，差 4dp
+ * 只让行高差约 0.4dp，不分模式。
+ *
+ * 它不为「板要躲底栏」（板里没有底栏），而是让**板的行高与课表页逐 dp 相同**：
+ * 课表页的网格可用高度 = 窗口 − 状态栏 − 顶栏 − 底部净空，板取同一笔预算，
+ * 见 [shareBoardGridHeightDp] 与下方函数注释。
+ */
+private val BoardBottomChrome = 76.dp
+
+/**
  * 导出为图片（DESIGN §4.12）：预览本周课表 → 勾选背景图 / 脚注 → 保存到相册或分享。
  *
  * **独立二级页而不是弹层**：预览要占整屏高度，且只有板会被截图——弹层（Dialog）在这个
  * Compose 版本上拿不到可靠的窗口 insets（实测内容比可视区高一个状态栏，底部按钮被挤出屏幕），
  * 二级页的 Activity 窗口 insets 是本项目既有链路里已经跑通的（与其余二级页同形态）。
  *
- * 尺寸口径：板宽 = 预览可用宽减板内边距，行高由 [ScheduleShare.boardRowHeightDp] 从可用高度
- * 反推并夹在 44–64dp（大屏不摊太高、小屏不压到课名放不下）。板按设备密度渲染，产出图约等于
- * 屏宽像素（1080 级），足够分享；不做离屏超采样（要另起一层布局约束，收益不值这个复杂度）。
+ * 尺寸口径：**导出板 = 课表页的网格在同一个窗口下的样子**。板宽按窗口宽算（列宽与屏幕上
+ * 逐 dp 相同），行高走与课表页同一份 [buildGridLayout] 输入（可用高 = 窗口高 − 状态栏 −
+ * 顶栏 − 底部净空），字号走同一份 [rememberGridTypeSpec]——三者的比例与屏幕上一致：
+ * 长课名在哪换行、教室占几行、字相对格子多大，都与页面对得上。预览区装不下整张板时
+ * **只缩显示**（`graphicsLayer`，不改布局），截图仍是板原始分辨率（整屏级：1080 屏上实测
+ * 1101×2289 px）；不做离屏超采样。
+ *
+ * 根因（2026-10-10 用户报「图里教室被截断成『@工程训练中心…』、格子文字明显偏大」）：
+ * 此前板宽按**预览区**算、行高按**预览区可用高**反推并夹 44–64dp，字号却还是课表页那一份。
+ * 预览区比课表页的网格区窄（左右各多 16dp 留白 + 板内边距）又矮（还要让出板头 / 选项 /
+ * 按钮），于是列宽少约一成半、行高被下限压到 44dp（页面约 65–71dp），字没跟着变——
+ * 文字相对格子明显偏大，长课名多换一行就把教室挤出可见区。现在几何与页面同源，不会再漂移。
  *
  * [initialWeek] 来自 `SubpageScreen.SCHEDULE_SHARE` 的 focusItemId（进页时正在看的那一周）；
  * 缺省落到本周。切周是**页内局部状态**，不动主页面当前周。
@@ -250,166 +275,179 @@ fun ScheduleShareScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("导出为图片") },
-                navigationIcon = {
-                    IconButton(onClick = { if (!busy) onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
-        },
-        snackbarHost = { AppSnackbarHost(snackbar) },
-    ) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            if (state.loading) {
-                LoadingHint("正在准备课表", modifier = Modifier.fillMaxSize())
-                return@Column
-            }
+    // 整窗尺寸（含状态栏 / 手势条那一圈）：导出板的几何按窗口算，见上方「尺寸口径」。
+    // 不拿预览区反推（比窗口窄、高度也让不出网格区那一份），也不读 Configuration 的
+    // screenHeightDp（edge-to-edge 下扣不扣系统栏因版本而异）；量到的就是窗口本身。
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val windowWidth = maxWidth
+        val windowHeight = maxHeight
 
-            // ---- 周次条：切换只影响预览
-            WeekStepper(
-                week = previewWeek,
-                totalWeeks = totalWeeks,
-                rangeText = ScheduleShare.weekRangeText(
-                    weekDate(state.semester, previewWeek, visibleDays.firstOrNull() ?: 1),
-                    weekDate(state.semester, previewWeek, visibleDays.lastOrNull() ?: 7),
-                ),
-                enabled = !busy,
-                onChange = { week = it },
-            )
-
-            // ---- 预览区：板先按可用高度定行高（夹在 44–64dp），再整块缩放到装得下。
-            // 缩放只影响**显示**：截图取的是板自己那一层（`ShareBoard` 的 graphicsLayer），
-            // 分辨率不随预览缩放变化。不这么做的话小屏上 11 节按 40dp 下限仍放不下，
-            // 预览只能滚动，用户看不到整张图。
-            BoxWithConstraints(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                val dayHeaderHeight = maxOf(state.dayHeaderHeightDp.dp, typeSpec.headerMinDp.dp)
-                val gaps = gridGapsTotal(sectionCount)
-                val chrome = BoardPadding * 2 + BoardHeaderHeight + BoardHeaderGap +
-                    (if (includeFooter) BoardFooterGap + BoardFooterHeight else 0.dp)
-                val rowHeightDp = ScheduleShare.boardRowHeightDp(
-                    availableHeightDp = (maxHeight - chrome).value,
-                    fixedHeightDp = (dayHeaderHeight + gaps).value,
-                    sectionCount = sectionCount,
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                TopAppBar(
+                    title = { Text("导出为图片") },
+                    navigationIcon = {
+                        IconButton(onClick = { if (!busy) onBack() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
                 )
-                val layout = buildGridLayout(
-                    maxHeight = dayHeaderHeight + rowHeightDp.dp * sectionCount + gaps,
-                    // 减掉板内边距：网格是**板内**的内容，列宽必须按可用宽减掉左右 12dp 算，
-                    // 否则最后一列会被内边距挤出板外（实测「10/10」被裁成「10/1」）
-                    maxWidth = maxWidth - BoardPadding * 2,
-                    sectionCount = sectionCount,
-                    dayCount = days,
-                    // 导出板不吃「格子高度倍率」：那是为适配屏幕而生的，图要固定观感
-                    rowHeightScale = 1f,
-                    railWidth = state.railWidthDp.dp,
-                    dayHeaderHeight = dayHeaderHeight,
-                )
-                val boardWidth = layout.railWidth + layout.dayWidth * days + BoardPadding * 2
-                val boardHeight = chrome + dayHeaderHeight + layout.gridHeight
-                val scale = minOf(1f, maxWidth / boardWidth, maxHeight / boardHeight)
-                val board: @Composable () -> Unit = {
-                    ShareBoard(
-                        graphicsLayer = graphicsLayer,
-                        state = state,
-                        typeSpec = typeSpec,
-                        week = previewWeek,
-                        layout = layout,
-                        boardWidth = boardWidth,
-                        days = days,
-                        visibleDays = visibleDays,
-                        background = backgroundImage,
-                        includeFooter = includeFooter,
-                        cellStyle = gridCellStyle(state, typeSpec),
-                        todayDay = LocalDate.now().dayOfWeek.value,
-                    )
-                }
-                // 板按原始尺寸布局、只把**绘制**缩下来：`graphicsLayer` 不改布局，
-                // 所以缩放不会串到截图分辨率上（截图取的是板自己那一层）。
-                // 原点取中心：板在预览区里居中，缩完仍然居中，不会偏向一角。
-                Box(
-                    Modifier
-                        .requiredSize(boardWidth, boardHeight)
-                        .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                            transformOrigin = TransformOrigin.Center
-                        },
-                ) {
-                    board()
-                }
-            }
-
-            // ---- 选项
+            },
+            snackbarHost = { AppSnackbarHost(snackbar) },
+        ) { padding ->
             Column(
                 Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .fillMaxSize()
+                    .padding(padding),
             ) {
-                if (hasBackground) {
-                    ToggleRow(
-                        label = "保留课表背景图",
-                        checked = includeBackground,
-                        enabled = !busy,
-                        onChecked = { includeBackground = it },
-                    )
+                if (state.loading) {
+                    LoadingHint("正在准备课表", modifier = Modifier.fillMaxSize())
+                    return@Column
                 }
-                ToggleRow(
-                    label = "包含「水贝贝」脚注",
-                    checked = includeFooter,
-                    enabled = !busy,
-                    onChecked = { includeFooter = it },
-                )
-                if (backgroundLoading) {
-                    Text(
-                        "背景图载入中…",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                    )
-                }
-            }
 
-            // ---- 动作
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { startSave() },
-                    enabled = !busy && !backgroundLoading,
+                // ---- 周次条：切换只影响预览
+                WeekStepper(
+                    week = previewWeek,
+                    totalWeeks = totalWeeks,
+                    rangeText = ScheduleShare.weekRangeText(
+                        weekDate(state.semester, previewWeek, visibleDays.firstOrNull() ?: 1),
+                        weekDate(state.semester, previewWeek, visibleDays.lastOrNull() ?: 7),
+                    ),
+                    enabled = !busy,
+                    onChange = { week = it },
+                )
+
+                // ---- 预览区：板按**窗口**布局（与课表页同一份几何），装不下时只缩显示。
+                // 缩放只影响**显示**：截图取的是板自己那一层（`ShareBoard` 的 graphicsLayer），
+                // 分辨率不随预览缩放变化——板比预览区大照样出整屏级分辨率的图。
+                BoxWithConstraints(
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 48.dp),
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Icon(HugeIcons.ImageDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("保存到相册")
+                    val dayHeaderHeight = maxOf(state.dayHeaderHeightDp.dp, typeSpec.headerMinDp.dp)
+                    // 与课表页逐 dp 相同的网格几何：宽 = 窗口宽；可用高 = 课表页那一份预算
+                    //（窗口 − 状态栏 − 顶栏 − 底部净空，口径见 shareBoardGridHeightDp）。
+                    // 字号本来就同源（typeSpec），三者比例一致 = 图里就是屏幕上那一眼。
+                    val statusBarDp = with(LocalDensity.current) {
+                        WindowInsets.statusBars.getTop(this).toDp()
+                    }
+                    val navBarDp = with(LocalDensity.current) {
+                        WindowInsets.navigationBars.getBottom(this).toDp()
+                    }
+                    val layout = buildGridLayout(
+                        maxHeight = shareBoardGridHeightDp(
+                            windowHeight = windowHeight,
+                            statusBarHeight = statusBarDp,
+                            topBarHeight = TopBarHeight,
+                            bottomChrome = BoardBottomChrome + navBarDp,
+                        ),
+                        maxWidth = windowWidth,
+                        sectionCount = sectionCount,
+                        dayCount = days,
+                        rowHeightScale = state.rowHeightScale,
+                        railWidth = state.railWidthDp.dp,
+                        dayHeaderHeight = dayHeaderHeight,
+                    )
+                    val chrome = BoardPadding * 2 + BoardHeaderHeight + BoardHeaderGap +
+                        (if (includeFooter) BoardFooterGap + BoardFooterHeight else 0.dp)
+                    val boardWidth = layout.railWidth + layout.dayWidth * days + BoardPadding * 2
+                    val boardHeight = chrome + dayHeaderHeight + layout.gridHeight
+                    val scale = minOf(1f, maxWidth / boardWidth, maxHeight / boardHeight)
+                    val board: @Composable () -> Unit = {
+                        ShareBoard(
+                            graphicsLayer = graphicsLayer,
+                            state = state,
+                            typeSpec = typeSpec,
+                            week = previewWeek,
+                            layout = layout,
+                            boardWidth = boardWidth,
+                            days = days,
+                            visibleDays = visibleDays,
+                            background = backgroundImage,
+                            includeFooter = includeFooter,
+                            cellStyle = gridCellStyle(state, typeSpec),
+                            todayDay = LocalDate.now().dayOfWeek.value,
+                        )
+                    }
+                    // 板按原始尺寸布局、只把**绘制**缩下来：`graphicsLayer` 不改布局，
+                    // 所以缩放不会串到截图分辨率上（截图取的是板自己那一层）。
+                    // 原点取中心：板在预览区里居中，缩完仍然居中，不会偏向一角。
+                    Box(
+                        Modifier
+                            .requiredSize(boardWidth, boardHeight)
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                transformOrigin = TransformOrigin.Center
+                            },
+                    ) {
+                        board()
+                    }
                 }
-                Button(
-                    onClick = { startShare() },
-                    enabled = !busy && !backgroundLoading,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp),
+
+                // ---- 选项
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                 ) {
-                    Icon(HugeIcons.Share01, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("分享")
+                    if (hasBackground) {
+                        ToggleRow(
+                            label = "保留课表背景图",
+                            checked = includeBackground,
+                            enabled = !busy,
+                            onChecked = { includeBackground = it },
+                        )
+                    }
+                    ToggleRow(
+                        label = "包含「水贝贝」脚注",
+                        checked = includeFooter,
+                        enabled = !busy,
+                        onChecked = { includeFooter = it },
+                    )
+                    if (backgroundLoading) {
+                        Text(
+                            "背景图载入中…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+
+                // ---- 动作
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { startSave() },
+                        enabled = !busy && !backgroundLoading,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Icon(HugeIcons.ImageDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("保存到相册")
+                    }
+                    Button(
+                        onClick = { startShare() },
+                        enabled = !busy && !backgroundLoading,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Icon(HugeIcons.Share01, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("分享")
+                    }
                 }
             }
         }
@@ -543,21 +581,24 @@ private fun ShareBoard(
                 ),
             )
             Spacer(Modifier.height(BoardHeaderGap))
-            Row(Modifier.height(layout.dayHeaderHeight + layout.gridHeight)) {
-                TimeRail(
-                    layout = layout,
-                    slots = state.slots,
-                    monthLabel = weekDate(state.semester, week, visibleDays.firstOrNull() ?: 1)
-                        ?.let { "${it.monthValue}月" },
-                    railFontSp = typeSpec.railFontSp,
-                    dateFontSp = typeSpec.dateFontSp,
-                )
-                Box(
-                    Modifier
-                        .width(layout.dayWidth * days)
-                        .height(layout.dayHeaderHeight + layout.gridHeight),
-                ) {
-                    GridTypography(typeSpec.gridScale) {
+            // 整行（时间轴 + 网格）都包在 GridTypography 里：课表页就是这么包的，
+            // 时间轴 / 日期表头字号按课名倍率预除过（`GridTypeSpec` 口径）——只包 WeekPage
+            // 会让时间轴在「课名字号改过」时差一个倍率（默认档位看不出来）。
+            GridTypography(typeSpec.gridScale) {
+                Row(Modifier.height(layout.dayHeaderHeight + layout.gridHeight)) {
+                    TimeRail(
+                        layout = layout,
+                        slots = state.slots,
+                        monthLabel = weekDate(state.semester, week, visibleDays.firstOrNull() ?: 1)
+                            ?.let { "${it.monthValue}月" },
+                        railFontSp = typeSpec.railFontSp,
+                        dateFontSp = typeSpec.dateFontSp,
+                    )
+                    Box(
+                        Modifier
+                            .width(layout.dayWidth * days)
+                            .height(layout.dayHeaderHeight + layout.gridHeight),
+                    ) {
                         WeekPage(
                             week = week,
                             layout = layout,
