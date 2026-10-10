@@ -1742,8 +1742,9 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 **骑行状态的时序纪律**（2026-10-09，修用户报的「开车后要冷却才能锁车还车 / 骑行中显示
 锁状态未知 / 同车还车后立即再开、骑行时长有概率丢失」）：五件收口——① **开锁冷却 3 秒**
 （`UNLOCK_COOLDOWN_MS`）：开锁类动作（`unlock` / `retryUnlock` / `resumeRide`）**成功**才落
-`unlockCooldownUntil`（未确认不落，用户仍可锁车兜底），页面把锁车 / 还车置灰，开锁位不冷却
-（车侧「已解锁」上报异步，紧接着发物理写指令容易两头落空）；② **确认快照采纳**：
+`unlockCooldownUntil`（未确认不落，用户仍可锁车兜底），页面把锁车 / 还车置灰并在按钮上
+逐秒显示倒计时（「锁车 3s」，`unlockCooldownSecondsLeft` 向上取整；2026-10-10），开锁位
+不冷却（车侧「已解锁」上报异步，紧接着发物理写指令容易两头落空）；② **确认快照采纳**：
 `UnlockOutcome.Unlocked` 带上确认那一刻的订单快照（仓库层三处返回都带），`unlock` 直接摆上
 卡片（`adoptConfirmedUnlock`：没报「已锁」就按「已解锁」落位，与「无信息不保持悬置」同口径）；
 ③ **有界补全**（`syncAfterUnlock`，替换 `unlock` 成功路径的单次 `refreshInternal`——那份在
@@ -1755,6 +1756,12 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 丢弃、busy 期间直接跳过——晚到的旧包（回页查询撞上动作）不许覆盖动作后的新状态。另：还车
 时长按**订单结束时刻**（`endedAt`）算，不按动作后刷新时刻（扣款确认轮询最多 ~7.5 秒会把
 时长与本机记录多算一截）。
+**开锁成功先落界面再做善后**（2026-10-10 追加，修用户报的「响应完后停滞一会才弹骑行卡」）：
+`unlock` 的 Unlocked 分支先 `_state.update`（确认快照 + 冷却 + 离开结算态）并立即发成功触感，
+然后才做 `ensureReminderEnabled` / `startRideTimer` 与 Snackbar，最后 `syncAfterUnlock`——
+善后是一串 DataStore 读写与系统调用（排闹钟 / 起通知服务），旧顺序会把骑行卡挡在后面；
+但善后**不许**挪到 `syncAfterUnlock` 之后（补全最多 4.5 秒，通知栏倒计时会迟到）。
+车辆卡的「开锁」按钮同时给等待态（「开锁中…（已等 Ns）」+ 禁用，见 §3.9）。
 **弹窗开关带过渡，不瞬间抽动**（2026-10-03，用户口径「不要有突变跳动」）：material3 1.3.0 的
 `AlertDialog` 没有 compose 侧动画、compose 的 Dialog 窗口也没配 `windowAnimationStyle`，
 开与关都是硬切；现在由 `ui/common/DialogWindowFade.kt` 的 `DialogWindowFadeEffect` 把
@@ -1800,6 +1807,24 @@ API，第三方 App 无法代调**（支付分 App SDK 需商户侧把应用登�
 （`KvcxRideController.ensureFreeReminderEnabled`：开锁是"确定在骑行"的信号，关着就打开并在
 提示里说明；读偏好失败按"开着"处理，宁可不写不误开）；还车成功 → 手动「结束骑行」同口径
 （`endRide` + `burnPending(force=true)` 焚码）。
+
+**自动还车（2026-10-10 用户要求）**：账号登录方式下，用车满 15 分钟**前**自动发起还车，
+让订单在免费时段内结束——**触发点 = 开锁 + 15 分钟 − 提前量**（`EbikeAutoReturn.triggerAtMillis`），
+提前量 10~60 秒 / 步长 5 / 默认 30，**恒早于免费结束**（晚于免费时段的还车会开始计费，用户口径）。
+默认关；失败重试 1~3 次（默认 2，**上一次失败后 3 秒内重试**）、**每次尝试结果都发通知**
+（成功一条；失败写原因原文 + 第 i/N 次 + 是否重试），调度费与支付分授权（11035）不重试。
+还车判区只看**车辆上传到服务器的位置**（用户口径），执行时现查在案订单、用快照里的
+`Ride.lat`/`lng`，不碰手机定位；结算口径与手动还车共用 `performReturnBike`
+（本地走时在订单结束那一刻截停、扣款确认轮询、结果卡字段——**只允许一份**）。调度 =
+独立精确闹钟（requestCode 4004）+ 一次性 `EbikeAutoReturnWorker`（唯一名 `ebike_auto_return`，
+KEEP），同一轮只跑一次（`doneKey` 带计时起点；进页 / 账号页 / 开锁 `reconcile` 兜底，
+**设置变更不追补**已过触发点的这一轮），执行窗 = 触发点 ~ 免费结束后 5 分钟
+（`EbikeAutoReturn.isDue`），与免费时长提醒**两套独立开关**。**与「写操作零自动重试」的
+关系**：仓库层的零重试红线不变——重试是这条**用户显式开启**的自动功能自己的行为、次数由
+设置封顶；别据此给手动还车加重试。纯逻辑 `domain/EbikeAutoReturn.kt`、循环
+`ui/ebike/EbikeAutoReturnRunner.kt`（`EbikeAutoReturnTest` 钉住时序）、调度
+`ui/ebike/EbikeAutoReturnReminder.kt`、通知 `ui/ebike/EbikeAutoReturnNotifier.kt`
+（channel `ebike_auto_return`、id 1014、落点 2007）。
 
 **使用方式（2026-09-29 用户口径）**：账号与用车这一整套（登录、开锁 / 锁车 / 还车、本机骑行记录、
 地图上的「开锁」与「当前用车」卡）现在由一档显式设置把关——

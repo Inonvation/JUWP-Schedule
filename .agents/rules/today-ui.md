@@ -40,7 +40,7 @@
   `WaterAutoStart` 同一纪律）：**不要**改用 `SubpageRequest` 的字段——窗口链恢复会把请求
   重放，等于用户没点又被推进下单页。
 
-## 课表网格导出为图片（2026-10-09，DESIGN §4.12）
+## 课表网格导出为图片（2026-10-09；尺寸口径 2026-10-10 改，DESIGN §4.12）
 
 - 入口在课表页分享弹层第 4 行 → 二级页 `SubpageScreen.SCHEDULE_SHARE`（`ui/week/ScheduleShareScreen.kt`）。
   `focusItemId` 复用为「进页预览哪一周」；页内切周是**局部状态**，不动主页面当前周。
@@ -48,12 +48,15 @@
   **`drawWithContent` 必须挂在修饰符链最外层**——`record { drawContent() }` 只记录它内部的绘制，
   把 `clip`/`background`/背景图放在它之前，截出来的图底色就是透明的。
 - 板 = 可选背景图 + 板头（课表名 / 第 N 周 / 日期范围）+ `TimeRail` + `WeekPage` + 可选脚注；
-  **顶栏、底栏、悬浮按钮、Snackbar 一律不进图**。板固定 `rowHeightScale = 1f`、不画非本周灰态与
-  当前时刻线、空白格不可点（`tapBlankToAdd = false`）。
-- 尺寸：板宽 = 预览可用宽 − `BoardPadding × 2`（列宽必须按**减掉内边距**的宽度算，否则最后一列被
-  内边距挤出板外）；行高由 `ScheduleShare.boardRowHeightDp` 从可用高度反推并夹在 44–64dp。
-  预览按可用区缩放，**缩放只走 `graphicsLayer`**（不改布局）→ 截图仍是板原始分辨率，别用会改布局的
-  缩放（`size()`/`requiredSize` 组合错一处，预览与导出图就对不上）。
+  **顶栏、底栏、悬浮按钮、Snackbar 一律不进图**。板不画非本周灰态与当前时刻线、空白格不可点
+  （`tapBlankToAdd = false`）。
+- 尺寸口径：**板 = 课表页的网格在同窗口下的样子**——板宽按**窗口宽**算、行高走与课表页同一份
+  `buildGridLayout` 输入（网格可用高 = 窗口高 − 状态栏 − 顶栏 − 底部净空，
+  `WeekGridLayout.shareBoardGridHeightDp`）、字号走同一份 `rememberGridTypeSpec`。
+  **别退回「按预览区算」**：预览区比课表页的网格区窄（左右留白 + 板内边距）又矮（要装板头 / 选项 /
+  按钮），字却是屏幕那一份，图里文字就相对格子偏大、长课名多截一行教室（2026-10-10 用户报障根因）。
+  预览按可用区缩放，**缩放只走 `graphicsLayer`**（不改布局）→ 截图仍是板原始分辨率（整屏级，
+  1101×2289 @ 1080 屏），别用会改布局的缩放（`size()`/`requiredSize` 组合错一处，预览与导出图就对不上）。
 - 出口两条：保存到相册 = `ui/common/BitmapSave.kt`（MediaStore `Pictures/水贝贝`，与单车出码共用）；
   分享 = `data/repo/ScheduleShareStore.kt`（`cacheDir/schedule_share/` + FileProvider 的
   `schedule_share` 根，只留最近 5 份）。
@@ -61,7 +64,8 @@
   状态栏，底部按钮被挤出屏幕，`decorFitsSystemWindows` 开关无效。二级页的 Activity 窗口 insets
   是本项目已经跑通的形态。
 - 网格排版参数走 `rememberGridTypeSpec`（`ui/week/GridTypeSpec.kt`）——页面与导出板**必须**同一份，
-  两处各算一遍必然漂移。
+  两处各算一遍必然漂移。`GridTypography` 要包**整行**（`TimeRail` + `WeekPage`）：课表页就是这么包的，
+  时间轴字号按课名倍率预除过，只包 `WeekPage` 会在「课名字号改过」时让时间轴差一个倍率。
 
 ## 可见星期序列
 
