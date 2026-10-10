@@ -1327,6 +1327,18 @@ DESIGN §3.9 / §4.32，规则见 `.agents/rules/ebike.md`「开锁的两段等�
 重试判定 / 循环时序），`KvcxRideControllerTest` +2（开锁排自动还车、未确认不排），全量
 **1759 例 0 失败** + `assembleDebug` 通过；设备未在线，待装机点验（见下表）。
 
+许可审计与标识权收尾（2026-10-10，非功能改动）：① **第三方许可审计**——把 kqcx-bikemap(AGPL)
+/ NcepuJw(GPL) / quzhi-lite / linyu / light-life 等参考实现逐模块对照，结论**无 GPL/AGPL
+移植**（重叠仅接口事实：端点 / 字段名 / HTTP 头 / 公开算法，无实现代码），**无需改仓库许可**；
+报告在本地 `docs/license-audit/`（gitignore，不入库）。② **移除校徽**——`AccountCard`
+（教务账户页 / 一卡通设置页共用）与「我的」页账户卡原先的 40dp 校徽圆标
+（`ic_school_emblem.png`）全部移除、资源文件删除，账户卡改无头像布局（DESIGN §3.3「校徽移除」）。
+③ **第三方协议注释中性化**——20 个文件里「反汇编 / 逆向 / 抓包 / 看雪」等来源自证表述与
+`.rodata` 偏移、符号名改为中性协议分析口径，**不改变任何行为**；4 处刻意保留（2 处
+「公开 JS 常量，非逆向所得」是免责性的，2 处面向用户的声明）。④ **「使用前须知」加后回退**
+——曾加入周期声明（每 3 天必弹、不可永久关闭），随后整笔 `git revert` 撤销（用户口径：
+自用不需要）；`git revert` 不改历史，反向提交抵消。⑤ **发版 2.7.0 并转私有**——见「仓库与发版」。
+
 ### 待真机点验（未闭环）
 
 2026-09-29 起累计 26 项改动只过了编译 + 单测（全量 1452 例 0 失败），真机点验一直挂着
@@ -1414,7 +1426,12 @@ DESIGN §3.9 / §4.32，规则见 `.agents/rules/ebike.md`「开锁的两段等�
 
 ## 仓库与发版
 
-- 公开仓库：https://github.com/Inonvation/JUWP-Schedule （MIT）
+- **仓库已转私有**（2026-10-10）：`Inonvation/JUWP-Schedule` 由公开改为私有，**停止分发**
+  （2026-10-10 发 2.7.0 → 删除全部旧 release → 转私有）。**连带影响（均未修，用户口径：自用）**：
+  ① 应用内「检查更新」失效（依赖 `docs-public/update/latest.json` 的公开镜像，`RepoMirror`
+  三条源全基于公开仓库）；② 「校历」的仓库镜像兜底失效（主源 = 教务处官网仍可用）；
+  ③ 关于页「开源仓库」行成死链；④ 用户须知 / 免责声明里「请认准 GitHub 官方仓库下载」文案
+  悬空。**本地仓库照常**（提交 / 推送走已认证凭证），只是远端不再公开可见。
 - **不入库**（已 gitignore，本地保留）：`scripts/out/`（含真实学号/姓名/会话）、
   `scripts/_archive/`、`docs/`、`scripts/gen_week_layout_preview.py`、`release.jks`、`keystore.properties`
 - 发版流程见 `.agents/skills/publish-release/SKILL.md`；图标查名见 `.agents/skills/find-hugeicons/SKILL.md`
