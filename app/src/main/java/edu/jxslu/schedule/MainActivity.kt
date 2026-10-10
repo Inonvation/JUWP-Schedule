@@ -67,7 +67,6 @@ import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
-import edu.jxslu.schedule.ui.common.LegalNoticeHost
 import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
 import edu.jxslu.schedule.ui.me.hub.UpdateAvailableDialogHost
 import kotlinx.coroutines.runBlocking
@@ -169,11 +168,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             JuwRoot {
-                Box(Modifier.fillMaxSize()) {
-                    JuwApp(pendingRoute = pendingRoute, pendingSubpages = pendingSubpages)
-                    // 「使用前须知」周期声明：挂在根层，任何页面之上都能弹（DESIGN §3.16）
-                    LegalNoticeHost()
-                }
+                JuwApp(pendingRoute = pendingRoute, pendingSubpages = pendingSubpages)
             }
         }
     }
