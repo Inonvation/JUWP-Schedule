@@ -11,7 +11,8 @@ import kotlinx.coroutines.flow.Flow
 /**
  * 本机骑行记录（DESIGN §3.9「最近骑行」，2026-09-28；表 `ride_records`，DB v16）。
  *
- * 写入时机只有一处：本机还车成功（`KvcxRideController.returnBike` → `KvcxSideEffects.recordRide`）。
+ * 写入时机只有两处，且共用同一个出口（`KvcxSideEffects.recordRide`）：手动还车
+ * （`KvcxRideController.returnBike`）与自动还车（`EbikeAutoReturnReminder.run`）。
  * 只记本机用车这条链路，理由见 `domain/RideRecord.kt` 的 KDoc。
  *
  * [startAt] 由 `endAt - durationSeconds` 反推（快趣只给"已骑秒数"，不给开锁时刻），

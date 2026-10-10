@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.domain.EbikeAutoReturn
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
@@ -80,6 +81,12 @@ data class EbikePrefsSnapshot(
      * 而滞后的方向是会弹窗——保守那一侧）。
      */
     val unlockConfirm: Boolean = true,
+    /** 用车满 15 分钟自动还车开关（DESIGN §3.9，默认关）。 */
+    val autoReturnEnabled: Boolean = false,
+    /** 自动还车的触发提前量（秒，10~60 步长 5，默认 30）。 */
+    val autoReturnLeadSeconds: Int = EbikeAutoReturn.DEFAULT_LEAD_SECONDS,
+    /** 自动还车的失败重试次数（1~3，默认 2）。 */
+    val autoReturnRetries: Int = EbikeAutoReturn.DEFAULT_RETRIES,
 )
 
 sealed interface EbikeEvent {
@@ -136,6 +143,9 @@ class EbikeViewModel(
         prefs.ebikeRideStartAt,
         prefs.ebikeUseMode,
         prefs.ebikeUnlockConfirm,
+        prefs.ebikeAutoReturnEnabled,
+        prefs.ebikeAutoReturnLeadSeconds,
+        prefs.ebikeAutoReturnRetries,
     ) { array ->
         val autoSave = array[0] as Boolean
         val burnAfterScan = array[1] as Boolean
@@ -147,6 +157,9 @@ class EbikeViewModel(
         val rideStartAt = array[6] as Long
         val useMode = array[7] as EbikeUseMode
         val unlockConfirm = array[8] as Boolean
+        val autoReturnEnabled = array[9] as Boolean
+        val autoReturnLeadSeconds = array[10] as Int
+        val autoReturnRetries = array[11] as Int
         EbikePrefsSnapshot(
             autoSave = autoSave,
             burnAfterScan = burnAfterScan,
@@ -157,6 +170,9 @@ class EbikeViewModel(
             rideStartAt = rideStartAt,
             useMode = useMode,
             unlockConfirm = unlockConfirm,
+            autoReturnEnabled = autoReturnEnabled,
+            autoReturnLeadSeconds = autoReturnLeadSeconds,
+            autoReturnRetries = autoReturnRetries,
         )
     }.stateIn(
         viewModelScope,
@@ -171,10 +187,29 @@ class EbikeViewModel(
         }
     }
 
+    /**
+     * 自动还车设置变更（开关 / 提前量 / 重试次数）→ 重算排程。
+     * `catchUp = false`：设置变更**不追补**触发点已过的这一轮（详见
+     * [EbikeAutoReturnReminder.reconcile]）——刚打开开关不该让 App 立刻还车。
+     */
+    fun onAutoReturnChanged() {
+        viewModelScope.launch {
+            EbikeAutoReturnReminder.reconcile(Graph.appContext, catchUp = false)
+        }
+    }
+
     /** 通知权限授予后的续跑：把进行中的计时的常驻倒计时与提醒补上（开关开着才做）。 */
     fun onReminderPermissionGranted() {
         viewModelScope.launch {
             emitReminderNotice(EbikeFreeRideReminder.check(Graph.appContext))
+        }
+    }
+
+    init {
+        // 进页兜底：自动还车闹钟被 ROM 丢掉（或被后台限制清掉）时补跑一次；
+        // 已执行过的这一轮由 doneKey 挡掉，幂等（同「周期核对」的兜底口径）
+        viewModelScope.launch {
+            EbikeAutoReturnReminder.reconcile(Graph.appContext)
         }
     }
 
@@ -221,6 +256,8 @@ class EbikeViewModel(
     fun onEndRide() {
         viewModelScope.launch {
             val outcome = EbikeFreeRideReminder.endRide(Graph.appContext)
+            // 本机计时都结束了，自动还车没有计时起点可依——撤掉（幂等）
+            EbikeAutoReturnReminder.cancel(Graph.appContext)
             burnPending(force = true)
             _events.send(
                 when (outcome) {

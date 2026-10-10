@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.EbikeAutoReturn
 import edu.jxslu.schedule.domain.EbikeCapabilities
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.capabilities
@@ -46,6 +48,7 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberSheetDismisser
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.ChevronRight
@@ -137,6 +140,8 @@ internal fun EbikeSettingsSheet(
                     if (prefs.useMode.isAccount && loggedIn) append(" · 已登录")
                     append(" · 免费提醒")
                     append(if (prefs.freeReminderEnabled) "开" else "关")
+                    // 自动还车只有账号方式才有意义：切到小程序方式后开关虽在，但排程已撤
+                    if (prefs.useMode.isAccount && prefs.autoReturnEnabled) append(" · 自动还车开")
                     cacheUsage?.takeIf { !it.isEmpty }?.let {
                         append(" · 地图缓存 ").append(EbikeMapCache.sizeLabel(it.totalBytes))
                     }
@@ -153,6 +158,11 @@ internal fun EbikeSettingsSheet(
                 // 先让弹层滑走再进账号页，中间不留"弹层突然没了"的那一帧
                 KvcxAccountRow(loggedIn = loggedIn, onClick = { dismiss { onOpenKvcxAccount() } })
                 RideConfirmSettingsSection(prefs = prefs)
+                AutoReturnSettingsSection(
+                    prefs = prefs,
+                    onAutoReturnChanged = viewModel::onAutoReturnChanged,
+                    withNotificationPermission = withNotificationPermission,
+                )
             }
 
             CodeSettingsSection(prefs = prefs)
@@ -314,6 +324,129 @@ private fun RideConfirmSettingsSection(prefs: EbikePrefsSnapshot) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+        )
+    }
+}
+
+/**
+ * 「自动还车」区（2026-10-10 用户要求）：账号登录方式下，用车满 15 分钟前自动发起还车。
+ *
+ * 默认关；开启后默认在满 15 分钟前 30 秒触发（10~60 秒可调，步长 5 秒）——触发点必须
+ * 落在免费时段内，否则还车完成时订单已开始计费（用户口径）。失败**每次都会通知**
+ * 并按「重试次数」自动重试（1~3 次，默认 2；上一次失败后 3 秒内重试）。
+ *
+ * 只在 `caps.inAppRide`（账号方式）里出现：小程序方式没有 App 内还车这回事。
+ */
+@Composable
+private fun AutoReturnSettingsSection(
+    prefs: EbikePrefsSnapshot,
+    onAutoReturnChanged: () -> Unit,
+    withNotificationPermission: (() -> Unit) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var enabled by remember(prefs.autoReturnEnabled) { mutableStateOf(prefs.autoReturnEnabled) }
+    var leadSeconds by remember(prefs.autoReturnLeadSeconds) {
+        mutableStateOf(prefs.autoReturnLeadSeconds)
+    }
+    SettingsSection(
+        title = "自动还车",
+        subtitle = "用车满 ${EbikeFreeRide.FREE_MINUTES} 分钟前自动还车，让订单在免费时段内结束；" +
+            "每次失败都会通知并自动重试。",
+    ) {
+        SettingSwitchRow(
+            title = "用车满 ${EbikeFreeRide.FREE_MINUTES} 分钟自动还车",
+            subtitle = "默认关。开启后在满 ${EbikeFreeRide.FREE_MINUTES} 分钟前自动还车；" +
+                "需已登录快趣账号；车辆不在还车点等失败会通知。还车判定以车辆上传的位置为准",
+            checked = enabled,
+            onCheckedChange = { checked ->
+                enabled = checked
+                scope.launch {
+                    Graph.displayPrefs(context).setEbikeAutoReturnEnabled(checked)
+                    onAutoReturnChanged()
+                }
+                // 结果要发通知：开启时顺手要一次通知权限（关闭是撤能力，不要权限）
+                if (checked) withNotificationPermission { onAutoReturnChanged() }
+            },
+        )
+        if (enabled) {
+            AutoReturnLeadSlider(
+                value = leadSeconds,
+                onValueChange = { leadSeconds = it },
+                onValueChangeFinished = {
+                    scope.launch {
+                        Graph.displayPrefs(context).setEbikeAutoReturnLeadSeconds(leadSeconds)
+                        onAutoReturnChanged()
+                    }
+                },
+            )
+            SettingChoiceRow(
+                title = "失败重试次数",
+                subtitle = "每次失败都会发通知；上一次失败后 3 秒内重试",
+                options = (EbikeAutoReturn.RETRY_MIN..EbikeAutoReturn.RETRY_MAX).map { "$it 次" },
+                selectedIndex = prefs.autoReturnRetries - EbikeAutoReturn.RETRY_MIN,
+                onSelect = { index ->
+                    scope.launch {
+                        Graph.displayPrefs(context)
+                            .setEbikeAutoReturnRetries(index + EbikeAutoReturn.RETRY_MIN)
+                        onAutoReturnChanged()
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 自动还车提前量滑块（10~60 秒，步长 5；默认 30）。
+ *
+ * 拖动中只改本地值，**松手才落盘**（`onValueChangeFinished`）：DataStore 每动一下就写
+ * 会让整张设置弹层跟着重组（prefs 是 stateIn 快照），拖起来发飘。
+ */
+@Composable
+private fun AutoReturnLeadSlider(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "触发提前量",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "在满 ${EbikeFreeRide.FREE_MINUTES} 分钟前多少秒发起自动还车",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Text(
+                text = "$value 秒",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onValueChange(EbikeAutoReturn.coerceLeadSeconds(it.roundToInt())) },
+            onValueChangeFinished = onValueChangeFinished,
+            valueRange = EbikeAutoReturn.LEAD_MIN_SECONDS.toFloat()..
+                EbikeAutoReturn.LEAD_MAX_SECONDS.toFloat(),
+            steps = (EbikeAutoReturn.LEAD_MAX_SECONDS - EbikeAutoReturn.LEAD_MIN_SECONDS) /
+                EbikeAutoReturn.LEAD_STEP_SECONDS - 1,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp, bottom = 6.dp),
         )
     }
 }

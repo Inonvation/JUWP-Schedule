@@ -114,6 +114,11 @@ class KvcxViewModel(
                 recheckUnsettledRecords()
             }
         }
+        // 自动还车兜底：进账号页也做一次对账（闹钟丢了补跑 / 退出登录、切方式后撤销），
+        // 幂等，见 [EbikeAutoReturnReminder.reconcile]
+        viewModelScope.launch {
+            EbikeAutoReturnReminder.reconcile(Graph.appContext)
+        }
     }
 
     /** 当前是否账号登录方式（读原始流；读失败按「不是」处理，宁可不查）。 */
@@ -148,6 +153,8 @@ class KvcxViewModel(
                 refreshRide()
                 refreshAssets()
                 recheckUnsettledRecords()
+                // 登录成功后按设置重排自动还车（登录前它不会排）
+                EbikeAutoReturnReminder.reconcile(Graph.appContext)
             }
             .onFailure {
                 _uiState.update { it.copy(loggingIn = false) }
@@ -157,6 +164,10 @@ class KvcxViewModel(
 
     fun logout() {
         session.logout()
+        // 退出登录后凭证没了：自动还车排着也执行不了，撤销（reconcile 内部按登录态判断）
+        viewModelScope.launch {
+            EbikeAutoReturnReminder.reconcile(Graph.appContext)
+        }
         // 仓库流会回灌归零；这里不重复改 uiState
     }
 

@@ -19,6 +19,7 @@ import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.BikeMapViewport
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
+import edu.jxslu.schedule.domain.EbikeAutoReturn
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
@@ -1058,6 +1059,36 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 用车满 15 分钟自动还车开关（DESIGN §3.9，2026-10-10）。**默认关**：
+     * 它会替用户执行有计费后果的写动作（自动还车），只能显式开启。
+     */
+    val ebikeAutoReturnEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_AUTO_RETURN_ENABLED] ?: false
+    }
+
+    /** 自动还车的触发提前量（秒，10~60 步长 5）。读路径吸附，防线脏数据。 */
+    val ebikeAutoReturnLeadSeconds: Flow<Int> = context.displayDataStore.data.map { p ->
+        EbikeAutoReturn.coerceLeadSeconds(
+            p[KEY_EBIKE_AUTO_RETURN_LEAD_SECONDS] ?: EbikeAutoReturn.DEFAULT_LEAD_SECONDS,
+        )
+    }
+
+    /** 自动还车的失败重试次数（1~3）。读路径吸附。 */
+    val ebikeAutoReturnRetries: Flow<Int> = context.displayDataStore.data.map { p ->
+        EbikeAutoReturn.coerceRetries(
+            p[KEY_EBIKE_AUTO_RETURN_RETRIES] ?: EbikeAutoReturn.DEFAULT_RETRIES,
+        )
+    }
+
+    /**
+     * 自动还车的「已执行」键（唯一实现 [EbikeAutoReturn.doneKey]）。同一轮骑行只跑一次：
+     * 成功、重试用尽、不该重试的失败都落这个键；换车（新起点）自然换键。
+     */
+    val ebikeAutoReturnDoneKey: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_AUTO_RETURN_DONE_KEY] ?: ""
+    }
+
+    /**
      * 日历同步的提前提醒分钟数（DESIGN §4.12）。全局项，默认 20，0 = 不提醒。
      * 值域 0–120 / 步长 5 的口径单一来源是 [CalendarSyncDefaults]，读路径先夹取防线。
      */
@@ -1597,6 +1628,30 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_RIDE_START_AT] = value }
     }
 
+    /** 用车满 15 分钟自动还车开关（DESIGN §3.9；语义见 [ebikeAutoReturnEnabled]）。 */
+    suspend fun setEbikeAutoReturnEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_EBIKE_AUTO_RETURN_ENABLED] = value }
+    }
+
+    /** 自动还车触发提前量（秒，10~60 步长 5；语义见 [ebikeAutoReturnLeadSeconds]）。 */
+    suspend fun setEbikeAutoReturnLeadSeconds(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_EBIKE_AUTO_RETURN_LEAD_SECONDS] = EbikeAutoReturn.coerceLeadSeconds(value)
+        }
+    }
+
+    /** 自动还车失败重试次数（1~3；语义见 [ebikeAutoReturnRetries]）。 */
+    suspend fun setEbikeAutoReturnRetries(value: Int) {
+        context.displayDataStore.edit {
+            it[KEY_EBIKE_AUTO_RETURN_RETRIES] = EbikeAutoReturn.coerceRetries(value)
+        }
+    }
+
+    /** 记下自动还车已对某轮骑行执行过（键由 [EbikeAutoReturn.doneKey] 生成）。 */
+    suspend fun setEbikeAutoReturnDoneKey(value: String) {
+        context.displayDataStore.edit { it[KEY_EBIKE_AUTO_RETURN_DONE_KEY] = value }
+    }
+
     /**
      * 免费时长提醒已发键的统一写入口（DESIGN §3.9）：读-改-写整个集合，同值跳写
      * （口径同 [updateEbikePendingDelete]）。清空用 `{ emptySet() }`。
@@ -2049,6 +2104,12 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_JW_DESKTOP_MODE = booleanPreferencesKey("jw_desktop_mode")
         val KEY_EBIKE_FREE_LEAD = intPreferencesKey("ebike_free_lead_minutes")
         val KEY_EBIKE_RIDE_START_AT = longPreferencesKey("ebike_ride_start_at")
+        // 用车满 15 分钟自动还车（DESIGN §3.9，2026-10-10）：开关 / 触发提前量（秒）/
+        // 失败重试次数 / 「已执行」键（同一轮骑行只跑一次，见 EbikeAutoReturn.doneKey）。
+        val KEY_EBIKE_AUTO_RETURN_ENABLED = booleanPreferencesKey("ebike_auto_return_enabled")
+        val KEY_EBIKE_AUTO_RETURN_LEAD_SECONDS = intPreferencesKey("ebike_auto_return_lead_seconds")
+        val KEY_EBIKE_AUTO_RETURN_RETRIES = intPreferencesKey("ebike_auto_return_retries")
+        val KEY_EBIKE_AUTO_RETURN_DONE_KEY = stringPreferencesKey("ebike_auto_return_done_key")
 
         // 2026-09-24 提醒改回 App 通知：日历事件 id（ebike_free_event_id）随之停用，
         // 键定义一并删掉——旧设备上的残留值没人读，也不会自己消失，但无害。

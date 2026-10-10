@@ -14,6 +14,7 @@ import edu.jxslu.schedule.ui.ebike.LocateResult
 import edu.jxslu.schedule.ui.ebike.UNLOCK_COOLDOWN_MS
 import edu.jxslu.schedule.ui.ebike.kvcxConfirmDialog
 import edu.jxslu.schedule.ui.ebike.rideElapsedSeconds
+import edu.jxslu.schedule.ui.ebike.unlockCooldownSecondsLeft
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -125,15 +126,24 @@ class KvcxRideControllerTest {
 
     private class FakeEffects(private val reminderWasOff: Boolean = false) : KvcxSideEffects {
         var startedTimer = 0
+        var scheduledAutoReturn = 0
         var endedRide = 0
         val recorded = mutableListOf<KvcxReturnSummary>()
 
+        /** 计时善后被调起时的钩子：测「界面先行」顺序（此刻骑行卡应已落 UI）。 */
+        var onStartTimer: (() -> Unit)? = null
+
         override suspend fun startRideTimer(): Pair<String, NoticeTone> {
             startedTimer++
+            onStartTimer?.invoke()
             return "已开始计时，通知栏已显示倒计时" to NoticeTone.Success
         }
 
         override suspend fun ensureReminderEnabled(): Boolean = reminderWasOff
+
+        override suspend fun scheduleAutoReturn() {
+            scheduledAutoReturn++
+        }
 
         override suspend fun endRideAndBurn() {
             endedRide++
@@ -194,6 +204,53 @@ class KvcxRideControllerTest {
 
         assertEquals(1, effects.startedTimer)
         assertEquals("已开锁；已开始计时，通知栏已显示倒计时", notices.single().first)
+    }
+
+    @Test
+    fun `开锁成功排自动还车`() {
+        // 自动还车的触发点 = 计时起点 + 15 分钟 − 提前量：必须和计时同刻排（见
+        // EbikeAutoReturnReminder）。开关关着时副作用实现里是空操作，但编排层要保证
+        // 每次都调用——漏掉就是"开了开关也不生效"
+        val session = FakeSession()
+        val effects = FakeEffects()
+        val kvcx = controller(session, effects)
+
+        kvcx.unlock("100000669")
+
+        assertEquals(1, effects.scheduledAutoReturn)
+        assertEquals(1, effects.startedTimer)
+    }
+
+    @Test
+    fun `开锁未确认不排自动还车`() {
+        // 没确认开锁 = 定时器都没起（见上面的用例）：自动还车没有起点可依，也不能排
+        val session = FakeSession()
+        val effects = FakeEffects()
+        session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
+        val kvcx = controller(session, effects)
+
+        kvcx.unlock("100000669")
+
+        assertEquals(0, effects.scheduledAutoReturn)
+        assertEquals(0, effects.startedTimer)
+    }
+
+    @Test
+    fun `开锁成功先落界面再做善后`() {
+        // 2026-10-10 用户口径「响应完后停滞一会才弹骑行卡」：确认快照必须先落 UI，
+        // 善后（开关 / 计时 / 通知）跟在后面——把 update 挪回善后之后就是那段可见的停顿
+        val session = FakeSession()
+        session.unlockResult = {
+            UnlockOutcome.Unlocked("100000669", helmetFlow = false, ride = ride(locked = false))
+        }
+        val effects = FakeEffects()
+        val kvcx = controller(session, effects)
+        var rideVisibleWhenTimerStarted = false
+        effects.onStartTimer = { rideVisibleWhenTimerStarted = kvcx.state.value.ride != null }
+
+        kvcx.unlock("100000669")
+
+        assertTrue(rideVisibleWhenTimerStarted)
     }
 
     @Test
@@ -315,6 +372,20 @@ class KvcxRideControllerTest {
         kvcxRetry.query(quiet = true)
         kvcxRetry.retryUnlock()
         assertTrue(kvcxRetry.state.value.unlockCooldownUntil > 0L)
+    }
+
+    @Test
+    fun `冷却剩余秒数向上取整且到点归零`() {
+        // 还剩 3 秒整：显示 3（页面据此把「锁车 / 还车」写成「锁车 3s」）
+        assertEquals(3, unlockCooldownSecondsLeft(until = 3_000L, now = 0L))
+        // 2.1 秒：向上取整到 3，不提前跳 0（数字宁可多显示一下）
+        assertEquals(3, unlockCooldownSecondsLeft(until = 3_000L, now = 900L))
+        assertEquals(2, unlockCooldownSecondsLeft(until = 3_000L, now = 1_000L))
+        assertEquals(1, unlockCooldownSecondsLeft(until = 3_000L, now = 2_999L))
+        // 到点 / 无冷却 / 时钟回拨：一律 0
+        assertEquals(0, unlockCooldownSecondsLeft(until = 3_000L, now = 3_000L))
+        assertEquals(0, unlockCooldownSecondsLeft(until = 0L, now = 5_000L))
+        assertEquals(0, unlockCooldownSecondsLeft(until = 1_000L, now = 9_000L))
     }
 
     @Test
@@ -734,6 +805,63 @@ class KvcxRideControllerTest {
         kvcx.dismissReturnSummary()
 
         assertNull(kvcx.state.value.returnSummary)
+    }
+
+    @Test
+    fun `重新开锁成功清掉还车结算卡`() {
+        // 结算卡上的「重新使用该车」（2026-10-10）：开锁成功 = 离开结算态，否则
+        // 「已还车」的卡片会和在案订单并存
+        val session = FakeSession()
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+        session.underway = null
+        kvcx.returnBike()
+        assertNotNull(kvcx.state.value.returnSummary)
+
+        session.unlockResult = {
+            UnlockOutcome.Unlocked("100000669", helmetFlow = false, ride = ride(locked = false))
+        }
+        kvcx.unlock("100000669")
+
+        assertNull(kvcx.state.value.returnSummary)
+        assertNotNull(kvcx.state.value.ride)
+        assertTrue(kvcx.state.value.unlockCooldownUntil > 0L)
+    }
+
+    @Test
+    fun `重新开锁未确认也清掉还车结算卡`() {
+        // 订单已创建（只是没确认到锁）：同样离开结算态——「已还车」的卡片不能与在案订单并存
+        val session = FakeSession()
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+        session.underway = null
+        kvcx.returnBike()
+        assertNotNull(kvcx.state.value.returnSummary)
+
+        // 新订单在案、锁未确认（刷新到「已锁」快照，悬置保持）
+        session.underway = ride(locked = true)
+        session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
+        kvcx.unlock("100000669")
+
+        assertNull(kvcx.state.value.returnSummary)
+        assertTrue(kvcx.state.value.unlockPending)
+    }
+
+    @Test
+    fun `重新开锁失败保留还车结算卡`() {
+        // 失败可原地重试：结算卡不许被清（清卡只在成功 / 未确认两条路径上）
+        val session = FakeSession()
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+        session.underway = null
+        kvcx.returnBike()
+        assertNotNull(kvcx.state.value.returnSummary)
+
+        session.unlockResult = { throw IOException("断网") }
+        kvcx.unlock("100000669")
+
+        assertNotNull(kvcx.state.value.returnSummary)
+        assertEquals(NoticeTone.Error, notices.last().second)
     }
 
     @Test

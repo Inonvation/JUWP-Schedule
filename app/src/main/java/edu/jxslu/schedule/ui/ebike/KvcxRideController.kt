@@ -45,6 +45,17 @@ import java.util.Locale
 internal const val UNLOCK_COOLDOWN_MS = 3_000L
 
 /**
+ * 冷却剩余秒数（2026-10-10 倒计时显示引入；纯函数，单测锁定）：
+ * `until - now` **向上取整**到整秒——还剩 2.1 秒显示 3s，数字宁可多显示一下、不提前
+ * 跳 0；≤ 0（无冷却 / 已结束 / 时钟回拨）一律回 0。
+ */
+internal fun unlockCooldownSecondsLeft(until: Long, now: Long): Int {
+    val remain = until - now
+    if (remain <= 0L) return 0
+    return ((remain + 999L) / 1000L).toInt()
+}
+
+/**
  * 开锁成功后的**对账 / 补全**次数与间隔（见 [KvcxRideController.syncAfterUnlock]）。
  *
  * 第一拍立即发（就是原来的"动作后刷新"），之后每 [UNLOCK_SYNC_INTERVAL_MS] 一拍；
@@ -107,7 +118,8 @@ data class KvcxRideState(
      * 2026-10-09 用户口径「开车后冷却三秒才能锁车还车」：开锁指令发出后车侧上报是异步的
      * （见 [UNLOCK_COOLDOWN_MS]），冷却期内这两个物理写动作在 UI 上置灰。
      * 开锁类动作成功（[unlock] / [retryUnlock] / [resumeRide]）都会刷新它；
-     * **不是失败态**，只是一道节流闸，页面按墙钟自解（不写回 0 也没关系，过期即失效）。
+     * **不是失败态**，只是一道节流闸：页面按 [unlockCooldownSecondsLeft] 逐秒显示倒计时
+     * （2026-10-10），过期即失效（不写回 0 也没关系）。
      */
     val unlockCooldownUntil: Long = 0L,
     /**
@@ -179,7 +191,14 @@ internal interface KvcxSideEffects {
     /** 提醒开关关着就打开（返回 true = 本次打开了）；开锁是"确定在骑行"的信号。 */
     suspend fun ensureReminderEnabled(): Boolean
 
-    /** 还车善后：收计时（撤闹钟/停服务/清通知）+ 焚毁相册里的码。 */
+    /**
+     * 开锁成功（新一轮骑行开始）：按「自动还车」设置排精确闹钟。
+     * 与 [startRideTimer] 同一刻调用——自动还车的触发点是「计时起点 + 15 分钟 − 提前量」，
+     * 必须先有计时起点。开关关着时是一次空操作。
+     */
+    suspend fun scheduleAutoReturn()
+
+    /** 还车善后：收计时（撤闹钟/停服务/清通知）+ 焚毁相册里的码 + 撤销自动还车闹钟。 */
     suspend fun endRideAndBurn()
 
     /** 记一条本机骑行记录（只有本机用车这条链路数据是齐的）。 */
@@ -199,8 +218,17 @@ internal object AppKvcxSideEffects : KvcxSideEffects {
         return true
     }
 
+    override suspend fun scheduleAutoReturn() {
+        // 上一轮的结果通知先撤掉（「已自动还车」不能与新一轮骑行并存），再按设置收口：
+        // 排闹钟 / 到点补跑 / 开关关着时撤销
+        EbikeAutoReturnNotifier.cancel(Graph.appContext)
+        EbikeAutoReturnReminder.reconcile(Graph.appContext)
+    }
+
     override suspend fun endRideAndBurn() {
         EbikeFreeRideReminder.endRide(Graph.appContext)
+        // 订单已经结束：自动还车再排着也没有对象可还
+        EbikeAutoReturnReminder.cancel(Graph.appContext)
         burnPendingCodes(Graph.appContext, Graph.displayPrefs(Graph.appContext), force = true)
     }
 
@@ -316,11 +344,9 @@ class KvcxRideController internal constructor(
         }
         when (outcome) {
             is UnlockOutcome.Unlocked -> {
-                // 免费计时与开锁**同步**（2026-09-28 用户口径）：本机开锁是服务端确认的骑行
-                // 开始（比"点扫一扫"这个准备动作强得多），提醒开关关着就顺手打开——
-                // 倒计时通知因此跟着开锁一起来。开关在「快趣出行设置」里可见、可随时关掉。
-                val reminderOpened = effects.ensureReminderEnabled()
-                val (timerText, timerTone) = effects.startRideTimer()
+                // **界面先行**（2026-10-10，修用户报的「响应完后停滞一会才弹骑行卡」）：
+                // 确认快照先落 UI——响应回来的第一帧就切骑行卡，不等下面那串善后
+                // （开关读写 / 计时落盘 / 排闹钟 / 起通知服务，几百毫秒起，低端机更久）。
                 val confirmedAt = System.currentTimeMillis()
                 _state.update {
                     it.copy(
@@ -334,9 +360,24 @@ class KvcxRideController internal constructor(
                         lockPending = false,
                         scoreAuthRequired = false,
                         unlockCooldownUntil = confirmedAt + UNLOCK_COOLDOWN_MS,
+                        // 重新开锁成功即离开结算态（2026-10-10，结算卡上的「重新使用该车」）：
+                        // 「已还车」的卡片只在"还完车待决定"这段时间成立。失败路径不经过这里
+                        // ——卡片保留，用户可以原地再点一次。
+                        returnSummary = null,
                     )
                 }
+                // 成功触感也立即发：它属于"开锁成功"这一刻，不该被善后拖后
                 onUnlocked()
+                // 免费计时与开锁**同步**（2026-09-28 用户口径）：本机开锁是服务端确认的骑行
+                // 开始（比"点扫一扫"这个准备动作强得多），提醒开关关着就顺手打开——
+                // 倒计时通知因此跟着开锁一起来。开关在「快趣出行设置」里可见、可随时关掉。
+                // **顺序纪律**：这段善后在界面更新之后跑，但**不许**挪到 [syncAfterUnlock]
+                // 后面——补全最多 3 拍 × 1.5 秒，挪过去会让通知栏倒计时迟到好几秒。
+                val reminderOpened = effects.ensureReminderEnabled()
+                val (timerText, timerTone) = effects.startRideTimer()
+                // 自动还车与计时同刻排（触发点 = 计时起点 + 15 分钟 − 提前量；见
+                // EbikeAutoReturnReminder）。开关关着时是一次空操作
+                effects.scheduleAutoReturn()
                 val head = if (outcome.helmetFlow) "已创建订单，请取下车盔" else "已开锁"
                 onNotice(
                     head + "；" + timerText +
@@ -348,7 +389,9 @@ class KvcxRideController internal constructor(
                 syncAfterUnlock()
             }
             is UnlockOutcome.Unconfirmed -> {
-                _state.update { it.copy(unlockPending = true) }
+                // 订单已创建（只是没确认到锁）：同样离开结算态——「已还车」的卡片
+                // 不能与在案订单并存（2026-10-10）
+                _state.update { it.copy(unlockPending = true, returnSummary = null) }
                 onNotice("订单已创建但未确认开锁；可点「重试开锁」，或到快趣小程序核对", NoticeTone.Warning)
                 refreshInternal()
             }
@@ -466,35 +509,23 @@ class KvcxRideController internal constructor(
     /**
      * 还车：静默锁 + 结束订单；成功后收计时、焚码、记一条本机骑行记录，并弹**结果卡**
      * （[KvcxRideState.returnSummary]）——还车是花钱那一刻，信息量不能只有一句话。
+     *
+     * 结算口径（本地走时在订单结束那一刻截停、扣款确认轮询、结果卡字段）统一在
+     * [performReturnBike] 里，与自动还车共用——**别在这里另写一份**。
      */
     fun returnBike() = run(KvcxAction.RETURN) { session ->
         val point = locateOrNotice() ?: return@run
         val before = _state.value.ride
-        val outcome = session.returnBike(point.first, point.second)
-        // 本地走时**在订单结束那一刻截停**（2026-10-09）：后面还有焚码与扣款确认轮询
-        // （最多 ~7.5 秒），拿它们之后的时间算会把本次骑行时长多算一截（写进结果卡与
-        // 本机记录）。快趣没有最终账单接口，这一份是我们自己要算准的东西。
-        val endedAt = System.currentTimeMillis()
-        effects.endRideAndBurn()
+        val summary = performReturnBike(
+            session = session,
+            before = before,
+            fetchedAt = _state.value.fetchedAt,
+            gcjLat = point.first,
+            gcjLng = point.second,
+        ) {
+            effects.endRideAndBurn()
+        }
         _state.update { it.copy(unlockPending = false, lockPending = false) }
-        // 官方扣款确认节奏：先享后付自动扣，短轮询一次看是否结清（不做支付本身）。
-        // 欠费金额一并带回来——结果卡上显示「¥3.50」比"有未结算费用"有用得多
-        val payState = if (outcome.needPay == true) session.confirmUnpaidSettled() else null
-        val summary = KvcxReturnSummary(
-            carNum = before?.carNum,
-            durationSeconds = before?.let {
-                rideElapsedSeconds(it, _state.value.fetchedAt, endedAt)
-            },
-            feeCents = before?.payMoneyCents,
-            needPay = outcome.needPay,
-            settled = when {
-                outcome.needPay == false -> true
-                payState is KqcxAuth.UnpayState.Settled -> true
-                outcome.needPay == null -> null
-                else -> false // Owed 或查询失败：都按"未结清"提示，让用户去核对
-            },
-            owedCents = (payState as? KqcxAuth.UnpayState.Owed)?.amountCents,
-        )
         effects.recordRide(summary)
         _state.update { it.copy(returnSummary = summary) }
         refreshInternal()

@@ -309,6 +309,8 @@ internal fun RideActionArea(
     onTimerExpired: () -> Unit,
     onSettle: () -> Unit,
     onContinue: () -> Unit,
+    /** 结算卡上的「重新使用该车」（2026-10-10）：对刚还的车号重发开锁（走 UNLOCK 的确认闸）。 */
+    onReuseCar: (String) -> Unit,
     /** 当前形态的 key（唯一出处 [rideBarKey]）：它一变，上面的上区就升/沉一次。 */
     barKey: String,
     modifier: Modifier = Modifier,
@@ -418,6 +420,7 @@ internal fun RideActionArea(
                 onEndTimer = onEndTimer,
                 onSettle = onSettle,
                 onContinue = onContinue,
+                onReuseCar = onReuseCar,
             )
         }
     }
@@ -605,6 +608,8 @@ private fun RideActionButtons(
     onEndTimer: () -> Unit,
     onSettle: () -> Unit,
     onContinue: () -> Unit,
+    /** 结算卡上的「重新使用该车」（2026-10-10）：对刚还的车号重发开锁。 */
+    onReuseCar: (String) -> Unit,
 ) {
     val carNum = carNumOf(key)
     // busy 动作的「已等 N 秒」走秒（RESUMED 才走）：开锁/还车链路最坏可挂一两分钟，
@@ -622,9 +627,10 @@ private fun RideActionButtons(
     } else {
         ""
     }
-    // 开锁冷却（[KvcxRideState.unlockCooldownUntil]）：到点一次性翻闸、不做逐秒走时
-    // （冷却只决定按钮 enabled，不需要中间帧）。无条件调用，见上面 busyNow 的纪律。
-    val cooling = rememberUnlockCooldown(unlockCooldownUntil)
+    // 开锁冷却（[KvcxRideState.unlockCooldownUntil]）：剩余秒数逐秒走时，按钮上直接
+    // 显示「锁车 3s」倒计时（2026-10-10）；到点翻闸点亮按钮。无条件调用，
+    // 见上面 busyNow 的纪律。
+    val coolingSeconds = rememberUnlockCooldownSeconds(unlockCooldownUntil)
     when {
         key == BAR_FINDING_PLAIN ->
             RideActionButton("按车号生成乘车码", onOpenCarNumber, icon = HugeIcons.QrCode01)
@@ -640,9 +646,13 @@ private fun RideActionButtons(
 
         carNum != null -> when {
             caps.directUnlock -> RideActionButton(
-                text = "开锁",
+                // 开锁等待期给过程反馈（2026-10-10）：定位 + 请求最长十几秒，按钮从确认
+                // 那一刻就写「开锁中…（已等 Ns）」并禁用——旧版这里纹丝不动，看着像卡死。
+                // 走秒与骑行态同一套（[waitedText]，超阈值补出路）
+                text = if (busy == KvcxAction.UNLOCK) "开锁中…" + waitedText else "开锁",
                 onClick = { onUnlock(carNum) },
                 icon = HugeIcons.LockOpen,
+                enabled = busy == null,
             )
 
             caps.wechatScan -> RideActionButton(
@@ -687,18 +697,27 @@ private fun RideActionButtons(
                 }
                 // 锁车 / 还车是物理写动作：开锁后的冷却期内（[KvcxRideState.unlockCooldownUntil]）
                 // 置灰——车侧「已解锁」上报还没走完，紧接着发指令容易两头落空（2026-10-09）。
-                // 左位开锁不冷却（重发解锁是安全的，见冷却口径的说明）
+                // 冷却期按钮文案带剩余秒数（「锁车 3s」，2026-10-10）——只置灰不说话，
+                // 用户不知道要等多久。左位开锁不冷却（重发解锁是安全的，见冷却口径的说明）
                 RideActionButton(
-                    text = if (busy == KvcxAction.LOCK) "锁车中…" + waitedText else "锁车",
+                    text = when {
+                        busy == KvcxAction.LOCK -> "锁车中…" + waitedText
+                        coolingSeconds > 0 -> "锁车 ${coolingSeconds}s"
+                        else -> "锁车"
+                    },
                     onClick = onTempLock,
-                    enabled = busy == null && !cooling,
+                    enabled = busy == null && coolingSeconds == 0,
                     modifier = Modifier.weight(1f),
                     filled = false,
                 )
                 RideActionButton(
-                    text = if (busy == KvcxAction.RETURN) "还车中…" + waitedText else "还车",
+                    text = when {
+                        busy == KvcxAction.RETURN -> "还车中…" + waitedText
+                        coolingSeconds > 0 -> "还车 ${coolingSeconds}s"
+                        else -> "还车"
+                    },
                     onClick = onReturn,
-                    enabled = busy == null && !cooling,
+                    enabled = busy == null && coolingSeconds == 0,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -722,41 +741,59 @@ private fun RideActionButtons(
             }
         }
 
-        key == BAR_SETTLED -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (summary?.needsSettle == true) {
+        key == BAR_SETTLED -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (summary?.needsSettle == true) {
+                    RideActionButton(
+                        text = "去微信结清",
+                        onClick = onSettle,
+                        modifier = Modifier.weight(1f),
+                        filled = false,
+                    )
+                }
                 RideActionButton(
-                    text = "去微信结清",
-                    onClick = onSettle,
+                    text = "继续找车",
+                    onClick = onContinue,
                     modifier = Modifier.weight(1f),
+                )
+            }
+            // 「重新使用该车」（2026-10-10）：还车后原地重开这辆车（与其它开锁同一套闸）。
+            // 单独一行、全宽——塞进上面那行会把文字挤成省略号；车号缺失（快照没拿到）
+            // 时没有"该车"可重开，不摆。
+            summary?.carNum?.let { car ->
+                RideActionButton(
+                    text = "重新使用该车",
+                    onClick = { onReuseCar(car) },
                     filled = false,
                 )
             }
-            RideActionButton(
-                text = "继续找车",
-                onClick = onContinue,
-                modifier = Modifier.weight(1f),
-            )
         }
     }
 }
 
 /**
- * 开锁后的「锁车 / 还车」冷却闸（2026-10-09 用户口径「开车后冷却三秒」）。
+ * 开锁后的「锁车 / 还车」冷却**剩余秒数**（2026-10-09 用户口径「开车后冷却三秒」；
+ * 2026-10-10 加倒计时显示，逐秒走时——数字要看得见，旧的"不做中间帧"口径作废）。
  *
- * [until] = 冷却截止时刻（epoch ms；0 = 无冷却），返回 true = 仍在冷却中。
- * 用**一次性**的 `delay` 到点翻闸，不做逐秒走时：冷却只决定按钮的 enabled，不需要中间帧
- * （每秒重组这一行是白花的）。`until` 变化（又开了一次锁）即以新截止点重启；
- * 钳一下负数（时钟回拨等）保证不空等。
+ * [until] = 冷却截止时刻（epoch ms；0 = 无冷却），返回剩余整秒（向上取整，见
+ * [unlockCooldownSecondsLeft]；0 = 冷却结束）。到点即停、不空转；`until` 变化
+ * （又开了一次锁）以新截止点重启。每秒重组的是动作行这一小块，可以接受。
  */
 @Composable
-private fun rememberUnlockCooldown(until: Long): Boolean {
-    var cooling by remember(until) { mutableStateOf(until > System.currentTimeMillis()) }
-    LaunchedEffect(until) {
-        val remain = until - System.currentTimeMillis()
-        if (remain > 0L) delay(remain)
-        cooling = false
+private fun rememberUnlockCooldownSeconds(until: Long): Int {
+    var seconds by remember(until) {
+        mutableStateOf(unlockCooldownSecondsLeft(until, System.currentTimeMillis()))
     }
-    return cooling
+    LaunchedEffect(until) {
+        while (true) {
+            val now = System.currentTimeMillis()
+            val remain = until - now
+            seconds = unlockCooldownSecondsLeft(until, now)
+            if (remain <= 0L) break
+            delay(minOf(remain, 1_000L))
+        }
+    }
+    return seconds
 }
 
 /**

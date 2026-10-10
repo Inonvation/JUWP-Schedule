@@ -830,6 +830,12 @@ fun RideScreen(
                             // 刷新由这个点击驱动，符合「刷新只由用户动作触发」的纪律
                             viewModel.refresh()
                         },
+                        // 结算卡上的「重新使用该车」（2026-10-10）：与其它开锁同一个入口——
+                        // 定位权限、二次确认、零重试都走 requestKvcxAction 那套闸；
+                        // 结算卡由控制器在开锁成功 / 未确认时清（失败保留，可原地重试）
+                        onReuseCar = { carNum ->
+                            requestKvcxAction(KvcxAction.UNLOCK, carNum)
+                        },
                         // 形态 key 由页面算（唯一出处 rideBarKey）：页面靠它冻结地图让位高度
                         barKey = barKey,
                         modifier = Modifier.fillMaxWidth(),

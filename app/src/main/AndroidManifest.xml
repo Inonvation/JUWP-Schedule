@@ -314,6 +314,12 @@
             android:name=".ui.ebike.EbikeFreeRideAlarmReceiver"
             android:exported="false" />
 
+        <!-- 用车满 15 分钟自动还车的精确闹钟落点（DESIGN §3.9，2026-10-10）：
+             到点把还车动作排进 WorkManager（网络与重试在那里），接收器不挂长任务 -->
+        <receiver
+            android:name=".ui.ebike.EbikeAutoReturnAlarmReceiver"
+            android:exported="false" />
+
         <!-- 内置相机扫一扫（快趣账号方式的「扫车身码」，DESIGN §3.9）。
              2026-09-30 起换成自己的窗口（`EbikeScanActivity`）——库自带的 CaptureActivity
              只有取景框 + 一行提示，没有开关手电筒与「从相册选图」两个入口，而这两件正是
