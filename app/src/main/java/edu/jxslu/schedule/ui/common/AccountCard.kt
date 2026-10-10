@@ -1,14 +1,9 @@
 package edu.jxslu.schedule.ui.common
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -21,13 +16,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import edu.jxslu.schedule.R
 import edu.jxslu.schedule.data.session.LoginState
 import edu.jxslu.schedule.domain.AccountMask
 import me.rerere.hugeicons.HugeIcons
@@ -35,7 +27,7 @@ import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 
 /**
- * 账户卡（DESIGN §3.3）：校徽 + 姓名 + 学号（可遮罩）+ 副行 + 一行登录状态。
+ * 账户卡（DESIGN §3.3）：姓名 + 学号（可遮罩）+ 副行 + 一行登录状态。
  *
  * **两处共用**：教务账户页（`JwAccountScreen`）与一卡通设置页（`CampusCardSettingsScreen`）。
  * 原先各画一套（一处用 `AppCard`、一处自己拼 `SettingsCard`），同样一句「我是谁」
@@ -65,14 +57,6 @@ fun AccountCard(
 
     AppCard(modifier = modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(R.drawable.ic_school_emblem),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape),
-            )
-            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
