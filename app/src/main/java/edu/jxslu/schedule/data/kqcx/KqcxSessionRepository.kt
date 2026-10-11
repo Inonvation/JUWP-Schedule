@@ -1,11 +1,11 @@
 package edu.jxslu.schedule.data.kqcx
 
 import edu.jxslu.schedule.domain.BikeNearby
+import edu.jxslu.schedule.domain.CarDetailResult
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.domain.KvcProtocolException
 import edu.jxslu.schedule.domain.KvcxZones
-import edu.jxslu.schedule.domain.NearbyBike
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -276,12 +276,16 @@ class KqcxSessionRepository(
     /**
      * 按车号查单车（2026-09-30）：附近列表里没有目标车时的兜底（官方 `loadOneCar` 同款）。
      * token 允许空——这个读接口不需要凭证（与 [queryZones] 同口径），小程序方式也能用
-     * 「按车号定位」。解析不出（车号不存在 / 坐标无效）返回 null，**不抛错**：调用方
-     * 把"查不到"当正常结果提示。
+     * 「按车号定位」。**不抛错**：服务端业务错误（车已出租 / 维修 / 不存在）与网络失败
+     * 都收在 [CarDetailResult] 里，由调用方决定怎么说（2026-10-11 起业务错误要原样转达）。
      */
-    suspend fun queryCarDetail(carNum: String, centerLat: Double, centerLng: Double): NearbyBike? {
+    suspend fun queryCarDetail(
+        carNum: String,
+        centerLat: Double,
+        centerLng: Double,
+    ): CarDetailResult {
         try {
-            return BikeNearby.parseSingle(
+            return BikeNearby.parseCarDetail(
                 client.oneCarJson(token.orEmpty(), carNum, centerLat, centerLng),
                 centerLat,
                 centerLng,
@@ -289,7 +293,8 @@ class KqcxSessionRepository(
         } catch (e: CancellationException) {
             throw e // 取消必须穿透：吞掉会破坏调用方的结构化并发
         } catch (_: Exception) {
-            return null // 解析不出（车号不存在 / 坐标无效）=「查不到」，当正常结果
+            // 网络 / 超时：与"服务端明确说不可用"区分开，按"没查到"处理
+            return CarDetailResult.Malformed
         }
     }
 

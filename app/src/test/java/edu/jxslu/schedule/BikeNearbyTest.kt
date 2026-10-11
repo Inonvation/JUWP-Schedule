@@ -2,13 +2,12 @@ package edu.jxslu.schedule
 
 import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.BikeStatus
+import edu.jxslu.schedule.domain.CarDetailResult
 import edu.jxslu.schedule.domain.NearbyBike
 import edu.jxslu.schedule.domain.NearbyParseResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -531,9 +530,9 @@ class BikeNearbyTest {
 
     @Test
     fun `单车详情解析同构响应`() {
-        val bike = BikeNearby.parseSingle(single(car()), centerLat, centerLng)
-        assertNotNull(bike)
-        assertEquals("100000652", bike!!.carNum)
+        val result = BikeNearby.parseCarDetail(single(car()), centerLat, centerLng)
+        val bike = (result as CarDetailResult.Ok).bike
+        assertEquals("100000652", bike.carNum)
         assertEquals(28.6883209, bike.lat, 1e-9)
         assertEquals(92.8, bike.batteryPercent!!, 1e-9)
         assertEquals(BikeStatus.Available, bike.status)
@@ -548,32 +547,52 @@ class BikeNearbyTest {
         // 缺数据不该把它标成"失联"（与附近列表"坏了丢一条"的口径不同）
         val raw = """{"result":{"carNum":"100000652","lat":$centerLat,"lng":$centerLng,
             "currentPercent":"64"},"resultCode":1,"errorCode":0}"""
-        val bike = BikeNearby.parseSingle(raw, centerLat, centerLng)
-        assertNotNull(bike)
-        assertEquals(BikeStatus.Available, bike!!.status)
+        val result = BikeNearby.parseCarDetail(raw, centerLat, centerLng)
+        val bike = (result as CarDetailResult.Ok).bike
+        assertEquals(BikeStatus.Available, bike.status)
         assertEquals(64.0, bike.batteryPercent!!, 1e-9)
     }
 
     @Test
     fun `单车详情明确离线与停用照旧生效`() {
-        val offline = BikeNearby.parseSingle(single(car(online = "0")), centerLat, centerLng)
-        assertEquals(BikeStatus.Offline, offline?.status)
-        val disabled = BikeNearby.parseSingle(single(car(status = "0")), centerLat, centerLng)
-        assertEquals(BikeStatus.Disabled, disabled?.status)
+        val offline = BikeNearby.parseCarDetail(single(car(online = "0")), centerLat, centerLng)
+        assertEquals(BikeStatus.Offline, (offline as CarDetailResult.Ok).bike.status)
+        val disabled = BikeNearby.parseCarDetail(single(car(status = "0")), centerLat, centerLng)
+        assertEquals(BikeStatus.Disabled, (disabled as CarDetailResult.Ok).bike.status)
     }
 
     @Test
-    fun `单车详情坏车号与业务错误返回 null`() {
+    fun `单车详情坏车号与非 JSON 按查不到处理`() {
         // 出不了码的车号：与附近列表同一道闸
-        assertNull(BikeNearby.parseSingle(single(car(carNum = "abc")), centerLat, centerLng))
-        // 业务错误（errorCode != 0）
-        assertNull(
-            BikeNearby.parseSingle(
-                """{"resultCode":1,"errorCode":30001,"resultMsg":"车辆不存在","result":null}""",
-                centerLat, centerLng,
-            ),
+        assertEquals(
+            CarDetailResult.Malformed,
+            BikeNearby.parseCarDetail(single(car(carNum = "abc")), centerLat, centerLng),
         )
-        // 非 JSON
-        assertNull(BikeNearby.parseSingle("<html>", centerLat, centerLng))
+        assertEquals(
+            CarDetailResult.Malformed,
+            BikeNearby.parseCarDetail("<html>", centerLat, centerLng),
+        )
+    }
+
+    @Test
+    fun `单车详情把服务端业务错误原文带出来`() {
+        // 2026-10-11 实测：车已出租 / 正在维修 / 不存在都是 errorCode != 0 + 一句中文 resultMsg。
+        // 这句要能到用户眼前（扫到别人正在骑的车，当场就该看见「车辆已出租」）
+        val rented = BikeNearby.parseCarDetail(
+            """{"resultCode":1,"errorCode":50006,"resultMsg":"车辆已出租","result":null}""",
+            centerLat, centerLng,
+        )
+        assertEquals(CarDetailResult.Unavailable("车辆已出租"), rented)
+        val repairing = BikeNearby.parseCarDetail(
+            """{"resultCode":1,"errorCode":50007,"resultMsg":"车辆正在维修","result":null}""",
+            centerLat, centerLng,
+        )
+        assertEquals(CarDetailResult.Unavailable("车辆正在维修"), repairing)
+        // 服务端没给文案时给一句兜底，不把空串摆到卡上
+        val blank = BikeNearby.parseCarDetail(
+            """{"resultCode":1,"errorCode":50002,"result":null}""",
+            centerLat, centerLng,
+        )
+        assertEquals(CarDetailResult.Unavailable("这辆车暂时不可用"), blank)
     }
 }

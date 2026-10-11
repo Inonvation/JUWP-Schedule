@@ -110,6 +110,26 @@ sealed interface NearbyParseResult {
     data object Malformed : NearbyParseResult
 }
 
+/**
+ * 「按车号查单车」（`queryOneCar`）的解析结果（2026-10-11）。
+ *
+ * 与 [NearbyParseResult] 分开：单车主打"点名查这一辆"，服务端的**业务错误是有用信息**
+ * （车已出租 / 正在维修 / 不存在），不能再塌成"查不到"。
+ */
+sealed interface CarDetailResult {
+    /** 查到了这辆车。 */
+    data class Ok(val bike: NearbyBike) : CarDetailResult
+
+    /**
+     * 服务端明确报的业务错误（`errorCode != 0`）：[message] 取服务端 `resultMsg` 原文
+     * （如「车辆已出租」「车辆正在维修」「车辆不存在」），UI 直接展示给用户。
+     */
+    data class Unavailable(val message: String) : CarDetailResult
+
+    /** 结构与预期不符（非 JSON / 缺字段 / 坐标无效 / 出不了码的车号）——按"查不到"处理。 */
+    data object Malformed : CarDetailResult
+}
+
 /** 查询失败的类别，文案由 UI 层给（见 `BikeMapViewModel`）。 */
 enum class BikeFailure { Network, Timeout, Service, Malformed }
 
@@ -494,21 +514,28 @@ object BikeNearby {
     }
 
     /**
-     * 解析「按车号查单车」（`/v2.0.0/queryOneCar`，2026-09-30）的响应为一辆车。
+     * 解析「按车号查单车」（`/v2.0.0/queryOneCar`，2026-09-30）的响应。
      *
-     * 附近列表里没有目标车（被筛掉 / 还没查到那一片）时，App 拿完整车号向快趣点名查一次，
-     * 拿到真实坐标与电量后高亮定位——官方扫码后的 `loadOneCar` 就是这条路。
+     * 附近列表里没有目标车（被筛掉 / 还没查到那一片 / **正在被别人骑**）时，App 拿完整车号
+     * 向快趣点名查一次——官方扫码后的 `loadOneCar` 就是这条路。
      *
      * 响应 `result` 是**单个车辆对象**（官方只消费 `carNum/lat/lng/deviceType/currentPercent`
-     * 五个字段）；信封非成功或解析不出车返回 null，调用方提示"查不到"。
+     * 五个字段）。**服务端的业务错误要带出来**（2026-10-11）：车已出租 / 正在维修 / 不存在
+     * 都走 `errorCode != 0` + 一句中文 `resultMsg`（实测 50006「车辆已出租」、50007
+     * 「车辆正在维修」、50002「车辆不存在」）。扫到一辆正被别人骑的车时，用户最该当场看到
+     * 的就是那句——不能再吞成笼统的"查不到"、更不能等点开锁才由 `createOrder` 报出来。
      */
-    fun parseSingle(raw: String, centerLat: Double, centerLng: Double): NearbyBike? {
+    fun parseCarDetail(raw: String, centerLat: Double, centerLng: Double): CarDetailResult {
         val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
-        val obj = root as? JsonObject ?: return null
-        val errorCode = obj["errorCode"].intValue()
-        if (errorCode == null || errorCode != 0) return null
-        val car = obj["result"] as? JsonObject ?: return null
-        return parseSingleCar(car, centerLat, centerLng)
+        val obj = root as? JsonObject ?: return CarDetailResult.Malformed
+        val errorCode = obj["errorCode"].intValue() ?: return CarDetailResult.Malformed
+        if (errorCode != 0) {
+            val message = obj["resultMsg"].stringValue()?.trim().orEmpty()
+            return CarDetailResult.Unavailable(message.ifBlank { "这辆车暂时不可用" })
+        }
+        val car = obj["result"] as? JsonObject ?: return CarDetailResult.Malformed
+        val bike = parseSingleCar(car, centerLat, centerLng) ?: return CarDetailResult.Malformed
+        return CarDetailResult.Ok(bike)
     }
 
     /**

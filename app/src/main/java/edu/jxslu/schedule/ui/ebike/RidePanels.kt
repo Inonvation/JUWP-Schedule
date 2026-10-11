@@ -568,6 +568,10 @@ private fun RideActionUpper(
                 bike = state.highlightedCar?.takeIf { it.carNum == car }
                     ?: state.clusters.asSequence().flatMap { it.bikes }
                         .firstOrNull { it.carNum == car },
+                // 服务端明确说这辆车不可用（已出租 / 维修 / 不存在）：卡上当场写出原因
+                issue = state.carDetailIssue?.takeIf { it.carNum == car }?.message,
+                // 正在点名查这辆车：这零点几秒里说"正在查询"，别摆那句"不在附近"
+                querying = state.carDetailQuerying == car,
                 caps = caps,
                 distanceFromUser = state.distanceFromUser,
                 onFocus = onFocusCar,
@@ -866,6 +870,13 @@ private fun RideUpperCard(
 private fun RideCarUpper(
     carNum: String,
     bike: NearbyBike?,
+    /**
+     * 服务端明确说这辆车不可用时的原文（已出租 / 维修 / 不存在；2026-10-11）。
+     * 非空时优先于"不在附近"那句：扫到一辆正被别人骑的车，卡上当场就该写「车辆已出租」。
+     */
+    issue: String?,
+    /** 正在向快趣点名查这辆车：查询期间显「正在查询这辆车…」，别摆"不在附近"。 */
+    querying: Boolean,
     caps: EbikeCapabilities,
     /** 距离的参照点是用户位置（true）还是地图中心（false），与列表同一口径。 */
     distanceFromUser: Boolean,
@@ -875,6 +886,7 @@ private fun RideCarUpper(
     onGenerate: (String) -> Unit,
 ) {
     val detailColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+    val warningColor = MaterialTheme.semanticColors.warning
     val bikeInfo = bike?.let { bikeInfoText(it, detailColor, distanceFromUser) }
     Column(
         modifier = Modifier
@@ -910,21 +922,24 @@ private fun RideCarUpper(
                 IconButtonSmall(HugeIcons.Cancel01, "收起车辆卡", onClick = onDismiss)
             }
             Text(
-                text = if (bike != null && bikeInfo != null) {
-                    buildAnnotatedString {
+                text = when {
+                    bike != null && bikeInfo != null -> buildAnnotatedString {
                         append(bike.siteName.ifBlank { bike.campusName.ifBlank { "位置未知" } })
                         append(" · ")
                         append(bikeInfo)
                     }
-                } else {
-                    AnnotatedString("这辆车不在附近这批结果里；用「按车号」输入车号后可以在地图上找它")
+                    // 服务端点名说过不可用：把那句原文摆出来（红色警示），别再说"不在附近"
+                    issue != null -> AnnotatedString(issue)
+                    querying -> AnnotatedString("正在查询这辆车…")
+                    else -> AnnotatedString("这辆车不在附近这批结果里；用「按车号」输入车号后可以在地图上找它")
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = detailColor,
+                color = if (bike == null && issue != null) warningColor else detailColor,
             )
             // 账号方式：支付分免押的账号开不了锁，只能出码去微信扫，所以这一枚要留着。
             // **做小 + 居中**：整宽描边按钮太占高度，一枚居中的小文字按钮就够了。
-            if (caps.inAppRide) {
+            // 服务端说过不可用（已出租 / 维修）时不给这枚——给一辆骑不成的车出码没意义。
+            if (caps.inAppRide && issue == null) {
                 RideTextAction(
                     icon = HugeIcons.QrCode01,
                     text = "生成乘车码",

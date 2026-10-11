@@ -15,6 +15,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.domain.BikeCluster
 import edu.jxslu.schedule.domain.BikeFailure
 import edu.jxslu.schedule.domain.BikeNearby
+import edu.jxslu.schedule.domain.CarDetailResult
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.KvcxZones
 import edu.jxslu.schedule.domain.NearbyBike
@@ -65,6 +66,12 @@ sealed interface BikeMapEvent {
     /** 开锁成功：页面补一次成功触感（与出码页同口径）。 */
     data object Unlocked : BikeMapEvent
 }
+
+/**
+ * 「按车号查单车」被服务端明确拒绝（[BikeMapUiState.carDetailIssue]）：车号 + 服务端原文
+ * （如「车辆已出租」）。车辆卡按车号认领，换车 / 清高亮时一起清。
+ */
+data class CarDetailIssue(val carNum: String, val message: String)
 
 /**
  * 附近单车地图页状态（DESIGN §3.9）。
@@ -152,6 +159,18 @@ data class BikeMapUiState(
     val highlightCarNum: String? = null,
     /** [highlightCarNum] 在当前结果里对应的车；null = 还没找到（等下一笔查询）。 */
     val highlightedCar: NearbyBike? = null,
+    /**
+     * 「按车号查单车」被服务端明确拒绝时的原因（2026-10-11）：车已出租 / 正在维修 /
+     * 不存在……存**车号 + 文案**，车辆卡按车号认领（扫到一辆正被别人骑的车，卡上当场
+     * 就该写「车辆已出租」，不能等点开锁才由 `createOrder` 报出来）。
+     */
+    val carDetailIssue: CarDetailIssue? = null,
+    /**
+     * 正在向快趣点名查这辆车（车号）；null = 没有在飞的查询。
+     * 车辆卡据此显「正在查询这辆车…」——查询那零点几秒里别再摆那句"不在附近这批结果里"，
+     * 那是误导（车可能就在附近，只是正被别人骑着）。
+     */
+    val carDetailQuerying: String? = null,
     /**
      * 列表的**距离参照点**（2026-09-30）：距离数字与排序都用它，两者必须同源——
      * 旧版数字按「距你」算、排序却按查询中心算，拖远之后顺序就和地图对不上了。
@@ -529,21 +548,25 @@ class BikeMapViewModel(
             clearHighlight()
             return
         }
-        _uiState.update { it.copy(highlightCarNum = carNum) }
+        _uiState.update {
+            it.copy(highlightCarNum = carNum, carDetailIssue = null, carDetailQuerying = null)
+        }
         rebuildClusters()
         val cluster = _uiState.value.clusters.firstOrNull { c -> c.bikes.any { it.carNum == carNum } }
         if (cluster == null) {
             // 当前列表里没有：可能是筛掉了、车被骑走了或还没查到这一片。
             // 向快趣按车号点一次名（`queryOneCarV2`，官方 loadOneCar 同款），
-            // 拿到真实坐标就高亮定位；查不到才提示等下一笔查询
+            // 拿到真实坐标就高亮定位；服务端说它不可用就把原因摆到车辆卡上
             fetchCarDetail(carNum)
             return
         }
+        // 车就在这批结果里（可用）——上一轮那条「不可用」结论作废
         _uiState.update {
             it.copy(
                 expandedKey = cluster.key,
                 focusKey = cluster.key,
                 focusNonce = it.focusNonce + 1,
+                carDetailIssue = null,
             )
         }
         pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
@@ -551,8 +574,9 @@ class BikeMapViewModel(
 
     /**
      * 按车号向快趣查单辆车（2026-09-30「单车详情」）：附近列表里没有它时的兜底。
-     * 查到就高亮 + 移镜头（电量与位置随车辆卡展示）；查不到（车号不存在 / 网络失败）
-     * 给旧口径的出路提示。
+     * 查到就高亮 + 移镜头（电量与位置随车辆卡展示）；**服务端明确说不可用**（车已出租 /
+     * 维修 / 不存在）就把原文摆到车辆卡上（2026-10-11：扫到别人正在骑的车，当场就能看见，
+     * 不用等点开锁才被 `createOrder` 报出来）；网络失败才给"查不到"的旧提示。
      *
      * 查询中心用**当前视野中心**（官方传扫当时的定位，同是"以哪为上下文"）。
      * 不轮询：一次查不到就到此为止，等用户下一次动作；连点期间只放一个在飞。
@@ -562,13 +586,20 @@ class BikeMapViewModel(
 
     /**
      * 清掉识别高亮（骑行吞高亮 / focusCar 撞上在骑车辆时走这里）：
-     * 标记、按号查回的那份单车详情一起清——详情兜底会在后续重算里把旧坐标再画回来。
+     * 标记、按号查回的那份单车详情、以及那条「不可用」结论一起清。
      */
     private fun clearHighlight() {
         if (_uiState.value.highlightCarNum == null) return
         val num = _uiState.value.highlightCarNum
         if (fetchedCarDetail?.carNum == num) fetchedCarDetail = null
-        _uiState.update { it.copy(highlightCarNum = null, highlightedCar = null) }
+        _uiState.update {
+            it.copy(
+                highlightCarNum = null,
+                highlightedCar = null,
+                carDetailIssue = it.carDetailIssue?.takeIf { issue -> issue.carNum != num },
+                carDetailQuerying = it.carDetailQuerying?.takeIf { q -> q != num },
+            )
+        }
     }
 
     private fun fetchCarDetail(carNum: String) {
@@ -579,29 +610,64 @@ class BikeMapViewModel(
             return
         }
         if (carDetailJob?.isActive == true) return
+        // 同步置位（不放进 launch 里）：车辆卡要**当场**翻成「正在查询这辆车…」，
+        // 晚一帧就会先闪一下"不在附近这批结果里"——那句正是要替掉的误导文案。
+        _uiState.update { it.copy(carDetailQuerying = carNum) }
         carDetailJob = viewModelScope.launch {
-            val detail = runCatching {
+            val result = runCatching {
                 session.queryCarDetail(carNum, pendingLat, pendingLng)
             }.getOrNull()
-            if (detail == null) {
-                _events.trySend(
-                    BikeMapEvent.Notice("快趣上也查不到车 $carNum；确认车号后再试，或移动地图找它", NoticeTone.Info),
-                )
-                return@launch
+            when (result) {
+                is CarDetailResult.Ok -> {
+                    val detail = result.bike
+                    fetchedCarDetail = detail
+                    _uiState.update {
+                        it.copy(
+                            highlightCarNum = carNum,
+                            carDetailIssue = null,
+                            carDetailQuerying = null,
+                        )
+                    }
+                    rebuildClusters()
+                    pushCamera(detail.lat, detail.lng, zoom = null, animated = true)
+                    _events.trySend(
+                        BikeMapEvent.Notice(
+                            "已在地图标出车 $carNum（${detail.batteryText}）",
+                            NoticeTone.Info,
+                        ),
+                    )
+                }
+
+                // 服务端明确说这辆车不可用（已出租 / 维修 / 不存在）：把原文摆到车辆卡上，
+                // 顺手提示一句。这不是"没查到"，用户该当场知道原因。
+                is CarDetailResult.Unavailable -> {
+                    _uiState.update {
+                        it.copy(
+                            carDetailIssue = CarDetailIssue(carNum, result.message),
+                            carDetailQuerying = null,
+                        )
+                    }
+                    _events.trySend(BikeMapEvent.Notice(result.message, NoticeTone.Warning))
+                }
+
+                else -> {
+                    _uiState.update { it.copy(carDetailQuerying = null) }
+                    _events.trySend(
+                        BikeMapEvent.Notice(
+                            "快趣上也查不到车 $carNum；确认车号后再试，或移动地图找它",
+                            NoticeTone.Info,
+                        ),
+                    )
+                }
             }
-            fetchedCarDetail = detail
-            _uiState.update { it.copy(highlightCarNum = carNum) }
-            rebuildClusters()
-            pushCamera(detail.lat, detail.lng, zoom = null, animated = true)
-            _events.trySend(
-                BikeMapEvent.Notice("已在地图标出车 $carNum（${detail.batteryText}）", NoticeTone.Info),
-            )
         }
     }
 
     /**
-     * 导航带入的待定位车号（出码页识别条「地图查看」经 focusItemId 传进来）：
-     * 第一笔查询结果里找到就自动定位（[focusCar]），找不到就安静等后面的查询。
+     * 导航带入的待定位车号（今日页「扫一扫」扫到车身码 / 出码页识别条经 focusItemId 传进来）：
+     * 第一笔查询结果里找到就自动定位（[focusCar]）；查过一轮还是没有（车被骑走 / 不在这一带
+     * / **正被别人骑着**）就退到按车号点名查一次（[fetchCarDetail]），服务端说不可用就把原因
+     * 摆到车辆卡上——与「扫车身码」那条路同一条兜底（2026-10-11）。
      */
     fun setPendingFocusCar(carNum: String) {
         pendingFocusCar = carNum
@@ -614,6 +680,14 @@ class BikeMapViewModel(
         if (found) {
             pendingFocusCar = null
             focusCar(num)
+            return
+        }
+        // 这一轮查询已经落定（中心 + 撒点都回来了）还是没有它：按车号点名查一次。
+        // 用 `queried && !completing` 判"落定"，别在撒点还在飞时就下结论（那会白查一次）。
+        val state = _uiState.value
+        if (state.queried && !state.completing) {
+            pendingFocusCar = null
+            fetchCarDetail(num)
         }
     }
 
