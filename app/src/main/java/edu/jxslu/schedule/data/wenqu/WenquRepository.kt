@@ -32,6 +32,20 @@ data class WenquActivityPage(
 )
 
 /**
+ * **蹲点探测的一页**（DESIGN §4.45「蹲点模式」，2026-10-11）。
+ *
+ * 与 [WenquActivityPage] 的区别在用途：那个是「搜索兜底取一页」，这个是
+ * 「蹲点轮询的最新一页」——后者**每轮都绕过缓存真发请求**，成功后并进快照
+ * （见 [WenquRepository.grabProbe]）。字段口径一致（`isBlack` / `stop_apply_reason`
+ * 每页都一样）。
+ */
+data class WenquGrabProbe(
+    val items: List<WenquActivity>,
+    val blacklisted: Boolean = false,
+    val stopApplyReason: String = "",
+)
+
+/**
  * **本地全量快照**（仓库层模型）：平台上**全部**活动的一份索引。
  *
  * 2026-10-11 起它同时是**活动列表的数据源**——不只是搜索。原因：列表原先只拿服务端
@@ -145,6 +159,13 @@ class WenquRepository(
 
     /** 登录串行化：并发登录会让两次响应互相覆盖凭证。 */
     private val loginMutex = Mutex()
+
+    /**
+     * 蹲点探测专用的短超时 API（秒数见 [WenquRules.GRAB_REQUEST_TIMEOUT_S]）：
+     * 3 秒一轮的高频轮询挂 30 秒会把整个节奏拖垮。与 [api] 分开派生，
+     * **别**把共享那份的默认 30 秒改小（登录 / 详情 / 写操作都靠它）。
+     */
+    private val probeApi: WenquApi = WenquApi.create(WenquRules.GRAB_REQUEST_TIMEOUT_S)
 
     // ---- 进程内缓存（DESIGN §4.45「进页不重复取数」）------------------------------
     // 「我的记录 / 星级」只有一个资源，键用常量；活动列表按关键词缓存（换关键词 = 换一份）。
@@ -601,6 +622,56 @@ class WenquRepository(
         }
         val data = payload.decodeData<WenquActivityData>()
         data?.list.orEmpty()
+    }
+
+    /**
+     * **蹲点探测**（DESIGN §4.45「蹲点模式」，2026-10-11）：只拉活动列表第一页，
+     * 不查缓存、不问关键词、不读详情——每轮蹲点**只有这一个请求**。
+     *
+     * 成功后把这一页**并进快照**（[mergeNewest]）并推进同步时刻：探测本身就是一次
+     * 「只看最新」的同步，蹲点页的列表跟着它刷新，不用再发其它请求。
+     *
+     * 失败原样抛出：调用方（蹲点流程）按连续失败次数退避，**不在这里重试**
+     * （同 `writeOnce` 的纪律：网络失败不自动重放，靠下一轮）。
+     */
+    suspend fun grabProbe(limit: Int = WenquRules.GRAB_PAGE_LIMIT): WenquGrabProbe =
+        withContext(Dispatchers.IO) {
+            val payload = authed { token ->
+                probeApi.volunteerList(token = token, page = 1, limit = limit, keyword = "")
+            }
+            val data = payload.decodeData<WenquActivityData>()
+            val page = WenquGrabProbe(
+                items = data?.list.orEmpty(),
+                blacklisted = data?.blacklisted == true,
+                stopApplyReason = data?.stopApplyReason.orEmpty(),
+            )
+            val current = indexCache.get(INDEX_KEY, now())
+            if (current != null) {
+                indexCache.put(
+                    INDEX_KEY,
+                    current.copy(
+                        items = mergeNewest(
+                            old = current.items,
+                            fresh = page.items,
+                            cap = WenquRules.ACTIVITY_INDEX_MAX_ITEMS,
+                        ),
+                        blacklisted = current.blacklisted || page.blacklisted,
+                        stopApplyReason = page.stopApplyReason.ifBlank { current.stopApplyReason },
+                        syncedAt = now(),
+                    ),
+                    now(),
+                )
+            }
+            page
+        }
+
+    /**
+     * **蹲点预热**：开始蹲点前把 token 换新（要重登就现在登）——
+     * 把这个登录请求放在高峰之前，12:00 那一刻的第一轮探测就只有列表请求。
+     * 失败向上抛，调用方自行决定（探测自己也会再走 [authed] 的续期路径）。
+     */
+    suspend fun prewarmSession() {
+        withContext(Dispatchers.IO) { ensureToken() }
     }
 
     private suspend fun fetchPage(

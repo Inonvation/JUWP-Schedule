@@ -985,6 +985,34 @@ UI 规格见 §3.28。
 于是动一下问渠开关就顺带让成绩 / 考试 / 选课 / 调课各打一次教务；问渠的入口只清自己那一路，
 再 `ensurePeriodicWork` + `enqueueWenquCheck`（复用同一个 Worker 类名与工作名，不新开任务）。
 
+**蹲点模式（抢活动）**（2026-10-11，用户口径；UI 见 §3.28「蹲点抢活动页」）：
+把周日 12:00 的抢活动压成「到点自动检测 → 点一下确认报名」。实现在
+`ui/wenqu/WenquGrabViewModel.kt` + `WenquRepository.grabProbe`，参数与判据全在
+`WenquRules`（纯函数，JVM 测）：
+
+- **只发一种请求**：每轮 1 个 `volunteer/v2` 第一页（`GRAB_PAGE_LIMIT = 30`、空关键词）；
+  不拉工时 / 星级 / 详情、不整份重抓。成功后 `mergeNewest` 并进快照并推 `syncedAt`
+  （探测 = 一次「只看最新」的同步，页面列表跟着新，不需要下拉）。
+- **短超时**：探测走单独派生的 `probeApi`（`WenquApi.create(GRAB_REQUEST_TIMEOUT_S = 6)`）；
+  共享那份 30 秒**不动**（登录 / 详情 / 写操作靠它）。`prewarmSession` 在开蹲时先把
+  token 换新，可能的登录请求不挤进 12:00 的第一轮。
+- **串行 + 退避**：上一轮不回来不发下一轮；成功间隔 `GRAB_POLL_INTERVAL_MS = 3` 秒，
+  连续失败按 `grabNextDelayMs` 逐档退避到 `GRAB_BACKOFF_MAX_MS = 12` 秒封顶，成功恢复。
+- **窗口**：`grabDetectStartAt`——周日 11:50–11:59:50 之间开始先待机到 11:59:50
+  （`GRAB_PREROLL_MS` = 发布前 10 秒），其余时刻立即开跑；检测窗口 `GRAB_WINDOW_MS = 10`
+  分钟 + `GRAB_MAX_CHECKS = 300` 次安全阀（`grabShouldStop`）。
+- **命中 = `grabFirstMatch`**：在**整份快照**里找第一条「`matchesKeyword` 匹配 +
+  `applyBlockReason` 为空」的活动——**不是只扫探测那一页**（2026-10-11 点验报「有招募中且
+  匹配的活动却不弹」，根因是多数招募活动不在最新 30 条里）。会话内 `shownHitIds` 去重：
+  同一条只弹一次，**弹过检测继续**（先弹到旧一批、12:00 新品出现还会再弹）；
+  报名成功 / 手动停止 / 窗口到点才收工。
+- **不自动提交**：命中只弹 `WenquGrabHitDialog`（确认报名 / 先看看 / 关闭），报名仍走
+  `writeOnce` 单发写路径。目标名 `wenqu_grab_keyword` 落盘预填，输入框随时可改
+  （检测中每轮读最新值）；「过滤已满」复用 `wenqu_hide_full`；
+  探测回 `isBlack` → 立即停 + 平台原话。
+- 页面侧：命中直接震动 + 弹窗开着暂停探测 + 蹲点期间屏幕常亮；**离开页面即停止**，
+  **不做后台 / 息屏轮询**（Android 限制 + MIUI 冻结且弹窗弹不出来，一期明确不做）。
+
 **本地凭证**：独立文件 `secure_wenqu`（`EncryptedSharedPreferences`，**含密码**，与一卡通查询密码
 同级），自愈三段照抄 `QzxySessionStore`；**两份备份排除 xml 都要登记**（正式件 + `.fallback`）。
 存 token 的 `expiresAt`（从 JWT 解）+ 工时影子（`hours` / `hoursFetchedAt`，30 分钟 TTL）。
@@ -1000,11 +1028,13 @@ UI 规格见 §3.28。
 `username` / `student_no` **都不声明**，`ignoreUnknownKeys` 下连内存都不进
 （`WenquModelsTest` 有兜底用例：toString 里出现即红）。
 
-**测试**：`WenquRulesTest` 53 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
+**测试**：`WenquRulesTest` 61 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
 星级与工时文案 / 状态文案 / 时间戳与时间段 / 名额文案 / 「满了没」/ 本地筛选两维叠加 /
 展示排序权重 / 报名限制文案 / 筛选哨兵 / 新增活动判据 / 活动提醒间隔档位与兜底 /
 **报名闸门六例**——可报回空串 / 被限制与已报名先说 / 状态各档 / 时间窗口 / 名额已满排最后 /
-活动视角取消入口只给已报名且招募中）
+活动视角取消入口只给已报名且招募中 / **蹲点八例**——周日待机时刻 / 10 分钟窗口 /
+退避序列与封顶 / 收工判据 / 命中筛选四例（匹配即命中 / 不能报名的跳过 / 空关键词不猜 /
+被限制不弹））
 + `WenquModelsTest` 21 例（信封判定 / 发码双 200 只看 msg / 数字与字符串两种工时 /
 记录带地点与报名时间 / 记录→活动映射与 `status` 钉 -1 / 自主类 id 收 0 / 负责人进模型而考勤人不进 /
 记录转活动带负责人 / 报名限制标记 / 活动列表与详情解析 / 忽略未知字段 / `data:null` 容错 /

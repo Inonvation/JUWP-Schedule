@@ -234,7 +234,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                调课处置页 SCHEDULE_CHANGES，§4.17；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
                培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；问渠 WENQU +
                志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
-               WENQU_SETTINGS，§3.28；学生评教走
+               WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交，§4.45），
+               §3.28；学生评教走
                JwImportActivity 的 TeachingEval 模式（§4.44））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
@@ -258,7 +259,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  + WenquRules（问渠：token 续期时机 · 验证码 5 分钟冷却 · 手机号/密码校验 · 星级与工时文案 ·
  活动状态文案 · 时间戳/时间段与名额文案 · **本地搜索**（关键词匹配 `matchesKeyword` · 命中高亮
  `keywordRanges` · 索引翻页判据 `shouldContinueIndexing`）· **排序档位 `Sort` 与截止排序键** ·
- **每周日 12:00 提醒点 `next/lastWeeklyAlertPoint`**，§4.45）
+ **每周日 12:00 提醒点 `next/lastWeeklyAlertPoint`** · **蹲点**（`grabDetectStartAt` 周日待机
+ 时刻 · `grabNextDelayMs` 退避 · `grabFirstMatch` 命中 · `grabShouldStop` 收工），§4.45）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
@@ -325,9 +327,14 @@ data/wenqu/      问渠（志愿服务 / 劳动教育，DESIGN §4.45 / UI §3.2
                  进页不重复取数）
                  活动列表 = `volunteer/v2`（平台上有的，与「我的记录」`volunteer/my` 是两张表）
                  + `volunteer/detail/{id}`（工时 / 群号只有详情有）
-                 + scanActivities（新增活动提醒的扫描口：一次取 100 条，成功后把浏览页缓存
-                 刷成刚抓到的前 20 条——否则点通知进来看到的是旧列表）
+                 + scanActivities（新增活动提醒的扫描口：一次取 100 条，**不写任何缓存**；
+                 要拿新数据走 `invalidateActivities()` + 下次进页增量同步）
+                 + grabProbe（蹲点探测：3 秒一轮只拉第一页、6 秒短超时、结果并进快照）
+                 + prewarmSession（开蹲前把 token 换新）
+                 蹲点页 ui/wenqu/WenquGrabScreen.kt + WenquGrabViewModel.kt（手动开始 ·
+                 命中弹确认**不自动提交** · 离开页面即停，§4.45）
                  新增活动提醒见 ui/reminder/WenquActivityAlertReminder.kt（第五路周期链）
+                 每周日 12:00 抢活动提醒见 ui/reminder/WenquWeeklyAlertReminder.kt（零网络，§4.45）
                  规则见 .agents/rules/wenqu.md
 ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|inbox|ai
 Graph.kt         单例 Repository

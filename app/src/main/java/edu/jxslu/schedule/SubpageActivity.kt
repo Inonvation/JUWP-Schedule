@@ -62,6 +62,7 @@ import edu.jxslu.schedule.ui.ujing.UjingOrderScreen
 import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
 import edu.jxslu.schedule.ui.week.ScheduleShareScreen
+import edu.jxslu.schedule.ui.wenqu.WenquGrabScreen
 import edu.jxslu.schedule.ui.wenqu.WenquRecordsScreen
 import edu.jxslu.schedule.ui.wenqu.WenquScreen
 import edu.jxslu.schedule.ui.wenqu.WenquSettingsScreen
@@ -173,6 +174,12 @@ enum class SubpageScreen {
     WENQU_RECORDS,
     /** 问渠 → 设置（记录入口 · 新增活动提醒 · 退出登录，DESIGN §3.28，2026-10-08）。 */
     WENQU_SETTINGS,
+    /**
+     * 问渠 → 蹲点抢活动（DESIGN §3.28 / §4.45，2026-10-11）：
+     * 手动开始、每 3 秒只轮询活动列表第一页，命中目标活动直接弹确认报名
+     * （**不自动提交**；蹲点只在打开本页时进行）。
+     */
+    WENQU_GRAB,
     /** 调课检测处置页（差异列表 · 勾选合并 · 忽略，DESIGN §4.17，2026-10-04 重立） */
     SCHEDULE_CHANGES,
     /** AI 调课（粘贴调课通知 → 模型给结构化建议 → 勾选落库，DESIGN §4.39，2026-10-06） */
@@ -295,12 +302,15 @@ class SubpageActivity : ComponentActivity() {
                 onOpenSettings = { SubpageActivity.start(this, SubpageScreen.WENQU_SETTINGS) },
                 // 工时行右侧「记录 ›」（2026-10-11）：与设置页那个入口同一去处
                 onOpenRecords = { SubpageActivity.start(this, SubpageScreen.WENQU_RECORDS) },
+                // 顶栏「蹲点」图标（2026-10-11）：到点自动检测、命中弹确认框
+                onOpenGrab = { SubpageActivity.start(this, SubpageScreen.WENQU_GRAB) },
             )
             SubpageScreen.WENQU_RECORDS -> WenquRecordsScreen(onBack = onBack)
             SubpageScreen.WENQU_SETTINGS -> WenquSettingsScreen(
                 onBack = onBack,
                 onOpenRecords = { SubpageActivity.start(this, SubpageScreen.WENQU_RECORDS) },
             )
+            SubpageScreen.WENQU_GRAB -> WenquGrabScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->

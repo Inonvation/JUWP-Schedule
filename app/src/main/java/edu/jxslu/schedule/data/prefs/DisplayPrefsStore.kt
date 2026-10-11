@@ -911,6 +911,19 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 蹲点页的目标活动名（DESIGN §4.45「蹲点模式」，2026-10-11）：预填用。
+     * 空串 = 没预填（蹲点页只浏览列表，不弹检测）。**不上传**——匹配全在本地做，
+     * 平台的 `keyword` 参数只有搜索兜底时才用。
+     */
+    val wenquGrabKeyword: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_GRAB_KEYWORD] ?: ""
+    }
+
+    suspend fun setWenquGrabKeyword(value: String) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_GRAB_KEYWORD] = value }
+    }
+
+    /**
      * 教材的上次成功抓取日期（ISO）。空 = 从没成功过。
      * 教材跟着「导入课表」走（一学期一次），这里只做记录与展示，不做时间闸门。
      */
@@ -2294,6 +2307,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_WENQU_WEEKLY_ALERT_ENABLED = booleanPreferencesKey("wenqu_weekly_alert_enabled")
         val KEY_WENQU_WEEKLY_ALERT_OFFSET_MIN = intPreferencesKey("wenqu_weekly_alert_offset_min")
         val KEY_WENQU_WEEKLY_ALERT_LAST_FIRED_AT = longPreferencesKey("wenqu_weekly_alert_last_fired_at")
+        // 蹲点模式的目标活动名（2026-10-11）：预填用，匹配在本地做
+        val KEY_WENQU_GRAB_KEYWORD = stringPreferencesKey("wenqu_grab_keyword")
 
         // AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 教师名脱敏 / 首次隐私确认。
         // API Key **不在这里**——它是账号凭据，走 AiCredentialStore 加密存储（secure_ai.xml）。

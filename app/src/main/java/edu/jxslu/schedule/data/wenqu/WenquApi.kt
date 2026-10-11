@@ -41,9 +41,15 @@ class WenquApi private constructor(private val http: OkHttpClient) {
 
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
-        fun create(): WenquApi = WenquApi(
-            // 共享池派生；登录与取数都短，给 30s 总上限
-            AppHttp.withCallTimeout(30).newBuilder().build(),
+        /**
+         * 共享池派生；[callTimeoutSeconds] 默认 30s（登录 / 详情 / 写操作都够用）。
+         *
+         * **蹲点探测单独派生一份短超时的实例**（`WenquRepository.probeApi`，6s 见
+         * `WenquRules.GRAB_REQUEST_TIMEOUT_S`）：它是 3 秒一轮的高频轮询，
+         * 高峰时挂 30 秒等于一轮白等——别直接把这个默认值改小，会误伤写操作。
+         */
+        fun create(callTimeoutSeconds: Long = 30L): WenquApi = WenquApi(
+            AppHttp.withCallTimeout(callTimeoutSeconds).newBuilder().build(),
         )
     }
 

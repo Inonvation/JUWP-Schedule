@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.domain
 
+import edu.jxslu.schedule.data.wenqu.WenquActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -667,5 +668,146 @@ class WenquRulesTest {
         // 已结束 / 进行中不给——活动视角拿不到平台的 canCancel，给个必然被拒的按钮只会白点
         assertFalse(WenquRules.canCancelFromActivity(status = 3, applied = true))
         assertFalse(WenquRules.canCancelFromActivity(status = 2, applied = true))
+    }
+
+    // ---- 蹲点（抢活动，2026-10-11）-----------------------------------------------
+
+    /** 活动夹具：默认「招募中 + 没满 + 没报过 + 在报名窗口内」，即**可报名**的基线。 */
+    private fun activity(
+        id: Long = 1L,
+        title: String = "爱心家教志愿服务",
+        status: Int = 1,
+        applied: Boolean = false,
+        peopleNum: Int = 20,
+        balanceNum: Int = 5,
+        applyStart: String = "26-10-01 00:00",
+        applyEnd: String = "26-10-20 00:00",
+    ): WenquActivity = WenquActivity(
+        id = id,
+        title = title,
+        status = status,
+        applied = applied,
+        peopleNum = peopleNum,
+        balanceNum = balanceNum,
+        applyStartTime = applyStart,
+        applyEndTime = applyEnd,
+    )
+
+    @Test
+    fun `蹲点待机_周日11点50到11点59分50之间开始才等到11点59分50`() {
+        // 发布前 10 秒 = 11:59:50（`at` 只给到分钟，秒在这里补）
+        val detectAt = at(2026, 10, 11, 11, 59) + 50_000L
+        // 11:55 开始 → 待机到 11:59:50
+        assertEquals(detectAt, WenquRules.grabDetectStartAt(at(2026, 10, 11, 11, 55), zone))
+        // 11:50 整（窗口边界）→ 也待机
+        assertEquals(detectAt, WenquRules.grabDetectStartAt(at(2026, 10, 11, 11, 50), zone))
+        // 11:59:50 之后才开始 → 立即（用户已经在窗口里，别再等）
+        val late = at(2026, 10, 11, 11, 59) + 55_000L
+        assertEquals(
+            late,
+            WenquRules.grabDetectStartAt(late, zone),
+        )
+        // 12:05 才开始（错过了发布）→ 立即
+        assertEquals(
+            at(2026, 10, 11, 12, 5),
+            WenquRules.grabDetectStartAt(at(2026, 10, 11, 12, 5), zone),
+        )
+        // 11:49 更早开（可能是在蹲别的活动）→ 立即
+        assertEquals(
+            at(2026, 10, 11, 11, 49),
+            WenquRules.grabDetectStartAt(at(2026, 10, 11, 11, 49), zone),
+        )
+        // 非周日 → 立即
+        assertEquals(
+            at(2026, 10, 10, 11, 55),
+            WenquRules.grabDetectStartAt(at(2026, 10, 10, 11, 55), zone),
+        )
+    }
+
+    @Test
+    fun `蹲点窗口_自首个探测起算十分钟`() {
+        val start = at(2026, 10, 11, 12, 0)
+        assertEquals(start + 10 * 60 * 1000L, WenquRules.grabWindowEndAt(start))
+    }
+
+    @Test
+    fun `蹲点退避_成功三秒_失败逐档退避到十二秒封顶`() {
+        assertEquals(3_000L, WenquRules.grabNextDelayMs(0))
+        assertEquals(6_000L, WenquRules.grabNextDelayMs(1))
+        assertEquals(9_000L, WenquRules.grabNextDelayMs(2))
+        assertEquals(12_000L, WenquRules.grabNextDelayMs(3))
+        assertEquals(12_000L, WenquRules.grabNextDelayMs(9))
+        // 负数（理论上到不了）按成功处理，别把间隔算成负的
+        assertEquals(3_000L, WenquRules.grabNextDelayMs(-1))
+    }
+
+    @Test
+    fun `蹲点收工_次数触顶或窗口到点`() {
+        val start = at(2026, 10, 11, 12, 0)
+        assertFalse(WenquRules.grabShouldStop(checks = 0, detectStartedAt = start, now = start + 60_000L))
+        assertFalse(
+            WenquRules.grabShouldStop(
+                checks = 299,
+                detectStartedAt = start,
+                now = start + 9 * 60 * 1000L,
+            ),
+        )
+        assertTrue(WenquRules.grabShouldStop(checks = 300, detectStartedAt = start, now = start))
+        assertTrue(
+            WenquRules.grabShouldStop(
+                checks = 0,
+                detectStartedAt = start,
+                now = start + WenquRules.GRAB_WINDOW_MS,
+            ),
+        )
+    }
+
+    @Test
+    fun `蹲点命中_名称匹配且现在能报名`() {
+        val now = at(2026, 10, 11, 12, 0)
+        val items = listOf(
+            activity(id = 3, title = "支教服务"),
+            activity(id = 2, title = "爱心家教志愿服务"),
+            activity(id = 1, title = "爱心家教（补录）", status = 3),
+        )
+        val hit = WenquRules.grabFirstMatch(items, "爱心家教", blacklisted = false, now = now, zone = zone)
+        assertEquals(2L, hit?.id)
+    }
+
+    @Test
+    fun `蹲点命中_不能报名的跳过_继续找下一条`() {
+        val now = at(2026, 10, 11, 12, 0)
+        val items = listOf(
+            // 已报名 → 跳
+            activity(id = 5, title = "爱心家教 A", applied = true),
+            // 已满 → 跳
+            activity(id = 4, title = "爱心家教 B", peopleNum = 20, balanceNum = 0),
+            // 报名还没开始 → 跳
+            activity(id = 3, title = "爱心家教 C", applyStart = "26-10-12 00:00"),
+            // 可报名 → 命中
+            activity(id = 2, title = "爱心家教 D"),
+        )
+        val hit = WenquRules.grabFirstMatch(items, "爱心家教", blacklisted = false, now = now, zone = zone)
+        assertEquals(2L, hit?.id)
+    }
+
+    @Test
+    fun `蹲点命中_空关键词不猜`() {
+        val now = at(2026, 10, 11, 12, 0)
+        val items = listOf(activity(id = 1, title = "爱心家教"))
+        assertEquals(
+            null,
+            WenquRules.grabFirstMatch(items, "   ", blacklisted = false, now = now, zone = zone),
+        )
+    }
+
+    @Test
+    fun `蹲点命中_账号被限制时不弹`() {
+        val now = at(2026, 10, 11, 12, 0)
+        val items = listOf(activity(id = 1, title = "爱心家教"))
+        assertEquals(
+            null,
+            WenquRules.grabFirstMatch(items, "爱心家教", blacklisted = true, now = now, zone = zone),
+        )
     }
 }

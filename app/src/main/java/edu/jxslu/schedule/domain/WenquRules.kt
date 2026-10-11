@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.domain
 
+import edu.jxslu.schedule.data.wenqu.WenquActivity
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -673,6 +674,111 @@ object WenquRules {
             "${publish.monthValue} 月 ${publish.dayOfMonth} 日"
         }
         return "$day $time"
+    }
+
+    // ---- 蹲点（抢活动，2026-10-11；用户口径）------------------------------------
+    //
+    // 用户口径：学校很多志愿活动周日中午 12:00 发布、当场开抢，服务器一到点就卡。
+    // 「蹲点」= **手动开始、只轮询活动列表第一页、命中即弹二次确认**（**不自动提交**）：
+    // 检测自动化、提交人工化。与「每周日 12:00 提醒」互补——那条把人叫过来，
+    // 这条在点到之后帮他盯着。规则见 `.agents/rules/wenqu.md`「蹲点模式」。
+
+    /** 轮询间隔（成功路径）：3 秒（用户拍板）。 */
+    const val GRAB_POLL_INTERVAL_MS: Long = 3_000L
+
+    /** 探测请求的 call timeout（秒）：高峰时挂 30 秒等于一轮白等，失败要快、下一轮再来。 */
+    const val GRAB_REQUEST_TIMEOUT_S: Long = 6L
+
+    /** 连续失败每多一次，下一轮多等这么久；封顶 [GRAB_BACKOFF_MAX_MS]。 */
+    const val GRAB_BACKOFF_STEP_MS: Long = 3_000L
+    const val GRAB_BACKOFF_MAX_MS: Long = 12_000L
+
+    /** 检测窗口：自首个探测起算 10 分钟，跑完自动停。 */
+    const val GRAB_WINDOW_MS: Long = 10 * 60 * 1000L
+
+    /** 单次蹲点的探测次数上限（安全阀，防呆：窗口内最多约 200 次）。 */
+    const val GRAB_MAX_CHECKS: Int = 300
+
+    /** 发布前先开检的提前量：周日 11:59:50 发第一轮（发布 = 周日 12:00）。 */
+    const val GRAB_PREROLL_MS: Long = 10 * 1000L
+
+    /**
+     * 触发「待机到 11:59:50」的提前窗口：周日 11:50 之后开始蹲点才待机——
+     * 更早开始视为在蹲别的活动，立即检测（12:00 之前发再多请求也刷不出新活动，
+     * 待机能省几十个空请求）。
+     */
+    const val GRAB_AUTO_WAIT_WINDOW_MS: Long = 10 * 60 * 1000L
+
+    /** 蹲点探测每轮取第一页这么多条（新活动一定在开头，见 `mergeNewest` 的口径）。 */
+    const val GRAB_PAGE_LIMIT: Int = 30
+
+    /**
+     * 蹲点的**首个探测时刻**：周日 11:50–11:59:50 之间开始的话待机到 11:59:50，
+     * 其余时刻立即可发。
+     */
+    fun grabDetectStartAt(
+        armedAt: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): Long {
+        val zoned = Instant.ofEpochMilli(armedAt).atZone(zone)
+        if (zoned.dayOfWeek != DayOfWeek.SUNDAY) return armedAt
+        val publishAt = zoned.toLocalDate()
+            .atTime(WEEKLY_ALERT_HOUR, WEEKLY_ALERT_MINUTE)
+            .atZone(zone)
+            .toInstant()
+            .toEpochMilli()
+        val detectAt = publishAt - GRAB_PREROLL_MS
+        return if (armedAt in (publishAt - GRAB_AUTO_WAIT_WINDOW_MS) until detectAt) {
+            detectAt
+        } else {
+            armedAt
+        }
+    }
+
+    /** 检测窗口的结束时刻（自首个探测起算）。 */
+    fun grabWindowEndAt(detectStartedAt: Long): Long = detectStartedAt + GRAB_WINDOW_MS
+
+    /** 下一轮探测前的等待时长：成功 = 基础间隔；连续失败逐档退避到封顶。 */
+    fun grabNextDelayMs(consecutiveFailures: Int): Long {
+        if (consecutiveFailures <= 0) return GRAB_POLL_INTERVAL_MS
+        return (GRAB_POLL_INTERVAL_MS + GRAB_BACKOFF_STEP_MS * consecutiveFailures)
+            .coerceAtMost(GRAB_BACKOFF_MAX_MS)
+    }
+
+    /** 该不该收工：探测次数触顶或窗口已到。 */
+    fun grabShouldStop(checks: Int, detectStartedAt: Long, now: Long): Boolean =
+        checks >= GRAB_MAX_CHECKS || now >= grabWindowEndAt(detectStartedAt)
+
+    /**
+     * 蹲点**命中**：第一页里第一条「名称匹配 + 现在能报名」的活动；没有回 null。
+     *
+     * 名称匹配与搜索同一份归一化（[matchesKeyword]，只收可见的四个字段）；
+     * 「能报名」走 [applyBlockReason]（已报名 / 已满 / 未到报名时间 / 被限制都不算命中）。
+     * **不区分「是不是这次新出现的」**：蹲点是用户手动开启、命中后还要手动确认的
+     * 工具，多一道新旧的判断只会把它变钝。
+     */
+    fun grabFirstMatch(
+        items: List<WenquActivity>,
+        keyword: String,
+        blacklisted: Boolean,
+        now: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): WenquActivity? {
+        if (keyword.isBlank()) return null
+        return items.firstOrNull { item ->
+            matchesKeyword(keyword, item.title, item.projectName, item.unit, item.address) &&
+                applyBlockReason(
+                    status = item.status,
+                    applied = item.applied,
+                    peopleNum = item.peopleNum,
+                    balanceNum = item.balanceNum,
+                    applyStartTime = item.applyStartTime,
+                    applyEndTime = item.applyEndTime,
+                    blacklisted = blacklisted,
+                    now = now,
+                    zone = zone,
+                ).isEmpty()
+        }
     }
 
     /** 今天（含）之后的第一个周日。 */

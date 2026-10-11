@@ -89,6 +89,7 @@ import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Medal02
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Settings01
+import me.rerere.hugeicons.stroke.Target01
 
 /**
  * 问渠 · 志愿服务页（DESIGN §3.28 / §4.45）。
@@ -123,6 +124,7 @@ fun WenquScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit = {},
     onOpenRecords: () -> Unit = {},
+    onOpenGrab: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val vm: WenquViewModel = viewModel(
@@ -190,9 +192,14 @@ fun WenquScreen(
                     },
                     actions = {
                         // 刷新走**下拉**（2026-10-11，同流水 / 账单 / 生活 / 趣智 / 开水那几页的
-                        // `PullToRefreshBox` 口径）：顶栏只留设置，不再放刷新图标——
-                        // 下拉指示器本身就是「有没有反应」的反馈。
+                        // `PullToRefreshBox` 口径）：顶栏不放刷新图标——下拉指示器本身就是
+                        // 「有没有反应」的反馈。已登录时顶栏两枚：蹲点 + 设置。
                         if (state.loggedIn) {
+                            // 蹲点抢活动（2026-10-11，DESIGN §3.28）：独立二级页 WenquGrabScreen，
+                            // 到点自动检测目标活动、命中弹确认框（不自动提交）
+                            IconButton(onClick = onOpenGrab) {
+                                Icon(HugeIcons.Target01, contentDescription = "蹲点抢活动")
+                            }
                             // 设置（DESIGN §3.28）：活动提醒 / 退出登录都在那一页
                             IconButton(onClick = onOpenSettings) {
                                 Icon(HugeIcons.Settings01, contentDescription = "问渠设置")
