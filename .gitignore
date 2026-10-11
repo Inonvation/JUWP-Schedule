@@ -49,7 +49,10 @@ captures/
 *.db-wal
 _*.txt
 build_*.txt
+# 模拟器点验的截图 / 录屏 / UI dump
+tmp_shots/
 
 # ============ 本地发布产物 ============
 # 正式包发布在 GitHub Release 上；本地副本统一放 dist/，不入库
 dist/
+.re-tmp/
