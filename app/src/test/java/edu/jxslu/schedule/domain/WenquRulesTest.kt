@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Base64
 
 /**
@@ -14,6 +16,13 @@ import java.util.Base64
 class WenquRulesTest {
 
     private val hour = 60 * 60 * 1000L
+
+    /** 固定时区：问渠给的都是本地时间，测试钉死时区，别跟着 CI 机器的默认时区走。 */
+    private val zone = ZoneId.of("Asia/Shanghai")
+
+    /** 本地时间 → epoch millis（测试里读起来是「几点几分」而不是一串数字）。 */
+    private fun at(y: Int, m: Int, d: Int, h: Int, min: Int): Long =
+        LocalDateTime.of(y, m, d, h, min).atZone(zone).toInstant().toEpochMilli()
 
     @Test
     fun `token 剩余不足 12 小时就要续期`() {
@@ -159,6 +168,26 @@ class WenquRulesTest {
     }
 
     @Test
+    fun `列表卡时刻_今天明天一眼看懂_其余原样`() {
+        val now = at(2026, 10, 11, 9, 0)
+        assertEquals(
+            "今天 14:00–17:00",
+            WenquRules.cardTimeLabel("26-10-11 14:00", "26-10-11 17:00", now, zone),
+        )
+        assertEquals("明天 09:00", WenquRules.cardTimeLabel("26-10-12 09:00", "", now, zone))
+        // 后天及更远：走 timeRange 原样（不带前缀）
+        assertEquals(
+            "10-13 14:00–16:30",
+            WenquRules.cardTimeLabel("26-10-13 14:00", "26-10-13 16:30", now, zone),
+        )
+        // 只有日期没有时刻：只给「今天」，别拼出「今天 10-11」
+        assertEquals("今天", WenquRules.cardTimeLabel("26-10-11", "", now, zone))
+        // 空 / 认不出：不猜
+        assertEquals("", WenquRules.cardTimeLabel("", "", now, zone))
+        assertEquals("待定", WenquRules.cardTimeLabel("待定", "", now, zone))
+    }
+
+    @Test
     fun `名额文案_招募人数没填就只给已报`() {
         assertEquals("已报 24/24", WenquRules.quotaText(24, 24))
         assertEquals("已报 1/20", WenquRules.quotaText(1, 20))
@@ -264,5 +293,299 @@ class WenquRulesTest {
         assertEquals(-1, WenquRules.FILTER_ALL_STORED)
         // 平台的状态只有 0-3，哨兵不能落在里面
         assertFalse(WenquRules.FILTER_ALL_STORED in 0..3)
+    }
+
+    @Test
+    fun `本地关键词_四个可见字段任一命中就算`() {
+        // 活动名 / 项目名 / 单位 / 地点，任一含这段字就命中——这就是「列表里看得见的搜得到」
+        assertTrue(WenquRules.matchesKeyword("爱心家教", "2026年爱心家教志愿服务", "", "", ""))
+        assertTrue(WenquRules.matchesKeyword("爱心家教", "", "爱心家教项目", "", ""))
+        assertTrue(WenquRules.matchesKeyword("爱心家教", "", "", "某某学院爱心家教服务队", ""))
+        assertTrue(WenquRules.matchesKeyword("爱心家教", "", "", "", "爱心家教实践基地"))
+        // 四个字段都没有 → 不命中
+        assertFalse(WenquRules.matchesKeyword("爱心家教", "支教服务", "支教项目", "某学院", "某小学"))
+    }
+
+    @Test
+    fun `本地关键词_子串匹配_忽略大小写与前后空白`() {
+        // 子串而不是全等：关键词只是活动名的一部分
+        assertTrue(WenquRules.matchesKeyword("家教", "爱心家教志愿服务"))
+        // 前后空白先 trim；ASCII 大小写不敏感
+        assertTrue(WenquRules.matchesKeyword("  zhijiao  ", "ZhiJiao 支教服务"))
+        assertTrue(WenquRules.matchesKeyword("zhijiao", "ZHIJIAO"))
+    }
+
+    @Test
+    fun `本地关键词_空串命中一切`() {
+        assertTrue(WenquRules.matchesKeyword("", "任意活动"))
+        assertTrue(WenquRules.matchesKeyword("   ", "任意活动"))
+    }
+
+    @Test
+    fun `索引翻页_有新东西且没触顶就继续`() {
+        assertTrue(
+            WenquRules.shouldContinueIndexing(
+                addedNew = 200, itemsSoFar = 200, pagesFetched = 1, elapsedMs = 500,
+            ),
+        )
+        // 这一页没带来任何新 id（服务端翻到头 / 忽略 page 参数）→ 停，且索引算「完整」
+        assertFalse(
+            WenquRules.shouldContinueIndexing(
+                addedNew = 0, itemsSoFar = 800, pagesFetched = 4, elapsedMs = 2_000,
+            ),
+        )
+        // 累计条数触顶
+        assertFalse(
+            WenquRules.shouldContinueIndexing(
+                addedNew = 200,
+                itemsSoFar = WenquRules.ACTIVITY_INDEX_MAX_ITEMS,
+                pagesFetched = 3,
+                elapsedMs = 1_000,
+            ),
+        )
+        // 页数触顶
+        assertFalse(
+            WenquRules.shouldContinueIndexing(
+                addedNew = 200,
+                itemsSoFar = 500,
+                pagesFetched = WenquRules.ACTIVITY_INDEX_MAX_PAGES,
+                elapsedMs = 1_000,
+            ),
+        )
+        // 时间预算用完
+        assertFalse(
+            WenquRules.shouldContinueIndexing(
+                addedNew = 200,
+                itemsSoFar = 500,
+                pagesFetched = 3,
+                elapsedMs = WenquRules.ACTIVITY_INDEX_BUDGET_MS,
+            ),
+        )
+    }
+
+    @Test
+    fun `索引每页比浏览页大一个量级`() {
+        // 索引要一次抓完全量，照浏览那样 20 条一页就是几十个请求
+        assertTrue(WenquRules.ACTIVITY_INDEX_PAGE_SIZE > WenquRules.ACTIVITY_PAGE_SIZE)
+    }
+
+    // ---- 排序档位 / 名额文案 / 只看我报名的（2026-10-11）----------------------------
+
+    @Test
+    fun `排序档位_存储值兜底`() {
+        assertEquals(3, WenquRules.SORT_CHOICES.size)
+        assertEquals(WenquRules.Sort.RecruitingFirst, WenquRules.coerceSort(null))
+        assertEquals(WenquRules.Sort.RecruitingFirst, WenquRules.coerceSort("Nope"))
+        assertEquals(WenquRules.Sort.ClosingSoon, WenquRules.coerceSort("ClosingSoon"))
+        assertEquals("报名截止临近", WenquRules.Sort.ClosingSoon.label)
+    }
+
+    @Test
+    fun `平台时间戳解析_只给排序用_认不出回 null`() {
+        assertEquals(at(2026, 10, 12, 18, 0), WenquRules.stampMillis("26-10-12 18:00", zone))
+        assertEquals(at(2026, 10, 12, 0, 0), WenquRules.stampMillis("26-10-12", zone))
+        assertEquals(null, WenquRules.stampMillis("", zone))
+        assertEquals(null, WenquRules.stampMillis("待定", zone))
+    }
+
+    @Test
+    fun `列表卡名额文案_只对招募中给数字`() {
+        // 招募中：直接说还剩几个（平台权威余量）
+        assertEquals("还剩 3", WenquRules.cardQuotaText(1, joinNum = 21, peopleNum = 24, balanceNum = 3))
+        assertEquals("已满", WenquRules.cardQuotaText(1, joinNum = 24, peopleNum = 24, balanceNum = 0))
+        // 招募人数没填（0）→ 没有上限可比，不能说还剩，退化成「已报 N」
+        assertEquals("已报 7", WenquRules.cardQuotaText(1, joinNum = 7, peopleNum = 0, balanceNum = 0))
+        // 其余状态不给名额（它们不在可报名的语义里）
+        assertEquals("", WenquRules.cardQuotaText(3, joinNum = 40, peopleNum = 40, balanceNum = 0))
+        assertEquals("", WenquRules.cardQuotaText(2, joinNum = 3, peopleNum = 10, balanceNum = 7))
+        assertEquals("", WenquRules.cardQuotaText(0, joinNum = 3, peopleNum = 10, balanceNum = 7))
+    }
+
+    @Test
+    fun `本地筛选_只看我报名的`() {
+        assertFalse(WenquRules.matchesFilter(1, 24, 3, null, false, appliedOnly = true, applied = false))
+        assertTrue(WenquRules.matchesFilter(1, 24, 3, null, false, appliedOnly = true, applied = true))
+        // 三个维度叠加
+        assertFalse(WenquRules.matchesFilter(1, 24, 0, null, true, appliedOnly = true, applied = true))
+        // 默认不开 = 与旧行为逐字一致
+        assertTrue(WenquRules.matchesFilter(1, 24, 0, null, false))
+    }
+
+    // ---- 每周日 12:00「抢活动」提醒（2026-10-11）------------------------------------
+
+    @Test
+    fun `每周提醒_下一个提醒点是本周日 12 点减提前量`() {
+        // 2026-10-07 是周三 → 下一个发布 = 2026-10-11（周日）12:00
+        val next = WenquRules.nextWeeklyAlertPoint(at(2026, 10, 7, 10, 0), 5, zone)
+        assertEquals(at(2026, 10, 11, 12, 0), next.publishAt)
+        assertEquals(at(2026, 10, 11, 11, 55), next.remindAt)
+    }
+
+    @Test
+    fun `每周提醒_当天已过提醒点就排下周`() {
+        // 周日 12:10（今天的 11:55 已过）→ 下一个是 10-18
+        assertEquals(
+            at(2026, 10, 18, 11, 55),
+            WenquRules.nextWeeklyAlertPoint(at(2026, 10, 11, 12, 10), 5, zone).remindAt,
+        )
+        // 周日 11:00 → 下一个就是今天 11:55
+        assertEquals(
+            at(2026, 10, 11, 11, 55),
+            WenquRules.nextWeeklyAlertPoint(at(2026, 10, 11, 11, 0), 5, zone).remindAt,
+        )
+        // 正好站在提醒点上 → 要求严格晚于 now，排下周
+        assertEquals(
+            at(2026, 10, 18, 11, 55),
+            WenquRules.nextWeeklyAlertPoint(at(2026, 10, 11, 11, 55), 5, zone).remindAt,
+        )
+    }
+
+    @Test
+    fun `每周提醒_最近一个到点的是本周或上周`() {
+        assertEquals(
+            at(2026, 10, 11, 11, 55),
+            WenquRules.lastWeeklyAlertPoint(at(2026, 10, 11, 12, 10), 5, zone).remindAt,
+        )
+        // 周日 11:00 还没到点 → 回上周
+        assertEquals(
+            at(2026, 10, 4, 11, 55),
+            WenquRules.lastWeeklyAlertPoint(at(2026, 10, 11, 11, 0), 5, zone).remindAt,
+        )
+    }
+
+    @Test
+    fun `每周提醒_提前量可调_改提前量不改发布键`() {
+        assertEquals(5, WenquRules.WEEKLY_ALERT_OFFSET_DEFAULT_MIN)
+        assertEquals(1, WenquRules.WEEKLY_ALERT_OFFSET_MIN)
+        assertEquals(10, WenquRules.WEEKLY_ALERT_OFFSET_MAX)
+        assertEquals(10, WenquRules.coerceWeeklyOffsetMinutes(10))
+        assertEquals(1, WenquRules.coerceWeeklyOffsetMinutes(1))
+        assertEquals(5, WenquRules.coerceWeeklyOffsetMinutes(0))
+        assertEquals(5, WenquRules.coerceWeeklyOffsetMinutes(99))
+        assertEquals("提前 5 分钟", WenquRules.weeklyOffsetLabel(5))
+        // 脏值归**默认档**（同 `coerceActivityIntervalHours` 的口径），不是钳到边界
+        assertEquals("提前 5 分钟", WenquRules.weeklyOffsetLabel(99))
+        assertEquals("提前 5 分钟", WenquRules.weeklyOffsetLabel(0))
+        assertEquals(0, WenquRules.weeklyOffsetChoiceIndex(1))
+        assertEquals(9, WenquRules.weeklyOffsetChoiceIndex(10))
+        // 提前量真的挪动了闹钟时刻，但**发布键不变**——同一周不该因为改设置再报一次
+        val five = WenquRules.nextWeeklyAlertPoint(at(2026, 10, 7, 10, 0), 5, zone)
+        val ten = WenquRules.nextWeeklyAlertPoint(at(2026, 10, 7, 10, 0), 10, zone)
+        assertEquals(five.publishAt, ten.publishAt)
+        assertEquals(at(2026, 10, 11, 11, 50), ten.remindAt)
+    }
+
+    @Test
+    fun `命中高亮_位置与匹配判据同源`() {
+        // 命中的字在卡上标出来（搜「单位」时用户才知道为什么这条被搜出来）
+        assertEquals(listOf(4 until 8), WenquRules.keywordRanges("某某学院爱心家教志愿服务队", "爱心家教"))
+        // 大小写不敏感 + 前后空白先 trim（与 matchesKeyword 同一份归一化）
+        assertEquals(listOf(0 until 7), WenquRules.keywordRanges("ZhiJiao 支教服务", "  zhijiao "))
+        // 逐段跳过已命中区间：aaaa 里搜 aa 得两段，不是三段重叠
+        assertEquals(listOf(0 until 2, 2 until 4), WenquRules.keywordRanges("aaaa", "aa"))
+        // 没命中 / 空关键词 → 空
+        assertEquals(emptyList<IntRange>(), WenquRules.keywordRanges("支教服务", "爱心家教"))
+        assertEquals(emptyList<IntRange>(), WenquRules.keywordRanges("支教服务", "  "))
+        assertEquals(emptyList<IntRange>(), WenquRules.keywordRanges("", "支教"))
+    }
+
+    @Test
+    fun `报名截止排序_没截止的排前面_已截止与没填的排后面`() {
+        val now = at(2026, 10, 11, 10, 0)
+        // 还没截止 → 直接用截止时刻当键（升序 = 越快截止的越靠前）
+        assertEquals(at(2026, 10, 12, 18, 0), WenquRules.closingSortKey("26-10-12 18:00", now, zone))
+        // 已截止 / 没填 / 解析不了 → 一律排最后
+        assertEquals(Long.MAX_VALUE, WenquRules.closingSortKey("26-10-10 18:00", now, zone))
+        assertEquals(Long.MAX_VALUE, WenquRules.closingSortKey("", now, zone))
+        assertEquals(Long.MAX_VALUE, WenquRules.closingSortKey("待定", now, zone))
+        // 两档的先后：没截止的一定排在已截止前面
+        val a = WenquRules.closingSortKey("26-10-20 09:00", now, zone)
+        val b = WenquRules.closingSortKey("26-10-01 09:00", now, zone)
+        assertTrue(a < b)
+    }
+
+    @Test
+    fun `记录年份_认不出回 null`() {
+        assertEquals(2026, WenquRules.stampYear("26-10-13 14:00", zone))
+        assertEquals(2025, WenquRules.stampYear("25-12-05 09:00", zone))
+        assertEquals(null, WenquRules.stampYear("", zone))
+        assertEquals(null, WenquRules.stampYear("待定", zone))
+    }
+
+    @Test
+    fun `快照装载计划_新鲜走缓存_过期走增量_太久走整份重抓`() {
+        val now = 1_000_000_000L
+        val min = 60_000L
+        // 刚同步过 + 快照完整 + 整份重抓还在有效期内 → 一个请求都不发
+        assertEquals(
+            WenquRules.IndexLoad.UseCache,
+            WenquRules.indexLoadPlan(
+                hasCache = true, cacheComplete = true,
+                fullCrawledAt = now - min, syncedAt = now - min, now = now, force = false,
+            ),
+        )
+        // 距上次同步超过 30 分钟 → 只抓第一页（增量）
+        assertEquals(
+            WenquRules.IndexLoad.SyncNewest,
+            WenquRules.indexLoadPlan(
+                hasCache = true, cacheComplete = true,
+                fullCrawledAt = now - min, syncedAt = now - 31 * min, now = now, force = false,
+            ),
+        )
+        // 下拉刷新（force）跳过闸门，也走增量——**不会**因为下拉就整份重抓
+        assertEquals(
+            WenquRules.IndexLoad.SyncNewest,
+            WenquRules.indexLoadPlan(
+                hasCache = true, cacheComplete = true,
+                fullCrawledAt = now, syncedAt = now, now = now, force = true,
+            ),
+        )
+        // 没有快照 / 快照不完整 / 上次整份重抓超过 24 小时 → 整份重抓
+        assertEquals(
+            WenquRules.IndexLoad.Rebuild,
+            WenquRules.indexLoadPlan(false, false, 0L, 0L, now, force = false),
+        )
+        assertEquals(
+            WenquRules.IndexLoad.Rebuild,
+            WenquRules.indexLoadPlan(true, false, now, now, now, force = false),
+        )
+        assertEquals(
+            WenquRules.IndexLoad.Rebuild,
+            WenquRules.indexLoadPlan(
+                true, true, now - WenquRules.INDEX_MAX_AGE_MS, now, now, force = false,
+            ),
+        )
+        // 漂移封顶优先于「快」：超过 24 小时，连下拉刷新也整份重抓
+        assertEquals(
+            WenquRules.IndexLoad.Rebuild,
+            WenquRules.indexLoadPlan(
+                true, true, now - WenquRules.INDEX_MAX_AGE_MS, now, now, force = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `状态校正_活动结束时间已过就当已结束`() {
+        val now = at(2026, 10, 11, 12, 0)
+        // 结束时间已过 → 已结束（不管缓存里写的是招募中还是进行中）
+        assertEquals(3, WenquRules.effectiveStatus(1, "26-10-10 18:00", now, zone))
+        assertEquals(3, WenquRules.effectiveStatus(2, "26-10-11 08:00", now, zone))
+        // 还没结束 → 保持原值
+        assertEquals(1, WenquRules.effectiveStatus(1, "26-10-12 18:00", now, zone))
+        assertEquals(2, WenquRules.effectiveStatus(2, "26-10-11 20:00", now, zone))
+        // 时间认不出 / 没填 → 不猜，保持原值（宁可不改，也不编一个状态）
+        assertEquals(1, WenquRules.effectiveStatus(1, "", now, zone))
+        assertEquals(1, WenquRules.effectiveStatus(1, "待定", now, zone))
+        assertEquals(3, WenquRules.effectiveStatus(3, "", now, zone))
+    }
+
+    @Test
+    fun `每周提醒_发布时刻文案`() {
+        val now = at(2026, 10, 11, 11, 55)
+        assertEquals("今天 12:00", WenquRules.weeklyPublishLabel(at(2026, 10, 11, 12, 0), now, zone))
+        assertEquals(
+            "10 月 18 日 12:00",
+            WenquRules.weeklyPublishLabel(at(2026, 10, 18, 12, 0), now, zone),
+        )
     }
 }

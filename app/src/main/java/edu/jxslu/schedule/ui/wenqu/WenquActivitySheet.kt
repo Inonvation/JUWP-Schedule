@@ -1,7 +1,9 @@
 package edu.jxslu.schedule.ui.wenqu
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,20 +16,28 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.data.wenqu.WenquActivity
 import edu.jxslu.schedule.domain.WenquRules
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -57,10 +67,15 @@ fun WenquActivitySheet(
     recordBadge: String? = null,
     /** 详情取不到（平台回 `detail: null` / 网络失败）：弹层内挂一行说明，**不弹提醒**。 */
     detailUnavailable: Boolean = false,
-    /** 复制电话 / 群号后的回执（走页面的统一提示）。 */
+    /** 复制电话 / 群号 / 活动名后的回执（走页面的统一提示）。 */
     onNotice: (String) -> Unit = {},
 ) {
-    ImeAwareModalBottomSheet(onDismiss = onDismiss) {
+    // 底部动作行的「关掉再做一件事」（DESIGN §3.28，2026-10-11）：
+    // 弹层是比页面高一层的独立窗口，页面级提示会被它盖住——所以先关弹层（退场动画走完
+    // 再落 onDismiss），再复制 / 拉起微信，回执才看得见。null = 没请求关闭。
+    var afterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val context = LocalContext.current
+    ImeAwareModalBottomSheet(onDismiss = onDismiss, pendingDismiss = afterDismiss) {
         WenquActivityDetailContent(
             activity = activity,
             detailLoading = detailLoading,
@@ -74,7 +89,77 @@ fun WenquActivitySheet(
             footer = if (recordBadge != null) RECORD_FOOTER else ACTIVITY_FOOTER,
             detailUnavailable = detailUnavailable,
             onNotice = onNotice,
+            // 动作行只给**活动视角**：记录视角已经报过名了，「去微信报名」是错的语义。
+            // 放在滚动内容的末尾（不钉在底部）：弹层内容是可滚的，钉底要么垫键盘高度、
+            // 要么在弹层里套 weight——那套在这套主题里没有先例，别在这里开个头。
+            showActions = recordBadge == null,
+            onCopyName = { afterDismiss = { onNotice("活动名已复制") } },
+            onOpenWechat = { afterDismiss = { openWechatForSignup(context, onNotice) } },
         )
+    }
+}
+
+/**
+ * 详情弹层底部的动作行（DESIGN §3.28，2026-10-11）。
+ *
+ * 本应用**全程只读**（红线：报名 / 签到 / 提交一律不碰），但「看完之后去哪」得给出来——
+ * 否则用户看完就卡住了。两个出口：复制活动名（去小程序里搜）、去微信（App 只递手，
+ * 不代报名）。**两个动作都先关弹层**：回执是页面级提示，被弹层盖住等于没给。
+ */
+@Composable
+private fun WenquActivityActions(
+    activity: WenquActivity,
+    onCopyName: () -> Unit,
+    onOpenWechat: () -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(
+            onClick = {
+                clipboard.setText(AnnotatedString(activityName(activity)))
+                onCopyName()
+            },
+            modifier = Modifier.weight(1f),
+        ) { Text("复制活动名") }
+        Button(
+            onClick = {
+                clipboard.setText(AnnotatedString(activityName(activity)))
+                onOpenWechat()
+            },
+            modifier = Modifier.weight(1f),
+        ) { Text("去微信报名") }
+    }
+}
+
+/** 复制 / 引导用的活动名：标题空就退到项目名，再空退到「志愿服务活动」。 */
+private fun activityName(activity: WenquActivity): String =
+    activity.title.ifBlank { activity.projectName.ifBlank { "志愿服务活动" } }
+
+/**
+ * 拉起微信并给一句引导（App 不代报名）。
+ *
+ * 走 [edu.jxslu.schedule.startActivityOutsideApp]：微信是 singleTask、永远开不进本 task，
+ * 从它返回时二级页的右推入过渡会被重放（用户报过「界面跳动」），这个出口会先换静止过渡。
+ * 只做一级兜底——这里只是「递到微信首页」，没有扫一扫那种直达诉求。
+ */
+private fun openWechatForSignup(context: android.content.Context, onNotice: (String) -> Unit) {
+    val launch = context.packageManager.getLaunchIntentForPackage("com.tencent.mm")
+    if (launch == null) {
+        onNotice("没检测到微信；活动名已复制，可到小程序「问渠」里报名")
+        return
+    }
+    runCatching {
+        context.startActivityOutsideApp(launch)
+        onNotice("活动名已复制，请在微信小程序「问渠」里报名")
+    }.onFailure {
+        onNotice("打不开微信；活动名已复制，请手动打开小程序报名")
     }
 }
 
@@ -101,6 +186,9 @@ private fun WenquActivityDetailContent(
     footer: String,
     detailUnavailable: Boolean,
     onNotice: (String) -> Unit,
+    showActions: Boolean = false,
+    onCopyName: () -> Unit = {},
+    onOpenWechat: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -210,6 +298,15 @@ private fun WenquActivityDetailContent(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
         )
+
+        // 底部动作行（活动视角）：看完知道下一步去哪——App 只读，但出口得递到手上
+        if (showActions) {
+            WenquActivityActions(
+                activity = activity,
+                onCopyName = onCopyName,
+                onOpenWechat = onOpenWechat,
+            )
+        }
     }
 }
 

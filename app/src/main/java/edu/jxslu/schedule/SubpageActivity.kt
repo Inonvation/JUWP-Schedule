@@ -293,6 +293,8 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.WENQU -> WenquScreen(
                 onBack = onBack,
                 onOpenSettings = { SubpageActivity.start(this, SubpageScreen.WENQU_SETTINGS) },
+                // 工时行右侧「记录 ›」（2026-10-11）：与设置页那个入口同一去处
+                onOpenRecords = { SubpageActivity.start(this, SubpageScreen.WENQU_RECORDS) },
             )
             SubpageScreen.WENQU_RECORDS -> WenquRecordsScreen(onBack = onBack)
             SubpageScreen.WENQU_SETTINGS -> WenquSettingsScreen(

@@ -849,6 +849,68 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 「只看我报名的」（2026-10-11）。默认关——默认视图要能看见全部，
+     * 用户想收窄时自己开（同「隐藏已满」的口径）。
+     */
+    val wenquAppliedOnly: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_APPLIED_ONLY] ?: false
+    }
+
+    suspend fun setWenquAppliedOnly(value: Boolean) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_APPLIED_ONLY] = value }
+    }
+
+    /**
+     * 活动列表的排序档位（[WenquRules.Sort] 的 `name`）。默认「招募中优先」。
+     * 存 **name 而不是序号**：以后往枚举中间插一档，老用户的设置不会错位。
+     */
+    val wenquSort: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_SORT] ?: WenquRules.Sort.RecruitingFirst.name
+    }
+
+    suspend fun setWenquSort(value: String) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_SORT] = value }
+    }
+
+    // ---- 问渠「每周日 12:00 抢活动」提醒（DESIGN §4.45，2026-10-11）----
+    //
+    // 与上面那条「检测到新活动就报」是两件事：那条是事后发现（周期扫列表），
+    // 这条是**事前蹲点**（周日 12:00 前 N 分钟响一声），只有一条精确闹钟、不扫接口。
+
+    /**
+     * 每周提醒开关。**默认关**——通知是打扰型能力（同选课 / 调课 / 新增活动提醒口径）。
+     */
+    val wenquWeeklyAlertEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_WEEKLY_ALERT_ENABLED] ?: false
+    }
+
+    suspend fun setWenquWeeklyAlertEnabled(value: Boolean) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_WEEKLY_ALERT_ENABLED] = value }
+    }
+
+    /** 提前提醒量（分钟，1–10，默认 5）。 */
+    val wenquWeeklyAlertOffsetMinutes: Flow<Int> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_WEEKLY_ALERT_OFFSET_MIN] ?: WenquRules.WEEKLY_ALERT_OFFSET_DEFAULT_MIN
+    }
+
+    suspend fun setWenquWeeklyAlertOffsetMinutes(value: Int) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_WEEKLY_ALERT_OFFSET_MIN] = value }
+    }
+
+    /**
+     * 上一次已提醒的**发布时刻**（周日 12:00，不是提醒时刻）——0 = 从没提醒过。
+     *
+     * 存发布时刻而不是提醒时刻：用户中途改提前量（5 分钟 → 10 分钟）时，
+     * 同一周的发布键不变，不会因为改了设置又报一次。
+     */
+    suspend fun wenquWeeklyAlertLastFiredAt(): Long =
+        context.displayDataStore.data.first()[KEY_WENQU_WEEKLY_ALERT_LAST_FIRED_AT] ?: 0L
+
+    suspend fun setWenquWeeklyAlertLastFiredAt(publishAt: Long) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_WEEKLY_ALERT_LAST_FIRED_AT] = publishAt }
+    }
+
+    /**
      * 教材的上次成功抓取日期（ISO）。空 = 从没成功过。
      * 教材跟着「导入课表」走（一学期一次），这里只做记录与展示，不做时间闸门。
      */
@@ -2225,6 +2287,13 @@ class DisplayPrefsStore(private val context: Context) {
         // 活动列表的本地筛选（2026-10-08）：状态（-1 = 全部）+ 隐藏已满
         val KEY_WENQU_STATUS_FILTER = intPreferencesKey("wenqu_status_filter")
         val KEY_WENQU_HIDE_FULL = booleanPreferencesKey("wenqu_hide_full")
+        // 只看我报名的 + 排序档位（2026-10-11）
+        val KEY_WENQU_APPLIED_ONLY = booleanPreferencesKey("wenqu_applied_only")
+        val KEY_WENQU_SORT = stringPreferencesKey("wenqu_sort")
+        // 每周日 12:00「抢活动」提醒（2026-10-11）：开关 / 提前量 / 上次已提醒的发布时刻
+        val KEY_WENQU_WEEKLY_ALERT_ENABLED = booleanPreferencesKey("wenqu_weekly_alert_enabled")
+        val KEY_WENQU_WEEKLY_ALERT_OFFSET_MIN = intPreferencesKey("wenqu_weekly_alert_offset_min")
+        val KEY_WENQU_WEEKLY_ALERT_LAST_FIRED_AT = longPreferencesKey("wenqu_weekly_alert_last_fired_at")
 
         // AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 教师名脱敏 / 首次隐私确认。
         // API Key **不在这里**——它是账号凭据，走 AiCredentialStore 加密存储（secure_ai.xml）。

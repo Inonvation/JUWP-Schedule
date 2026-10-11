@@ -1,8 +1,10 @@
 package edu.jxslu.schedule.data.wenqu
 
+import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.domain.WenquRules
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,24 +15,97 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 
 /**
- * 活动列表的一页（**仓库层模型，不是接口模型**）。
+ * `volunteer/v2` 的**一页响应**（仓库层模型）。
  *
- * [items] 是**累计**结果（翻到第 3 页就是 3 页拼起来的），页面直接整份渲染；
- * [hasMore] 由「上一页是否回满」推断——`volunteer/v2` **不返回总数**，
- * 只能靠「回满即可能还有」这条经验判据（宁可多给一次「加载更多」按钮，也不要漏数据）。
+ * 2026-10-11 起页面不再按页取（列表 = 全量快照 [WenquActivityIndex]），这个模型只剩一个
+ * 用处：**搜索兜底**——快照不完整时补一次服务端关键词查询，只取它的 [items]。
+ * 所以 `page` / `hasMore` 两个分页字段已经删掉（没人读了，留着是死代码）。
  *
  * [blacklisted] / [stopApplyReason] 是**账号级**的报名限制（平台的 `isBlack` /
- * `stop_apply_reason`，每个活动都一样），不是某条活动的属性——页面据此在列表上方挂一条
+ * `stop_apply_reason`，每页都一样），不是某条活动的属性——页面据此在列表上方挂一条
  * 「你被限制报名」的说明，把平台原话带上来，别让它静静丢掉。
  */
 data class WenquActivityPage(
     val items: List<WenquActivity>,
-    /** 已经取到第几页（下一页 = [page] + 1）。 */
-    val page: Int,
-    val hasMore: Boolean,
     val blacklisted: Boolean = false,
     val stopApplyReason: String = "",
 )
+
+/**
+ * **本地全量快照**（仓库层模型）：平台上**全部**活动的一份索引。
+ *
+ * 2026-10-11 起它同时是**活动列表的数据源**——不只是搜索。原因：列表原先只拿服务端
+ * 第一页（20 条），而本地筛选 / 排序都作用在这 20 条上，于是「平台里明明有招募中的活动，
+ * 选『招募中』却显示没有、选『招募中优先』却把一堆旧的已结束排在前面」——
+ * 招募中只有个位数且不在第一页，筛选与排序**必须**覆盖全量才有意义。
+ *
+ * 它也是搜索的数据源：搜索原先完全依赖服务端 `keyword`，而那个参数到底匹配哪些字段
+ * 无法验证（无 token 回 `410000 请登录`），于是「列表里看得见的活动搜不到」。
+ *
+ * [complete] 表示这份快照**抓全了**：
+ * - `true`：抓到服务端翻到头（某页没带来任何新 id），筛选 / 排序 / 搜索都是纯本地、零请求；
+ * - `false`：触到条数 / 页数 / 时间上限，或中途某页失败——搜索再补一次服务端关键词查询
+ *   （只取第一页）兜住深层活动，结果按 id 去重后并入。
+ *
+ * [blacklisted] / [stopApplyReason] 是**账号级**的报名限制（平台的 `isBlack` /
+ * `stop_apply_reason`，每页都一样）——页面据此在列表上方挂「报名受限」说明。
+ * 它们跟着快照一起带出来：列表不再有「浏览页」那个载体了。
+ *
+ * [fullCrawledAt] / [syncedAt] 是增量同步的两个时刻（2026-10-11）：
+ * - [fullCrawledAt] = 上次**整份重抓**的时刻，超过 [WenquRules.INDEX_MAX_AGE_MS] 就再整份抓一次；
+ * - [syncedAt] = 上次**同步**（整份或增量）的时刻，不足
+ *   [WenquRules.INDEX_SYNC_INTERVAL_MS] 就一个请求都不发。
+ *
+ * 分派逻辑是纯函数 [WenquRules.indexLoadPlan]（JVM 可测）。
+ */
+data class WenquActivityIndex(
+    val items: List<WenquActivity>,
+    val complete: Boolean,
+    val blacklisted: Boolean = false,
+    val stopApplyReason: String = "",
+    val fullCrawledAt: Long = 0L,
+    val syncedAt: Long = 0L,
+)
+
+/**
+ * **增量同步的合并**（2026-10-11）：把刚抓到的第一页并进已有快照。
+ *
+ * 平台列表**开头按 id 倒序**，新活动一定在最前面，所以：
+ * - [fresh] 整页放在最前（它本来就在最前，顺序基本不变）；
+ * - [old] 里**不在** [fresh] 的条目按原序接在后面（同 id 的以 [fresh] 那份为准——名额 /
+ *   状态 / 已报名这些可变字段要新值）；
+ * - 合并后超过 [cap] 就砍尾巴（尾巴是最旧的；上限只为兜住内存，正常远到不了）。
+ *
+ * 纯函数，JVM 可测。
+ */
+internal fun mergeNewest(
+    old: List<WenquActivity>,
+    fresh: List<WenquActivity>,
+    cap: Int,
+): List<WenquActivity> {
+    if (fresh.isEmpty()) return old
+    val freshIds = HashSet<Long>()
+    for (item in fresh) if (item.id > 0L) freshIds.add(item.id)
+    val merged = ArrayList<WenquActivity>(fresh.size + old.size)
+    merged += fresh
+    for (item in old) if (item.id <= 0L || item.id !in freshIds) merged += item
+    return if (merged.size <= cap) merged else merged.take(cap)
+}
+
+/**
+ * 本地命中 ∪ 服务端兜底命中（部分索引 / 索引不可用时用）：按 id 去重，[primary] 优先。
+ *
+ * `id ≤ 0` 的条目（平台没给 id）不去重——它们没有身份，硬按 0 合并会把好几条挤成一条。
+ */
+internal fun mergeActivities(
+    primary: List<WenquActivity>,
+    secondary: List<WenquActivity>,
+): List<WenquActivity> {
+    if (secondary.isEmpty()) return primary
+    val seen = HashSet<Long>()
+    for (item in primary) if (item.id > 0L) seen.add(item.id)
+    return primary + secondary.filter { it.id <= 0L || seen.add(it.id) }
+}
 
 /**
  * 问渠实践教育平台仓库（DESIGN §4.45）：登录态、凭证、志愿 / 劳动教育取数。
@@ -82,17 +157,46 @@ class WenquRepository(
     private val detailCache =
         WenquTtlCache<Long, WenquActivity>(WenquRules.ACTIVITY_TTL_MS)
 
-    fun localSession(): WenquSession? = store.read()
-
     /**
-     * 只读缓存快照（**不发请求**）：页面进页先把它摆上，避免「明明有缓存还闪一下骨架」。
-     * 过期或没取过回 null，调用方按空处理。
+     * 全量快照（整份活动列表，只有一个资源，键用常量）。
+     *
+     * TTL 是 [WenquRules.INDEX_MAX_AGE_MS]（24 小时）——**不是 30 分钟**：
+     * 快照要活得比一次同步久，否则每次进页都退化成整份重抓。30 分钟那档闸门改由
+     * [WenquActivityIndex.syncedAt] 判（到点只抓第一页做增量，见 [syncNewest]）。
      */
-    fun cachedActivities(keyword: String): WenquActivityPage? =
-        activityCache.get(keyword.trim(), now())
+    private val indexCache =
+        WenquTtlCache<String, WenquActivityIndex>(WenquRules.INDEX_MAX_AGE_MS, maxEntries = 1)
+
+    /** 索引构建串行化：两个入口同时要索引时，只允许一次抓取，另一个等结果。 */
+    private val indexMutex = Mutex()
+
+    fun localSession(): WenquSession? = store.read()
 
     /** 同上：我的记录 / 工时。 */
     fun cachedVolunteer(): WenquVolunteerData? = volunteerCache.get(SINGLE_KEY, now())
+
+    /**
+     * 只读快照（**不发请求**）：页面进来先看有没有现成的，有就先摆上（本地筛 / 排 / 搜），
+     * 再按 [WenquRules.indexLoadPlan] 决定要不要增量同步。过期或没抓过回 null。
+     */
+    fun cachedIndex(): WenquActivityIndex? = indexCache.get(INDEX_KEY, now())
+
+    /** 作废快照（退登等）：下次进页整份重抓。 */
+    fun invalidateIndex() {
+        indexCache.clear()
+    }
+
+    /**
+     * 让**下次进页立刻同步一次**（不整份重抓）。
+     *
+     * 调用方是「每周日抢活动」提醒：它响的时候（12:00 前几分钟）用户多半正要进页看新活动，
+     * 若还吃着 30 分钟的同步闸门，进页会**零请求**地显示发布前的列表。
+     * 只把同步时刻清零、**不发请求**——进页照旧是用户动作，网络请求不提前。
+     */
+    fun invalidateActivities() {
+        val cached = indexCache.get(INDEX_KEY, now()) ?: return
+        indexCache.put(INDEX_KEY, cached.copy(syncedAt = 0L), now())
+    }
 
     fun logout() {
         store.clear()
@@ -106,6 +210,7 @@ class WenquRepository(
         certCache.clear()
         activityCache.clear()
         detailCache.clear()
+        indexCache.clear()
     }
 
     private fun persist(session: WenquSession) {
@@ -195,8 +300,10 @@ class WenquRepository(
     }
 
     /**
-     * 活动列表**第一页**。命中缓存（且未过期）直接返回，不发请求——
-     * 这是「每次进页都重新获取」的正面修复点。
+     * 取**一页**活动（只给搜索兜底用：快照不完整时补一次服务端关键词查询）。
+     * 命中缓存（且未过期）直接返回，不发请求。
+     *
+     * 页面本身不用它——列表与搜索的数据源都是 [activityIndex]（2026-10-11 起）。
      */
     suspend fun activities(keyword: String, force: Boolean = false): WenquActivityPage =
         withContext(Dispatchers.IO) {
@@ -208,18 +315,154 @@ class WenquRepository(
         }
 
     /**
-     * 追加下一页。缓存已被清掉（比如刚退登）或本来就取完了，就退回 [activities]，
-     * 不让「加载更多」变成一次没有前文的裸请求。
+     * 活动快照（[WenquActivityIndex]）：列表与搜索共用的数据源。
+     *
+     * **三条路，由纯函数 [WenquRules.indexLoadPlan] 分派**（JVM 可测）：
+     * - [WenquRules.IndexLoad.UseCache]：距上次同步不足
+     *   [WenquRules.INDEX_SYNC_INTERVAL_MS] → 直接用缓存，**零请求**；
+     * - [WenquRules.IndexLoad.SyncNewest]：**增量**——只抓第一页（[syncNewest]）按 id 合并。
+     *   平台列表开头按 id 倒序，新活动一定在最前面，所以增量够用（1 个请求、几百毫秒）；
+     * - [WenquRules.IndexLoad.Rebuild]：没有快照 / 快照不完整 / 上次整份重抓超过
+     *   [WenquRules.INDEX_MAX_AGE_MS] → [buildIndex] 整份重抓（几秒，页面给进度提示）。
+     *
+     * [force] = 用户显式动作（下拉刷新）：跳过 30 分钟闸门立刻增量同步一次，
+     * **但不会因为「想看看新的」就整份重抓**——那是几秒的事，不该由一次下拉触发。
+     *
+     * 并发的两次调用由 [indexMutex] 串行化——第二个等第一个的结果，不会各抓一份。
      */
-    suspend fun loadMoreActivities(keyword: String): WenquActivityPage = withContext(Dispatchers.IO) {
-        val key = keyword.trim()
-        val current = activityCache.get(key, now()) ?: return@withContext activities(key)
-        if (!current.hasMore) return@withContext current
-        val next = fetchPage(key, page = current.page + 1)
-        // 以**新那一页**为基底（账号级的报名限制标记取最新），只把累计的 items 拼上去
-        val merged = next.copy(items = current.items + next.items)
-        activityCache.put(key, merged, now())
-        merged
+    suspend fun activityIndex(force: Boolean = false): WenquActivityIndex? =
+        withContext(Dispatchers.IO) {
+            val cached = indexCache.get(INDEX_KEY, now())
+            when (
+                WenquRules.indexLoadPlan(
+                    hasCache = cached != null,
+                    cacheComplete = cached?.complete == true,
+                    fullCrawledAt = cached?.fullCrawledAt ?: 0L,
+                    syncedAt = cached?.syncedAt ?: 0L,
+                    now = now(),
+                    force = force,
+                )
+            ) {
+                WenquRules.IndexLoad.UseCache -> cached
+                WenquRules.IndexLoad.SyncNewest -> indexMutex.withLock {
+                    // 双检：等锁期间另一个调用可能已经同步过了
+                    val latest = indexCache.get(INDEX_KEY, now()) ?: return@withLock buildIndex()
+                    if (!force && now() - latest.syncedAt < WenquRules.INDEX_SYNC_INTERVAL_MS) {
+                        latest
+                    } else {
+                        syncNewest(latest)
+                    }
+                }
+
+                WenquRules.IndexLoad.Rebuild -> indexMutex.withLock {
+                    // 双检：等锁期间另一个调用可能已经抓好了
+                    val latest = indexCache.get(INDEX_KEY, now())
+                    if (latest != null && !force) {
+                        latest
+                    } else {
+                        buildIndex() ?: latest
+                    }
+                }
+            }
+        }
+
+    /**
+     * 增量同步：只抓第一页，按 id 合并进快照（[mergeNewest]）。
+     *
+     * 抓失败**也算同步过了**（推进 [WenquActivityIndex.syncedAt]）：不这样的话网络一抖，
+     * 每次进页都要重试一遍。用户想立刻再试就下拉刷新（[force] 跳过闸门）。
+     */
+    private suspend fun syncNewest(current: WenquActivityIndex): WenquActivityIndex {
+        val syncedAt = now()
+        val page = try {
+            fetchPage(keyword = "", page = 1, limit = WenquRules.INDEX_SYNC_PAGE_SIZE)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            val stamped = current.copy(syncedAt = syncedAt)
+            indexCache.put(INDEX_KEY, stamped, syncedAt)
+            return stamped
+        }
+        val updated = current.copy(
+            items = mergeNewest(current.items, page.items, WenquRules.ACTIVITY_INDEX_MAX_ITEMS),
+            blacklisted = current.blacklisted || page.blacklisted,
+            stopApplyReason = page.stopApplyReason.ifBlank { current.stopApplyReason },
+            syncedAt = syncedAt,
+        )
+        indexCache.put(INDEX_KEY, updated, syncedAt)
+        return updated
+    }
+
+    /**
+     * **整份重抓**（[WenquRules.IndexLoad.Rebuild] 那条路）：按页翻到服务端翻不动为止。
+     *
+     * 抓取**一次一页**（[WenquRules.ACTIVITY_INDEX_PAGE_SIZE] 条），页间按
+     * `AutoSyncRules.interRequestDelayMs()` 放慢，别把第三方系统打疼。
+     *
+     * 收工判据全部交给 [WenquRules.shouldContinueIndexing]（纯函数，JVM 可测）：
+     * 这一页没带来新 id / 累计触顶 / 页数触顶 / 超时间预算，任一命中就停。
+     * **只有「没带来新 id」算抓全**（`complete = true`）；其余都是部分快照。
+     *
+     * 失败处理：首页就失败 → 回 null（调用方保留旧快照 / 页面给「没抓到」的空态）；
+     * 中途失败 → 带着已抓到的部分收工并**缓存**（`complete = false`），
+     * 否则网络一抖就要每次进页重爬一遍。
+     */
+    private suspend fun buildIndex(): WenquActivityIndex? {
+        val startedAt = now()
+        val items = ArrayList<WenquActivity>()
+        val seenIds = HashSet<Long>()
+        var page = 1
+        var complete = false
+        // 账号级的报名限制：每页都一样，取到非空的那份就行（列表要挂「报名受限」说明）
+        var blacklisted = false
+        var stopApplyReason = ""
+        while (true) {
+            val current = try {
+                fetchPage(keyword = "", page = page, limit = WenquRules.ACTIVITY_INDEX_PAGE_SIZE)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // 首页失败 = 索引不可用；中途失败 = 带着已有部分收工
+                if (items.isEmpty()) return null
+                break
+            }
+            if (current.blacklisted) blacklisted = true
+            if (current.stopApplyReason.isNotBlank()) stopApplyReason = current.stopApplyReason
+            var added = 0
+            for (item in current.items) {
+                // 按 id 去重；id 认不出（0）的照收，别让它们互相吞掉
+                if (item.id > 0L && !seenIds.add(item.id)) continue
+                items.add(item)
+                added++
+            }
+            page++
+            if (added == 0) {
+                // 服务端翻到头（或忽略 page 参数）：索引到此为止且**是完整的**
+                complete = true
+                break
+            }
+            if (!WenquRules.shouldContinueIndexing(
+                    addedNew = added,
+                    itemsSoFar = items.size,
+                    pagesFetched = page - 1,
+                    elapsedMs = now() - startedAt,
+                )
+            ) {
+                break
+            }
+            delay(AutoSyncRules.interRequestDelayMs())
+        }
+        val index = WenquActivityIndex(
+            items = items,
+            complete = complete,
+            blacklisted = blacklisted,
+            stopApplyReason = stopApplyReason,
+            // 整份重抓：两个时刻一起推（它同时是一次同步）
+            fullCrawledAt = now(),
+            syncedAt = now(),
+        )
+        indexCache.put(INDEX_KEY, index, now())
+        return index
     }
 
     /**
@@ -244,48 +487,31 @@ class WenquRepository(
     /**
      * **扫一遍**第一页 `limit` 条（新增活动提醒用，DESIGN §4.45）。
      *
-     * 与 [activities] 分开是因为语义不同：那是「浏览一页」（20 条、进缓存），
+     * 与 [activities] 分开是因为语义不同：那是「取一页」（进缓存），
      * 这是「看有没有新活动」（一次取够）。接口**不保证按 id 排序**
      * （实测前 21 条严格降序、之后跳回旧 id），扫描范围太小会漏掉夹在中间的新活动。
      *
-     * **扫完顺手把「浏览页」的缓存刷成刚抓到的这一页**（2026-10-08）：提醒刚说「有新活动」，
-     * 用户点通知进来却看到 30 分钟前的旧列表——这个坑就是这么来的。只放前
-     * [WenquRules.ACTIVITY_PAGE_SIZE] 条且 `page = 1`：与 [activities] 的分页口径一致，
-     * 「加载更多」接着取 page 2 不会与这次多抓的 80 条重叠。
+     * 它**不写任何缓存**（2026-10-11）：列表与搜索的数据源都是 [activityIndex]，
+     * 原先那句「顺手把浏览页缓存刷成刚抓到的前 20 条」已经没有读的人了。
+     * 提醒响过之后要拿新数据，走 [invalidateActivities] + 下一次进页重抓快照。
      */
     suspend fun scanActivities(limit: Int): List<WenquActivity> = withContext(Dispatchers.IO) {
         val payload = authed { token ->
             api.volunteerList(token = token, page = 1, limit = limit, keyword = "")
         }
         val data = payload.decodeData<WenquActivityData>()
-        val items = data?.list.orEmpty()
-        if (items.isNotEmpty()) {
-            activityCache.put(
-                "",
-                WenquActivityPage(
-                    items = items.take(WenquRules.ACTIVITY_PAGE_SIZE),
-                    page = 1,
-                    hasMore = items.size >= WenquRules.ACTIVITY_PAGE_SIZE,
-                    blacklisted = data?.blacklisted == true,
-                    stopApplyReason = data?.stopApplyReason.orEmpty(),
-                ),
-                now(),
-            )
-        }
-        items
+        data?.list.orEmpty()
     }
 
-    private suspend fun fetchPage(keyword: String, page: Int): WenquActivityPage {
-        val payload = authed { token ->
-            api.volunteerList(token, page, WenquRules.ACTIVITY_PAGE_SIZE, keyword)
-        }
+    private suspend fun fetchPage(
+        keyword: String,
+        page: Int,
+        limit: Int = WenquRules.ACTIVITY_PAGE_SIZE,
+    ): WenquActivityPage {
+        val payload = authed { token -> api.volunteerList(token, page, limit, keyword) }
         val data = payload.decodeData<WenquActivityData>()
-        val items = data?.list.orEmpty()
         return WenquActivityPage(
-            items = items,
-            page = page,
-            // 接口不给总数，只能按「回满即可能还有」判（多给一次按钮好过漏数据）
-            hasMore = items.size >= WenquRules.ACTIVITY_PAGE_SIZE,
+            items = data?.list.orEmpty(),
             blacklisted = data?.blacklisted == true,
             stopApplyReason = data?.stopApplyReason.orEmpty(),
         )
@@ -342,5 +568,8 @@ class WenquRepository(
     private companion object {
         /** 单资源缓存的键（我的记录 / 星级各只有一份）。 */
         const val SINGLE_KEY = "self"
+
+        /** 搜索索引只有一个资源，键用常量。 */
+        const val INDEX_KEY = "all"
     }
 }

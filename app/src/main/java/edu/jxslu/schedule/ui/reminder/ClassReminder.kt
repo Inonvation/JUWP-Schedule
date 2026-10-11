@@ -579,6 +579,8 @@ class ReminderBootReceiver : BroadcastReceiver() {
             -> {
                 ClassReminder.enqueueCheck(context)
                 SelectionAlertReminder.enqueueCheck(context)
+                // 问渠每周日抢活动提醒（2026-10-11）：同一条精确闹钟口径
+                WenquWeeklyAlertReminder.enqueueCheck(context)
             }
         }
     }

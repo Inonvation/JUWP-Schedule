@@ -842,25 +842,78 @@ UI 规格见 §3.28。
 （`coerceInputValues` 收成 0），本地字段已经够看，不发注定失败的详情请求。
 
 **活动列表的两条实测口径**：① `keyword` **空串是合法的**（回全量前 `limit` 条），
-与教务选课中心「空关键词回 0 行」相反；② **接口不返回总数**，`hasMore` 只能按
-「上一页回满 `limit` 即可能还有」推断（宁可多给一次「加载更多」，也不要漏数据）。
+与教务选课中心「空关键词回 0 行」相反；② **接口不返回总数**——早先靠「上一页回满 `limit`
+即可能还有」推断 `hasMore` 做「加载更多」，**2026-10-11 起整条分页浏览删掉**（列表 = 全量快照，
+见下），`WenquActivityPage` 的 `page` / `hasMore` 一并删除。
 总量上千且按 id 倒序，所以列表是「时间流」——已结束的占绝大多数，状态筛选在**本地**做。
+
+**列表与搜索 = 本地全量快照**（2026-10-11，两轮改动同一个根因）：
+① 用户报「志愿列表里明明有『爱心家教』的活动，搜索却搜不到」——搜索原先完全依赖服务端
+`keyword`，而那个参数到底匹配哪些字段**无法验证**（无 token 回 `410000 请登录`）；
+② 用户报「选了『招募中优先』还是把旧的已结束排前面，切『招募中』显示没有、点加载更多才有」
+——因为列表只拿**服务端第一页 20 条**，而本地筛选 / 排序都作用在这 20 条上，
+招募中只有个位数且不在第一页。**筛选与排序必须覆盖全量才有意义**，所以列表也换成快照，
+两处共用一个数据源。现在：
+
+- `WenquRepository.activityIndex()` 按**三条路**分派，判据是纯函数 `WenquRules.indexLoadPlan`：
+
+  | 路 | 什么时候 | 代价 |
+  |----|----------|------|
+  | `UseCache` | 距上次同步 < `INDEX_SYNC_INTERVAL_MS`（30 分钟） | **零请求** |
+  | `SyncNewest` | 到点了 / 下拉刷新（`force`） | **1 个请求**：只抓第一页 20 条，按 id 合并（`mergeNewest`） |
+  | `Rebuild` | 没快照 / 快照不完整 / 上次整份重抓超过 `INDEX_MAX_AGE_MS`（24 小时） | 整份重抓（按页翻，几秒） |
+
+- **增量为什么够**（用户口径「已发布的老活动基本不会改，没必要重复请求」）：平台列表
+  **开头按 id 倒序**（实测前 21 条严格降序），新活动一定落在第一页——抓一页就能捞回新的。
+- **增量的代价与两个兜底**：深层条目的可变字段（名额 / 状态 / 已报名）会冻在抓取那一刻。
+  ① 24 小时一次整份重抓把漂移封顶（同时清掉平台侧删掉的条目）；
+  ② `WenquRules.effectiveStatus` 用**不可变的时间字段**校正状态——**活动结束时间已过 → 已结束**
+  （冻住的「招募中」会被本地排序顶到最上面，这条就是堵它）。「报名截止已过但活动还没结束」
+  平台语义没实测过，**不猜**。校正发生在**数据进状态**那一步（`WenquViewModel.corrected`）。
+- **整份重抓**（`buildIndex`）：按页抓 `volunteer/v2`（`keyword=""`、
+  `limit = ACTIVITY_INDEX_PAGE_SIZE = 200`、`page = 1..`），页间
+  `AutoSyncRules.interRequestDelayMs()` 放慢，并发由 `indexMutex` 串行化。
+  **收工判据在 `WenquRules.shouldContinueIndexing`**（纯函数）：这一页没带来新 id /
+  累计触顶 `ACTIVITY_INDEX_MAX_ITEMS = 2000` / 页数触顶 `ACTIVITY_INDEX_MAX_PAGES = 15` /
+  超 `ACTIVITY_INDEX_BUDGET_MS = 8000` 预算。**只有「没带来新 id」算抓全**（`complete = true`）；
+  首页失败回 null（不缓存），中途失败带部分收工并缓存（`complete = false`）。
+- **匹配字段 = `WenquRules.matchesKeyword`**：活动名 / 项目名 / 单位 / 地点，trim + 小写后子串包含
+  （**不传 `content`**——卡片上看不到的字不该搜出来）。
+- **命中来源**：`complete` 时**纯本地、零请求**；不完整 / 建不起来时补一次服务端关键词查询
+  （只取第一页）按 id 去重并入（`mergeActivities`，本地优先）。兜底失败不打断本地结果。
+- **生命周期**：**进页就按上表走**（`WenquViewModel.loadIndex`）；清空检索词回浏览列表、零请求。
+  `WenquViewModel.indexJob` 让抓取**不随搜索协程取消**（防抖会取消上一个搜索协程），
+  结果落地带世代号 `searchSeq`。
 
 **进程内 TTL 缓存**（2026-10-08 二轮，用户报「每次进这个界面都要重新获取」）：
 问渠页是 `SubpageActivity` 上的独立窗口，**每次进页都新建 ViewModel**，旧写法在 `init` 里
-一订阅到登录态就取数 → 进页 = 三次请求。现在工时 / 星级 / 活动列表各有一份
-`WenquTtlCache`（30 分钟，`WenquRules.ACTIVITY_TTL_MS` / `HOURS_TTL_MS`），
-`WenquRepository` 是 `Graph` 单例所以跨页面、跨窗口都命中；进页还会先用
-`cachedActivities` / `cachedVolunteer` **同步**铺上快照，不闪骨架屏。只有顶栏刷新
-（`force = true`）绕过缓存。**不做磁盘缓存**（第三方公开内容、随时在变，落盘还要处理
+一订阅到登录态就取数 → 进页 = 三次请求。现在工时 / 星级 / 活动快照各有一份 `WenquTtlCache`
+（工时与星级 30 分钟；**快照 24 小时**——它要活得比一次同步久，30 分钟那档闸门改由
+`WenquActivityIndex.syncedAt` 判），`WenquRepository` 是 `Graph` 单例所以跨页面、跨窗口都命中；
+进页还会先用 `cachedIndex` / `cachedVolunteer` **同步**铺上快照，不闪骨架屏。只有下拉刷新
+（`force = true`）绕过同步闸门。**不做磁盘缓存**（第三方公开内容、随时在变，落盘还要处理
 备份排除与陈旧展示，收益不抵成本），**也不做周期轮询**（活动提醒那一路是周期任务，
 但它是独立的开关 + 间隔闸门，见下）。换人登录会 `clearCaches()`。
 
-**本地筛选与排序**（2026-10-08 三轮）：服务端只认 `keyword`，状态 + 「隐藏已满」两个维度都在本地做
-（`WenquRules.matchesFilter` / `isFull`），再按 **`displayRank` 稳定排序**（招募中优先）——
-平台的顺序既不是 id 也不是 add_time（实测前 21 条严格降序、之后跳回旧 id），不排就是满屏已结束。
-「满」= 招募中 + 剩余名额 0，**招募人数没填（0）时一律不算满**。两个筛选都落 DataStore
-（`wenqu_status_filter`，-1 = 全部；`wenqu_hide_full`）。
+**本地筛选与排序**（2026-10-08 三轮；2026-10-11 扩到三个筛选 + 三档排序，同样作用于搜索结果）：
+状态 / 「隐藏已满」/「**只看我报名的**」（`isApply`，2026-10-11 新增）三个维度都在本地做
+（`WenquRules.matchesFilter` / `isFull`），再按 **`WenquRules.Sort`** 排序：
+
+| 档位 | 判据 |
+|------|------|
+| 招募中优先（默认） | `displayRank`（招募中 → 进行中 → 已结束 → 已取消），组内保持平台原序 |
+| 报名截止临近 | `closingSortKey`（用 `apply_end_time`，**已截止 / 没填的排最后**） |
+| 最新发布 | 活动 id 降序 |
+
+`sortedBy` 是稳定排序（只重排不隐藏）。平台的顺序既不是 id 也不是 add_time（实测前 21 条严格降序、
+之后跳回旧 id），不排就是满屏已结束。「满」= 招募中 + 剩余名额 0，**招募人数没填（0）时一律不算满**。
+三个筛选 + 排序都落 DataStore（`wenqu_status_filter` / `wenqu_hide_full` / `wenqu_applied_only` /
+`wenqu_sort` 存枚举 name，插档不错位）。筛选把整页挡空时，页面说「有 N 条活动被当前筛选隐藏了」
+并给「清除筛选」（`UiState.searchHiddenByFilter` 就是这条判据）——**别把「被筛掉了」说成「没搜到」**。
+
+**下拉刷新**（2026-10-11 调整）：强刷「我的」+ 浏览列表；**搜索模式下不重抓索引**，只把命中
+重算一遍（索引在 TTL 内直接复用——重抓一次要几秒，用户点刷新不该干等它；真过期了
+`ensureIndex` 自己会重来）。
 
 **`isApply` / `isBlack` / `stop_apply_reason` 三个平台字段要展示**（2026-10-08 三轮）：
 前者在活动卡上给一枚「已报名」徽章（早先解析了却没展示，报过名和没报名的长得一模一样）；
@@ -886,10 +939,35 @@ UI 规格见 §3.28。
 （`InboxKind.WENQU_ACTIVITY`，键 `wenqu|activity|<本批最大 id>`，一次核对只留一条痕）；
 通知 id 1013 / 落点 requestCode 3013 / 渠道 `wenqu_activity`。
 
-**两处 2026-10-08 三轮的修补**：① `scanActivities` 成功后**顺手把浏览页缓存写成刚抓到的前 20 条**
-（`page = 1`）——提醒刚说「有新活动」，用户点通知进来却看到 30 分钟前的旧列表，这个坑就是这么来的；
-只放前 20 条且 `page = 1` 是为了与 `activities()` 的分页口径一致，加载更多接着取 page 2 不重叠。
-② 设置页改开关 / 间隔走 `WenquActivityAlertReminder.onSettingsChanged`，
+**每周日 12:00「抢活动」提醒**（2026-10-11，用户口径「学校很多志愿都是这个时间开抢」，
+`ui/reminder/WenquWeeklyAlertReminder.kt`）：与上面那条是**两件事**，别合并——
+那条是**事后发现**（周期扫列表，依赖接口 + 网络），这条是**事前蹲点**（固定时刻，
+发布时刻还没到、扫也扫不到新东西，所以**一条网络请求都不发**，只有一条精确闹钟）。
+
+- 排法同 `SelectionAlertReminder`：主 = `setAlarmClock` 单点精确闹钟（requestCode **4007**，
+  不需要特殊权限）；兜 = 一次性 Work（闹钟落点 / 开机 / 覆盖安装 / 开关变更）+ 冷启动
+  `JuwApplication` 补一次本地重排。**不搭周期任务**（不是「周期扫」那类）。
+- 时刻由 `WenquRules.nextWeeklyAlertPoint` / `lastWeeklyAlertPoint` 算（纯函数，JVM 测）：
+  `publishAt` = 本周日 12:00（本地时区），`remindAt` = `publishAt` − 提前量（1–10 分钟，默认 5）。
+- **已发键是「发布时刻」不是「提醒时刻」**（`wenqu_weekly_alert_last_fired_at`）：用户中途把提前量
+  从 5 分钟改成 10 分钟，同一周不该再报一次（`WeeklyAlertPoint.publishAt` 与提前量无关）。
+- **迟到窗口 10 分钟**（`WEEKLY_ALERT_LATE_MS`，对齐免扰时段对时刻型提醒的过期口径）：
+  提醒点过去超过 10 分钟就不再补发——用户要的是「12:00 前就位」，12:30 才响只是噪音。
+- **通知被系统整体关掉时不落键**：这次没发出去，下次冷启动 / 开机还在窗口内就还能补。
+  这条**不入箱**（时刻型提醒不入箱，与选课那条不同——那边有收件箱兜底）。
+- 通知走**免扰拦截**（时刻型，`eventAt` = 发布时刻）+ **直接震动**（`ReminderVibration`，
+  不挂通用「通知强提醒」开关：这条是用户为「抢」显式开启的、一周一次的能力，而 HyperOS 上
+  第三方通知的振动开关默认是关的，不直接震等于静默）。
+- 响过之后 `WenquRepository.invalidateActivities()` 把快照的**同步时刻清零**：
+  用户点通知进来时不该看到发布前的旧列表，下次进页立刻**增量**同步一次（**不是整份重抓**）。
+  **只清时刻、不发请求**——进页照旧是用户动作。
+- 通知 id **1015** / 落点 requestCode **3014** / 渠道 `wenqu_weekly`；设置页改开关 / 提前量走
+  `onSettingsChanged`（只重排闹钟，**不碰** `ScoreAlertReminder.onSettingsChanged`）。
+
+**一处 2026-10-08 三轮的修补（2026-10-11 已作废）**：原先 `scanActivities` 成功后顺手把
+「浏览页」缓存写成刚抓到的前 20 条，让用户点通知进来不至于看到旧列表——列表换成全量快照之后
+那条缓存没有读的人了，**写入已删**（要拿新数据走 `invalidateActivities()` + 下次进页增量同步）。
+另一处保留：设置页改开关 / 间隔走 `WenquActivityAlertReminder.onSettingsChanged`，
 **不用** `ScoreAlertReminder.onSettingsChanged`——后者会把五路的检查时刻一起清 0，
 于是动一下问渠开关就顺带让成绩 / 考试 / 选课 / 调课各打一次教务；问渠的入口只清自己那一路，
 再 `ensurePeriodicWork` + `enqueueWenquCheck`（复用同一个 Worker 类名与工作名，不新开任务）。

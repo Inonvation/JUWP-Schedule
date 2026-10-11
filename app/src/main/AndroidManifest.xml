@@ -284,6 +284,12 @@
             android:name=".ui.reminder.SelectionAlertReceiver"
             android:exported="false" />
 
+        <!-- 问渠「每周日 12:00 抢活动」提醒（DESIGN §4.45，2026-10-11）：精确闹钟落点
+             （显式 PendingIntent，无需 intent-filter）——只把核对排进 WorkManager -->
+        <receiver
+            android:name=".ui.reminder.WenquWeeklyAlertReceiver"
+            android:exported="false" />
+
         <!-- 洗衣完成提醒（DESIGN §4.37）：U净 订单洗涤中的精确闹钟落点——到点查一次
              订单详情，已完成发「衣服洗好了」，还在跑按新剩余时间重排 -->
         <receiver

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,9 +43,11 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.WenquActivityAlertReminder
+import edu.jxslu.schedule.ui.reminder.WenquWeeklyAlertReminder
 import edu.jxslu.schedule.ui.score.maybeRequestNotifPermission
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.AlarmClock
 import me.rerere.hugeicons.stroke.Logout03
 import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Notification03
@@ -71,7 +74,16 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
     val alertEnabled by prefs.wenquActivityAlertEnabled.collectAsState(initial = false)
     val intervalHours by prefs.wenquActivityIntervalHours
         .collectAsState(initial = WenquRules.ACTIVITY_ALERT_INTERVAL_DEFAULT)
+    // 每周日 12:00「抢活动」提醒（2026-10-11）：开关 + 提前量
+    val weeklyEnabled by prefs.wenquWeeklyAlertEnabled.collectAsState(initial = false)
+    val weeklyOffsetMinutes by prefs.wenquWeeklyAlertOffsetMinutes
+        .collectAsState(initial = WenquRules.WEEKLY_ALERT_OFFSET_DEFAULT_MIN)
+    // 浏览偏好（2026-10-11）：与列表页那份落盘值同一处
+    val sortName by prefs.wenquSort.collectAsState(initial = WenquRules.Sort.RecruitingFirst.name)
+    val hideFull by prefs.wenquHideFull.collectAsState(initial = false)
     var intervalPickerOpen by remember { mutableStateOf(false) }
+    var weeklyOffsetPickerOpen by remember { mutableStateOf(false) }
+    var sortPickerOpen by remember { mutableStateOf(false) }
     var confirmingLogout by remember { mutableStateOf(false) }
     /** 记录条数：进页读一次仓库缓存（冷缓存时它自己会抓一次），失败就不显示数字。 */
     var recordsCount by remember { mutableStateOf<Int?>(null) }
@@ -154,6 +166,56 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                 )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 每周日 12:00「抢活动」（2026-10-11，用户口径）：与上面那条是两件事——
+                // 那条是事后发现（周期扫列表），这条是事前蹲点（固定时刻，不扫接口）。
+                SettingSwitchRow(
+                    title = "每周日 12:00 抢活动提醒",
+                    subtitle = "学校常在这时发布新志愿活动，到点前提醒你去蹲",
+                    icon = HugeIcons.AlarmClock,
+                    checked = weeklyEnabled,
+                    onCheckedChange = { want ->
+                        scope.launch {
+                            prefs.setWenquWeeklyAlertEnabled(want)
+                            WenquWeeklyAlertReminder.onSettingsChanged(context)
+                        }
+                        if (want) maybeRequestNotifPermission(context, notifPermissionLauncher)
+                    },
+                )
+                SettingItem(
+                    title = "提前提醒",
+                    subtitle = "到点前多久响一声",
+                    value = WenquRules.weeklyOffsetLabel(weeklyOffsetMinutes),
+                    enabled = weeklyEnabled,
+                    onClick = { weeklyOffsetPickerOpen = true },
+                )
+                Text(
+                    text = "每周日 12:00 前提醒一次，到点自己去问渠抢。只排一条精确闹钟、不扫接口；" +
+                        "提醒响过后活动列表会重新取一次，点通知进来就是最新的。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                )
+            }
+
+            SettingsSection(
+                title = "浏览偏好",
+                subtitle = "活动列表的默认筛选与排序（列表页也能改，两处同一份）",
+            ) {
+                SettingItem(
+                    title = "默认排序",
+                    subtitle = "招募中优先 / 报名截止临近 / 最新发布",
+                    value = WenquRules.coerceSort(sortName).label,
+                    onClick = { sortPickerOpen = true },
+                )
+                SettingSwitchRow(
+                    title = "默认隐藏已满",
+                    subtitle = "招募人数没填的不算满",
+                    checked = hideFull,
+                    onCheckedChange = { want -> scope.launch { prefs.setWenquHideFull(want) } },
+                )
             }
 
             SettingsSection(title = "登录", subtitle = "凭证只存本机（加密存储，不进云备份）") {
@@ -188,6 +250,42 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
                 }
             },
             onDismiss = { intervalPickerOpen = false },
+        )
+    }
+
+    if (weeklyOffsetPickerOpen) {
+        WheelValueDialog(
+            title = "提前提醒",
+            values = WenquRules.WEEKLY_ALERT_OFFSET_CHOICES.map(WenquRules::weeklyOffsetLabel),
+            initialIndex = WenquRules.weeklyOffsetChoiceIndex(weeklyOffsetMinutes),
+            onConfirm = { index ->
+                weeklyOffsetPickerOpen = false
+                val value = WenquRules.WEEKLY_ALERT_OFFSET_CHOICES[index]
+                scope.launch {
+                    prefs.setWenquWeeklyAlertOffsetMinutes(value)
+                    // 改提前量要重排闹钟（提醒时刻变了），但**不动已发键**——同一周不会重复报
+                    WenquWeeklyAlertReminder.onSettingsChanged(context)
+                    snackbar.showNotice("已设为${WenquRules.weeklyOffsetLabel(value)}")
+                }
+            },
+            onDismiss = { weeklyOffsetPickerOpen = false },
+        )
+    }
+
+    if (sortPickerOpen) {
+        WheelValueDialog(
+            title = "默认排序",
+            values = WenquRules.SORT_CHOICES.map { it.label },
+            initialIndex = WenquRules.SORT_CHOICES.indexOf(WenquRules.coerceSort(sortName)).coerceAtLeast(0),
+            onConfirm = { index ->
+                sortPickerOpen = false
+                val value = WenquRules.SORT_CHOICES[index]
+                scope.launch {
+                    prefs.setWenquSort(value.name)
+                    snackbar.showNotice("默认排序已设为${value.label}")
+                }
+            },
+            onDismiss = { sortPickerOpen = false },
         )
     }
 
