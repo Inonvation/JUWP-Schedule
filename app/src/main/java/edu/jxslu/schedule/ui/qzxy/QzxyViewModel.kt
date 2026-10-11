@@ -168,6 +168,12 @@ data class QzxyUiState(
     val wateringDeviceEnded: Boolean = false,
     /** 最近一次结算结果。展示后由用户点「完成」清掉，不自动消失（金额值得多看一眼）。 */
     val lastSettlement: QzxySettlement? = null,
+    /**
+     * 检测到设备自动关停后要不要自动结算（DESIGN §4.30，开关在趣智页尾）。
+     * **默认开** = 既有口径；真相源是 [QzxyDebugStore.autoSettleEnabled]，
+     * 页面与今日页卡片两份实例各读各的，落盘后天然一致。
+     */
+    val autoSettleEnabled: Boolean = true,
 ) {
     /**
      * 能不能开阀：主动选过设备、用过上次那台、或至少绑过一台。
@@ -248,6 +254,7 @@ class QzxyViewModel(
             boundDevices = deviceStore.list(),
             lastUsedDevice = deviceStore.lastUsed(),
             debugLogEnabled = debugStore.logEnabled,
+            autoSettleEnabled = debugStore.autoSettleEnabled,
         ),
     )
     val uiState: StateFlow<QzxyUiState> = _uiState.asStateFlow()
@@ -408,6 +415,7 @@ class QzxyViewModel(
         boundDevices = deviceStore.list(),
         debugLogEnabled = state.debugLogEnabled,
         debugLog = state.debugLog,
+        autoSettleEnabled = state.autoSettleEnabled,
     )
 
     /**
@@ -1281,7 +1289,10 @@ class QzxyViewModel(
      * （一直在用会用到预扣耗尽，停下不用过一阵会自动关），推不出预测时刻，
      * 所以这里只做反应式核对，不做倒计时。
      *
-     * @return true = 值得继续轮询；false = 停（没有记账 / 到终端态 / 连续读不到设备 / 已自动结算过）。
+     * 「消费完成，待采集」只在 [QzxyUiState.autoSettleEnabled] 开着时触发自动结算，
+     * 关着即视为终端态收手（结算全部手动）。
+     *
+     * @return true = 值得继续轮询；false = 停（没有记账 / 到终端态 / 连续读不到设备 / 已自动结算过 / 自动结算已关）。
      */
     suspend fun reconcileWateringOnce(): Boolean {
         val watering = wateringStore.watering.value ?: return false
@@ -1306,8 +1317,12 @@ class QzxyViewModel(
         wateringWatch.pollFailures = 0
         return when (state.deviceState) {
             QzxyProtocol.STATE_FINISHED_UNCOLLECTED -> {
-                // 已经结算过（成功或失败）就不再空转：失败卡上有手动「重试结算核对」
-                if (wateringWatch.autoSettleAttempted) return false
+                // 已经结算过（成功或失败）就不再空转：失败卡上有手动「重试结算核对」；
+                // 自动结算被关掉同理——状态不会自己变，继续轮询只是空耗蓝牙，
+                // 待核对口径由状态卡常驻提示，结算入口也在那儿
+                if (wateringWatch.autoSettleAttempted || !_uiState.value.autoSettleEnabled) {
+                    return false
+                }
                 maybeAutoSettle()
                 true
             }
@@ -1329,10 +1344,12 @@ class QzxyViewModel(
      * 检测到「消费完成，待采集」时的自动结算。
      *
      * 一次前台周期内只自动发起一次（失败不自动重试）；未登录不抢跑——登录后
-     * 下一拍对账会再来。
+     * 下一拍对账会再来。开关（[QzxyUiState.autoSettleEnabled]）关着时不进来：
+     * 对账分支已据此收手，这里是最后一道闸。
      */
     private fun maybeAutoSettle() {
         if (wateringWatch.autoSettleAttempted) return
+        if (!_uiState.value.autoSettleEnabled) return
         if (!_uiState.value.loggedIn) return
         wateringWatch.autoSettleAttempted = true
         launchStop(auto = true)
@@ -1864,6 +1881,12 @@ class QzxyViewModel(
         _uiState.update {
             it.copy(debugLogEnabled = value, debugLog = if (value) it.debugLog else emptyList())
         }
+    }
+
+    /** 设备关停后自动结算的开关（趣智页尾，DESIGN §4.30）。落盘即生效，两份实例各自读。 */
+    fun setAutoSettleEnabled(value: Boolean) {
+        debugStore.autoSettleEnabled = value
+        _uiState.update { it.copy(autoSettleEnabled = value) }
     }
 
     fun clearDebugLog() = _uiState.update { it.copy(debugLog = emptyList()) }

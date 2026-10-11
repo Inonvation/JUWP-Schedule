@@ -11,7 +11,8 @@ import android.content.Context
  * 默认关是有意的：日志里含设备地址、账号标识与接口原始数据，日常使用没必要留。
  * 排查时才开，复制完关掉。
  *
- * 除调试开关外还承担「记住手机号」（见 [rememberedPhone] 的注释）。
+ * 除调试开关外还承担「记住手机号」（见 [rememberedPhone] 的注释）与
+ * 「设备关停后自动结算」开关（见 [autoSettleEnabled] 的注释）——都是本机偏好。
  */
 class QzxyDebugStore(context: Context) {
     private val prefs = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
@@ -20,6 +21,19 @@ class QzxyDebugStore(context: Context) {
         get() = prefs.getBoolean(KEY_LOG_ENABLED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_LOG_ENABLED, value).apply()
+        }
+
+    /**
+     * 检测到设备自动关停后要不要自动结算（DESIGN §4.30，2026-10-11 起可关）。
+     *
+     * **默认开**：那是对账链路本来就有的行为（读到「消费完成，待采集」就走一遍
+     * 结算并记账），开是既有口径；关掉后设备状态只作展示，结算全部手动
+     * （状态卡上的「结算核对」）。
+     */
+    var autoSettleEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_SETTLE, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_SETTLE, value).apply()
         }
 
     /**
@@ -39,5 +53,6 @@ class QzxyDebugStore(context: Context) {
         const val FILE_NAME = "qzxy_debug"
         const val KEY_LOG_ENABLED = "debug_log_enabled"
         const val KEY_PHONE = "remembered_phone"
+        const val KEY_AUTO_SETTLE = "auto_settle_enabled"
     }
 }

@@ -81,6 +81,7 @@ import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -287,6 +288,7 @@ fun QzxyScreen(
                     BillSection(state, viewModel)
                     DiagnosticEntry(onOpen = { onOpenDiagnostics(state.selected?.address) })
                 }
+                WateringSettingSection(state = state, viewModel = viewModel)
                 DisplaySettingSection()
                 Disclaimer()
             }
@@ -1331,6 +1333,26 @@ private fun DiagnosticEntry(onOpen: () -> Unit) {
             text = "›",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+        )
+    }
+}
+
+/**
+ * 设备关停后自动结算的开关（DESIGN §4.30，2026-10-11 起可关，默认开）。
+ *
+ * 页尾、登录与未登录两态都显示：这是行为偏好，不是账号状态，提前关也该能关。
+ * 关掉后的变化全在对账链路（[WateringReconcileEffect]）：读到「消费完成，待采集」
+ * 不再自动发起结算，待核对口径由状态卡常驻提示，结算手动点「结算核对」。
+ */
+@Composable
+private fun WateringSettingSection(state: QzxyUiState, viewModel: QzxyViewModel) {
+    SettingsSection(title = "用水") {
+        SettingSwitchRow(
+            title = "设备关停后自动结算",
+            subtitle = "页面或今日页卡片可见期间，读到设备「消费完成，待采集」会自动结算并记账；" +
+                "关掉后不自动动设备，由你在设备旁手动结算。",
+            checked = state.autoSettleEnabled,
+            onCheckedChange = viewModel::setAutoSettleEnabled,
         )
     }
 }
