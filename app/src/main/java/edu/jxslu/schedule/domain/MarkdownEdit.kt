@@ -57,6 +57,24 @@ private val LINE_ORDERED = Regex("""^(\s*)(\d{1,9})([.)])\s(.*)$""")
 private val LINE_QUOTE = Regex("""^(\s*)>\s?(.*)$""")
 
 /**
+ * [pos] 所在行的行首下标。
+ *
+ * **pos == 0 必须特判**：`(pos - 1).coerceAtLeast(0)` 会把 lastIndexOf 的起点钳到 0，
+ * 若正文以 `\n` 开头（插图后把图片推到第二行的常见形态），行首被算成 1 > pos=0，
+ * 之后再 `substring(lineStart, pos)` 直接越界崩溃（2026-10-11）。
+ */
+private fun lineStartOf(text: String, pos: Int): Int =
+    if (pos <= 0) 0
+    else text.lastIndexOf('\n', pos - 1).let { if (it < 0) 0 else it + 1 }
+
+/** 行首动作算完位移后把选区钳回文本范围：去前缀时选区起点若在前缀内会算成负数。 */
+private fun EditResult.clamped(): EditResult {
+    val s = selectionStart.coerceIn(0, text.length)
+    val e = selectionEnd.coerceIn(0, text.length)
+    return if (s == selectionStart && e == selectionEnd) this else EditResult(text, s, e)
+}
+
+/**
  * 回车续行（Obsidian 式）。返回 null 表示**不干预**，交给输入框做普通换行：
  * - 光标不在行尾（本行还有非空白内容）→ 不干预（普通换行即可）
  * - 围栏代码块内 → 不干预
@@ -69,9 +87,7 @@ private val LINE_QUOTE = Regex("""^(\s*)>\s?(.*)$""")
  */
 fun continueOnEnter(text: String, cursor: Int): EditResult? {
     if (cursor !in 0..text.length) return null
-    val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let {
-        if (it < 0) 0 else it + 1
-    }
+    val lineStart = lineStartOf(text, cursor)
     val line = text.substring(lineStart, cursor)
     if (line.isBlank()) return null
     // 光标右侧还有内容（同一行未到尾）：交给输入框做普通换行，不续行
@@ -191,7 +207,7 @@ private fun wrapInline(text: String, start: Int, end: Int, open: String, close: 
 
 /** 行首动作：选区覆盖的每一行加上前缀；若都已带该前缀则整体去掉（开关式）。 */
 private fun toggleLinePrefix(text: String, start: Int, end: Int, prefix: String): EditResult {
-    val lineStart = text.lastIndexOf('\n', (start - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+    val lineStart = lineStartOf(text, start)
     val lineEnd = text.indexOf('\n', end).let { if (it < 0) text.length else it }
     val before = text.substring(0, lineStart)
     val body = text.substring(lineStart, lineEnd)
@@ -208,7 +224,7 @@ private fun toggleLinePrefix(text: String, start: Int, end: Int, prefix: String)
     val newText = before + newBody + after
     // 光标尽量贴住原位置（行首插入会让后续整体后移，简单按整体位移算）
     val delta = newBody.length - body.length
-    return EditResult(newText, start + delta, end + delta)
+    return EditResult(newText, start + delta, end + delta).clamped()
 }
 
 /**
@@ -216,7 +232,7 @@ private fun toggleLinePrefix(text: String, start: Int, end: Int, prefix: String)
  * 已是 `## ` → 去掉；是别的级别 → 换成 `## `；没有标题 → 加 `## `。
  */
 private fun toggleHeading(text: String, start: Int, end: Int): EditResult {
-    val lineStart = text.lastIndexOf('\n', (start - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+    val lineStart = lineStartOf(text, start)
     val lineEnd = text.indexOf('\n', end).let { if (it < 0) text.length else it }
     val before = text.substring(0, lineStart)
     val body = text.substring(lineStart, lineEnd)
@@ -233,12 +249,12 @@ private fun toggleHeading(text: String, start: Int, end: Int): EditResult {
     }
     val newBody = newLines.joinToString("\n")
     val delta = newBody.length - body.length
-    return EditResult(before + newBody + after, start + delta, end + delta)
+    return EditResult(before + newBody + after, start + delta, end + delta).clamped()
 }
 
 /** 有序列表：选中多行时按 1. 2. 3. 递增编号；全部已编号则整体去掉（开关式）。 */
 private fun toggleOrdered(text: String, start: Int, end: Int): EditResult {
-    val lineStart = text.lastIndexOf('\n', (start - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+    val lineStart = lineStartOf(text, start)
     val lineEnd = text.indexOf('\n', end).let { if (it < 0) text.length else it }
     val before = text.substring(0, lineStart)
     val body = text.substring(lineStart, lineEnd)
@@ -256,7 +272,7 @@ private fun toggleOrdered(text: String, start: Int, end: Int): EditResult {
     }
     val newBody = newLines.joinToString("\n")
     val delta = newBody.length - body.length
-    return EditResult(before + newBody + after, start + delta, end + delta)
+    return EditResult(before + newBody + after, start + delta, end + delta).clamped()
 }
 
 // ---------------------------------------------------------------------------

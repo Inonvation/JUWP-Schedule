@@ -67,6 +67,15 @@ class MarkdownEditTest {
         assertNull(continueOnEnter("", 0))
     }
 
+    @Test
+    fun enter_atDocStart_afterImagePushedToSecondLine_doesNothing() {
+        // 2026-10-11 崩溃修复：插图 → 行首回车把图片推到第二行（正文以 \n 开头）→
+        // 再在最前面按回车/输入触发续行判断。旧行首定位在 cursor=0 且 text[0]=='\n'
+        // 时算出 lineStart=1 > cursor=0，substring(1, 0) 抛越界。
+        val text = "\n![](img:a.jpg)\n"
+        assertNull(continueOnEnter(text, 0))
+    }
+
     // ---- 工具条动作 ----
 
     @Test
@@ -123,6 +132,35 @@ class MarkdownEditTest {
     @Test
     fun task_insertsCheckboxPrefix() {
         assertEquals("- [ ] 交作业", applyMarkdownAction("交作业", 0, 0, MdAction.Task).text)
+    }
+
+    @Test
+    fun lineActions_atDocStart_afterImagePushedToSecondLine_staySafe() {
+        // 同上崩溃的另一条路：正文以 \n 开头（图片被推到第二行）后，光标 (0,0) 点工具栏
+        // 行首动作。旧行首定位算出 lineStart=1 而 lineEnd=0，substring(1, 0) 抛越界。
+        val text = "\n![](img:a.jpg)\n"
+        applyMarkdownAction(text, 0, 0, MdAction.Bullet)
+        applyMarkdownAction(text, 0, 0, MdAction.Task)
+        applyMarkdownAction(text, 0, 0, MdAction.Quote)
+        applyMarkdownAction(text, 0, 0, MdAction.Ordered)
+        applyMarkdownAction(text, 0, 0, MdAction.Heading)
+    }
+
+    @Test
+    fun lineActions_removingPrefix_keepsCursorInBounds() {
+        // 取消前缀时选区按整体位移回退，选区起点在前缀里会算出负光标 → 钳回 0
+        val r = applyMarkdownAction("- 甲", 0, 0, MdAction.Bullet)
+        assertEquals("甲", r.text)
+        assertEquals(0, r.selectionStart)
+        assertEquals(0, r.selectionEnd)
+
+        val h = applyMarkdownAction("## 甲", 0, 0, MdAction.Heading)
+        assertEquals("甲", h.text)
+        assertEquals(0, h.selectionStart)
+
+        val o = applyMarkdownAction("1. 甲", 0, 0, MdAction.Ordered)
+        assertEquals("甲", o.text)
+        assertEquals(0, o.selectionStart)
     }
 
     // ---- `$` 自动配对 ----
