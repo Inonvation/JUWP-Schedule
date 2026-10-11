@@ -49,7 +49,8 @@ import kotlinx.coroutines.launch
  * 记录详情复用活动详情弹层（记录的 `id` 就是活动 id，见 `WenquVolunteerRecord.asActivity`），
  * 只是徽章换成「我的报名状态」。
  *
- * 只读：报名、签到、提交等写操作请到微信小程序内完成。
+ * 写操作：平台说这条能取消（`canCancel`）时，详情弹层给「取消报名」入口（过二次确认）；
+ * 签到、提交材料等其它写操作请到微信小程序内完成。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,7 +160,7 @@ fun WenquRecordsScreen(onBack: () -> Unit) {
                 item(key = "disclaimer") {
                     FooterDisclaimer(
                         "记录与工时来自「问渠」实践教育平台（第三方系统，非学校官方功能）。" +
-                            "只读展示；如需申诉或修改，请到微信小程序内联系活动单位。",
+                            "取消报名会直接提交到该平台；如需申诉或修改，请到微信小程序内联系活动单位。",
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -177,6 +178,11 @@ fun WenquRecordsScreen(onBack: () -> Unit) {
             recordBadge = state.opened?.statusText,
             detailUnavailable = state.detailUnavailable,
             onNotice = { msg -> scope.launch { snackbar.showNotice(msg) } },
+            // 记录视角的取消入口以平台的 `canCancel` 为准（活动列表 / 详情都没这个字段）
+            canCancel = state.opened?.canCancel == true,
+            busy = state.applying,
+            actionError = state.detailActionError,
+            onCancel = vm::cancelApply,
         )
     }
 }

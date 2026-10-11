@@ -22,13 +22,22 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * 红线：
  * - **无日志拦截器**——手机号 / 密码 / token 绝不进 Logcat（对齐一卡通 / 电费 / 快趣 / U净）；
  * - token 不驻留本类（持久化归 [WenquCredentialStore]），本类只见调用方传入的串；
- * - 只发读接口 + 用户显式触发的登录/设密码；**报名 / 签到 / 提交类写接口一律不碰**。
+ * - 只发读接口 + 用户显式触发的写（登录 / 设密码 / **报名** / **取消报名**）；
+ *   **签到、提交材料类写接口仍不碰**（`volunteer/checkin`、`*_submit` 一个都不要调）。
  */
 class WenquApi private constructor(private val http: OkHttpClient) {
 
     companion object {
         /** 平台根（与小程序 `HTTP_REQUEST_URL` 逐字一致）。 */
         const val BASE = "https://wenqu.juwp.edu.cn/api/"
+
+        /**
+         * 取消报名时「我没报过这条活动」的平台原话（2026-10-11 实测）。
+         *
+         * 用来给 [WenquRepository.cancelApply] 的 id 语义兜底：`volunteer/apply/cancel/{id}`
+         * 里的 `{id}` 到底是**活动 id** 还是**报名 id** 未钉死，撞上这句就换另一个 id 再试一次。
+         */
+        const val MSG_NOT_APPLIED = "您未报名该活动"
 
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
@@ -115,6 +124,32 @@ class WenquApi private constructor(private val http: OkHttpClient) {
     /** 单个活动详情。**id 走路径**（`volunteer/detail/{id}`），请求体是空对象。 */
     suspend fun volunteerDetail(token: String, id: Long): WenquEnvelope = post(
         path = "volunteer/detail/$id",
+        token = token,
+        body = buildJsonObject {},
+    )
+
+    /**
+     * **报名**（2026-10-11 实测钉死）：`POST volunteer/apply`，请求体 `{"id": <活动id>}`。
+     *
+     * 参数校验实测：`{}` / `id=0` → `参数错误`（`id` 必填）；`id` 不存在 →
+     * `服务项目不存在或已下架`（说明它查的是**活动**）。所以 `id` 就是活动 id，不是报名 id。
+     *
+     * 写操作：**只发一次**，失败由调用方决定是否提示（见 [WenquRepository.applyActivity]）。
+     */
+    suspend fun volunteerApply(token: String, activityId: Long): WenquEnvelope = post(
+        path = "volunteer/apply",
+        token = token,
+        body = buildJsonObject { put("id", activityId) },
+    )
+
+    /**
+     * **取消报名**（2026-10-11 实测存在）：`POST volunteer/apply/cancel/{id}`，请求体空。
+     *
+     * `{id}` 是**活动 id** 还是**报名 id** 未能钉死（不存在的 id 两种情况都回
+     * [MSG_NOT_APPLIED]）；[WenquRepository.cancelApply] 据此做一次兜底重试。
+     */
+    suspend fun volunteerCancel(token: String, id: Long): WenquEnvelope = post(
+        path = "volunteer/apply/cancel/$id",
         token = token,
         body = buildJsonObject {},
     )

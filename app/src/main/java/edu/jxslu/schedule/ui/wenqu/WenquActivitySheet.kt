@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.data.wenqu.WenquActivity
 import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.startActivityOutsideApp
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -55,6 +58,11 @@ import me.rerere.hugeicons.stroke.Copy01
  * [recordBadge] 非 null = **记录视角**：徽章换成「我的报名状态」（如「已完成」）而不是活动状态
  * （记录看的是「我这条怎么样了」），并去掉「我的状态」行（徽章已经说了）。
  *
+ * **报名 / 取消报名**（2026-10-11 起本应用不再是纯只读，DESIGN §3.28 / §4.45）：
+ * 底部动作行的主按钮按状态三选一（报名 / 取消报名 / 去微信报名），两个写操作都**先过二次确认**
+ * （[WenquActionConfirmDialog]）再交给调用方的 [onApply] / [onCancel]；进行中按钮转圈防连点，
+ * 失败原因留在弹层里（[actionError]）——**不飘页面级提醒**，那会被弹层盖住。
+ *
  * **负责人姓名 / 电话会展示**（2026-10-08 用户要求）：它们是平台公开给登录学生的活动联系人信息，
  * 只在弹层里展示、可长按复制；**不进日志、不进持久化、不进测试夹具与文档**
  * （这个仓库是公开的）。`attendance_*`（考勤人）模型里没声明，不会出现在这里。
@@ -69,11 +77,23 @@ fun WenquActivitySheet(
     detailUnavailable: Boolean = false,
     /** 复制电话 / 群号 / 活动名后的回执（走页面的统一提示）。 */
     onNotice: (String) -> Unit = {},
+    /** **活动视角**的报名闸门原因（`WenquRules.applyBlockReason`；空 = 可报名）。 */
+    applyBlockReason: String = "",
+    /** 要不要给「取消报名」入口（活动视角 = 已报名 + 招募中；记录视角 = 平台 `canCancel`）。 */
+    canCancel: Boolean = false,
+    /** 报名 / 取消进行中（按钮转圈 + 防连点）。 */
+    busy: Boolean = false,
+    /** 报名 / 取消失败的原因，挂在动作行上方——见下方「为什么不飘页面级提醒」。 */
+    actionError: String? = null,
+    onApply: (() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null,
 ) {
     // 底部动作行的「关掉再做一件事」（DESIGN §3.28，2026-10-11）：
     // 弹层是比页面高一层的独立窗口，页面级提示会被它盖住——所以先关弹层（退场动画走完
     // 再落 onDismiss），再复制 / 拉起微信，回执才看得见。null = 没请求关闭。
     var afterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // 报名 / 取消的二次确认（DESIGN §3.28，2026-10-11）：写操作前必须过一道确认。
+    var confirmKind by remember { mutableStateOf<SheetConfirm?>(null) }
     val context = LocalContext.current
     ImeAwareModalBottomSheet(onDismiss = onDismiss, pendingDismiss = afterDismiss) {
         WenquActivityDetailContent(
@@ -89,30 +109,115 @@ fun WenquActivitySheet(
             footer = if (recordBadge != null) RECORD_FOOTER else ACTIVITY_FOOTER,
             detailUnavailable = detailUnavailable,
             onNotice = onNotice,
-            // 动作行只给**活动视角**：记录视角已经报过名了，「去微信报名」是错的语义。
+            // 动作行默认只给**活动视角**；记录视角在平台说「这条能取消」时才补一个取消入口。
             // 放在滚动内容的末尾（不钉在底部）：弹层内容是可滚的，钉底要么垫键盘高度、
             // 要么在弹层里套 weight——那套在这套主题里没有先例，别在这里开个头。
-            showActions = recordBadge == null,
+            showActions = recordBadge == null || canCancel,
+            applyBlockReason = applyBlockReason,
+            canCancel = canCancel,
+            busy = busy,
+            actionError = actionError,
+            onRequestApply = { confirmKind = SheetConfirm.APPLY },
+            onRequestCancel = { confirmKind = SheetConfirm.CANCEL },
             onCopyName = { afterDismiss = { onNotice("活动名已复制") } },
             onOpenWechat = { afterDismiss = { openWechatForSignup(context, onNotice) } },
         )
     }
+    confirmKind?.let { kind ->
+        WenquActionConfirmDialog(
+            kind = kind,
+            activityName = activityName(activity),
+            timeText = WenquRules.timeRange(activity.startTime, activity.endTime),
+            onConfirm = {
+                confirmKind = null
+                if (kind == SheetConfirm.APPLY) onApply?.invoke() else onCancel?.invoke()
+            },
+            onDismiss = { confirmKind = null },
+        )
+    }
+}
+
+/** 二次确认的两件事（报名 / 取消报名）。 */
+private enum class SheetConfirm { APPLY, CANCEL }
+
+/**
+ * 报名 / 取消报名的二次确认弹窗（DESIGN §3.28）。
+ *
+ * 文案刻意**只陈述事实**：报名 / 取消都会**直接提交到问渠平台**（本应用不再是只读展示），
+ * 所以要把「这一步会改平台数据」说清楚，别让用户以为是本地操作。
+ */
+@Composable
+private fun WenquActionConfirmDialog(
+    kind: SheetConfirm,
+    activityName: String,
+    timeText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DialogWindowFadeEffect()
+    val isApply = kind == SheetConfirm.APPLY
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isApply) "报名确认" else "取消报名") },
+        text = {
+            Column {
+                Text(
+                    text = activityName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (timeText.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = timeText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = if (isApply) {
+                        "报名会直接提交到「问渠」平台。报名后如需取消，可再打开本条活动取消（以平台规则为准）。"
+                    } else {
+                        "取消后本条报名会从平台移除，如需再次参加请重新报名。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(if (isApply) "确认报名" else "确认取消") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(if (isApply) "再想想" else "保留报名") }
+        },
+    )
 }
 
 /**
- * 详情弹层底部的动作行（DESIGN §3.28，2026-10-11）。
+ * 详情弹层底部的动作行（DESIGN §3.28）。
  *
- * 本应用**全程只读**（红线：报名 / 签到 / 提交一律不碰），但「看完之后去哪」得给出来——
- * 否则用户看完就卡住了。两个出口：复制活动名（去小程序里搜）、去微信（App 只递手，
- * 不代报名）。**两个动作都先关弹层**：回执是页面级提示，被弹层盖住等于没给。
+ * 主按钮按**这条活动当前的状态**三选一（2026-10-11，本应用不再是纯只读）：
+ * - 已报名且平台允许取消（[canCancel]）→ **取消报名**（过二次确认）；
+ * - 还能报名（[WenquRules.applyBlockReason] 回空）→ **报名**（过二次确认）；
+ * - 不能报名（已满 / 已截止 / 已结束 / 被限制）→ 按钮禁用，原因写在动作行上方；
+ * - 其余（进行中 / 已结束且没报名）→ 保持原样给「去微信报名」，只递手不代报名。
+ *
+ * 次按钮永远是「复制活动名」——报名 / 取消都由本应用做了，但活动名复制这个出口
+ * （去小程序里搜、贴给同学）仍然有用。
  */
 @Composable
 private fun WenquActivityActions(
     activity: WenquActivity,
+    applyBlockReason: String,
+    canCancel: Boolean,
+    busy: Boolean,
+    onRequestApply: () -> Unit,
+    onRequestCancel: () -> Unit,
     onCopyName: () -> Unit,
     onOpenWechat: () -> Unit,
 ) {
-    val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     Row(
         modifier = Modifier
@@ -126,15 +231,46 @@ private fun WenquActivityActions(
                 clipboard.setText(AnnotatedString(activityName(activity)))
                 onCopyName()
             },
+            enabled = !busy,
             modifier = Modifier.weight(1f),
         ) { Text("复制活动名") }
-        Button(
-            onClick = {
-                clipboard.setText(AnnotatedString(activityName(activity)))
-                onOpenWechat()
-            },
-            modifier = Modifier.weight(1f),
-        ) { Text("去微信报名") }
+
+        when {
+            canCancel -> Button(
+                onClick = onRequestCancel,
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) { Text(if (busy) "取消中…" else "取消报名") }
+
+            // 报过名但平台不让取消（如活动已结束）：给一枚禁用的「已报名」，别写「报名」
+            activity.applied -> Button(
+                onClick = {},
+                enabled = false,
+                modifier = Modifier.weight(1f),
+            ) { Text("已报名") }
+
+            WenquRules.canApply(applyBlockReason) -> Button(
+                onClick = onRequestApply,
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) { Text(if (busy) "报名中…" else "报名") }
+
+            // 不能报名：按钮留着但禁用，原因在动作行上方那行（别让按钮凭空消失）
+            applyBlockReason.isNotBlank() -> Button(
+                onClick = {},
+                enabled = false,
+                modifier = Modifier.weight(1f),
+            ) { Text("报名") }
+
+            else -> Button(
+                onClick = {
+                    clipboard.setText(AnnotatedString(activityName(activity)))
+                    onOpenWechat()
+                },
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) { Text("去微信报名") }
+        }
     }
 }
 
@@ -164,8 +300,7 @@ private fun openWechatForSignup(context: android.content.Context, onNotice: (Str
 }
 
 private const val ACTIVITY_FOOTER =
-    "报名、签到、提交材料等操作请到微信小程序「问渠」内完成；" +
-        "本页只做只读展示，不代表已报名。"
+    "报名 / 取消报名会直接提交到「问渠」平台；签到、提交材料等其它操作请到微信小程序内完成。"
 
 private const val RECORD_FOOTER =
     "本条记录与工时以「问渠」平台为准；如需申诉或修改，请到微信小程序内联系活动单位。"
@@ -187,6 +322,12 @@ private fun WenquActivityDetailContent(
     detailUnavailable: Boolean,
     onNotice: (String) -> Unit,
     showActions: Boolean = false,
+    applyBlockReason: String = "",
+    canCancel: Boolean = false,
+    busy: Boolean = false,
+    actionError: String? = null,
+    onRequestApply: () -> Unit = {},
+    onRequestCancel: () -> Unit = {},
     onCopyName: () -> Unit = {},
     onOpenWechat: () -> Unit = {},
 ) {
@@ -299,10 +440,34 @@ private fun WenquActivityDetailContent(
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
         )
 
-        // 底部动作行（活动视角）：看完知道下一步去哪——App 只读，但出口得递到手上
+        // 底部动作行：看完知道下一步去哪（报名 / 取消 / 去微信）
         if (showActions) {
+            // 不能报名时把原因写在按钮上方——按钮禁用但不让它凭空消失，用户才知道为什么。
+            // 「已报名」不算「不能报名」的原因（按钮已经写着已报名了），别重复。
+            if (!canCancel && !activity.applied && applyBlockReason.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "暂不能报名：$applyBlockReason",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            // 报名 / 取消失败：留在弹层里说清原因，**不飘页面级提醒**（弹层会把它盖住）
+            if (!actionError.isNullOrBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = actionError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             WenquActivityActions(
                 activity = activity,
+                applyBlockReason = applyBlockReason,
+                canCancel = canCancel,
+                busy = busy,
+                onRequestApply = onRequestApply,
+                onRequestCancel = onRequestCancel,
                 onCopyName = onCopyName,
                 onOpenWechat = onOpenWechat,
             )

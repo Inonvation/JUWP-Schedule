@@ -52,4 +52,10 @@ class WenquTtlCache<K : Any, V : Any>(
     fun clear() {
         entries.clear()
     }
+
+    /** 单键作废（写操作改了一条数据时，别把整张表都清掉）。 */
+    @Synchronized
+    fun remove(key: K) {
+        entries.remove(key)
+    }
 }

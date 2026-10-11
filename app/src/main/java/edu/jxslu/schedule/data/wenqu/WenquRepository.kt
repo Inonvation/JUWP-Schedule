@@ -121,7 +121,8 @@ internal fun mergeActivities(
  * 纪律：
  * - **只有 `status:410000`（请登录）算会话失效**；网络 / 5xx / 业务拒绝一律不标失效
  *   （对齐一卡通：把对的密码记成错的会把用户往改密码方向带）；
- * - 写操作只有「用户显式点发码 / 设密码」两处，各自只发一次、失败不自动重试；
+ * - 写操作只有**用户显式触发**的四处：发码 / 设密码 / **报名** / **取消报名**；
+ *   一律**只发一次、失败不自动重试**（[writeOnce]），签到 / 提交材料仍不碰；
  * - 取数失败**不落任何影子**（宁旧勿空：账号卡那一行保留上次工时）。
  */
 class WenquRepository(
@@ -474,15 +475,114 @@ class WenquRepository(
     suspend fun activityDetail(id: Long): WenquActivity? =
         withContext(Dispatchers.IO) {
             detailCache.get(id, now())?.let { return@withContext it }
-            val payload = authed { token -> api.volunteerDetail(token, id) }
-            // `detail: null` 是平台的**正常回答**（活动已删 / 不可见），不是错误：
-            // 调用方用列表或记录里已有的字段继续展示，别弹「取不到详情」吓用户
-            // （2026-10-08 用户报「点记录弹详情，同时飘一条取不到详情」）。
-            val parsed = payload.decodeData<WenquActivityDetailData>()?.detail
-                ?: return@withContext null
+            val parsed = fetchDetailUncached(id) ?: return@withContext null
             detailCache.put(id, parsed, now())
             parsed
         }
+
+    /**
+     * 详情接口的真实取数（绕过缓存）。把响应里的 `apply` 段并进活动模型：
+     * - `apply` 非 null = 我报过这条活动 → [WenquActivity.applied] 置真（比列表的 `isApply` 权威）；
+     * - `apply.id` = 报名 id → 收进 [WenquActivity.applyId]，供取消报名兜底。
+     */
+    private suspend fun fetchDetailUncached(id: Long): WenquActivity? {
+        val payload = authed { token -> api.volunteerDetail(token, id) }
+        // `detail: null` 是平台的**正常回答**（活动已删 / 不可见），不是错误：
+        // 调用方用列表或记录里已有的字段继续展示，别弹「取不到详情」吓用户
+        // （2026-10-08 用户报「点记录弹详情，同时飘一条取不到详情」）。
+        val data = payload.decodeData<WenquActivityDetailData>() ?: return null
+        val detail = data.detail ?: return null
+        return detail.copy(
+            applied = detail.applied || data.apply != null,
+            applyId = data.apply?.id ?: 0L,
+        )
+    }
+
+    /**
+     * **报名**（DESIGN §4.45，2026-10-11 起本应用可写）。
+     *
+     * 写路径纪律（对齐选课 `fetchForAction`）：**只发一次、不自动重登重发**——报名不是幂等操作，
+     * 撞上会话失效就报错让用户再点一次，绝不在客户端重放。token 的**续期在写之前**
+     * （[writeOnce] 先 [ensureToken]），所以正常路径不会带着过期 token 去写。
+     *
+     * 成功后做**本地乐观更新**（索引里那条置「已报名」、名额 -1）并作废「我的记录」缓存；
+     * 权威值等下一次同步（30 分钟闸门 / 下拉刷新 / 重进页）回来对齐。
+     */
+    suspend fun applyActivity(activityId: Long) = withContext(Dispatchers.IO) {
+        writeOnce { token -> api.volunteerApply(token, activityId) }.requireSuccess()
+        patchIndexApplied(activityId, applied = true)
+        detailCache.remove(activityId)
+        volunteerCache.clear()
+        activityCache.clear()
+    }
+
+    /**
+     * **取消报名**（DESIGN §4.45）。
+     *
+     * `volunteer/apply/cancel/{id}` 的 `{id}` 是**活动 id** 还是**报名 id** 没能钉死
+     * （平台对两种不存在的 id 都回 [WenquApi.MSG_NOT_APPLIED]）。按同族一致性先发**活动 id**
+     * （`volunteer/apply` 的 body 与 `volunteer/detail/{id}` 都用活动 id）；只有平台明确回
+     * 「您未报名该活动」**且**手里另有一个报名 id 时，才换报名 id 再试一次。
+     *
+     * 这**不是「失败重试」**：取消对未报名的活动是幂等拒绝，两种 id 都改不了任何数据，
+     * 所以换 id 重发不会造成重复副作用（网络 / 会话失效**不**换 id 重发，直接报错）。
+     */
+    suspend fun cancelApply(activityId: Long, applyId: Long = 0L) = withContext(Dispatchers.IO) {
+        var envelope = writeOnce { token -> api.volunteerCancel(token, activityId) }
+        if (envelope.status != WenquEnvelope.STATUS_OK &&
+            applyId > 0L && applyId != activityId &&
+            envelope.msg.orEmpty().contains(WenquApi.MSG_NOT_APPLIED)
+        ) {
+            envelope = writeOnce { token -> api.volunteerCancel(token, applyId) }
+        }
+        envelope.requireSuccess()
+        patchIndexApplied(activityId, applied = false)
+        detailCache.remove(activityId)
+        volunteerCache.clear()
+        activityCache.clear()
+    }
+
+    /**
+     * 写操作的统一收口：**先保证 token 新鲜、再发一次、不重试**。
+     * 撞上会话失效（`410000`）直接抛 [WenquSessionExpiredException]，把「再点一次」交给用户
+     * ——写操作在客户端自动重放有重复提交的风险（对齐选课写路径的纪律）。
+     */
+    private suspend fun writeOnce(call: suspend (String) -> WenquEnvelope): WenquEnvelope {
+        val session = ensureToken()
+        val envelope = call(session.token)
+        if (envelope.status == WenquEnvelope.STATUS_NEED_LOGIN) {
+            throw WenquSessionExpiredException(envelope.msg ?: "登录已失效，请重试")
+        }
+        return envelope
+    }
+
+    /**
+     * 报名 / 取消成功后，把索引里那条**就地**改成新状态（乐观更新，不等下一次同步）。
+     * 权威值仍是平台：下次同步会用服务端数据覆盖回来。
+     */
+    private fun patchIndexApplied(activityId: Long, applied: Boolean) {
+        val current = indexCache.get(INDEX_KEY, now()) ?: return
+        var changed = false
+        val items = current.items.map { item ->
+            if (item.id != activityId) {
+                item
+            } else {
+                changed = true
+                val delta = if (applied) 1 else -1
+                item.copy(
+                    applied = applied,
+                    joinNum = (item.joinNum + delta).coerceAtLeast(0),
+                    // 名额只在「招募人数填了」的时候才有意义（同 WenquRules.isFull 的口径）
+                    balanceNum = if (item.peopleNum > 0) {
+                        (item.balanceNum - delta).coerceAtLeast(0)
+                    } else {
+                        item.balanceNum
+                    },
+                )
+            }
+        }
+        if (changed) indexCache.put(INDEX_KEY, current.copy(items = items), now())
+    }
 
     /**
      * **扫一遍**第一页 `limit` 条（新增活动提醒用，DESIGN §4.45）。

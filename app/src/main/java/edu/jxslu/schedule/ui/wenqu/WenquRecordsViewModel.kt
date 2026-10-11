@@ -42,6 +42,10 @@ class WenquRecordsViewModel(private val repo: WenquRepository) : ViewModel() {
          * **不飘白色提醒**（2026-10-08 用户报）。
          */
         val detailUnavailable: Boolean = false,
+        /** 取消报名进行中（弹层里的按钮转圈 + 防连点）。 */
+        val applying: Boolean = false,
+        /** 取消失败的原因（平台原话），留在弹层里——页面级提示会被弹层盖住。 */
+        val detailActionError: String? = null,
         val message: String? = null,
     )
 
@@ -86,6 +90,7 @@ class WenquRecordsViewModel(private val repo: WenquRepository) : ViewModel() {
                 detail = null,
                 detailLoading = record.id > 0L,
                 detailUnavailable = record.id <= 0L,
+                detailActionError = null,
             )
         }
         if (record.id <= 0L) return
@@ -120,7 +125,51 @@ class WenquRecordsViewModel(private val repo: WenquRepository) : ViewModel() {
 
     fun closeDetail() {
         _state.update {
-            it.copy(opened = null, detail = null, detailLoading = false, detailUnavailable = false)
+            it.copy(
+                opened = null,
+                detail = null,
+                detailLoading = false,
+                detailUnavailable = false,
+                detailActionError = null,
+            )
+        }
+    }
+
+    /**
+     * **取消报名**（DESIGN §4.45）。
+     *
+     * 记录视角的取消入口以平台给的 `canCancel` 为准（只有 `volunteer/my` 回这个字段），
+     * 页面侧已经据此决定要不要给按钮；这里只负责发请求。
+     *
+     * 成功：关弹层 + 页面提示 + 记录列表刷新（那条报名从平台移除了，得重新取）。
+     * 失败：原因留在弹层里。
+     */
+    fun cancelApply() {
+        val record = _state.value.opened ?: return
+        if (record.id <= 0L || _state.value.applying) return
+        // **同步扣闸**（同 WenquViewModel.applyActivity）：连点两下时第二下进不来
+        _state.update { it.copy(applying = true, detailActionError = null) }
+        viewModelScope.launch {
+            try {
+                repo.cancelApply(record.id, record.applyId)
+                _state.update {
+                    it.copy(
+                        applying = false,
+                        opened = null,
+                        detail = null,
+                        detailLoading = false,
+                        message = "已取消报名",
+                    )
+                }
+                // 报名没了 → 记录列表要重取（走仓库的 force，别被 30 分钟缓存挡回去）
+                load(force = true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(applying = false, detailActionError = e.message ?: "取消失败")
+                }
+            }
         }
     }
 

@@ -109,6 +109,13 @@ class WenquViewModel(
          * **不飘白色提醒**（2026-10-08 用户报「点记录弹详情，同时飘一条取不到详情」）。
          */
         val detailUnavailable: Boolean = false,
+        /** 报名 / 取消报名进行中（弹层里的主按钮转圈 + 防连点）。 */
+        val applying: Boolean = false,
+        /**
+         * 报名 / 取消失败的原因（平台原话），**留在弹层里**——弹层比页面高一层，
+         * 页面级 Snackbar 会被它盖住，报在这里用户才看得见。
+         */
+        val detailActionError: String? = null,
 
         /** 登录 / 设密码 / 发码进行中（按钮转圈）。 */
         val busy: Boolean = false,
@@ -516,6 +523,8 @@ class WenquViewModel(
                 detail = activity,
                 detailLoading = activity.id > 0L,
                 detailUnavailable = activity.id <= 0L,
+                // 换了一条活动：上一条的报名 / 取消报错不能跟着飘过来
+                detailActionError = null,
             )
         }
         if (activity.id <= 0L) return
@@ -549,7 +558,85 @@ class WenquViewModel(
     }
 
     fun closeDetail() {
-        _state.update { it.copy(detail = null, detailLoading = false, detailUnavailable = false) }
+        _state.update {
+            it.copy(
+                detail = null,
+                detailLoading = false,
+                detailUnavailable = false,
+                detailActionError = null,
+            )
+        }
+    }
+
+    /**
+     * **报名**（DESIGN §4.45，2026-10-11 起本应用可写）。
+     *
+     * 写操作纪律：**只发一次**（仓库的 [WenquRepository.applyActivity] 不自动重登重发）；
+     * 失败把平台原话留在弹层里（[UiState.detailActionError]），成功则关弹层 + 页面级提示，
+     * 并把仓库里就地更新过的快照重新铺回列表（那条立刻变「已报名」）。
+     */
+    fun applyActivity(activityId: Long) {
+        if (activityId <= 0L || _state.value.applying) return
+        // **同步扣闸**：`update` 是同步的、VM 方法又在主线程被调，所以连点两下时第二下进不来
+        // （若把扣闸放进协程里，两下可能在协程起跑前都通过判断 → 重复提交）
+        _state.update { it.copy(applying = true, detailActionError = null) }
+        viewModelScope.launch {
+            try {
+                repo.applyActivity(activityId)
+                syncIndexFromRepo()
+                _state.update {
+                    it.copy(
+                        applying = false,
+                        detail = null,
+                        detailLoading = false,
+                        message = "报名成功",
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(applying = false, detailActionError = e.message ?: "报名失败")
+                }
+            }
+        }
+    }
+
+    /**
+     * **取消报名**。纪律同 [applyActivity]。
+     * [applyId] 是仓库换 id 兜底用的（活动列表 / 详情通常能拿到；拿不到传 0）。
+     */
+    fun cancelApply(activityId: Long, applyId: Long = 0L) {
+        if (activityId <= 0L || _state.value.applying) return
+        _state.update { it.copy(applying = true, detailActionError = null) }
+        viewModelScope.launch {
+            try {
+                repo.cancelApply(activityId, applyId)
+                syncIndexFromRepo()
+                _state.update {
+                    it.copy(
+                        applying = false,
+                        detail = null,
+                        detailLoading = false,
+                        message = "已取消报名",
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(applying = false, detailActionError = e.message ?: "取消失败")
+                }
+            }
+        }
+    }
+
+    /** 写操作成功后，把仓库里就地更新过的快照重新铺到界面（列表那条的「已报名」与名额）。 */
+    private fun syncIndexFromRepo() {
+        val cached = repo.cachedIndex() ?: return
+        _state.update {
+            it.copy(indexItems = corrected(cached.items), indexComplete = cached.complete)
+        }
     }
 
     /** 手机号 + 密码登录。 */

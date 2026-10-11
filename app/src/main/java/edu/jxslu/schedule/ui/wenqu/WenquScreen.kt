@@ -113,7 +113,8 @@ import me.rerere.hugeicons.stroke.Settings01
  * 提示一律走 [AppSnackbarHost]（全 App 统一的那张提示卡），不用裸 `SnackbarHost`——
  * 后者在这套主题里是另一副模样，用户会当成「不是软件内的弹窗」（2026-10-08 用户报）。
  *
- * 红线（DESIGN §4.45）：全程只读——报名 / 签到 / 提交等写操作请用户到小程序里做。
+ * 写操作（DESIGN §4.45，2026-10-11 起）：**报名 / 取消报名**直接提交到问渠平台，都过二次确认；
+ * 签到、提交材料等其它写操作仍请用户到小程序里做。
  * 负责人姓名 / 电话会展示（用户要求），但**不进日志、不进持久化、不进测试夹具与文档**。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -444,6 +445,21 @@ fun WenquScreen(
             onDismiss = vm::closeDetail,
             detailUnavailable = state.detailUnavailable,
             onNotice = { msg -> scope.launch { snackbar.showNotice(msg) } },
+            applyBlockReason = WenquRules.applyBlockReason(
+                status = activity.status,
+                applied = activity.applied,
+                peopleNum = activity.peopleNum,
+                balanceNum = activity.balanceNum,
+                applyStartTime = activity.applyStartTime,
+                applyEndTime = activity.applyEndTime,
+                blacklisted = state.applyBlockedReason.isNotBlank(),
+                now = System.currentTimeMillis(),
+            ),
+            canCancel = WenquRules.canCancelFromActivity(activity.status, activity.applied),
+            busy = state.applying,
+            actionError = state.detailActionError,
+            onApply = { vm.applyActivity(activity.id) },
+            onCancel = { vm.cancelApply(activity.id, activity.applyId) },
         )
     }
 }
@@ -453,7 +469,7 @@ private val BACK_TO_TOP_CLEARANCE = 64.dp
 
 private const val DISCLAIMER =
     "志愿工时 / 劳动教育数据来自「问渠」实践教育平台（第三方系统，非学校官方功能）。" +
-        "本应用只做只读展示，报名、签到、提交等操作请到微信小程序内完成。"
+        "报名 / 取消报名会直接提交到该平台；签到、提交材料等其它操作请到微信小程序内完成。"
 
 /** 条数行文案：浏览说「共 N 条」，搜索说「找到 N 条」，被本地筛选藏掉的都单独说出来。 */
 private fun metaText(state: WenquViewModel.UiState): String = buildString {

@@ -229,7 +229,7 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
 
             FooterDisclaimer(
                 "问渠是第三方系统，非学校官方功能；工时与活动数据以平台为准。" +
-                    "本应用只做只读展示，报名、签到、提交等操作请到微信小程序内完成。",
+                    "报名 / 取消报名会直接提交到该平台；签到、提交材料等其它操作请到微信小程序内完成。",
                 modifier = Modifier.padding(top = 4.dp),
             )
         }

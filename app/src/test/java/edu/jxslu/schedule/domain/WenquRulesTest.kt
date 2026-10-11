@@ -66,7 +66,8 @@ class WenquRulesTest {
 
     @Test
     fun `密码非空即可_平台没有格式限制`() {
-        assertTrue(WenquRules.isValidPassword("050059"))
+        // 夹具一律虚构：6 位纯数字带前导 0 只是「平台不挑格式」的样例，别拿真密码当例子
+        assertTrue(WenquRules.isValidPassword("012345"))
         assertTrue(WenquRules.isValidPassword("a"))
         assertFalse(WenquRules.isValidPassword(""))
         assertFalse(WenquRules.isValidPassword("   "))
@@ -587,5 +588,84 @@ class WenquRulesTest {
             "10 月 18 日 12:00",
             WenquRules.weeklyPublishLabel(at(2026, 10, 18, 12, 0), now, zone),
         )
+    }
+
+    // ---- 报名闸门（2026-10-11，本应用可写后新增）-----------------------------------
+
+    /** 可报名的基线：招募中 + 未满 + 没报过 + 在报名窗口内 + 没被限制。 */
+    private fun blockReason(
+        status: Int = 1,
+        applied: Boolean = false,
+        peopleNum: Int = 20,
+        balanceNum: Int = 5,
+        applyStart: String = "26-10-01 00:00",
+        applyEnd: String = "26-10-20 00:00",
+        blacklisted: Boolean = false,
+        now: Long = at(2026, 10, 11, 12, 0),
+    ): String = WenquRules.applyBlockReason(
+        status = status,
+        applied = applied,
+        peopleNum = peopleNum,
+        balanceNum = balanceNum,
+        applyStartTime = applyStart,
+        applyEndTime = applyEnd,
+        blacklisted = blacklisted,
+        now = now,
+        zone = zone,
+    )
+
+    @Test
+    fun `报名闸门_能报名时回空串`() {
+        assertEquals("", blockReason())
+        assertTrue(WenquRules.canApply(blockReason()))
+        // 招募人数没填（0）时名额不参与判断——平台有整格不填的时候
+        assertEquals("", blockReason(peopleNum = 0, balanceNum = 0))
+    }
+
+    @Test
+    fun `报名闸门_账号被限制与已报名先说`() {
+        // 被限制优先于一切（账号级原因最该先说）
+        assertEquals("当前账号被限制报名", blockReason(blacklisted = true, status = 3, applied = true))
+        // 已报名优先于活动状态：报过的活动点进去不该看到「活动已结束」再让点报名
+        assertEquals("已报名", blockReason(applied = true, status = 3))
+    }
+
+    @Test
+    fun `报名闸门_活动状态各档文案`() {
+        assertEquals("活动已取消", blockReason(status = 0))
+        assertEquals("活动进行中，报名已截止", blockReason(status = 2))
+        assertEquals("活动已结束", blockReason(status = 3))
+        // 认不出的状态：不猜，给一句兜底
+        assertEquals("当前不可报名", blockReason(status = 9))
+    }
+
+    @Test
+    fun `报名闸门_时间窗口`() {
+        val now = at(2026, 10, 11, 12, 0)
+        assertEquals("报名已截止", blockReason(applyEnd = "26-10-10 23:59", now = now))
+        assertEquals("报名尚未开始", blockReason(applyStart = "26-10-12 00:00", now = now))
+        // 时间认不出 → 不拦（宁可让平台拒，也不拿猜出来的时刻关掉入口）
+        assertEquals("", blockReason(applyStart = "", applyEnd = ""))
+        assertEquals("", blockReason(applyStart = "待定", applyEnd = "待定"))
+    }
+
+    @Test
+    fun `报名闸门_名额已满排在最后`() {
+        // 既满员又在窗口内 → 名额已满
+        assertEquals("名额已满", blockReason(peopleNum = 20, balanceNum = 0))
+        // 已满但活动也结束了 → 说「活动已结束」（更说明问题）
+        assertEquals("活动已结束", blockReason(status = 3, peopleNum = 20, balanceNum = 0))
+        // 招募人数没填（0）时不算满
+        assertEquals("", blockReason(peopleNum = 0, balanceNum = 0))
+    }
+
+    @Test
+    fun `活动视角的取消入口_只给已报名且招募中`() {
+        assertTrue(WenquRules.canCancelFromActivity(status = 1, applied = true))
+        // 没报名不给
+        assertFalse(WenquRules.canCancelFromActivity(status = 1, applied = false))
+        // 已结束 / 进行中不给——活动视角拿不到平台的 canCancel，给个必然被拒的按钮只会白点
+        assertFalse(WenquRules.canCancelFromActivity(status = 3, applied = true))
+        assertFalse(WenquRules.canCancelFromActivity(status = 2, applied = true))
     }
 }

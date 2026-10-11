@@ -231,6 +231,45 @@ class WenquModelsTest {
     }
 
     @Test
+    fun `详情解析_apply 段带报名 id_个人字段不进模型`() {
+        // `apply` = 我对这条活动的报名；取消报名要用它的 id。
+        // 里面还有 username / student_no 这类个人字段——**不声明**，连内存都不进（仓库是公开的）。
+        // 夹具一律虚构（真学号 / 真 uid 不许进仓库）。
+        val env = envelope(
+            """
+            {"status":200,"msg":"ok","data":{"detail":{"id":37471,"title":"x","status":1},
+              "apply":{"id":900001,"uid":10001,"aid":37471,"username":"某人","student_no":"2024000000","status":2},
+              "qj_count":0,"qx_count":0,"isBlack":false,"stop_apply_reason":""}}
+            """.trimIndent(),
+        )
+        val data = env.data.decodeData<WenquActivityDetailData>()
+        assertEquals(900001L, data?.apply?.id)
+        assertEquals(37471L, data?.apply?.aid)
+        assertEquals(2, data?.apply?.status)
+        assertFalse(data.toString().contains("某人"))
+        assertFalse(data.toString().contains("2024000000"))
+    }
+
+    @Test
+    fun `记录解析_带报名 id 与能否取消_记录当活动时一起带过去`() {
+        val env = envelope(
+            """{"status":200,"msg":"ok","data":{"total_score":1,"list":[
+                 {"id":34658,"title":"x","apply_id":900001,"canCancel":false,"apply_status_text":"已完成"},
+                 {"id":34660,"title":"y","apply_id":900002,"canCancel":true,"apply_status_text":"已报名"}
+               ]}}""",
+        )
+        val list = env.data.decodeData<WenquVolunteerData>()!!.list
+        assertEquals(900001L, list[0].applyId)
+        assertFalse(list[0].canCancel)
+        assertTrue(list[1].canCancel)
+        // 记录喂给详情弹层时，取消入口要的 canCancel / applyId 一并带过去（记录视角的入口以它为准）
+        val asActivity = list[1].asActivity()
+        assertEquals(900002L, asActivity.applyId)
+        assertTrue(asActivity.canCancel)
+        assertTrue(asActivity.applied)
+    }
+
+    @Test
     fun `报名限制标记解析_账号级不是活动级`() {
         // isBlack / stop_apply_reason 挂在信封上（每个活动都一样），页面据此挂一条说明
         val env = envelope(

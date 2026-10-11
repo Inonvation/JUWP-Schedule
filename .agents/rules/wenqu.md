@@ -29,7 +29,7 @@
 > （或 `{encryptedData, iv, cache_key}`），**只有微信运行时能生成**，App 造不出来。
 > `cache_key` 存在微信**加密** MMKV 里，磁盘上无明文。密码这条路是唯一能自助的。
 
-## 接口（全部只读或用户显式触发）
+## 接口（读 + 用户显式触发的写）
 
 ```http
 POST /api/register/verify  {"phone":"<手机号>","type":"reset"}       发码
@@ -38,7 +38,27 @@ POST /api/login            {"account":"<手机号>","password"}            → t
 POST /api/volunteer/my     {"status":"","start_time":"","end_time":""}  → total_score + list（我参加过的）
 POST /api/volunteer/star_cert {}                                        → volunteer_score_total + star_level
 POST /api/volunteer/v2     {"page","limit","keyword"}                   → list（平台上有的活动）
-POST /api/volunteer/detail/{id}   {}（id 走路径）                        → detail（工时 / 群号只有这里）```
+POST /api/volunteer/detail/{id}   {}（id 走路径）                        → detail + apply（工时 / 群号 / 报名 id 只有这里）
+POST /api/volunteer/apply  {"id":<活动id>}                              报名
+POST /api/volunteer/apply/cancel/{id}   {}（id 走路径）                  取消报名
+```
+
+**写端点是怎么探出来的（2026-10-11，别再重复踩）**：未登录请求**真端点回 `200` +
+`{"status":410000,"msg":"请登录"}`，不存在的路径回 `404`**，且路由**大小写不敏感**
+（`volunteer/MY`、`VOLUNTEER/my` 都命中）——用这个信号就能问出路由存在性、不碰任何数据。
+`volunteer/apply` 与 `volunteer/checkin` 就是这么确认的；**取消报名藏在路径参数路由里**
+（`volunteer/apply/cancel/{id}`），只试不带 id 的 `volunteer/apply/cancel` 会 404 漏掉它
+——`volunteer/detail/{id}` 同族，**探路由时路径参数要一起试**。
+
+- **报名**：`POST volunteer/apply`，body `{"id": <活动id>}`。实测 `{}` / `id=0` → `参数错误`
+  （`id` 必填），`id` 不存在 → `服务项目不存在或已下架`（它查的是**活动**）⇒ `id` 是活动 id。
+- **取消报名**：`POST volunteer/apply/cancel/{id}`。`{id}` 是**活动 id** 还是**报名 id** 未钉死
+  （平台对两种不存在的 id 都回 `您未报名该活动`）；App 先发活动 id，撞上这句且手里有报名 id
+  时再换一次（见 `WenquRepository.cancelApply`）。
+- `volunteer/my` 的每条记录带 **`apply_id`**（报名 id）、`apply_status`、**`canCancel`**
+  （平台算好的「这条还能不能取消」，**只有记录列表有这个字段**）；`volunteer/detail/{id}` 的
+  `apply` 段 = 我对这条活动的报名（`id` 报名 id / `aid` 活动 id / `status`），里面还有
+  `username` / `student_no` 等个人字段——**模型里不声明**，`ignoreUnknownKeys` 下连内存都不进。
 
 ## 七个坑（都踩过）
 
@@ -176,7 +196,7 @@ POST /api/volunteer/detail/{id}   {}（id 走路径）                        �
   **班级先让位**（吃余量、可省略），工时优先保完整；点工时进问渠页。
   未登录时这一行照旧只有班级。
 - **校园服务 → 第三方账号**：`问渠 · 志愿服务` 行，`value = 已登录 / 点击登录`，
-  副标题「志愿工时 · 活动 · 劳动教育（只读）」。
+  副标题「志愿工时 · 活动报名 · 劳动教育」。
 - **今日页顶栏「+」→「志愿服务」**也落问渠页（2026-10-08，见 `.agents/rules/today-ui.md`）。
 - 问渠页（`SubpageScreen.WENQU`）已登录时**两块**（2026-10-11 按提案页收口）：
   **工时行**（一行：工时数 + 小时 + 星级 + 右侧「记录 ›」）→ **可报名活动**
@@ -264,13 +284,22 @@ POST /api/volunteer/detail/{id}   {}（id 走路径）                        �
   照搬会让记录徽章写「已取消」。自主（DIY）类记录 `id` 为 null（收成 0），不发注定失败的详情请求。
 - 活动详情弹层字段：状态徽章 + 「计 N 工时」、活动名、项目名、单位 / 地点 / 活动时间 / 报名时间 /
   招募人数 / 已报名 / 我的状态（仅活动视角）/ **负责人 / 负责人电话** / 活动群号 / 活动内容。
-- **底部动作行**（2026-10-11，**活动视角才有**）：`复制活动名` + `去微信报名`。本应用只读，
-  但「看完去哪」得给出来。两个动作都**先关弹层再执行**（`ImeAwareModalBottomSheet(pendingDismiss)`）
-  ——弹层比页面高一层，页面级 Snackbar 会被它盖住，先关再提示才看得见。`去微信报名` 走
-  `startActivityOutsideApp` + 复制活动名，**只递手不代报名**；未装微信只提示「活动名已复制」。
-  记录视角**不给动作行**（已经报过名了，语义不对）。
-  电话与群号那两行**整行可点即复制**（行尾一枚淡复制图标当提示，行高抬到 44dp 保命中区）——
-  比「只能长按选中」好发现得多。
+- **底部动作行**（2026-10-11 改版，本应用不再是纯只读）：次按钮固定 `复制活动名`，
+  主按钮按状态三选一——**可报名 → 报名 / 已报名且平台允许 → 取消报名 / 其余 → 去微信报名**
+  （不能报名时按钮禁用 + 行上方写原因，别让按钮凭空消失）。
+  - 两个写操作都**先过二次确认**（`WenquActionConfirmDialog`，接 `DialogWindowFadeEffect`）；
+    失败原因留在弹层里（`actionError`，**不飘页面级提醒**——弹层比页面高一层，会被盖住）；
+    进行中按钮转圈 + 防连点（VM 的 `applying` 闸）。
+  - 记录视角默认不给动作行，**只有平台说这条能取消（`canCancel`）时才补一个「取消报名」**。
+  - 复制 / 去微信那类动作**先关弹层再执行**（`ImeAwareModalBottomSheet(pendingDismiss)`）；
+    `去微信报名` 走 `startActivityOutsideApp` + 复制活动名，**只递手不代报名**。
+  - 电话与群号那两行**整行可点即复制**（行尾一枚淡复制图标当提示，行高抬到 44dp 保命中区）。
+- **报名闸门是纯函数** `WenquRules.applyBlockReason`（JVM 测）：账号被限制 → 已报名 →
+  活动状态（已取消 / 进行中 / 已结束）→ 报名时间窗口 → 名额已满，回空串才可报名。
+  **活动视角的取消入口**走 `WenquRules.canCancelFromActivity`（已报名 + 招募中）——
+  平台只在 `volunteer/my` 回 `canCancel`，活动视角拿不到权威值，给个必然被拒的按钮只会白点。
+- **写操作后的本地更新**：仓库就地改索引里那条（`applied` / `joinNum` / `balanceNum` 乐观更新）
+  并作废详情 / 「我的记录」缓存；权威值等下一次同步回来对齐。列表那条当场变「已报名」。
 - **群号下面挂一句说明**（2026-10-08 用户口径）：**「请确保在小程序报名成功后再进群」**——
   有些活动的群号是报名后才放出来的。只在群号非空时显示。
 - 工时影子 30 分钟 TTL（`WenquRules.hoursStale`）：进「我的」页过期才后台刷一次，
@@ -341,10 +370,13 @@ POST /api/volunteer/detail/{id}   {}（id 走路径）                        �
 
 ## 红线
 
-- **只读**：只发上面七个端点里的**读**那些（`volunteer/my` / `volunteer/star_cert` /
-  `volunteer/v2` / `volunteer/detail/{id}`）。报名 / 签到 / 提交等写接口**一律不碰**
-  （`volunteer/apply`、`volunteer/checkin`、`*_submit` 一个都不要调）。
+- **写操作只有用户显式触发的四处**：发码 / 设密码 / **报名** / **取消报名**，
+  一律只发一次、失败不自动重试（`WenquRepository.writeOnce`）。
+  **签到（`volunteer/checkin`）与提交材料类（`*_submit`）仍不碰**——它们有到点 / 定位语义，
+  不是「一次点击」能安全覆盖的。
+- 报名 / 取消都**先过二次确认**（`WenquActionConfirmDialog`），失败原因留在弹层里
+  （页面级 Snackbar 会被弹层盖住）。
 - **无日志拦截器**：手机号 / 密码 / token / 负责人姓名电话绝不进 Logcat（对齐一卡通 / 快趣 / U净）。
-- 写操作只有「用户点发码」与「用户点设密码」两处，各发一次、失败不自动重试。
 - 负责人姓名与电话**只在详情弹层展示**，不进日志 / 持久化 / 夹具 / 文档；
-  考勤人字段**不进模型**（见「七个坑」第 5 条）。
+  考勤人字段**不进模型**（见「七个坑」第 5 条）；报名记录里的 `username` / `student_no`
+  同理**不进模型**（见「接口」节）。

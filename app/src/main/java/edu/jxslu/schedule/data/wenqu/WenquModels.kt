@@ -6,6 +6,7 @@ import edu.jxslu.schedule.data.qiekj.QiekjJson
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 
@@ -105,6 +106,16 @@ data class WenquVolunteerRecord(
     @Serializable(with = LenientStringSerializer::class)
     val score: String? = null,
     @SerialName("apply_status_text") val statusText: String = "",
+    /**
+     * **报名 id**（不是活动 id，见 [id]）。取消报名要用它——2026-10-11 实测。
+     * 自主（DIY）类记录可能没有，收成 0。
+     */
+    @SerialName("apply_id") val applyId: Long = 0,
+    /**
+     * 平台算好的「这条报名现在还能不能取消」。**只有 `volunteer/my` 有这个字段**
+     * （活动列表 / 详情都没有），所以记录视角的「取消报名」入口以它为准。
+     */
+    @SerialName("canCancel") val canCancel: Boolean = false,
 )
 
 /**
@@ -137,6 +148,10 @@ fun WenquVolunteerRecord.asActivity(): WenquActivity = WenquActivity(
     content = content,
     score = score,
     status = WENQU_STATUS_NOT_APPLICABLE,
+    // 记录 = 已经报过名了；能不能取消看平台给的 canCancel（记录视角的取消入口以它为准）
+    applied = true,
+    canCancel = canCancel,
+    applyId = applyId,
 )
 
 /** `POST /api/volunteer/star_cert` 的 `data`：星级证书（总工时 + 星级）。 */
@@ -207,6 +222,12 @@ data class WenquActivity(
     @SerialName("balance_num") val balanceNum: Int = 0,
     /** 我报名了没（要登录才准）。 */
     @SerialName("isApply") val applied: Boolean = false,
+    /**
+     * 平台算好的「这条报名现在还能不能取消」。**只有 `volunteer/my` 的记录有**，
+     * 活动列表 / 详情都不回——所以它只在**记录视角**（[asActivity]）有意义；
+     * 活动视角的取消入口走「已报名 + 招募中」自己判（见 `WenquRules.canCancel`）。
+     */
+    @SerialName("canCancel") val canCancel: Boolean = false,
     /** **详情才有**：本活动计多少工时。平台有时回数字有时回字符串。 */
     @Serializable(with = LenientStringSerializer::class)
     val score: String? = null,
@@ -214,16 +235,41 @@ data class WenquActivity(
     @Serializable(with = LenientStringNonNullSerializer::class)
     @SerialName("group_id")
     val groupId: String = "",
+    /**
+     * 我对这条活动的**报名 id**。**不是接口字段**——`volunteer/v2` 的列表项没有它，
+     * 由仓库在详情（`data.apply.id`）与记录（`apply_id`）里补上，专供取消报名兜底
+     * （见 [WenquRepository.cancelApply]）。没报名 / 认不出 = 0。
+     */
+    @Transient val applyId: Long = 0,
 )
 
 /** `POST /api/volunteer/detail/{id}` 的 `data`。 */
 @Serializable
 data class WenquActivityDetailData(
     val detail: WenquActivity? = null,
+    /** **我对这条活动的报名记录**；没报名是 null（平台一直回，2026-10-11 起声明进模型）。 */
+    val apply: WenquApply? = null,
     @SerialName("qj_count") val leaveCount: Int = 0,
     @SerialName("qx_count") val absentCount: Int = 0,
     @SerialName("isBlack") val blacklisted: Boolean = false,
     @SerialName("stop_apply_reason") val stopApplyReason: String = "",
+)
+
+/**
+ * 我对某条活动的**报名记录**（`volunteer/detail/{id}` 的 `apply` 段）。
+ *
+ * **只声明取消要用到的字段**。它含一堆个人字段（`username` / `student_no` / `college` /
+ * `major` / `dormitory_no` …）——那些**一律不声明**，`ignoreUnknownKeys` 下连内存都不进
+ * （同 [WenquActivity] 对 `attendance_*` 的处理）。
+ */
+@Serializable
+data class WenquApply(
+    /** 报名 id（取消报名的候选 id，见 [WenquApi.volunteerCancel]）。 */
+    val id: Long = 0,
+    /** 活动 id（与 [WenquActivity.id] 同）。 */
+    @SerialName("aid") val aid: Long = 0,
+    /** 报名状态（记录列表里的 `apply_status` 同源）。 */
+    val status: Int = 0,
 )
 
 /** 把 `data` 段解成 [T]；缺失或解析失败回 null（调用方按空处理，不整批失败）。 */

@@ -818,7 +818,20 @@ UI 规格见 §3.28。
 | 我的记录 | `POST /api/volunteer/my` | `{status:"", start_time:"", end_time:""}` → `total_score` + `list`（我参加过的） |
 | 星级证书 | `POST /api/volunteer/star_cert` | `{}` → `volunteer_score_total` + `star_level` |
 | **活动列表** | `POST /api/volunteer/v2` | `{page, limit, keyword}` → `list` + `qj_count` / `qx_count` / `isBlack` / `stop_apply_reason`；**需要登录**（无 token 回 `410000 请登录`） |
-| **活动详情** | `POST /api/volunteer/detail/{id}` | id 走路径、请求体 `{}` → `detail` + `apply`；**工时 `score` 与活动群号 `group_id` 只有这里才有** |
+| **活动详情** | `POST /api/volunteer/detail/{id}` | id 走路径、请求体 `{}` → `detail` + `apply`；**工时 `score` 与活动群号 `group_id` 只有这里才有**，`apply` 段 = 我对这条活动的报名（报名 id / 状态） |
+| **报名**（写） | `POST /api/volunteer/apply` | `{"id": <活动id>}`；实测 `{}` / `id=0` → `参数错误`（id 必填）、id 不存在 → `服务项目不存在或已下架`（它查的是**活动**）⇒ `id` 是活动 id |
+| **取消报名**（写） | `POST /api/volunteer/apply/cancel/{id}` | id 走路径、请求体 `{}`；`{id}` 是**活动 id** 还是**报名 id** 未钉死（平台对两种不存在的 id 都回 `您未报名该活动`），App 先发活动 id、撞上这句且有报名 id 时再换一次 |
+
+**路由是怎么探出来的**（2026-10-11，别再重复踩）：未登录请求**真端点回 `200` +
+`{"status":410000,"msg":"请登录"}`，不存在的路径回 `404`**，且路由**大小写不敏感**
+（`volunteer/MY` 也命中）。取消报名藏在**路径参数路由**里（`volunteer/apply/cancel/{id}`）——
+只试不带 id 的 `volunteer/apply/cancel` 会 404 漏掉，**探路由时路径参数要一起试**
+（`volunteer/detail/{id}` 同族）。
+
+- `volunteer/my` 的每条记录带 **`apply_id`**（报名 id）、`apply_status`、**`canCancel`**
+  （平台算好的「这条还能不能取消」，**只有记录列表有这个字段**，活动列表 / 详情都没有）。
+  `apply` 段里还有 `username` / `student_no` 等个人字段——**模型里不声明**，`ignoreUnknownKeys`
+  下连内存都不进。
 
 - token 是 **3 天** JWT（`exp - iat = 259200s`）；`data` 里**没有 cache_key**，续期就是重登，
   本地存着手机号+密码所以用户无感。
@@ -976,19 +989,25 @@ UI 规格见 §3.28。
 同级），自愈三段照抄 `QzxySessionStore`；**两份备份排除 xml 都要登记**（正式件 + `.fallback`）。
 存 token 的 `expiresAt`（从 JWT 解）+ 工时影子（`hours` / `hoursFetchedAt`，30 分钟 TTL）。
 
-**红线**：① **只读**——报名 / 签到 / 提交类写接口（`volunteer/apply`、`volunteer/checkin`、
-`*_submit`）一律不碰，`volunteer/v2` 与 `volunteer/detail/{id}` 都是读；② **无日志拦截器**，
-手机号 / 密码 / token / 负责人姓名电话不进 Logcat；③ 响应里的他人信息**分两档**
+**红线**：① **写操作只有用户显式触发的四处**——发码 / 设密码 / **报名** / **取消报名**，
+一律只发一次、失败不自动重试（`WenquRepository.writeOnce`）；**签到（`volunteer/checkin`）与
+提交材料类（`*_submit`）仍不碰**——它们有到点 / 定位语义，不是「一次点击」能安全覆盖的。
+报名 / 取消都先过二次确认，失败原因留在弹层里（页面级 Snackbar 会被弹层盖住）；
+② **无日志拦截器**，手机号 / 密码 / token / 负责人姓名电话不进 Logcat；③ 响应里的他人信息**分两档**
 （2026-10-08 起）：`leader_name` / `leader_phone`（活动负责人）**已声明进模型**、在详情弹层展示
 （电话可长按复制），但**只展示**——不进日志、不进持久化、不进夹具与文档（仓库是公开的，
-夹具一律假名假号）；`attendance_name` / `attendance_phone`（考勤人）**不声明**，
-`ignoreUnknownKeys` 下连内存都不进（`WenquModelsTest` 有兜底用例：toString 里出现即红）。
+夹具一律假名假号）；`attendance_name` / `attendance_phone`（考勤人）与 `apply` 段里的
+`username` / `student_no` **都不声明**，`ignoreUnknownKeys` 下连内存都不进
+（`WenquModelsTest` 有兜底用例：toString 里出现即红）。
 
-**测试**：`WenquRulesTest` 28 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
+**测试**：`WenquRulesTest` 53 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
 星级与工时文案 / 状态文案 / 时间戳与时间段 / 名额文案 / 「满了没」/ 本地筛选两维叠加 /
-展示排序权重 / 报名限制文案 / 筛选哨兵 / 新增活动判据 / 活动提醒间隔档位与兜底）
-+ `WenquModelsTest` 19 例（信封判定 / 发码双 200 只看 msg / 数字与字符串两种工时 /
+展示排序权重 / 报名限制文案 / 筛选哨兵 / 新增活动判据 / 活动提醒间隔档位与兜底 /
+**报名闸门六例**——可报回空串 / 被限制与已报名先说 / 状态各档 / 时间窗口 / 名额已满排最后 /
+活动视角取消入口只给已报名且招募中）
++ `WenquModelsTest` 21 例（信封判定 / 发码双 200 只看 msg / 数字与字符串两种工时 /
 记录带地点与报名时间 / 记录→活动映射与 `status` 钉 -1 / 自主类 id 收 0 / 负责人进模型而考勤人不进 /
-记录转活动带负责人 / 报名限制标记 / 活动列表与详情解析 / 忽略未知字段 / `data:null` 容错）
+记录转活动带负责人 / 报名限制标记 / 活动列表与详情解析 / 忽略未知字段 / `data:null` 容错 /
+**详情 `apply` 段带报名 id 且个人字段不进模型** / **记录带 `apply_id` 与 `canCancel`**）
 + `WenquTtlCacheTest` 6 例（新鲜期命中 / 过期即删 / 按关键词各存一份 / 超量按写入序淘汰 /
 重写排到最新 / clear）。夹具按真实结构脱敏改写，人名手机号一律假值。

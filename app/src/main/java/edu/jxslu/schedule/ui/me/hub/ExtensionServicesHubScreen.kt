@@ -70,7 +70,7 @@ fun ExtensionServicesHubScreen(
     onOpenCampusCalendar: () -> Unit,
     /** U净 洗衣房（DESIGN §4.37）：空闲看板 · 扫码识别；登录凭据在第三方手里。 */
     onOpenUjing: () -> Unit,
-    /** 问渠 · 志愿服务（DESIGN §3.28 / §4.45）：手机号 + 密码登录，只读志愿工时 / 劳动教育。 */
+    /** 问渠 · 志愿服务（DESIGN §3.28 / §4.45）：手机号 + 密码登录，志愿工时 / 活动报名 / 劳动教育。 */
     onOpenWenqu: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
@@ -186,10 +186,11 @@ fun ExtensionServicesHubScreen(
                     value = if (ujingLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenUjing,
                 )
-                // 问渠（2026-10-08 加入）：学校「问渠」实践教育平台的志愿工时 / 劳动教育（只读）
+                // 问渠（2026-10-08 加入）：学校「问渠」实践教育平台的志愿工时 / 劳动教育
+                // （2026-10-11 起可报名 / 取消报名，见 DESIGN §4.45）
                 SettingItem(
                     title = "问渠 · 志愿服务",
-                    subtitle = "志愿工时 · 活动 · 劳动教育（只读）",
+                    subtitle = "志愿工时 · 活动报名 · 劳动教育",
                     icon = HugeIcons.HeartHandshake,
                     value = if (wenquLoggedIn) "已登录" else "点击登录",
                     onClick = onOpenWenqu,

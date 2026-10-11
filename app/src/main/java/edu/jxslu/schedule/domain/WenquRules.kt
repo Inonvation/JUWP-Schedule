@@ -162,6 +162,56 @@ object WenquRules {
     const val STATUS_RECRUITING: Int = 1
 
     /**
+     * **报名闸门**：能报名回空串，不能报名回**原因**（详情弹层拿它禁用按钮并写一行说明）。
+     *
+     * 判据顺序有意为之——先给**最不容易变、最该先说**的原因：
+     * 账号被限制 → 已报名 → 活动状态（已取消 / 进行中 / 已结束）→ 报名时间窗口 → 名额。
+     * 「已满」放最后：一条活动既结束又满员时，「活动已结束」比「名额已满」更说明问题。
+     *
+     * 时间认不出（[stampMillis] 回 null）时**不拦**——宁可让用户点一下被平台拒，
+     * 也不拿一个猜出来的截止时刻把入口关掉（同 [effectiveStatus] 的纪律）。
+     */
+    fun applyBlockReason(
+        status: Int,
+        applied: Boolean,
+        peopleNum: Int,
+        balanceNum: Int,
+        applyStartTime: String,
+        applyEndTime: String,
+        blacklisted: Boolean,
+        now: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): String {
+        if (blacklisted) return "当前账号被限制报名"
+        if (applied) return "已报名"
+        when (status) {
+            0 -> return "活动已取消"
+            2 -> return "活动进行中，报名已截止"
+            3 -> return "活动已结束"
+        }
+        if (status != STATUS_RECRUITING) return "当前不可报名"
+        val end = stampMillis(applyEndTime, zone)
+        if (end != null && end < now) return "报名已截止"
+        val start = stampMillis(applyStartTime, zone)
+        if (start != null && start > now) return "报名尚未开始"
+        if (isFull(status, peopleNum, balanceNum)) return "名额已满"
+        return ""
+    }
+
+    /** [applyBlockReason] 回空串 = 能报名。 */
+    fun canApply(reason: String): Boolean = reason.isEmpty()
+
+    /**
+     * **活动视角**要不要给「取消报名」入口：已报名 + 还在招募中。
+     *
+     * 为什么不是「已报名就给」：平台只在 `volunteer/my` 的记录里回 `canCancel`
+     * （活动列表 / 详情都没有），活动视角拿不到权威值；已结束 / 进行中的活动给个必然被拒的
+     * 按钮只会让用户白点。**记录视角以平台的 `canCancel` 为准**（那边有权威值）。
+     */
+    fun canCancelFromActivity(status: Int, applied: Boolean): Boolean =
+        applied && status == STATUS_RECRUITING
+
+    /**
      * 「报名截止临近」的排序键：**还没截止的排前面**（按截止时间升序），
      * 已截止 / 没填截止 / 解析不了的排后面（同 [stampMillis] 的不猜时间纪律）。
      *
