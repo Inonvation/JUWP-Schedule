@@ -54,7 +54,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -481,9 +483,9 @@ fun RideScreen(
      * 页面底部常驻块（动作区 + 免责）**稳定态的实测高度**（含导航栏内边距）：面板上限要按
      * 它扣、地图才留得住三成，Snackbar 也靠它抬到常驻块之上。首帧先用估值兜底。
      *
-     * **不按 phase 重置**：换形态时保留上一档的值，等动画结束量到新值再改（见 [mapReserveDp]）。
-     * 按 phase 重置成估值的话，切换那一帧地图会先跳到估值、动画结束再跳一次真值——两次多余的
-     * 整幅重绘，还可能露出地图底边与面板之间的空档。
+     * **不按 phase 重置**：换形态时保留上一档的值，等动画结束量到新值再改（见 [blockAnimating]）。
+     * 按 phase 重置成估值的话，切换那一帧面板上限会先跳到估值、动画结束再跳一次真值——两次
+     * 多余的整幅重绘，还可能露出地图底边与面板之间的空档。
      */
     var measuredBlockDp by remember {
         mutableStateOf(if (phase == RidePhase.Riding) 250f else 120f)
@@ -500,19 +502,12 @@ fun RideScreen(
      */
     var liveBlockDp by remember { mutableStateOf(measuredBlockDp) }
     /**
-     * 地图给底部让位用的高度（**冻结值**，与 [measuredBlockDp] 不是一回事）。
+     * 底部块是否正在换形态。
      *
-     * [barKey] 一变，`RideActionArea` 就走一次 240ms 的高度动画（`AnimatedContent` 的
-     * `SizeTransform`）。地图若跟着实时高度走，这 240ms 里**每一帧**都会 resize 一次视图，
-     * osmdroid 每次 resize 都整幅重绘（瓦片 + 校园围栏 + 车标 + 还车点）——用户报的
-     * 「开锁后掉帧、然后骑行面板弹出来」就是这一段（2026-10-01 定位）。
-     *
-     * 现在的分工：动画期间地图尺寸**不动**，升起来的底部块直接盖在它下沿；动画结束再一次性
-     * 落位（被切掉的那一截正好在已经升上去的块后面，看不见）。视觉仍是"底部窗口升起"，
-     * 但整段动画只 resize 一次地图。
+     * 换形态期间 [measuredBlockDp] **只记账不落位**（见它的注释）：它是**面板上限**
+     * （[maxPanelDp]）的输入，动画中途跟着变会让面板与地图同时动。地图的让位**不看它**
+     * ——地图让位走 [liveBlockDp] 的整幅平移（见地图那层的注释），不 resize。
      */
-    var mapReserveDp by remember { mutableStateOf(measuredBlockDp) }
-    /** 底部块是否正在换形态（见 [mapReserveDp]）。 */
     var blockAnimating by remember { mutableStateOf(false) }
     val barKey = rideBarKey(phase, caps, kvcxLoggedIn, pickedCar, hasCode)
     var lastBarKey by remember { mutableStateOf(barKey) }
@@ -526,22 +521,16 @@ fun RideScreen(
         // 前提：容器高度动画（SizeTransform）**两个方向都是 BAR_RISE_MS**——它不看初末
         // 尺寸，块的实际高度 240ms 才落底；上区退场现在只是 120ms 原地淡出（2026-10-08
         // 用户口径「直接上升」），**不参与**高度动画，落位基数仍是 BAR_RISE_MS。
-        // - **升起**（块变高）：等满程 + 标准余量。动画里地图不动、被升起来的块盖住，
-        //   落位时缩小的那截在块后面，看不见——2026-10-01 的修法，保持。
+        // - **升起**（块变高）：等满程 + 标准余量。
         // - **下沉**（块变矮，如结算卡 → 继续找车）：动画一落底（[SHRINK_SETTLE_MS] 小余量）
-        //   就落位。原来也等满程 + 标准余量，块贴底后地图还矮着，露约 60ms 空档，然后让位
-        //   高度一次跳变、地图猛地补齐——那就是用户看到的「抽搐突变」。现在落位贴住块落底
-        //   那一刻，「面板沉下去 → 地图展开」读起来是连续的两个动作。
-        //   地图变大的 resize 仍然只发生一次（不做逐帧 resize，那是 10-01 修掉的掉帧来源）。
+        //   就落位。
+        // 这个时刻只决定 [measuredBlockDp]（面板上限）何时落位；地图的让位不在这里落，
+        // 它整段跟着 [liveBlockDp] 平滑平移（见地图那层的注释）。
         val settleMs = BAR_RISE_MS.toLong() +
             if (barBlockShrinks(prev, barKey)) SHRINK_SETTLE_MS else BLOCK_SETTLE_MS.toLong()
         delay(settleMs)
         measuredBlockDp = blockHeight.value
         blockAnimating = false
-    }
-    // 不换形态时随时跟随实测值（首帧的估值就是这么被纠正的）
-    LaunchedEffect(measuredBlockDp, blockAnimating) {
-        if (!blockAnimating) mapReserveDp = measuredBlockDp
     }
 
     Scaffold(
@@ -602,24 +591,30 @@ fun RideScreen(
             val maxPanelDp = minOf(
                 MAX_PANEL_HEIGHT_DP,
                 // 用冻结值：面板上限在动画期间不该跟着变（那会让面板与地图同时动）
-                maxHeight.value * PANEL_MAX_RATIO - mapReserveDp,
+                maxHeight.value * PANEL_MAX_RATIO - measuredBlockDp,
             ).coerceAtLeast(MIN_PANEL_HEIGHT_DP)
             LaunchedEffect(maxPanelDp, state.panelHeightDp) {
                 viewModel.clampPanelHeight(MIN_PANEL_HEIGHT_DP, maxPanelDp)
             }
             val panelHeight = state.panelHeightDp.coerceIn(MIN_PANEL_HEIGHT_DP, maxPanelDp).dp
 
-            // 地图在上、面板与动作区在下（**不是覆盖**）：动作区展开时地图跟着让位。
-            // 覆盖式布局会把「我的位置」压在动作区底下——地图中心即用户位置。
+            // 地图在上、面板与动作区在下。地图**只按面板让位**（`panelHeight`，与底部块无关），
+            // 让位到面板上沿即可——**不 resize**：osmdroid 每次 resize 都会重投影，把整幅内容
+            // 平移 delta/2（用户报的「车辆卡弹出时地图突变」就是这个，2026-10-11）。
             //
-            // 结构上地图与底部分层叠在同一个 Box 里：地图按 mapReserveDp（冻结值）让位、
-            // 底部（面板 + 常驻块）贴底。换形态的 240ms 里地图不动、被升起来的底部块盖住，
-            // 动画结束才一次性落位——理由见 mapReserveDp 的注释。
+            // 现在的做法：地图视图尺寸**恒定**（= 面板之上那块），底部块换形态时把**整幅地图**
+            // 按块实测高度的一半向上平移（`graphicsLayer.translationY`）。视图中心随之落在
+            // 「可见区中心」（可见区 = 地图层减去被面板 + 底部块盖住的那段），于是：
+            // ① 视图尺寸不变 → osmdroid 不重投影 → 内容不跳、也不重绘瓦片（平移只是图层变换）；
+            // ② 地图中心（= 用户位置）始终落在可见区中心，查询中心与相机语义与原先完全一致；
+            // ③ 平移量跟着块的实测高度走，块升起时地图**平滑**上移，不再有一次跳变。
+            // 上半截平移到窗口外的部分由外层 `clipToBounds` 裁掉（顶栏画在它上面）。
             Box(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = panelHeight + mapReserveDp.dp),
+                        .padding(bottom = panelHeight)
+                        .clipToBounds(),
                 ) {
                     OsmMapView(
                         // 账号方式的骑行态让位给还车点：那一刻用户要找的是"停哪儿"。
@@ -653,7 +648,11 @@ fun RideScreen(
                             }
                         },
                         onCameraApplied = viewModel::onCameraApplied,
-                        modifier = Modifier.fillMaxSize(),
+                        // 底部块换形态时把整幅地图按块实测高度的一半向上平移（见上面那段的注释）：
+                        // 只动图层、不 resize 视图，地图内容不跳、瓦片不重绘。
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { translationY = -liveBlockDp.dp.toPx() / 2f },
                     )
 
                     // 车号输入搬进「车号 / 出码」面板，地图上不再有第二个入口抢注意力
@@ -1149,7 +1148,7 @@ private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里�
 
 /**
  * 动作区高度动画结束后的落位余量（毫秒）：动画本身是 [BAR_RISE_MS]，多留一点，
- * 让最后一帧的尺寸也落定再冻结地图的让位高度（见 RideScreen 里 mapReserveDp 的注释）。
+ * 让最后一帧的尺寸也落定再落 [measuredBlockDp]（面板上限的输入，见 RideScreen 里它的注释）。
  */
 private const val BLOCK_SETTLE_MS = 60L
 
