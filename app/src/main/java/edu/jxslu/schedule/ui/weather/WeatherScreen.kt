@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.ui.weather
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +35,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,7 +91,7 @@ import kotlin.math.roundToInt
  *    容器吃 Scaffold 的 padding（否则指示器整条轨迹藏在顶栏后面）；
  * 3. 数据来自 Open-Meteo（CC BY 4.0），**署名不能删**。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WeatherScreen(
     onBack: () -> Unit,
@@ -121,57 +124,66 @@ fun WeatherScreen(
         },
     ) { padding ->
         val snapshot = state.snapshot
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .pullToRefresh(
-                    isRefreshing = state.refreshing,
-                    state = pullState,
-                    threshold = WeatherPullRefreshThreshold,
-                    onRefresh = {
-                        haptics.tap()
-                        viewModel.refresh()
-                    },
-                ),
-        ) {
-            when {
-                // 首屏骨架：几何与成品同一套（同卡片、同行高），数据回来直接替换
-                snapshot == null && state.loading -> WeatherSkeleton()
+        // 关掉本页的触底回弹（stretch overscroll，2026-10-11 用户报「滑到底部再滑会卡一下」）。
+        // 机制：拖到头之后系统把**整个滚动内容**做拉伸（31+ 走 RenderEffect 图层），
+        // 而本页是一条 `Column + verticalScroll` 的长内容（约 4 屏、30 多个 emoji 字形），
+        // 拉伸那一帧要整块重栅格化，就是这个卡顿；今日页/问渠那种 LazyColumn 的图层只有
+        // 一屏高，所以没这问题。本页是展示型静态页，边到边回弹没有信息量，直接关掉。
+        // `LocalOverscrollConfiguration provides null` 是这套 API 的正规开关（glow 与
+        // stretch 都归它管）；**别删**——删了就回到「触底卡一下」。
+        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .pullToRefresh(
+                        isRefreshing = state.refreshing,
+                        state = pullState,
+                        threshold = WeatherPullRefreshThreshold,
+                        onRefresh = {
+                            haptics.tap()
+                            viewModel.refresh()
+                        },
+                    ),
+            ) {
+                when {
+                    // 首屏骨架：几何与成品同一套（同卡片、同行高），数据回来直接替换
+                    snapshot == null && state.loading -> WeatherSkeleton()
 
-                // 空态也套一层可滚动容器：指示器靠嵌套滚动接手势，纯静态子节点接不住下拉。
-                // 可滚动容器里 `Arrangement.Center` 不生效（内容高度不受约束），
-                // 用 BoxWithConstraints 把内容最小高度钉到视口高，才真的居中。
-                snapshot == null -> BoxWithConstraints(Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .heightIn(min = maxHeight),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        EmptyHint(
-                            title = "没能拿到天气",
-                            body = "网络或服务异常。天气数据来自 Open-Meteo，仅供参考。" +
-                                "下拉或点下面都可以重试。",
-                            actionLabel = "重试",
-                            onAction = { viewModel.load(force = true) },
-                        )
+                    // 空态也套一层可滚动容器：指示器靠嵌套滚动接手势，纯静态子节点接不住下拉。
+                    // 可滚动容器里 `Arrangement.Center` 不生效（内容高度不受约束），
+                    // 用 BoxWithConstraints 把内容最小高度钉到视口高，才真的居中。
+                    snapshot == null -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .heightIn(min = maxHeight),
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            EmptyHint(
+                                title = "没能拿到天气",
+                                body = "网络或服务异常。天气数据来自 Open-Meteo，仅供参考。" +
+                                    "下拉或点下面都可以重试。",
+                                actionLabel = "重试",
+                                onAction = { viewModel.load(force = true) },
+                            )
+                        }
                     }
-                }
 
-                else -> WeatherContent(
-                    snapshot = snapshot,
-                    loadedAtMs = state.loadedAtMs,
-                    stale = state.stale,
+                    else -> WeatherContent(
+                        snapshot = snapshot,
+                        loadedAtMs = state.loadedAtMs,
+                        stale = state.stale,
+                    )
+                }
+                PullToRefreshDefaults.Indicator(
+                    state = pullState,
+                    isRefreshing = state.refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    threshold = WeatherPullRefreshThreshold,
                 )
             }
-            PullToRefreshDefaults.Indicator(
-                state = pullState,
-                isRefreshing = state.refreshing,
-                modifier = Modifier.align(Alignment.TopCenter),
-                threshold = WeatherPullRefreshThreshold,
-            )
         }
     }
 }

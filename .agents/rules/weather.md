@@ -46,6 +46,11 @@
   整条滑入轨迹藏在顶栏后面；指示器最短驻留 650ms（`WeatherViewModel.MIN_REFRESH_MILLIS`）。
   只有用户真的下拉才转指示器——进页与失败重试都不转（那两条走骨架 / 静默更新）。
 - **空态外层套可滚动容器**：指示器靠嵌套滚动接手势，纯静态子节点接不住下拉。
+- **本页关掉了触底回弹**（`CompositionLocalProvider(LocalOverscrollConfiguration provides null)`，
+  2026-10-11 用户报「滑到底部再滑会卡一下」）：31+ 的 stretch 走原生 `RenderNode`，
+  回弹期间内容**每帧重新录制离屏图层**，而本页是一条 4 屏高的非懒加载长内容，最贵的那种形态；
+  展示型静态页的边到边回弹没有信息量。**别删这个 provider**——删了卡顿回来。
+  同类页面（长 `Column + verticalScroll`）也照这条处理。
 - 温度区间条是 **Canvas** 画的（条位置 = 该日区间在整周范围里的落点），最窄留一个圆点，
   免得「一天没波动」的区间看不见；别改成按 dp 估偏移的布局写法。
 - 逐小时格的图标走**接口逐小时给的 `is_day`**（`WeatherHour.isDay`）选昼夜：`weather_code`
