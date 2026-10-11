@@ -2,7 +2,7 @@
 
 > 本文档是 [DESIGN.md](../DESIGN.md) 的拆分件。代码注释里的「DESIGN §x.y」章节号一字未改，索引见 DESIGN.md 的映射表。
 
-## 4. 技术架构（续 · §4.33–§4.44）
+## 4. 技术架构（续 · §4.33–§4.46）
 
 ### 4.33 成绩/考试变动提醒（2026-09-30，P6；成绩侧设置入口在成绩页齿轮、考试侧在考试页）
 
@@ -1041,3 +1041,46 @@ UI 规格见 §3.28。
 **详情 `apply` 段带报名 id 且个人字段不进模型** / **记录带 `apply_id` 与 `canCancel`**）
 + `WenquTtlCacheTest` 6 例（新鲜期命中 / 过期即删 / 按关键词各存一份 / 超量按写入序淘汰 /
 重写排到最新 / clear）。夹具按真实结构脱敏改写，人名手机号一律假值。
+
+### 4.46 天气（Open-Meteo，2026-10-11；UI 见 §3.29）
+
+**选型**（2026-10-11 定，换源前先读这段）：**Open-Meteo**（`api.open-meteo.com/v1/forecast`）——
+免注册、免 API Key、覆盖中国（模型池含 CMA 的 GFS GRAPES），一次请求同时给实时 / 逐小时 /
+逐日。对比过的两条：和风天气要建项目 + 凭据（SDK v5 起只支持 JWT），密钥落进 App 就是泄露，
+让每个用户自己申请又不现实；中国天气网那批非官方端点无文档、随时变。代价是许可 CC BY 4.0
+**要求署名**——界面上的「数据来源 Open-Meteo（CC BY 4.0）」不能删。
+
+**分层**：`data/weather/WeatherApi`（裸 OkHttp + 宽容序列化；**无日志拦截器**，
+请求里只有坐标与字段清单；超时收到 20s）→ `data/weather/WeatherRepository`
+（30 分钟 TTL + `Mutex` 保证同刻只放一个请求 + **刷新失败回退旧快照**；`load()` 带
+`fresh` 标记供页面判「这份可能旧了」）→ `domain/Weather`（快照模型 + WMO 码 → emoji /
+中文短语的唯一映射处）+ `domain/WeatherAdvice`（18:00 分界与话术优先级，纯函数，可 JVM 测）。
+
+**查询点**：校区坐标（`WeatherApi.CAMPUS_LAT/LNG`，与 `BikeNearby.DEFAULT_CENTER_*` 同一组数字）。
+那边是 GCJ-02、这里是 WGS84 口径，南昌一带差几百米——天气网格以公里计，不做反算；
+将来要跟随设备定位时再补 `domain/Gcj02` 那一步。
+
+**请求字段**：`current`（温度 / 湿度 / 体感 / 昼夜 / 天气码 / 风速 / 风向）、
+`hourly`（温度 / 降水概率 / 天气码 / **昼夜 `is_day`**，小时格的昼夜图标靠它）、
+`daily`（天气码 / 最高最低温 / 降水概率上限 /
+紫外线 / 最大风速 / 日出日落），`timezone=Asia/Shanghai`。
+窗口是 **`forecast_days=7` + `forecast_hours=24`**：逐日要 7 天（主流天气页的日数），
+逐小时只要 24 条（从当前整点起算，接口按这个参数给）——别为了 7 天把 168 条小时数据也拉回来。
+解析全部可空（`uv_index_max` 这类会回 null），`ignoreUnknownKeys` 接新增字段。
+
+**地点名**：`WeatherApi.CAMPUS_LABEL`（「南昌 · 瑶湖校区」），与坐标一起写死——
+天气查的是固定坐标，没有反查地名这一步，界面上写的就是这个常量。
+
+**缓存形态**：`Cached(snapshot, atMs)` 一个不可变对（取数时刻与快照同读同写，不会读到
+「新快照 + 旧时刻」）。`peek()` 不判 TTL、不发网络，给页面首帧直接铺缓存用；
+`load()` 返回 `Load(snapshot, fresh, atMs)`，`atMs` 是**这份数据自己的**取数时刻
+（回退旧值时就是旧那份的时刻，页面「更新于」据此显示）。
+
+**下拉刷新的最短驻留**：`WeatherViewModel.MIN_REFRESH_MILLIS = 650ms`，
+与今日页同口径——请求命中得再快也不让指示器一拉到顶就弹回去。
+
+**开关与取数纪律**：偏好键 `weather_enabled`（DataStore 全局项，**默认关**），
+单独一条流不进 `baseDisplayPrefs`（combine 已满员）；**关着时今日页一行网络都不发**。
+仓库单例走 `Graph.weatherRepository(context)`。
+
+**测试**：`WeatherAdviceTest` 17 例（18:00 边界 / 优先级顺序 / 兜底与容错 / 参考日取不到）。

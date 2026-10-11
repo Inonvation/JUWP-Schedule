@@ -29,6 +29,7 @@
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 / 自动还车 | `.agents/rules/ebike.md` |
 | 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
+| 天气（今日页顶栏提示 · 天气页） | `.agents/rules/weather.md` |
 | U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
 | 问渠（志愿服务 / 劳动教育） | `.agents/rules/wenqu.md` |
 | 学工表单 / 盖章成绩单 | `.agents/rules/xg-transcript.md` |
@@ -235,7 +236,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；问渠 WENQU +
                志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
                WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交，§4.45），
-               §3.28；学生评教走
+               §3.28；天气详情 WEATHER + 天气设置 WEATHER_SETTINGS（今日页顶栏那行提示的
+               落点与开关，默认关，§3.29）；学生评教走
                JwImportActivity 的 TeachingEval 模式（§4.44））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
@@ -261,6 +263,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  `keywordRanges` · 索引翻页判据 `shouldContinueIndexing`）· **排序档位 `Sort` 与截止排序键** ·
  **每周日 12:00 提醒点 `next/lastWeeklyAlertPoint`** · **蹲点**（`grabDetectStartAt` 周日待机
  时刻 · `grabNextDelayMs` 退避 · `grabFirstMatch` 命中 · `grabShouldStop` 收工），§4.45）
+ + Weather·WeatherAdvice（天气：WMO 码 → emoji/中文短语 · **18:00 分界**与话术优先级
+ （正在下雨 > 雪/雷暴 > 有雨 > 降水概率 > 雾 > 防晒 > 防暑 > 添衣 > 大风 > 兜底），§3.29）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
@@ -336,7 +340,11 @@ data/wenqu/      问渠（志愿服务 / 劳动教育，DESIGN §4.45 / UI §3.2
                  新增活动提醒见 ui/reminder/WenquActivityAlertReminder.kt（第五路周期链）
                  每周日 12:00 抢活动提醒见 ui/reminder/WenquWeeklyAlertReminder.kt（零网络，§4.45）
                  规则见 .agents/rules/wenqu.md
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|inbox|ai
+data/weather/    天气（DESIGN §3.29 / §4.46；**Open-Meteo 免 Key 免注册**，CC BY 4.0 要署名）：
+                 WeatherApi（裸 OkHttp，无日志拦截器；查询点 = 校区坐标，WGS84 口径）
+                 + WeatherRepository（30 分钟 TTL · 同刻只放一个请求 · 刷新失败回退旧快照）
+                 规则见 .agents/rules/weather.md
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|ai
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
@@ -353,7 +361,8 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
 - **提交不带个人信息**：提交信息、代码、注释、测试 fixture 里不出现真实学号、姓名、手机号、寝室房号、真实邮箱；作者身份用 noreply 邮箱
 - **提交信息精简**：标题一行说清改了什么，正文只写必要的理由与影响面。细则见 `.agents/rules/build-release.md`
 - 禁止改导航或课表领域模型时不同步 `DESIGN.md`（同步排在编译/装机之后，见「怎么用这份文件」的收尾顺序）
-- 禁止 emoji 当功能图标；HugeIcons 查名用本地 JAR，勿猜
+- 禁止 emoji 当功能图标（**文案行内允许**，如今日页天气提示那行的 ☀️🌧️；按钮 / 卡片 /
+  标签这类承载操作的图标仍一律用 HugeIcons）；HugeIcons 查名用本地 JAR，勿猜
 - 禁止把「能编译」当完成；禁止故意压制编译错误
 
 ## 沟通与 DoD

@@ -61,6 +61,8 @@ import edu.jxslu.schedule.ui.ujing.UjingHistoryScreen
 import edu.jxslu.schedule.ui.ujing.UjingOrderScreen
 import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
+import edu.jxslu.schedule.ui.weather.WeatherScreen
+import edu.jxslu.schedule.ui.weather.WeatherSettingsScreen
 import edu.jxslu.schedule.ui.week.ScheduleShareScreen
 import edu.jxslu.schedule.ui.wenqu.WenquGrabScreen
 import edu.jxslu.schedule.ui.wenqu.WenquRecordsScreen
@@ -192,6 +194,10 @@ enum class SubpageScreen {
     INBOX,
     /** 课表页分享弹层第 4 行 → 导出为图片（预览本周课表，保存到相册 / 分享，DESIGN §4.12，2026-10-09） */
     SCHEDULE_SHARE,
+    /** 天气详情（实时 · 今天/明天提醒 · 未来 7 天与 24 小时，DESIGN §3.29，2026-10-11） */
+    WEATHER,
+    /** 天气设置（今日页顶栏提示开关，DESIGN §3.29，2026-10-11） */
+    WEATHER_SETTINGS,
 }
 
 /**
@@ -407,6 +413,16 @@ class SubpageActivity : ComponentActivity() {
                 onOpenShortcuts = { SubpageActivity.start(this, SubpageScreen.SHORTCUTS) },
                 // AI 调课服务配置（DESIGN §4.39）
                 onOpenAiSettings = { SubpageActivity.start(this, SubpageScreen.AI_SETTINGS) },
+                // 天气设置（DESIGN §3.29，2026-10-11）：开关 + 查看详情入口
+                onOpenWeatherSettings = {
+                    SubpageActivity.start(this, SubpageScreen.WEATHER_SETTINGS)
+                },
+            )
+            // 天气（DESIGN §3.29）：详情与设置各自独立窗口，与其它二级页同规格
+            SubpageScreen.WEATHER -> WeatherScreen(onBack = onBack)
+            SubpageScreen.WEATHER_SETTINGS -> WeatherSettingsScreen(
+                onBack = onBack,
+                onOpenWeather = { SubpageActivity.start(this, SubpageScreen.WEATHER) },
             )
             SubpageScreen.WIDGET_CALENDAR_HUB -> WidgetCalendarHubScreen(
                 onBack = onBack,

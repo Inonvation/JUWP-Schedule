@@ -202,6 +202,8 @@ fun TodayScreen(
     onOpenInbox: () -> Unit = {},
     /** 顶栏「+ → 志愿服务」：问渠 · 志愿服务页（DESIGN §3.28，2026-10-08） */
     onOpenWenqu: () -> Unit = {},
+        /** 顶栏天气提示那一行（DESIGN §3.29）：点它进天气详情页 */
+        onOpenWeather: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
@@ -218,10 +220,13 @@ fun TodayScreen(
         factory = TodayViewModel.Factory(
             Graph.repository(LocalContext.current),
             Graph.homeworkRepository(LocalContext.current),
+                Graph.weatherRepository(LocalContext.current),
         ),
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+        // 顶栏天气提示（DESIGN §3.29）：功能关着 / 取不到数据时是 null，顶栏不占位
+        val weatherLine by viewModel.weatherLine.collectAsStateWithLifecycle()
     // 开水面板（WaterEntrySheet）的实时状态：弹窗打开时逐帧跟随流程态，
     // 不能用打开瞬间的快照（Working 计时不会动）
     val waterEntryState by waterViewModel?.uiState
@@ -480,15 +485,44 @@ fun TodayScreen(
                 title = {
                     Column {
                         Text(stringResource(R.string.tab_today))
-                        Text(
-                            text = buildString {
-                                append(state.date.format(MONTH_DAY_FORMAT))
-                                append(" 周${dayLabel(state.day)}")
-                                if (state.week > 0) append(" · 第 ${state.week} 周")
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = buildString {
+                                    append(state.date.format(MONTH_DAY_FORMAT))
+                                    append(" 周${dayLabel(state.day)}")
+                                    if (state.week > 0) append(" · 第 ${state.week} 周")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            )
+                            // 天气提示（DESIGN §3.29，2026-10-11）：**接在次标题同一行的后面**，
+                            // emoji + 一句话（18:00 前讲今天、之后讲明天），点它进天气详情页。
+                            //
+                            // 为什么不做成顶栏里的第三行：M3 的 TopAppBar 高度是固定的 64dp，
+                            // 标题区塞三行、用户又关掉「固定字体大小」时会被裁掉底边
+                            // （现有标题两行合计 44sp，加上第三行 16sp 已到 60sp，没有余量）。
+                            // 同一行渲染则任何字号下都只是省略号收尾，不会裁字。
+                            // 功能关着 / 取不到数据时是 null——这里什么都不占，不留空位。
+                            weatherLine?.let { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            quickHaptics.tap()
+                                            onOpenWeather()
+                                        }
+                                        // 竖向 4dp 是把命中区从一行字（约 14dp）撑到约 22dp，
+                                        // 标题区三行合计 62dp 仍在 TopAppBar 的 64dp 之内；
+                                        // 再加大就会顶出顶栏被裁，别动这个数
+                                        .padding(start = 6.dp, top = 4.dp, bottom = 4.dp),
+                                )
+                            }
+                        }
                     }
                 },
                 // 「+」快捷入口（2026-10-02，2026-10-06 加收件箱）：扫一扫（车码 / 机身码

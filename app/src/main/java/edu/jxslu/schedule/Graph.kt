@@ -34,6 +34,7 @@ import edu.jxslu.schedule.data.ujing.UjingDraftStore
 import edu.jxslu.schedule.data.ujing.UjingHistoryStore
 import edu.jxslu.schedule.data.wenqu.WenquCredentialStore
 import edu.jxslu.schedule.data.wenqu.WenquRepository
+import edu.jxslu.schedule.data.weather.WeatherRepository
 import edu.jxslu.schedule.data.repo.AiApplyHistoryStore
 import edu.jxslu.schedule.data.repo.AiImageStore
 import edu.jxslu.schedule.data.repo.AttachmentStore
@@ -194,6 +195,10 @@ object Graph {
 
     @Volatile
     private var textbookSync: TextbookSync? = null
+
+    /** 天气仓库单例（DESIGN §3.29）：进程内一份快照缓存，今日页与详情页共用。 */
+    @Volatile
+    private var weatherRepository: WeatherRepository? = null
 
     @Volatile
     private var teachingCalendarSync: TeachingCalendarSync? = null
@@ -389,6 +394,15 @@ object Graph {
         inboxRepository ?: synchronized(this) {
             inboxRepository ?: InboxRepository(JuwDatabase.get(context.applicationContext).inboxDao())
                 .also { inboxRepository = it }
+        }
+
+    /**
+     * 天气仓库单例（DESIGN §3.29）：Open-Meteo 快照 + 30 分钟 TTL 缓存。
+     * 无凭证、不落库；功能关着时调用点先判开关，本仓库不做开关判断。
+     */
+    fun weatherRepository(context: Context): WeatherRepository =
+        weatherRepository ?: synchronized(this) {
+            weatherRepository ?: WeatherRepository().also { weatherRepository = it }
         }
 
     /** 教材抓取单例（DESIGN §4.31）：教务导入课表成功后顺带抓对应学期，静默失败。 */

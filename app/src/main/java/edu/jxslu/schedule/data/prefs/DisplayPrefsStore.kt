@@ -1237,6 +1237,14 @@ class DisplayPrefsStore(private val context: Context) {
     }.distinctUntilChanged()
 
     /**
+     * 今日页顶栏天气提示开关（DESIGN §3.29）。全局项，**默认关**：
+     * 关着时一次网络请求都不发（取数调用点先判这个开关）。
+     */
+    val weatherEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_WEATHER_ENABLED] ?: false
+    }.distinctUntilChanged()
+
+    /**
      * 快趣出行的使用方式（DESIGN §3.9 / §4.32）。**默认 [EbikeUseMode.MiniProgram]**：
      * 账号登录方式要凭证、有计费后果，只能由用户显式选择。
      * 认不出的存储值一律退回默认档（口径在 [EbikeUseMode.fromId]）。
@@ -1755,6 +1763,10 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_EBIKE_CARD_ENABLED] = value }
     }
 
+    suspend fun setWeatherEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_WEATHER_ENABLED] = value }
+    }
+
     /**
      * 快趣出行的使用方式（DESIGN §3.9 / §4.32）。写的是枚举的存储 id，
      * 读路径用 [EbikeUseMode.fromId] 还原（认不出一律回默认档）。
@@ -2187,6 +2199,7 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_WATER_CARD_ENABLED = booleanPreferencesKey("water_card_enabled")
         val KEY_QZXY_CARD_ENABLED = booleanPreferencesKey("qzxy_card_enabled")
         val KEY_EBIKE_CARD_ENABLED = booleanPreferencesKey("ebike_card_enabled")
+        val KEY_WEATHER_ENABLED = booleanPreferencesKey("weather_enabled")
         val KEY_EBIKE_USE_MODE = stringPreferencesKey("ebike_use_mode")
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")
         val KEY_EBIKE_BURN_AFTER_SCAN = booleanPreferencesKey("ebike_burn_after_scan")

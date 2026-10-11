@@ -166,6 +166,18 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
             runBlocking { repo.strongReminderVibration.first() },
         )
 
+    /**
+     * 今日页顶栏天气提示开关（DESIGN §3.29）。**默认关**，单独一条流——
+     * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型。
+     * 首帧真值同 [initialPrefs] 的模式，开关不先按默认渲染再跳一次。
+     */
+    val weatherEnabled: StateFlow<Boolean> = repo.weatherEnabled
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            runBlocking { repo.weatherEnabled.first() },
+        )
+
     // ---- 背景图（DESIGN §4.21）：选图与移除都在 VM 里跑，转屏不丢进行中的导入 ----
 
     private val _bgImporting = MutableStateFlow(false)
@@ -460,6 +472,9 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     /** 今日页共享单车卡开关（DESIGN §3.9）。 */
     fun setEbikeCardEnabled(value: Boolean) = viewModelScope.launch { repo.setEbikeCardEnabled(value) }
+
+    /** 今日页顶栏天气提示开关（DESIGN §3.29）。关掉即从顶栏撤下，不残留占位。 */
+    fun setWeatherEnabled(value: Boolean) = viewModelScope.launch { repo.setWeatherEnabled(value) }
 
     /** 兼容入口：老调用点一次改两天。 */
     fun setShowWeekend(value: Boolean) = viewModelScope.launch { repo.setShowWeekend(value) }

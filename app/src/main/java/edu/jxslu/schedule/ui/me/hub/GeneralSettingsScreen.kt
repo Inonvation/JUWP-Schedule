@@ -71,6 +71,7 @@ import me.rerere.hugeicons.stroke.Palette
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.SwatchBook
+import me.rerere.hugeicons.stroke.SunCloud01
 import me.rerere.hugeicons.stroke.TextFont
 import me.rerere.hugeicons.stroke.Vibrate
 import me.rerere.hugeicons.stroke.Wallet03
@@ -112,6 +113,8 @@ fun GeneralSettingsScreen(
     onOpenShortcuts: () -> Unit,
     /** AI 服务配置页（DESIGN §4.39）：地址 · 模型 · API Key · 教师名脱敏。 */
     onOpenAiSettings: () -> Unit,
+    /** 天气设置页（DESIGN §3.29）：今日页顶栏提示开关，默认关。 */
+    onOpenWeatherSettings: () -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -254,6 +257,14 @@ fun GeneralSettingsScreen(
                     subtitle = "服务地址 · 模型 · API Key · 教师名脱敏",
                     icon = HugeIcons.AiBrain01,
                     onClick = onOpenAiSettings,
+                )
+                // 天气（DESIGN §3.29，2026-10-11）：今日页顶栏那行提示的总开关默认关，
+                // 配置收在独立页（开关 · 查看详情 · 数据来源）
+                SettingItem(
+                    title = "天气",
+                    subtitle = "今日页顶栏天气提示 · 数据来自 Open-Meteo",
+                    icon = HugeIcons.SunCloud01,
+                    onClick = onOpenWeatherSettings,
                 )
                 // 快捷方式不是单个开关：条目编辑页里有「在今日页显示」总开关，
                 // 这里给入口行而不是开关行，编辑与显隐管理都在那一页

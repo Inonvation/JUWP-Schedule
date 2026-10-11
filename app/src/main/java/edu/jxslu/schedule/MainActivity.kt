@@ -1041,6 +1041,10 @@ internal fun JuwApp(
                             onOpenWenqu = {
                                 SubpageActivity.start(context, SubpageScreen.WENQU)
                             },
+                            // 天气详情（DESIGN §3.29，2026-10-11）：顶栏那行提示的落点
+                            onOpenWeather = {
+                                SubpageActivity.start(context, SubpageScreen.WEATHER)
+                            },
                             // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
                             // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
                             onOpenShortcuts = { focusItemId ->

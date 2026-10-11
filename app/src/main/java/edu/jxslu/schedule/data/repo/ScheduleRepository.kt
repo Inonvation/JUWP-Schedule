@@ -677,6 +677,13 @@ class ScheduleRepository(
      */
     val shortcutSettings: Flow<ShortcutSettings> = prefs.shortcutSettings
 
+    /**
+     * 今日页顶栏天气提示开关（DESIGN §3.29）。**默认关**，单独一条流——
+     * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型；
+     * 消费方是通用设置页与今日页 ViewModel，各自 collect 即可。
+     */
+    val weatherEnabled: Flow<Boolean> = prefs.weatherEnabled
+
     // ------------------------------------------------------------------
     // 偏好写入：视图偏好写全局 DataStore 键，主题等全局项同层
     // ------------------------------------------------------------------
@@ -692,6 +699,9 @@ class ScheduleRepository(
 
     /** 今日页共享单车卡开关（DESIGN §3.9）。 */
     suspend fun setEbikeCardEnabled(value: Boolean) = prefs.setEbikeCardEnabled(value)
+
+    /** 今日页顶栏天气提示开关（DESIGN §3.29）。 */
+    suspend fun setWeatherEnabled(value: Boolean) = prefs.setWeatherEnabled(value)
 
     /** 今日页校园卡付款码卡开关（DESIGN §3.10）。凭证的写/清走 YktCredentialStore，不在这里。 */
     suspend fun setCampusCardEnabled(value: Boolean) = prefs.setCampusCardEnabled(value)

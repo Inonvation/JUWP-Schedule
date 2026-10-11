@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.repo.HomeworkRepository
 import edu.jxslu.schedule.data.repo.ScheduleRepository
+import edu.jxslu.schedule.data.weather.WeatherRepository
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.domain.PendingHomework.Companion.EMPTY
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
+import edu.jxslu.schedule.domain.WeatherAdvice
 import edu.jxslu.schedule.domain.buildTodayState
 import edu.jxslu.schedule.domain.pendingHomework
 import edu.jxslu.schedule.ui.common.UndoableMessage
@@ -22,12 +24,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 /**
  * 今日页 ViewModel。
@@ -41,6 +45,12 @@ class TodayViewModel(
     private val repo: ScheduleRepository,
     private val homeworkRepo: HomeworkRepository,
     private val todayProvider: () -> LocalDate = { LocalDate.now() },
+    /**
+     * 天气仓库（DESIGN §3.29）。可空注入：测试与旧构造点不传时顶栏那行恒为空。
+     */
+    private val weatherRepo: WeatherRepository? = null,
+    /** 天气提示的「现在」来源，独立于 [todayProvider]（它只给日期，提示要判 18:00）。 */
+    private val nowProvider: () -> LocalDateTime = { LocalDateTime.now() },
 ) : ViewModel() {
 
     private val tick = MutableStateFlow(0L)
@@ -119,6 +129,30 @@ class TodayViewModel(
             SharingStarted.WhileSubscribed(5_000),
             runBlocking { repo.shortcutSettings.first() },
         )
+
+    /**
+     * 今日页顶栏天气提示那一行（DESIGN §3.29）。
+     *
+     * 三条口径：
+     * 1. **开关关着 = 一次网络都不发**（[repo] 的 weatherEnabled 是默认关的全局项）；
+     * 2. 随 [tick] 重算（页面每 30 秒一次）：`now` 跨过 18:00 时提示从「今天」自动切到
+     *    「明天」，不用等页面重进；命中仓库的 30 分钟 TTL 缓存时零网络；
+     * 3. 取不到数据给 null，顶栏不占位、不显示半截内容。
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val weatherLine: StateFlow<String?> = combine(repo.weatherEnabled, tick) { enabled, _ -> enabled }
+        .flatMapLatest { enabled ->
+            val weather = weatherRepo
+            if (!enabled || weather == null) {
+                // 显式标 String?：否则 flowOf(null) 推成 Flow<Nothing?>，与另一分支合不上
+                flowOf<String?>(null)
+            } else {
+                flow<String?> {
+                    emit(weather.snapshot()?.let { WeatherAdvice.line(it, nowProvider()) })
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * 卡片开关的首帧初值。这三个开关独立于 [ready] 门闸（那管的是 Room 派生状态），
@@ -214,9 +248,10 @@ class TodayViewModel(
     class Factory(
         private val repo: ScheduleRepository,
         private val homeworkRepo: HomeworkRepository,
+            private val weatherRepo: WeatherRepository,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            TodayViewModel(repo, homeworkRepo) as T
+                TodayViewModel(repo, homeworkRepo, weatherRepo = weatherRepo) as T
     }
 }
