@@ -5,7 +5,6 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +34,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -206,6 +207,29 @@ fun WatermarkScreen(onBack: () -> Unit) {
                 },
             )
         },
+        // 出口按钮冻结在底部（DESIGN §4.47）：还没选图时是「选图」，选好后是「分享 / 保存到相册」
+        bottomBar = {
+            ToolboxActionBar(progress = busy) {
+                if (sourceUri == null) {
+                    Button(
+                        onClick = pickImage,
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("选图") }
+                } else {
+                    OutlinedButton(
+                        onClick = { runExport(share = true) },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("分享") }
+                    Button(
+                        onClick = { runExport(share = false) },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("保存到相册") }
+                }
+            }
+        },
         snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
         Column(
@@ -221,6 +245,14 @@ fun WatermarkScreen(onBack: () -> Unit) {
                 placeholder = "选一张图片，水印会平铺满图",
                 onPick = pickImage,
             )
+            // 换图是输入动作，留在内容里顶在预览下方；出口按钮在底部动作条
+            if (sourceUri != null) {
+                TextButton(
+                    onClick = pickImage,
+                    enabled = !busy,
+                    modifier = Modifier.align(Alignment.End),
+                ) { Text("换一张图") }
+            }
             AppCard {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     OutlinedTextField(
@@ -268,23 +300,6 @@ fun WatermarkScreen(onBack: () -> Unit) {
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = pickImage,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (sourceUri == null) "选图" else "换图") }
-                Button(
-                    onClick = { runExport(share = false) },
-                    enabled = !busy && sourceUri != null,
-                    modifier = Modifier.weight(1f),
-                ) { Text("保存到相册") }
-            }
-            OutlinedButton(
-                onClick = { runExport(share = true) },
-                enabled = !busy && sourceUri != null,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("分享") }
             Spacer(Modifier.height(12.dp))
         }
     }

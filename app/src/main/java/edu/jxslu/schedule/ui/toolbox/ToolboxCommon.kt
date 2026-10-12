@@ -16,14 +16,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -162,6 +166,33 @@ fun ToolboxSliderRow(
             valueRange = valueRange,
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * 工具页的贴底动作条（DESIGN §4.47）：主操作按钮**冻结在屏幕底部**，不随内容滚动。
+ * 底色 `surfaceContainer`、`navigationBarsPadding` 自理；按钮由调用方给（整宽一颗或成对）。
+ * [progress] 为真时在按钮上方加一条进度线（拼接 / 写盘期间）。
+ */
+@Composable
+fun ToolboxActionBar(
+    progress: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
+            if (progress) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = content,
+            )
+        }
     }
 }
 

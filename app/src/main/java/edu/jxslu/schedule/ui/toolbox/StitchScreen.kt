@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -79,7 +80,7 @@ private const val StitchSourceLongSide = 2600
 
 /**
  * 图片拼接（DESIGN §4.47，等宽归一的竖拼；原版「一个木函」会顺手裁掉上下边缘，
- * 那是给滚动截屏留的，本项目不做——活动截图场景里裁掉的是内容）。
+ * 那是给滚动接缝留的，本项目不做——上下裁边会裁掉真实内容）。
  *
  * 内存纪律：只先读各图尺寸（不占像素内存）→ 算目标宽与总高 → 逐张解码、画、回收
  * （[ToolboxRenderer.stitchStreaming]），任意时刻只有一张源图 + 一张成品在内存里。
@@ -104,6 +105,8 @@ fun StitchScreen(onBack: () -> Unit) {
     // 状态栏行数（px）：智能识别时它按「公共头」直接计入，不参与行比对
     // （时钟 / 电量每张都不同，会打断公共带的连续匹配）
     val statusBarRows = with(LocalDensity.current) { WindowInsets.statusBars.getTop(this) }
+    // 拼接完成后自动滚回顶部看结果：按钮在页底，预览在页顶，图多时不自动滚会「点了没反应」
+    val scroll = rememberScrollState()
 
     fun notice(message: String, tone: NoticeTone) {
         scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
@@ -118,6 +121,14 @@ fun StitchScreen(onBack: () -> Unit) {
             notice("一次最多拼 $MaxStitchImages 张，多出的没加进来", NoticeTone.Warning)
         }
         uris = merged.take(MaxStitchImages)
+    }
+    // 选图入口：预览卡点击、空态的「添加图片」、列表标题行的「添加」都走这里
+    val addImages: () -> Unit = {
+        if (uris.size >= MaxStitchImages) {
+            notice("最多 $MaxStitchImages 张", NoticeTone.Warning)
+        } else {
+            pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }
     }
 
     // 列表一变：作废旧结果、重解码缩略图（缩略图很小，旧的一批交给 GC）
@@ -135,6 +146,11 @@ fun StitchScreen(onBack: () -> Unit) {
         if (decoded.any { it == null }) {
             notice("有图片的缩略图读不出来（拼接时会再试一次）", NoticeTone.Warning)
         }
+    }
+
+    // 拼接方式 / 容差一变就作废旧结果：底栏从「保存 · 分享」切回「开始拼接」，可改档重拼
+    LaunchedEffect(smart, tolerance) {
+        result = null
     }
 
     fun move(index: Int, delta: Int) {
@@ -205,6 +221,8 @@ fun StitchScreen(onBack: () -> Unit) {
             }
             result = rendered
             busy = false
+            // 结果在页顶，滚回去让用户立刻看到（长列表时页面停在下面）
+            scroll.animateScrollTo(0)
         }
     }
 
@@ -245,13 +263,42 @@ fun StitchScreen(onBack: () -> Unit) {
                 },
             )
         },
+        // 主操作冻结在底部（DESIGN §4.47）：随状态切换「添加图片 / 开始拼接 / 保存·分享」
+        bottomBar = {
+            ToolboxActionBar(progress = busy) {
+                when {
+                    uris.isEmpty() -> Button(
+                        onClick = addImages,
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("添加图片") }
+                    result == null -> Button(
+                        onClick = { startStitch() },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("开始拼接") }
+                    else -> {
+                        OutlinedButton(
+                            onClick = { runExport(share = true) },
+                            enabled = !busy,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("分享") }
+                        Button(
+                            onClick = { runExport(share = false) },
+                            enabled = !busy,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("保存到相册") }
+                    }
+                }
+            }
+        },
         snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -262,32 +309,33 @@ fun StitchScreen(onBack: () -> Unit) {
                 } else {
                     "点「开始拼接」生成预览"
                 },
-                onPick = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onPick = addImages,
             )
-            AppCard {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SettingChoiceRow(
-                        title = "拼接方式",
-                        subtitle = "智能：裁掉每张重复的状态栏 / 底栏，按内容对齐去掉滚动重叠" +
-                            "——适合同一页面连续滚动的截图；不相关的一组图请用「直接」",
-                        options = listOf("智能", "直接"),
-                        selectedIndex = if (smart) 0 else 1,
-                        onSelect = { smart = it == 0 },
-                    )
-                    if (smart) {
-                        SettingChoiceRow(
-                            title = "识别容差",
-                            subtitle = "接缝错位就放宽；把不相关内容粘一起就收紧",
-                            options = listOf("严格", "标准", "宽松"),
-                            selectedIndex = tolerance.ordinal,
-                            onSelect = { tolerance = StitchScan.Tolerance.entries[it] },
-                        )
-                    }
-                }
-            }
+            // 已选图片列表（有图才出现）：标题行带张数与「添加 / 清空」，下面可上下移动 / 删除
             if (uris.isNotEmpty()) {
                 AppCard {
                     Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "已选 ${uris.size} 张",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = addImages,
+                                enabled = !busy,
+                            ) { Text("添加") }
+                            TextButton(
+                                onClick = { uris = emptyList() },
+                                enabled = !busy,
+                            ) { Text("清空") }
+                        }
+                        AppCardDivider()
                         uris.forEachIndexed { index, _ ->
                             StitchRow(
                                 index = index,
@@ -303,35 +351,26 @@ fun StitchScreen(onBack: () -> Unit) {
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        if (uris.size >= MaxStitchImages) {
-                            notice("最多 $MaxStitchImages 张", NoticeTone.Warning)
-                        } else {
-                            pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        }
-                    },
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                ) { Text("添加图片") }
-                Button(
-                    onClick = { startStitch() },
-                    enabled = !busy && uris.isNotEmpty(),
-                    modifier = Modifier.weight(1f),
-                ) { Text("开始拼接") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = { runExport(share = false) },
-                    enabled = !busy && result != null,
-                    modifier = Modifier.weight(1f),
-                ) { Text("保存到相册") }
-                OutlinedButton(
-                    onClick = { runExport(share = true) },
-                    enabled = !busy && result != null,
-                    modifier = Modifier.weight(1f),
-                ) { Text("分享") }
+            AppCard {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SettingChoiceRow(
+                        title = "拼接方式",
+                        subtitle = "智能会自动裁掉重复的头尾与滚动重叠，适合同一页面连续滚动的截图；" +
+                            "不相关的一组图请用「直接」",
+                        options = listOf("智能", "直接"),
+                        selectedIndex = if (smart) 0 else 1,
+                        onSelect = { smart = it == 0 },
+                    )
+                    if (smart) {
+                        SettingChoiceRow(
+                            title = "识别容差",
+                            subtitle = "接缝错位就放宽；把不相关内容粘一起就收紧",
+                            options = listOf("严格", "标准", "宽松"),
+                            selectedIndex = tolerance.ordinal,
+                            onSelect = { tolerance = StitchScan.Tolerance.entries[it] },
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
         }

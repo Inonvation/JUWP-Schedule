@@ -19,7 +19,7 @@
   五行**只在 `TodayScreen` 的 `actions` 里组合**，不做常驻按钮——低频动作不跟底部固定区的
   卡片抢位置。有未读消息时「+」图标本体叠红点（`BadgedBox`）+「收件箱」行带未读数，
   数据源是 `Graph.inboxRepository(context).unreadCount`（页面直接订阅，不另开 ViewModel）。
-- 「百宝箱」= 图片工具集合（水印 / 拼接 / 活动截图，`SubpageScreen.TOOLBOX`）。
+- 「百宝箱」= 图片工具集合（水印 / 拼接 / 菜鸟批量查，`SubpageScreen.TOOLBOX`）。
   **受通用设置「功能 → 百宝箱」开关控制**（`toolbox_enabled`，默认开）：关掉时这一行
   整行不渲染（不是置灰）；页面直接订阅 `Graph.displayPrefs(context).toolboxEnabled`，
   与收件箱未读数同一形态。规则见 `.agents/rules/toolbox.md`。

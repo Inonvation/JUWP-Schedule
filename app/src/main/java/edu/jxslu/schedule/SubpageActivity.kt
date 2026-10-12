@@ -64,7 +64,6 @@ import edu.jxslu.schedule.ui.water.WaterScreen
 import edu.jxslu.schedule.ui.weather.WeatherScreen
 import edu.jxslu.schedule.ui.weather.WeatherSettingsScreen
 import edu.jxslu.schedule.ui.toolbox.CainiaoQueryScreen
-import edu.jxslu.schedule.ui.toolbox.IdShotScreen
 import edu.jxslu.schedule.ui.toolbox.StitchScreen
 import edu.jxslu.schedule.ui.toolbox.ToolboxScreen
 import edu.jxslu.schedule.ui.toolbox.WatermarkScreen
@@ -209,8 +208,6 @@ enum class SubpageScreen {
     TOOLBOX_WATERMARK,
     /** 百宝箱 → 图片拼接（多图竖拼长图，DESIGN §4.47） */
     TOOLBOX_STITCH,
-    /** 百宝箱 → 活动截图（姓名学号贴底，DESIGN §4.47） */
-    TOOLBOX_ID_SHOT,
     /** 百宝箱 → 菜鸟批量查（多单号一次送菜鸟查件，DESIGN §4.47） */
     TOOLBOX_CAINIAO,
 }
@@ -448,16 +445,12 @@ class SubpageActivity : ComponentActivity() {
                 onOpenStitch = {
                     SubpageActivity.start(this, SubpageScreen.TOOLBOX_STITCH)
                 },
-                onOpenIdShot = {
-                    SubpageActivity.start(this, SubpageScreen.TOOLBOX_ID_SHOT)
-                },
                 onOpenCainiao = {
                     SubpageActivity.start(this, SubpageScreen.TOOLBOX_CAINIAO)
                 },
             )
             SubpageScreen.TOOLBOX_WATERMARK -> WatermarkScreen(onBack = onBack)
             SubpageScreen.TOOLBOX_STITCH -> StitchScreen(onBack = onBack)
-            SubpageScreen.TOOLBOX_ID_SHOT -> IdShotScreen(onBack = onBack)
             SubpageScreen.TOOLBOX_CAINIAO -> CainiaoQueryScreen(onBack = onBack)
             SubpageScreen.WIDGET_CALENDAR_HUB -> WidgetCalendarHubScreen(
                 onBack = onBack,

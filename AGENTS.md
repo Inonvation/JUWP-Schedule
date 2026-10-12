@@ -30,7 +30,7 @@
 | 共享单车 / 地图 / 免费时长提醒 / 自动还车 | `.agents/rules/ebike.md` |
 | 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
 | 天气（今日页顶栏提示 · 天气页） | `.agents/rules/weather.md` |
-| 百宝箱（图片水印 / 拼接 / 活动截图 / 菜鸟批量查） | `.agents/rules/toolbox.md` |
+| 百宝箱（图片水印 / 拼接 / 菜鸟批量查） | `.agents/rules/toolbox.md` |
 | U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
 | 问渠（志愿服务 / 劳动教育） | `.agents/rules/wenqu.md` |
 | 学工表单 / 盖章成绩单 | `.agents/rules/xg-transcript.md` |
@@ -240,8 +240,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                §3.28；天气详情 WEATHER + 天气设置 WEATHER_SETTINGS（今日页顶栏那行提示的
                落点与开关，默认关，§3.29）；学生评教走
                JwImportActivity 的 TeachingEval 模式（§4.44）；百宝箱 TOOLBOX +
-               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH + 活动截图
-               TOOLBOX_ID_SHOT + 菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
+              图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
+              菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
                受通用设置开关控制，默认开，§4.47））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
@@ -271,7 +271,7 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  （正在下雨 > 雪/雷暴 > 有雨 > 降水概率 > 雾 > 防晒 > 防暑 > 添衣 > 大风 > 兜底），§3.29）
  + ScheduleTips（顶栏课表句：上午/下午南北楼往返跑 / 都在一栋楼 · 有实验课只出实验课句 ·
  快下课有雨独占整行；≥2 节课且楼解析得出才说，否则整句丢弃，§3.29）
- + ToolboxImage（百宝箱图片排版：水印字号/密度三档 · 活动截图底块锚点 · 拼接取宽与
+ + ToolboxImage（百宝箱图片排版：水印字号/密度三档 · 拼接取宽与
  像素上限，纯函数，§4.47）
  + StitchScan（智能拼接匹配核：公共头尾 · 滚动重叠逐行验证 · 容差三档 · **精修取最优对齐**，
  纯函数；默认开，只适合同页连续滚动的一批截图，§4.47）

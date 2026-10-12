@@ -86,7 +86,7 @@ data class DisplayPrefs(
     val lifeTabEnabled: Boolean = true,
     /**
      * 百宝箱（DESIGN §4.47）。全局项，**默认开**：今日页顶栏「+」下拉里的
-     * 「百宝箱」一行（图片水印 · 图片拼接 · 活动截图 · 菜鸟批量查）。
+     * 「百宝箱」一行（图片水印 · 图片拼接 · 菜鸟批量查）。
      * 关 = 该行从「+」菜单消失，与其余功能开关同一语义（关闭后全部入口隐藏）。
      */
     val toolboxEnabled: Boolean = true,

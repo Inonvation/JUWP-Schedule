@@ -1088,9 +1088,9 @@ UI 见 §3.29。
 **测试**：`WeatherAdviceTest`（18:00 边界 / 优先级顺序 / 兜底与容错 / 候选句列表）与
 `ScheduleTipsTest`（半天分组 · ≥2 节课门槛 · 南/北楼判定 · 实验课优先 · 快下课窗口边界）。
 
-### 4.47 百宝箱：图片水印 · 图片拼接 · 活动截图 · 菜鸟批量查（2026-10-12，P6；UI 见 §3.30）
+### 4.47 百宝箱：图片水印 · 图片拼接 · 菜鸟批量查（2026-10-12，P6；UI 见 §3.30）
 
-**来源**：三个工具的实现思路拆自「一个木函」（`com.One.WoodenLetter` 7.19.1）的
+**来源**：水印与拼接两个工具的实现思路拆自「一个木函」（`com.One.WoodenLetter` 7.19.1）的
 `program.imageutils.watermark` / `stitch` 两个模块（REA 静态逆向，笔记在本地
 `.re-tmp/ymh/`，不入库）。**只借鉴思路不抄代码**——那是闭源商业软件；
 若将来要抄代码级的实现，参考 [T8RIN/ImageToolbox]（Apache-2.0，Kotlin + Compose），
@@ -1098,15 +1098,15 @@ UI 见 §3.29。
 
 **文件**：`domain/ToolboxImage.kt`（全部排版口径的纯函数）+
 `ui/toolbox/ToolboxRenderer.kt`（Canvas 渲染核）+ `ToolboxCommon.kt`（选图 / 滑杆 /
-出口）+ 五个页面（`ToolboxScreen` / `WatermarkScreen` / `StitchScreen` / `IdShotScreen` /
+出口）+ 四个页面（`ToolboxScreen` / `WatermarkScreen` / `StitchScreen` /
 `CainiaoQueryScreen`）+ `domain/CainiaoQuery.kt`（菜鸟批量查的纯逻辑）。
 入口与开关见 §3.30。
 
-**预览即所得（口径 1）**：所有尺寸**只按图片宽度取比例**（字号、边距、底块、平铺块），
-图像高只参与「贴底」锚点计算。预览用长边 ≤ 1200 的降采样源、成品用长边 ≤ 2600 的源，
+**预览即所得（口径 1）**：所有尺寸**只按图片宽度取比例**（字号、边距、平铺块）。
+预览用长边 ≤ 1200 的降采样源、成品用长边 ≤ 2600 的源，
 同一组参数渲染两遍，观感一致——**不要**给预览另写一套口径（那正是漂移的开始），
 也不要让任何尺寸依赖绝对像素。渲染核与参数解耦，域函数在
-`ToolboxImageTest` 里钉住（字号比例 / 密度三档 = 尾部空行 / 底块锚点与夹取 / 拼接取宽
+`ToolboxImageTest` 里钉住（字号比例 / 密度三档 = 尾部空行 / 拼接取宽
 与总高 / 像素上限 / alpha 换算）。
 
 **水印（平铺）**：文字先渲染成一小块平铺单元（多行 `StaticLayout`，行距 1.0——
@@ -1145,16 +1145,6 @@ UI 见 §3.29。
   达标），精修把接缝拉回真对齐（真对齐 8.5 vs 错一行 14.9 的分数地形，见
   `.re-tmp/ymh/stitch_probe/` 的探针）。
   细节与边界见 `.agents/rules/toolbox.md`。
-
-**活动截图（裸文字）**：只画两行文字（姓名 / 学号，**不带标签**，只填一项时只渲染一行），
-**不带底衬框**（2026-10-12 用户口径）；位置默认**图片正中间**，另有 底部居中 / 左下 / 右下；
-颜色 = 八枚预设 + 红绿蓝三滑块自定义。文字块的几何走 `ToolboxImage.idShotBlock`
-（宽 = 文本宽 + 2×内边距再夹进「图宽 − 2×边距」，高 = 行数 × 1.4×字号 + 2×内边距，
-贴底时边距 = 图宽 × 3%，居中时水平/垂直双向居中）。
-`Anchor` 的**声明顺序 = 界面选项顺序**（`ToolboxImageTest` 钉住），改顺序要连界面一起改。
-姓名 / 学号取自 `DisplayPrefsStore.profileName / profileStudentId`（学籍卡，教务登录或
-导一次成绩时落库；**不联网**），首次拿到值时预填一次、用户改过的不再覆盖；
-两个都空时页面上给一行说明引导手填。
 
 **菜鸟批量查（非图片工具，2026-10-12）**：贴入多个运单号 → 拉起菜鸟查询。
 链接 = `cainiao://startapp/search_alert?querySourceId=68719476739&prePath=Pasteboard&content=<单号逗号分隔>`

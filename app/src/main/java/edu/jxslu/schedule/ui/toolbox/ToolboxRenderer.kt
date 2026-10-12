@@ -86,53 +86,6 @@ object ToolboxRenderer {
     }
 
     /**
-     * 活动截图：两行文字（姓名 / 学号）直接画在图上，**不带底衬**（用户口径 2026-10-12：
-     * 只要文字），位置由 [anchor] 决定（默认图片正中间），颜色自定义。
-     *
-     * [lines] 为空时原样返回 [src] 的副本——渲染器不定义「空」的语义，由页面拦在前头。
-     */
-    fun idShot(
-        src: Bitmap,
-        lines: List<String>,
-        textColor: Int,
-        scale: Float,
-        anchor: ToolboxImage.Anchor,
-    ): Bitmap {
-        val result = Bitmap.createBitmap(src.width, src.height, safeCopyConfig(src))
-        val canvas = Canvas(result)
-        canvas.drawBitmap(src, 0f, 0f, null)
-        if (lines.isEmpty()) return result
-
-        val textSize = ToolboxImage.idShotTextSizePx(src.width, scale)
-        val textPaint = TextPaint().apply {
-            color = textColor
-            this.textSize = textSize
-            isAntiAlias = true
-            textAlign = Paint.Align.LEFT
-        }
-        val measured = lines.maxOf { textPaint.measureText(it) }
-        val block = ToolboxImage.idShotBlock(
-            imageWidthPx = src.width,
-            imageHeightPx = src.height,
-            textSizePx = textSize,
-            lineCount = lines.size,
-            measuredTextWidthPx = measured,
-            anchor = anchor,
-        )
-
-        val padding = textSize * ToolboxImage.IdShotBlockPadding
-        val lineHeight = textSize * ToolboxImage.IdShotLineSpacing
-        val fontMetrics = textPaint.fontMetrics
-        val glyphHeight = fontMetrics.descent - fontMetrics.ascent
-        lines.forEachIndexed { index, line ->
-            val lineTop = block.top + padding + index * lineHeight
-            val baseline = lineTop + (lineHeight - glyphHeight) / 2f - fontMetrics.ascent
-            canvas.drawText(line, block.left + padding, baseline, textPaint)
-        }
-        return result
-    }
-
-    /**
      * 竖拼（**流式**）：目标宽取最大源宽（等宽归一），逐张「要一张、画一张、丢一张」。
      * 长图拼接是内存最重的一个工具——九张截屏同时解码就是上百 MB，
      * 所以这里只收尺寸表（先 `inJustDecodeBounds` 读边界，零像素内存），

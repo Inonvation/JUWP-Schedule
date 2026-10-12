@@ -27,7 +27,6 @@ import edu.jxslu.schedule.ui.common.SettingsIconBadge
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ChevronRight
-import me.rerere.hugeicons.stroke.IdCard
 import me.rerere.hugeicons.stroke.ImageComposition
 import me.rerere.hugeicons.stroke.PackageSearch01
 import me.rerere.hugeicons.stroke.Stamp01
@@ -37,7 +36,7 @@ import me.rerere.hugeicons.stroke.Stamp01
  *
  * 入口在今日页顶栏「+」下拉（受「通用设置 → 功能 → 百宝箱」开关控制，默认开）。
  * 每加一个工具就加一张卡 + 一个 `SubpageScreen` 值，本页不做其它逻辑——
- * 各工具的重活都在自己的页面里（水印 / 拼接 / 活动截图 / 菜鸟批量查）。
+ * 各工具的重活都在自己的页面里（水印 / 拼接 / 菜鸟批量查）。
  *
  * 2026-10-12 用户口径：卡片竖排（最初做成了两列方卡网格，用户要一行一张）。
  */
@@ -47,7 +46,6 @@ fun ToolboxScreen(
     onBack: () -> Unit,
     onOpenWatermark: () -> Unit,
     onOpenStitch: () -> Unit,
-    onOpenIdShot: () -> Unit,
     onOpenCainiao: () -> Unit,
 ) {
     Scaffold(
@@ -74,7 +72,7 @@ fun ToolboxScreen(
         ) {
             item {
                 Text(
-                    text = "小工具：加个水印、拼成长图、给截图落上姓名学号，还能把快递单号批量送进菜鸟。",
+                    text = "小工具：加个水印、拼成长图，还能把快递单号批量送进菜鸟。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.padding(bottom = 4.dp),
@@ -94,14 +92,6 @@ fun ToolboxScreen(
                     title = "图片拼接",
                     subtitle = "多图竖拼长图",
                     onClick = onOpenStitch,
-                )
-            }
-            item {
-                ToolboxTile(
-                    icon = HugeIcons.IdCard,
-                    title = "活动截图",
-                    subtitle = "姓名学号贴角",
-                    onClick = onOpenIdShot,
                 )
             }
             item {

@@ -1,4 +1,4 @@
-# 百宝箱（图片水印 · 图片拼接 · 活动截图 · 菜鸟批量查）
+# 百宝箱（图片水印 · 图片拼接 · 菜鸟批量查）
 
 作用域：改 `ui/toolbox/`、`domain/ToolboxImage`、工具页的分享 / 保存出口、今日页「+」里
 百宝箱那一行时读。规格见 DESIGN §3.30 / §4.47。菜鸟批量查（非图片工具）的口径
@@ -90,23 +90,11 @@
 - `inJustDecodeBounds = true` 时 **`BitmapFactory.decodeStream` 必定返回 null**（只量尺寸、
   不产图）。所以**不能**把它的返回值串进 `?:` / `takeIf` 之类的判空链：
   `openInputStream(uri)?.use { decodeStream(it, null, bounds) } ?: return null`
-  会把「量到了尺寸」误判成「流打不开」，整条两遍解码永远返回 null——三个工具全读不出图。
+  会把「量到了尺寸」误判成「流打不开」，整条两遍解码永远返回 null——各图片工具全读不出图。
 - 正确形态（`ui/common/DecodeSampled.kt` 的 `decodeUriSampled` / `readImageBounds`）：
   **流单独取出来判空**，`use { decodeStream(...) }` 只当语句用，成败看 `bounds.outWidth`。
 - 解码失败**不许静默**：预览 / 缩略图读到 null 时必须发提示，否则用户只看到空白预览，
   报障也只能说「读不出来」。
-
-## 活动截图
-
-- 姓名 / 学号只从 `DisplayPrefsStore.profileName / profileStudentId` 读（学籍卡，**不联网**）；
-  首次拿到值的预填一次，用户改过的不再覆盖；取不到给手填，不弹错。
-- 两行**只写内容、不带标签**（用户口径 2026-10-12）；只填一项时只渲染一行。
-- **只画文字、不带底衬框**（用户口径 2026-10-12 第二次修订）：不加底、不加描边、不加阴影。
-  位置默认**图片正中间**（另有 底部居中 / 左下 / 右下），颜色 = 八枚预设圆点 +
-  红绿蓝三滑块自定义（预设是快捷入口，当前色不在预设里时圆点不选中 =
-  `ColorDotRow(selectedIndex = -1)`）。
-- `Anchor` 的**声明顺序 = 界面选项顺序**（`ToolboxImageTest` 钉住一条），
-  加锚点/改顺序时界面选项列表跟着一起改。
 
 ## 平铺块尺寸取自文字实际渲染宽度（2026-10-12 真机 abort 的真因）
 
@@ -135,7 +123,7 @@
 图片工具走全 4 步；**非图片工具**（如菜鸟批量查）只做 1–2 步，3–4 步不适用——
 纯逻辑按领域另起文件（`domain/CainiaoQuery`），不要为凑格式硬塞 `ToolboxImage` 那套。
 
-1. `ui/toolbox/` 加一个页面（骨架照抄现有三页：预览卡 → 参数卡 → 动作行）；
+1. `ui/toolbox/` 加一个页面（骨架照抄现有页：预览卡 → 参数卡 → 动作行）；
 2. `SubpageScreen` 加一个值 + `SubpageActivity` 加路由 + `ToolboxScreen` 加一张卡；
 3. 排版口径进 `domain/ToolboxImage` 并补测试；渲染进 `ToolboxRenderer`；
 4. 出口直接用 `ToolboxExport`（保存 / 分享），不要再写一套。
@@ -161,5 +149,8 @@
 
 - **`produceState` 的类型安全重载最多 5 个 key**：参数超过 5 个就收成一个 `List` key
   （列表按结构比较，语义等价）——直接传 6 个 key 编译不过。
-- 四个页面都要 `BackHandler(enabled = busy) {}`（导出中不接受退出）与
+- 各工具页都要 `BackHandler(enabled = busy) {}`（导出中不接受退出）与
   `pinnedStatusBars()` 顶栏（页面会拉起相册与分享面板）。
+- 主操作 / 出口按钮走 `ToolboxActionBar` **冻结在屏幕底部**（`surfaceContainer` 底 +
+  `navigationBarsPadding`，挂在 `Scaffold` 的 `bottomBar`），内容区只放预览 / 参数 / 列表——
+  重要按钮不随内容滚走。`busy` 时传 `progress = true` 在按钮上方加进度线。

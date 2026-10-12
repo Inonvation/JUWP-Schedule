@@ -278,7 +278,7 @@ fun GeneralSettingsScreen(
                 // 百宝箱（DESIGN §4.47）：今日页「+」下拉里的图片工具，默认开
                 SettingSwitchRow(
                     title = "百宝箱",
-                    subtitle = "今日页「+」里的工具：水印 · 拼接 · 活动截图 · 菜鸟批量查",
+                    subtitle = "今日页「+」里的工具：水印 · 拼接 · 菜鸟批量查",
                     checked = state.displayPrefs.toolboxEnabled,
                     onCheckedChange = viewModel::setToolboxEnabled,
                     icon = HugeIcons.Toolbox,

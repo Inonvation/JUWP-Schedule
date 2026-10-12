@@ -118,6 +118,16 @@ fun CainiaoQueryScreen(onBack: () -> Unit) {
                 },
             )
         },
+        // 主操作冻结在底部（DESIGN §4.47）：输入框与计数行留在内容里
+        bottomBar = {
+            ToolboxActionBar {
+                Button(
+                    onClick = { send() },
+                    enabled = parsed.numbers.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                ) { Text("发送到菜鸟") }
+            }
+        },
         snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
         Column(
@@ -155,14 +165,6 @@ fun CainiaoQueryScreen(onBack: () -> Unit) {
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     },
                 )
-                Spacer(Modifier.height(10.dp))
-                Button(
-                    onClick = { send() },
-                    enabled = parsed.numbers.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("发送到菜鸟")
-                }
             }
             AppCard(modifier = Modifier.fillMaxWidth()) {
                 Text("到菜鸟后怎么走", style = MaterialTheme.typography.titleSmall)
