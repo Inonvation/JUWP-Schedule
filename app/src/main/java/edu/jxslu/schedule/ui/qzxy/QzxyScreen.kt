@@ -337,8 +337,7 @@ fun QzxyScreen(
 private fun LoginSection(state: QzxyUiState, viewModel: QzxyViewModel) {
     SettingsSection(
         title = "登录趣智校园",
-        subtitle = "用你在趣智校园 App / 小程序注册的手机号登录。本应用不提供注册；" +
-            "充值在登录后点账号一行的「充值」，跳到官方支付宝小程序完成。",
+        subtitle = "用趣智校园 App / 小程序注册的手机号登录；本应用不提供注册，充值走官方小程序",
     ) {
         OutlinedTextField(
             value = state.phone,
@@ -1349,8 +1348,7 @@ private fun WateringSettingSection(state: QzxyUiState, viewModel: QzxyViewModel)
     SettingsSection(title = "用水") {
         SettingSwitchRow(
             title = "设备关停后自动结算",
-            subtitle = "页面或今日页卡片可见期间，读到设备「消费完成，待采集」会自动结算并记账；" +
-                "关掉后不自动动设备，由你在设备旁手动结算。",
+            subtitle = "页面可见时读到「消费完成，待采集」会自动结算并记账；关掉后要你手动结算",
             checked = state.autoSettleEnabled,
             onCheckedChange = viewModel::setAutoSettleEnabled,
         )
@@ -1364,7 +1362,7 @@ private fun DisplaySettingSection() {
     // 页尾说明（FooterDisclaimer 形态），不再伪装成可交互项。
     FooterDisclaimer(
         title = "在今日页显示趣智校园卡片",
-        body = "开关在「我的 → 通用设置 → 功能开关」；关掉后今日页与「我的」账号卡同步隐藏。",
+        body = "开关在「我的 → 通用设置 → 功能」；关掉后今日页与「我的」账号卡同步隐藏。",
     )
 }
 

@@ -488,7 +488,7 @@ private fun WaterSettingsSection(
 ) {
     SettingsSection(
         title = "开水卡设置",
-        subtitle = "卡片显隐在「我的 → 通用设置 → 功能开关」；本节只管开水卡行为。",
+        subtitle = "卡片显隐在「我的 → 通用设置 → 功能」；本节只管开水卡行为。",
     ) {
         SettingChoiceRow(
             title = "点击方式",

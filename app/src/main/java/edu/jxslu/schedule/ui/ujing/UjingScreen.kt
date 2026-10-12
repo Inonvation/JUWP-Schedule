@@ -424,7 +424,7 @@ private fun LoginSection(state: UjingUiState, viewModel: UjingViewModel) {
 private fun AccountSection(state: UjingUiState, onLogout: () -> Unit) {
     SettingsSection(
         title = "U净 账号",
-        subtitle = "会话过期时才需要重新登录 · 洗好提醒在系统通知的「洗衣完成提醒」渠道里关",
+        subtitle = "会话过期时才需要重新登录；洗好提醒在系统通知里关",
     ) {
         SettingItem(
             title = QzxyPhoneMask.mask(state.mobile),

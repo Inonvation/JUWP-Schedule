@@ -52,6 +52,7 @@ import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.domain.ReminderDefaults
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
@@ -168,7 +169,7 @@ fun ReminderSettingsScreen(
             // 语义上它是提醒能不能显示的前置条件
             SettingsSection(
                 title = "上课提醒",
-                subtitle = "按当前课表计算；换课表后自动跟随新课表。",
+                subtitle = "按当前课表计算，换课表后自动跟随",
             ) {
                 Spacer(Modifier.height(8.dp))
                 SettingSwitchRow(
@@ -199,7 +200,7 @@ fun ReminderSettingsScreen(
             // 作业截止提醒（DESIGN §3.11）：独立于上课提醒的开关，调度共用同一闹钟
             SettingsSection(
                 title = "作业截止提醒",
-                subtitle = "只提醒未完成、未过期的作业；与上课提醒共用闹钟。",
+                subtitle = "只提醒未完成、未过期的作业",
             ) {
                 SettingSwitchRow(
                     title = "开启作业截止提醒",
@@ -213,21 +214,11 @@ fun ReminderSettingsScreen(
                 )
             }
 
-            // 说明卡（2026-10-07 收口）：只留运行行为里用户测得到、且别处没说的两条——
-            // 省电推迟（对应权限设置的改善出口）与重启自动恢复；触发点与作业时刻两条
-            // 已在上方行副标题里说过，删掉重复
+            // 说明卡：只留运行行为里用户测得到、且别处没说的两条——省电推迟（对应
+            // 权限设置的改善出口）与重启自动恢复
             SettingsSection(title = "说明") {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "· 提醒可能被系统省电策略推迟几分钟；在关于 → 权限设置里允许「忽略电池优化」可改善；",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                )
-                Text(
-                    "· 手机重启后自动恢复，无需打开 App。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                )
+                SettingsNote("提醒可能被系统省电推迟；在「权限设置」允许忽略电池优化可改善")
+                SettingsNote("手机重启后自动恢复，无需打开 App")
             }
         }
     }

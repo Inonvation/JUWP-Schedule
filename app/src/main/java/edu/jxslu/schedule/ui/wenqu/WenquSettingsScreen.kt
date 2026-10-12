@@ -38,6 +38,7 @@ import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
@@ -159,13 +160,7 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
                     enabled = alertEnabled,
                     onClick = { intervalPickerOpen = true },
                 )
-                Text(
-                    text = "首次开启只把当前活动记成基线、不会立刻通知；之后出现新的「招募中」活动才提醒。" +
-                        "问渠是第三方系统，间隔别调太短——一天一次（24 小时）就够用。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                )
+                SettingsNote("首次开启只记基线、不立刻通知；间隔别调太短")
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -191,18 +186,12 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
                     enabled = weeklyEnabled,
                     onClick = { weeklyOffsetPickerOpen = true },
                 )
-                Text(
-                    text = "每周日 12:00 前提醒一次，到点自己去问渠抢。只排一条精确闹钟、不扫接口；" +
-                        "提醒响过后活动列表会重新取一次，点通知进来就是最新的。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                )
+                SettingsNote("到点前提醒一次，抢活动要自己去问渠")
             }
 
             SettingsSection(
                 title = "浏览偏好",
-                subtitle = "活动列表的默认筛选与排序（列表页也能改，两处同一份）",
+                subtitle = "列表页也能改，两处同一份",
             ) {
                 SettingItem(
                     title = "默认排序",

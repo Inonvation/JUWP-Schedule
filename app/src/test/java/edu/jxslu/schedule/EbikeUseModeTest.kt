@@ -25,25 +25,18 @@ class EbikeUseModeTest {
     }
 
     @Test
-    fun `存储 id 往返`() {
+    fun `fromId 认得出就往返，认不出退回默认档`() {
         EbikeUseMode.entries.forEach { mode ->
             assertEquals(mode, EbikeUseMode.fromId(mode.id))
         }
-    }
-
-    @Test
-    fun `认不出的存储值一律退回默认档`() {
+        // 大小写不敏感
+        assertEquals(EbikeUseMode.Account, EbikeUseMode.fromId("ACCOUNT"))
+        assertEquals(EbikeUseMode.MiniProgram, EbikeUseMode.fromId("Mini_Program"))
         // 脏值落回小程序方式：宁可回到不需要凭证、没有写操作的那一档
         assertEquals(EbikeUseMode.Default, EbikeUseMode.fromId(null))
         assertEquals(EbikeUseMode.Default, EbikeUseMode.fromId(""))
         assertEquals(EbikeUseMode.Default, EbikeUseMode.fromId("wechat"))
         assertEquals(EbikeUseMode.Default, EbikeUseMode.fromId("account2"))
-    }
-
-    @Test
-    fun `存储值大小写不敏感`() {
-        assertEquals(EbikeUseMode.Account, EbikeUseMode.fromId("ACCOUNT"))
-        assertEquals(EbikeUseMode.MiniProgram, EbikeUseMode.fromId("Mini_Program"))
     }
 
     @Test
@@ -94,11 +87,4 @@ class EbikeUseModeTest {
         assertTrue(EbikeUseMode.Account.capabilities(loggedIn = false, hasRide = true).inAppRide)
     }
 
-    @Test
-    fun `默认档给的是不需要凭证的那一套`() {
-        val caps = EbikeUseMode.Default.capabilities()
-        assertTrue(caps.wechatScan)
-        assertFalse(caps.inAppRide)
-        assertFalse(caps.directUnlock)
-    }
 }

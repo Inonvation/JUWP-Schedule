@@ -100,6 +100,23 @@ fun SettingsSection(
 }
 
 /**
+ * 分区注记：分区末尾的一行补充说明（前提 / 边界），每区最多一条。
+ *
+ * 与行副标题同一视觉语言（0.55 透明度），只在这里定义——页面别再手写 `Text(...)`
+ * 自己调透明度（旧代码里有 0.5f / onSurfaceVariant 两套）。层级口径见
+ * `.agents/rules/ui-common.md`。
+ */
+@Composable
+fun SettingsNote(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+        modifier = modifier.padding(top = 2.dp, bottom = SettingsRowVerticalPadding),
+    )
+}
+
+/**
  * 设置行标题 + 可选标签的统一排布（2026-09-28 我的改版）：
  * 标签用 [SettingsTag]，与标题同行、基线对齐、可换行兜底（长标题 + 标签在
  * 小屏不会溢出，标签整体折到下一行）。

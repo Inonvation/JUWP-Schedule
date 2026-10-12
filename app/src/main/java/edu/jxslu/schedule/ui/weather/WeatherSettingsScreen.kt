@@ -11,7 +11,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -24,7 +23,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.weather.WeatherApi
+import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.me.MeViewModel
@@ -85,25 +86,14 @@ fun WeatherSettingsScreen(
                     icon = HugeIcons.SunCloud01,
                     onClick = onOpenWeather,
                 )
-                Text(
-                    text = "提示按时间换口径：18:00 前讲今天（要不要带伞、注不注意防晒），" +
-                        "18:00 起讲明天，方便提前准备。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 6.dp),
-                )
+                SettingsNote("18:00 前讲今天，18:00 起讲明天，方便提前准备")
             }
 
-            SettingsSection(title = "数据") {
-                Text(
-                    text = "天气数据来自 Open-Meteo（CC BY 4.0）。查询点固定为校区" +
-                        "（${WeatherApi.CAMPUS_LABEL}）：不读手机定位，也不上传任何个人或设备信息。" +
-                        "预报仅供参考。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 6.dp),
-                )
-            }
+            FooterDisclaimer(
+                "天气数据来自 Open-Meteo（CC BY 4.0），查询点固定为校区" +
+                    "（${WeatherApi.CAMPUS_LABEL}）：不读手机定位，也不上传任何个人或设备信息。预报仅供参考。",
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }

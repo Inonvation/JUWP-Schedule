@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.EbikeAutoReturn
-import edu.jxslu.schedule.domain.EbikeCapabilities
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -43,6 +42,7 @@ import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -57,17 +57,14 @@ import me.rerere.hugeicons.stroke.Settings01
 import me.rerere.hugeicons.stroke.UserAccount
 
 /**
- * 「快趣出行设置」弹层（2026-09-29 界面收敛，DESIGN §3.9）：**快趣相关设置的唯一入口**。
+ * 「快趣出行设置」弹层（DESIGN §3.9）：**快趣相关设置的唯一入口**。
  *
- * 快趣出行页顶栏 ⚙ 打开这一份，两档共用。2026-09-30 按主题分组：
- * **账号 / 出码 / 提醒 / 地图**——低频项不再和高频开关挤在同一张卡里。
- * 使用方式不在这里：它搬到快趣出行页标题栏那枚常驻 chip（`RideModeChip`）。
- * 「打开官方快趣出行 App」文字入口已删（2026-09-30，用户要求）：官方 App 不再是
- * 任何流程的必经步骤，要用的人自己去桌面打开；`openKvcoo` 与 manifest 的
- * `com.kvcoo.go` 包可见性声明一并移除，别加回来。
+ * 快趣出行页顶栏 ⚙ 打开这一份，两档共用，按主题分组：账号 / 开锁与还车 / 自动还车 /
+ * 乘车码 / 提醒 / 地图缓存。
+ * 使用方式不在这里：它搬到骑行页标题栏那枚常驻 chip（`RideModeChip`）。
  *
- * 弹层自带「当前配置速览」副行：使用方式 · 登录态 · 提醒开关 · 地图缓存占用，
- * 不展开就能看到现在是什么口径。
+ * 顶部副行只报「使用方式 + 登录态」；分组沿革、已删入口与各条红线见
+ * `.agents/rules/ebike.md`。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -137,22 +134,13 @@ internal fun EbikeSettingsSheet(
             Text(
                 text = buildString {
                     append(if (prefs.useMode.isAccount) "账号登录方式" else "微信小程序方式")
-                    if (prefs.useMode.isAccount && loggedIn) append(" · 已登录")
-                    append(" · 免费提醒")
-                    append(if (prefs.freeReminderEnabled) "开" else "关")
-                    // 自动还车只有账号方式才有意义：切到小程序方式后开关虽在，但排程已撤
-                    if (prefs.useMode.isAccount && prefs.autoReturnEnabled) append(" · 自动还车开")
-                    cacheUsage?.takeIf { !it.isEmpty }?.let {
-                        append(" · 地图缓存 ").append(EbikeMapCache.sizeLabel(it.totalBytes))
-                    }
+                    if (prefs.useMode.isAccount) append(if (loggedIn) " · 已登录" else " · 未登录")
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
 
-            // 使用方式（DESIGN §3.9 / §4.32）**不在这里**：2026-09-29 结构重构后它搬到
-            // 快趣出行页标题栏那枚常驻 chip（`RideModeChip` + `RideModeSheet`）——一个决定
-            // 主动作是什么的开关，不该藏在设置里、更不该在切换后让整页变形。
+            // 使用方式不在这里：见骑行页标题栏那枚常驻 chip（`RideModeChip` + `RideModeSheet`）。
 
             if (caps.inAppRide) {
                 // 先让弹层滑走再进账号页，中间不留"弹层突然没了"的那一帧
@@ -169,7 +157,6 @@ internal fun EbikeSettingsSheet(
 
             ReminderSettingsSection(
                 prefs = prefs,
-                caps = caps,
                 onFreeReminderChanged = viewModel::onFreeReminderChanged,
                 onReminderPermissionGranted = viewModel::onReminderPermissionGranted,
                 withNotificationPermission = withNotificationPermission,
@@ -292,48 +279,36 @@ private fun KvcxAccountRow(loggedIn: Boolean, onClick: () -> Unit) {
 }
 
 /**
- * 「开锁与还车」区（2026-10-01 用户要求）。
+ * 「开锁与还车」区：只放开锁那一项——四道闸里它是唯一"用户对自己账号"的授权，
+ * 且开锁之后 App 侧一路有进度与结果提示；还车与重试开锁保留每次确认。
  *
- * 开锁弹窗里那个「不再提醒」勾选**落的就是这一项**——勾完在这里看得见、也改得回来。
- * 两个入口写同一份偏好（`ebike_unlock_confirm`），所以别在弹窗里另存一份状态。
- *
- * **只放开锁**：四道闸里它是唯一"用户对自己账号"的授权，而且开锁之后 App 侧一路有进度与
- * 结果提示；还车（结算、可能的调度费）与重试开锁（异常路径）保留每次确认，那一行常显说明
- * 就是写给用户看的——关不掉不是漏做。
+ * 开锁弹窗里那个「不再提醒」勾选落的就是这一项（`ebike_unlock_confirm`），
+ * 两个入口写同一份偏好，别在弹窗里另存一份状态。
  */
 @Composable
 private fun RideConfirmSettingsSection(prefs: EbikePrefsSnapshot) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var unlockConfirm by remember(prefs.unlockConfirm) { mutableStateOf(prefs.unlockConfirm) }
-    SettingsSection(
-        title = "开锁与还车",
-        subtitle = "App 内的写操作都会先要一次确认；这里只放开锁那一项。",
-    ) {
+    SettingsSection(title = "开锁与还车") {
         SettingSwitchRow(
             title = "开锁前确认",
-            subtitle = "开锁前弹一次：写明计费、车号核对与支付分出路。关掉后点「开锁」直接发指令并开始计费",
+            subtitle = "开锁前弹确认框，写明计费与车号；关掉后点「开锁」直接开锁并开始计费",
             checked = unlockConfirm,
             onCheckedChange = { checked ->
                 unlockConfirm = checked
                 scope.launch { Graph.displayPrefs(context).setEbikeUnlockConfirm(checked) }
             },
         )
-        Text(
-            text = "还车与重试开锁始终要确认：还车涉及结算与可能的调度费。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
-        )
+        SettingsNote("还车与重试开锁始终要确认。")
     }
 }
 
 /**
- * 「自动还车」区（2026-10-10 用户要求）：账号登录方式下，用车满 15 分钟前自动发起还车。
+ * 「自动还车」区：账号登录方式下，用车满 15 分钟前自动发起还车。
  *
- * 默认关；开启后默认在满 15 分钟前 30 秒触发（10~60 秒可调，步长 5 秒）——触发点必须
- * 落在免费时段内，否则还车完成时订单已开始计费（用户口径）。失败**每次都会通知**
- * 并按「重试次数」自动重试（1~3 次，默认 2；上一次失败后 3 秒内重试）。
+ * 触发点必须落在免费时段内（提前量下限 10 秒就是这条口径的保证），失败每次通知并按
+ * 「重试次数」自动重试；时刻 / 重试 / 文案口径见 `.agents/rules/ebike.md`。
  *
  * 只在 `caps.inAppRide`（账号方式）里出现：小程序方式没有 App 内还车这回事。
  */
@@ -349,15 +324,10 @@ private fun AutoReturnSettingsSection(
     var leadSeconds by remember(prefs.autoReturnLeadSeconds) {
         mutableStateOf(prefs.autoReturnLeadSeconds)
     }
-    SettingsSection(
-        title = "自动还车",
-        subtitle = "用车满 ${EbikeFreeRide.FREE_MINUTES} 分钟前自动还车，让订单在免费时段内结束；" +
-            "每次失败都会通知并自动重试。",
-    ) {
+    SettingsSection(title = "自动还车") {
         SettingSwitchRow(
             title = "用车满 ${EbikeFreeRide.FREE_MINUTES} 分钟自动还车",
-            subtitle = "默认关。开启后在满 ${EbikeFreeRide.FREE_MINUTES} 分钟前自动还车；" +
-                "需已登录快趣账号；车辆不在还车点等失败会通知。还车判定以车辆上传的位置为准",
+            subtitle = "免费时段内自动还车，需已登录快趣账号",
             checked = enabled,
             onCheckedChange = { checked ->
                 enabled = checked
@@ -382,7 +352,7 @@ private fun AutoReturnSettingsSection(
             )
             SettingChoiceRow(
                 title = "失败重试次数",
-                subtitle = "每次失败都会发通知；上一次失败后 3 秒内重试",
+                subtitle = "失败后自动重试，每次失败都发通知",
                 options = (EbikeAutoReturn.RETRY_MIN..EbikeAutoReturn.RETRY_MAX).map { "$it 次" },
                 selectedIndex = prefs.autoReturnRetries - EbikeAutoReturn.RETRY_MIN,
                 onSelect = { index ->
@@ -394,6 +364,7 @@ private fun AutoReturnSettingsSection(
                 },
             )
         }
+        SettingsNote("还车判定以车辆上传的位置为准。")
     }
 }
 
@@ -423,7 +394,7 @@ private fun AutoReturnLeadSlider(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = "在满 ${EbikeFreeRide.FREE_MINUTES} 分钟前多少秒发起自动还车",
+                    text = "满 ${EbikeFreeRide.FREE_MINUTES} 分钟前多少秒发起",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     modifier = Modifier.padding(top = 2.dp),
@@ -451,25 +422,17 @@ private fun AutoReturnLeadSlider(
     }
 }
 
-/**
- * 「乘车码」区：生成后自动保存、骑完车自动删除。
- *
- * 从 2026-09-30 起设置弹层按主题分组（账号 / 乘车码 / 提醒 / 地图 / 其他），
- * 低频项不再和高频开关挤在同一张卡里。
- */
+/** 「乘车码」区：生成后自动保存、骑完车自动删除。只影响生成、保存与清除。 */
 @Composable
 private fun CodeSettingsSection(prefs: EbikePrefsSnapshot) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var autoSaveChecked by remember(prefs.autoSave) { mutableStateOf(prefs.autoSave) }
     var burnChecked by remember(prefs.burnAfterScan) { mutableStateOf(prefs.burnAfterScan) }
-    SettingsSection(
-        title = "乘车码",
-        subtitle = "只影响生成、保存与清除，与登录状态无关。",
-    ) {
+    SettingsSection(title = "乘车码") {
         SettingSwitchRow(
             title = "生成后自动保存到相册",
-            subtitle = "开启后每次生成乘车码即存入相册「水贝贝」",
+            subtitle = "每次生成乘车码就存进相册「水贝贝」",
             checked = autoSaveChecked,
             onCheckedChange = { checked ->
                 autoSaveChecked = checked
@@ -478,7 +441,7 @@ private fun CodeSettingsSection(prefs: EbikePrefsSnapshot) {
         )
         SettingSwitchRow(
             title = "骑完车自动删除",
-            subtitle = "免费时长结束或手动结束骑行后，自动清除相册里的二维码",
+            subtitle = "免费时长结束或手动结束后，清除相册里的二维码",
             checked = burnChecked,
             onCheckedChange = { checked ->
                 burnChecked = checked
@@ -488,16 +451,10 @@ private fun CodeSettingsSection(prefs: EbikePrefsSnapshot) {
     }
 }
 
-/**
- * 「提醒」区：免费时长提醒（含提前量）。
- *
- * 两档只有一处不同，由参数决定：**免费时长提醒的副标题**——计时起点是
- * 「点扫一扫」（小程序方式）还是「开锁成功」（账号方式）。
- */
+/** 「提醒」区：免费时长提醒（含提前量）。计时起点两档不同，写在分区注记里。 */
 @Composable
 private fun ReminderSettingsSection(
     prefs: EbikePrefsSnapshot,
-    caps: EbikeCapabilities,
     onFreeReminderChanged: () -> Unit,
     onReminderPermissionGranted: () -> Unit,
     withNotificationPermission: (() -> Unit) -> Unit,
@@ -507,22 +464,11 @@ private fun ReminderSettingsSection(
     var freeEnabled by remember(prefs.freeReminderEnabled) {
         mutableStateOf(prefs.freeReminderEnabled)
     }
-    SettingsSection(
-        title = "提醒",
-        subtitle = "通知栏常驻倒计时 + 两个精确闹钟，不写系统日历。",
-    ) {
-        // 免费时长提醒（DESIGN §3.9）：提前量 1~5 分钟（用户拍板默认 3）。
-        // 副标题带套餐前提（2026-10-07 用户要求）：前 15 分钟免费是骑行套餐卡的权益，
-        // 两档口径相同——15 分钟这个数由 EbikeFreeRide.FREE_MINUTES 出，别手抄。
+    SettingsSection(title = "提醒") {
+        // 提前量 1~5 分钟（默认 3）；15 分钟这个数由 EbikeFreeRide.FREE_MINUTES 出，别手抄。
         SettingSwitchRow(
             title = "免费时长提醒",
-            // 计时起点两档不同：小程序方式是「点打开微信扫一扫 + 5 秒缓冲」这个预估起点
-            // （2026-10-05 用户拍板），账号方式是服务端确认的开锁时刻
-            subtitle = (if (caps.wechatScan) {
-                "点「打开微信扫一扫」5 秒后开始计时并常驻倒计时，到点发通知提醒"
-            } else {
-                "开锁成功后起常驻倒计时，到点发通知提醒"
-            }) + "；${EbikeFreeRide.TICKET_NOTE}（前 ${EbikeFreeRide.FREE_MINUTES} 分钟免费）",
+            subtitle = "计时开始后常驻倒计时，免费结束前提醒",
             checked = freeEnabled,
             onCheckedChange = { checked ->
                 freeEnabled = checked
@@ -550,17 +496,19 @@ private fun ReminderSettingsSection(
                     }
                 },
             )
-            // 横幅（heads-up）弹不弹由系统 / ROM 决定，App 只能把渠道设成 HIGH——
-            // 设置不对时（后台限制、通知里的「悬浮通知」被关）用户在这里有一条出路，
-            // 否则只能得到一个"通知了但看不到"的死局（2026-09-30 用户反馈）。
+            // 横幅弹不弹由系统 / ROM 决定，App 只能把渠道设成 HIGH。设置不对时用户
+            // 在这里有一条出路，否则只有"通知了但看不到"的死局。
             SettingItem(
                 title = "通知与悬浮",
-                subtitle = "没弹出、没震动时进系统通知设置：允许通知，并把「免费时长提醒」" +
-                    "设为横幅 / 悬浮通知 + 震动",
+                subtitle = "没弹出、没震动时进系统通知：允许通知，「免费时长提醒」设为横幅 + 震动",
                 icon = HugeIcons.Notification02,
                 onClick = { AppPermissions.jumpNotificationSettings(context) },
             )
         }
+        SettingsNote(
+            "小程序方式从「打开微信扫一扫」后 5 秒开始计时，账号方式从开锁成功起；" +
+                "前 ${EbikeFreeRide.FREE_MINUTES} 分钟免费以骑行套餐卡为准。",
+        )
     }
 }
 
@@ -572,7 +520,7 @@ private fun ReminderSettingsSection(
 private fun MapCacheCard(usage: EbikeMapCache.Usage?, onClear: () -> Unit) {
     SettingsSection(
         title = "地图缓存",
-        subtitle = "「附近单车地图」的离线瓦片与还车点 / 禁停区数据缓存；清除后下次打开重新下载，不影响车辆查询。",
+        subtitle = "离线瓦片与还车点数据；清除后下次打开重新下载，不影响账号与订单",
     ) {
         SettingItem(
             title = when {

@@ -259,7 +259,7 @@ fun ShortcutSettingsScreen(
             SettingsSection(title = "自定义") {
                 if (customs.isEmpty()) {
                     Text(
-                        text = "还没有自定义快捷方式。可以放学校常用网页、App 内页面等。",
+                        text = "还没有自定义快捷方式，可以放常用网页或 App 内页面",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.padding(vertical = 8.dp),

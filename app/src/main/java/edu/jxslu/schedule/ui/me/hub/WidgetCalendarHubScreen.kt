@@ -132,7 +132,7 @@ fun WidgetCalendarHubScreen(
                 // 放在上课提醒旁边比放在通用设置的「通知」单行节更贴语义
                 SettingSwitchRow(
                     title = "通知强提醒",
-                    subtitle = "提醒发出时直接震动，可穿透免打扰与系统的通知限制；关闭时按系统通知设置振动",
+                    subtitle = "提醒发出时直接震动，可穿透免打扰；关闭时按系统设置振动",
                     checked = strongReminderVibration,
                     onCheckedChange = viewModel::setStrongReminderVibration,
                     icon = HugeIcons.Notification03,

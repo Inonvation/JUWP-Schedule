@@ -202,7 +202,7 @@ fun CalendarSettingsScreen(
             // 日历权限是单行节，行副标题已把授权出路说清，节卡没有增量信息
             SettingsSection(
                 title = "同步到手机日历",
-                subtitle = "把当前课表写入系统日历（课程名 / 教室 / 教师）；重复同步先删旧事件再整表重写。",
+                subtitle = "把当前课表写入系统日历（课程名 / 教室 / 教师）",
             ) {
                 if (busy) {
                     Spacer(Modifier.height(4.dp))
@@ -214,7 +214,7 @@ fun CalendarSettingsScreen(
                     subtitle = when {
                         busy -> "正在写入日历…"
                         readiness is SyncReadiness.Ready ->
-                            "将写入 ${(readiness as SyncReadiness.Ready).eventCount} 条日程 · 删除重写：以 App 课表为准"
+                            "将写入 ${(readiness as SyncReadiness.Ready).eventCount} 条日程 · 以 App 课表为准"
                         readiness is SyncReadiness.NoSemester -> "先到「我的 → 课表设置」配置学期"
                         readiness == null -> "正在统计…"
                         else -> "当前课表还没有课程"

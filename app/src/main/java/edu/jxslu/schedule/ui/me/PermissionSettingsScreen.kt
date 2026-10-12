@@ -185,7 +185,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
         ) {
             SettingsSection(
                 title = "保持后台可用",
-                subtitle = "上课提醒与桌面小组件靠后台刷新；不开也能用，开启后更及时",
+                subtitle = "不开也能用；开启后提醒与小组件更及时",
             ) {
                 PermissionRow(
                     title = "忽略电池优化",
@@ -223,12 +223,12 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             }
             SettingsSection(
                 title = "日历",
-                subtitle = "同步课表进手机日历、骑行免费时长提醒写日历，都要这一对权限",
+                subtitle = "把课表同步进手机日历要用这一对权限",
             ) {
                 PermissionRow(
                     title = "日历读写",
                     detail = if (calendarGranted) {
-                        "已开启；课表同步与骑行提醒都能写进系统日历"
+                        "已开启；课表能同步进系统日历"
                     } else {
                         "未开启时日历同步会停在提示上；点「去开启」授权"
                     },
@@ -240,7 +240,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             }
             SettingsSection(
                 title = "定位",
-                subtitle = "只给「附近单车」里看车在哪用；不给也能手动拖动地图找车",
+                subtitle = "只给「附近单车」看车在哪用；不给也能手动拖地图找车",
             ) {
                 PermissionRow(
                     title = "位置信息",

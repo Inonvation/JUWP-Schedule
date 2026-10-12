@@ -174,7 +174,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             SettingsSection(
                 title = "添加到桌面",
                 subtitle = if (caps.canPin) {
-                    "点「添加」后在系统确认框里一键放到桌面；四个条目各自独立添加，可以同时上桌面"
+                    "点「添加」后在系统确认框里一键放到桌面"
                 } else {
                     "当前桌面不支持应用内添加，请长按桌面空白处 → 小组件 → 水贝贝"
                 },
@@ -305,8 +305,8 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(6.dp))
                 Bullet("四个条目各自独立添加，可以同时上桌面。")
-                Bullet("内容与 App 内同口径：课表与「今日」页一致，余额与生活页钱包卡一致。")
-                Bullet("跟随系统深浅色；校园卡余额与电费都不在渲染路径上联网，电费只显示已取到的读数。")
+                Bullet("课表与「今日」页一致，余额与生活页钱包卡一致。")
+                Bullet("跟随系统深浅色；校园卡余额与电费不在渲染时联网。")
                 Bullet("「还有 N 分钟」按刷新时刻计算，两次刷新之间不会跳动。")
                 Spacer(Modifier.height(6.dp))
                 LauncherNoteRow()

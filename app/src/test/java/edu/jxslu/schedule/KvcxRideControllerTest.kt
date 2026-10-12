@@ -176,6 +176,7 @@ class KvcxRideControllerTest {
 
     @Test
     fun `开锁成功同步计时与提醒开关`() {
+        // 提醒开关原本关着：善后顺手打开，提示里补一句括号说明
         val session = FakeSession()
         val effects = FakeEffects(reminderWasOff = true)
         val kvcx = controller(session, effects)
@@ -192,17 +193,11 @@ class KvcxRideControllerTest {
         assertEquals(1, unlockedSignals)
         assertNull(kvcx.state.value.busy)
         assertFalse(kvcx.state.value.unlockPending)
-    }
 
-    @Test
-    fun `提醒开关本来就开着时不加括号说明`() {
-        val session = FakeSession()
-        val effects = FakeEffects(reminderWasOff = false)
-        val kvcx = controller(session, effects)
-
-        kvcx.unlock("100000669")
-
-        assertEquals(1, effects.startedTimer)
+        // 本来就开着：不补括号说明
+        notices.clear()
+        val kvcx2 = controller(FakeSession(), FakeEffects(reminderWasOff = false))
+        kvcx2.unlock("100000669")
         assertEquals("已开锁；已开始计时，通知栏已显示倒计时", notices.single().first)
     }
 
@@ -237,8 +232,8 @@ class KvcxRideControllerTest {
 
     @Test
     fun `开锁成功先落界面再做善后`() {
-        // 2026-10-10 用户口径「响应完后停滞一会才弹骑行卡」：确认快照必须先落 UI，
-        // 善后（开关 / 计时 / 通知）跟在后面——把 update 挪回善后之后就是那段可见的停顿
+        // 确认快照必须先落 UI，善后（开关 / 计时 / 通知）跟在后面；把 update 挪回善后
+        // 之后就是用户看到的那段停顿
         val session = FakeSession()
         session.unlockResult = {
             UnlockOutcome.Unlocked("100000669", helmetFlow = false, ride = ride(locked = false))
@@ -390,8 +385,8 @@ class KvcxRideControllerTest {
 
     @Test
     fun `同车快照缺锁字段沿用上一份`() {
-        // 2026-10-09 修「骑行中却显示锁状态未知」：快趣字段类型不稳定 + 新订单异步落账，
-        // 缺 lockStatus 的快照是常态——拿不到新事实不把已知事实降级成未知
+        // 快趣字段类型不稳定 + 新订单异步落账，缺 lockStatus 的快照是常态：
+        // 拿不到新事实，不把已知事实降级成未知
         val session = FakeSession()
         val kvcx = controller(session)
         session.underway = ride(locked = false)
@@ -553,8 +548,7 @@ class KvcxRideControllerTest {
 
     @Test
     fun `锁车未确认不是错误而是确认中`() {
-        // 2026-10-08 修「开锁后临时锁车容易失败」：上报慢是常态，超窗不该报 Error——
-        // 那会把用户推去反复点（客户端幂等早退已同日删除：再点一次锁车=真重发指令）。
+        // 上报慢是常态，超窗不该报 Error（那会把用户推去反复点；再点一次锁车 = 真重发指令）。
         // 置 lockPending + Warning。
         val session = FakeSession()
         session.lockResult = LockOutcome.Unconfirmed(lastKnown = ride(locked = false))
@@ -621,7 +615,6 @@ class KvcxRideControllerTest {
 
     @Test
     fun `已解锁时点开锁=重发解锁指令并给确认文案`() {
-        // 2026-10-08 用户口径「即使车辆已解锁，也保留开启车辆的按钮和功能」：
         // 骑行卡左位「开锁」在未锁态 = 对在案订单重发 greenCarUnlock（不重建订单）
         val session = FakeSession()
         session.underway = ride(carNum = "100000669", locked = false)
@@ -700,7 +693,7 @@ class KvcxRideControllerTest {
     @Test
     fun `锁状态查询现查也消解悬置`() {
         // 胶囊「核实」路径（queryLockState）与 query / 动作后刷新共用同一份悬置裁决：
-        // 查到未锁即消解「开锁未确认」（2026-10-08 复核对齐）
+        // 查到未锁即消解「开锁未确认」
         val session = FakeSession()
         session.underway = ride(carNum = "100000669", locked = true)
         session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
@@ -720,30 +713,29 @@ class KvcxRideControllerTest {
         assertNotNull(kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669"))
         assertNotNull(kvcxConfirmDialog(KvcxAction.RETRY_UNLOCK, "车 100000669"))
         assertNotNull(kvcxConfirmDialog(KvcxAction.RETURN, "车 100000669"))
-        // 临时锁车与解锁继续骑都没有新增的计费后果：不弹（2026-09-28 用户拍板）
+        // 临时锁车与解锁继续骑都没有新增的计费后果：不弹
         assertNull(kvcxConfirmDialog(KvcxAction.LOCK, "车 100000669"))
         assertNull(kvcxConfirmDialog(KvcxAction.RESUME, "车 100000669"))
     }
 
     @Test
     fun `开锁确认弹窗写清支付分授权与客服出路`() {
-        // 用户口径（2026-09-29）：账号方式开锁前要交代「可能要跳微信做支付分授权」，
-        // 以及唯一能让本机直接开锁端到端可用的出路——联系快趣客服关闭该授权。
-        // 这是用户唯一一次看清的机会，文案只在 kvcxConfirmDialog 里
+        // 账号方式开锁前要交代「可能要跳微信做支付分授权」，以及唯一能让本机直接开锁
+        // 端到端可用的出路：联系快趣客服关闭该授权。文案只在 kvcxConfirmDialog 里
         val dialog = kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669")!!
         val text = dialog.points.joinToString("\n")
         assertTrue(text.contains("微信支付分"))
         assertTrue(text.contains("客服"))
         assertTrue(text.contains("车 100000669"))
-        // 要点一条一件事（2026-10-01 打磨）：计费、车号核对、支付分各一条
+        // 要点一条一件事：计费、车号核对、支付分各一条
         assertEquals(3, dialog.points.size)
         assertEquals("开锁", dialog.confirmLabel)
     }
 
     @Test
     fun `只有开锁弹窗允许免确认`() {
-        // 「不再提醒」只给开锁（2026-10-01 用户要求）：四道闸里它是唯一"用户对自己账号"的
-        // 授权；还车涉及结算与调度费、重试开锁是异常路径，都保留每次确认
+        // 「不再提醒」只给开锁：四道闸里它是唯一"用户对自己账号"的授权；还车涉及结算与
+        // 调度费、重试开锁是异常路径，都保留每次确认
         assertTrue(kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669")!!.allowSkip)
         assertFalse(kvcxConfirmDialog(KvcxAction.RETRY_UNLOCK, "车 100000669")!!.allowSkip)
         assertFalse(kvcxConfirmDialog(KvcxAction.RETURN, "车 100000669")!!.allowSkip)
@@ -809,8 +801,8 @@ class KvcxRideControllerTest {
 
     @Test
     fun `重新开锁成功清掉还车结算卡`() {
-        // 结算卡上的「重新使用该车」（2026-10-10）：开锁成功 = 离开结算态，否则
-        // 「已还车」的卡片会和在案订单并存
+        // 结算卡上的「重新使用该车」：开锁成功 = 离开结算态，否则「已还车」的卡片会和
+        // 在案订单并存
         val session = FakeSession()
         val kvcx = controller(session)
         kvcx.query(quiet = true)
@@ -872,7 +864,7 @@ class KvcxRideControllerTest {
         // 金额未知（轮询没确认到 / 查询失败）：不说成"欠费"，只说结算中或未结清
         assertEquals("费用结算中或未结清，可在快趣小程序核对", summary(needPay = true, settled = null).settleText)
         assertTrue(summary(needPay = true, settled = null).settleWarning)
-        // 金额已知：写出来，并把两条能直达付款页的路一并给（2026-09-30 用户实测踩的坑）
+        // 金额已知：写出来，并把两条能直达付款页的路一并给
         assertEquals(
             "有未结算费用 ¥3.50；进快趣小程序点主页「待支付」横幅，或在历史订单里点那笔待支付",
             summary(needPay = true, settled = false).copy(owedCents = 350).settleText,

@@ -84,6 +84,7 @@ import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.RechargeDisclaimerDialog
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
@@ -564,14 +565,10 @@ fun CampusCardSettingsScreen(
             }
 
             SettingsSection(title = "关于余额提醒") {
-                Text(
-                    "· 检查在后台按设置的间隔进行（默认每 6 小时），可能被系统省电策略推迟；打开 App 时若已到期会补查一次；\n" +
-                        "· 余额持续偏低期间只提醒一次（充值回升后消停；调整阈值/间隔会立即按新规则重新评估）；\n" +
-                        "· 提醒依赖上面保存的学号与查询密码，关闭凭证时两个提醒会一并关掉；\n" +
-                        "· 取数失败（网络不通、平台改版）当次不提醒，也不会重试——不会因为反复登录触发风控。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                )
+                SettingsNote("后台按间隔检查（默认 6 小时），可能被省电推迟；打开 App 会补查一次")
+                SettingsNote("余额持续偏低只提醒一次，充值回升后消停")
+                SettingsNote("提醒依赖上面保存的凭证；关掉凭证时两个提醒一并关")
+                SettingsNote("取数失败当次不提醒也不重试，避免反复登录触发风控")
             }
         }
     }

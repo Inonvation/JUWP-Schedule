@@ -289,7 +289,7 @@ fun SettingsScreen(
             SettingsSection(title = "设置") {
                 SettingItem(
                     title = "通用设置",
-                    subtitle = "外观 · 布局 · 页面 · 功能开关",
+                    subtitle = "外观 · 布局 · 页面 · 功能",
                     icon = HugeIcons.Settings01,
                     onClick = onOpenGeneralSettings,
                 )

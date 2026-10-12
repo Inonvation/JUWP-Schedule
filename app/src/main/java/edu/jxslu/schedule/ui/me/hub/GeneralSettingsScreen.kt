@@ -195,7 +195,7 @@ fun GeneralSettingsScreen(
                 // 即时生效（Compose 根覆盖 LocalDensity），不用挂「重启生效」tag
                 SettingSwitchRow(
                     title = "固定字体大小",
-                    subtitle = "不随系统「字体大小」缩放，避免布局被挤占；关闭后跟随系统",
+                    subtitle = "不随系统字体缩放；关闭后跟随系统",
                     checked = state.displayPrefs.fontScaleLocked,
                     onCheckedChange = viewModel::setFontScaleLocked,
                     icon = HugeIcons.TextFont,
@@ -278,7 +278,7 @@ fun GeneralSettingsScreen(
                 // 百宝箱（DESIGN §4.47）：今日页「+」下拉里的图片工具，默认开
                 SettingSwitchRow(
                     title = "百宝箱",
-                    subtitle = "今日页「+」里的图片工具：水印 · 拼接 · 活动截图",
+                    subtitle = "今日页「+」里的工具：水印 · 拼接 · 活动截图 · 菜鸟批量查",
                     checked = state.displayPrefs.toolboxEnabled,
                     onCheckedChange = viewModel::setToolboxEnabled,
                     icon = HugeIcons.Toolbox,

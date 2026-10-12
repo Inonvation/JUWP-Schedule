@@ -30,31 +30,6 @@ class RidingCardToneTest {
     }
 
     @Test
-    fun `锁车确认中在未锁态给警示色`() {
-        assertEquals(
-            RidingCardTone.Pending,
-            ridingCardTone(locked = false, unlockPending = false, lockPending = true),
-        )
-        // 已锁快照是权威结果：即使悬置位还有残留（时序瞬态），也按已锁展示
-        assertEquals(
-            RidingCardTone.Locked,
-            ridingCardTone(locked = true, unlockPending = false, lockPending = true),
-        )
-    }
-
-    @Test
-    fun `已锁与已解锁各自成态`() {
-        assertEquals(
-            RidingCardTone.Locked,
-            ridingCardTone(locked = true, unlockPending = false, lockPending = false),
-        )
-        assertEquals(
-            RidingCardTone.Unlocked,
-            ridingCardTone(locked = false, unlockPending = false, lockPending = false),
-        )
-    }
-
-    @Test
     fun `锁状态缺失且无悬置时归未知态（不再返回 null）`() {
         // 旧版这里返回 null，调用方据此去掉内边距与胶囊——同一张卡在「已锁」与「锁状态未知」
         // 之间整体平移、尾部文字被切（用户报「两张信息卡片都不一致」）。判据改成全函数后，

@@ -40,6 +40,7 @@ import edu.jxslu.schedule.domain.QuietWindows
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.TimeWheelDialog
 import kotlinx.coroutines.launch
@@ -143,13 +144,7 @@ fun QuietHoursScreen(onBack: () -> Unit) {
                 }
             }
             item {
-                Text(
-                    "时段内的 App 通知不响铃不弹横幅，推迟到时段结束后一起发出；" +
-                        "「10 分钟后上课」这类已经过点的提醒不再补发。收件箱不受影响。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
+                SettingsNote("时段内通知推迟到结束后发出；已过点的提醒不补发，收件箱不受影响")
             }
         }
     }

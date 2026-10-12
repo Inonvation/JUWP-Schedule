@@ -60,20 +60,7 @@ class RidingStateChipTextTest {
     }
 
     @Test
-    fun `已锁快照压过锁车悬置的残留`() {
-        assertEquals(
-            "已锁",
-            ridingStateChipText(
-                querying = false,
-                locked = true,
-                unlockPending = false,
-                lockPending = true,
-            ),
-        )
-    }
-
-    @Test
-    fun `已锁与已解锁各自的文案`() {
+    fun `锁状态各自的文案`() {
         assertEquals(
             "已锁",
             ridingStateChipText(
@@ -81,6 +68,16 @@ class RidingStateChipTextTest {
                 locked = true,
                 unlockPending = false,
                 lockPending = false,
+            ),
+        )
+        // 已锁快照压过锁车悬置的残留
+        assertEquals(
+            "已锁",
+            ridingStateChipText(
+                querying = false,
+                locked = true,
+                unlockPending = false,
+                lockPending = true,
             ),
         )
         assertEquals(

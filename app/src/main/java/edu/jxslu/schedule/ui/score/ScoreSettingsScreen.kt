@@ -45,6 +45,7 @@ import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.showNotice
@@ -140,7 +141,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
             SettingsSection(title = "统计口径") {
                 SettingItem(
                     title = "任选课计入统计",
-                    subtitle = "默认排除：本校综测同样不计任选课；影响加权平均分与平均绩点",
+                    subtitle = "默认排除：本校综测也不计；影响加权平均分与平均绩点",
                     trailing = {
                         Switch(
                             checked = includeFreeElectives,
@@ -153,7 +154,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
             SettingsSection(title = "成绩变动提醒") {
                 SettingItem(
                     title = "出分提醒",
-                    subtitle = "新出成绩或复查改分时通知；打开应用时也会自动在后台检查一次",
+                    subtitle = "新出成绩或复查改分时通知；打开应用也会检查一次",
                     trailing = {
                         Switch(
                             checked = scoreAlertEnabled,
@@ -174,13 +175,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
                     enabled = scoreAlertEnabled,
                     onClick = { intervalPickerOpen = true },
                 )
-                Text(
-                    "首次开启只记录当前成绩作为基线，之后有新出分才通知。" +
-                        "提醒需要「我的」页已保存教务账号。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                )
+                SettingsNote("首次开启只记基线，之后有新出分才通知；需已保存教务账号")
             }
         }
     }
