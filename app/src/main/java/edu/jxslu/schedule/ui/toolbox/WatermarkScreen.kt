@@ -91,7 +91,9 @@ fun WatermarkScreen(onBack: () -> Unit) {
     var alphaPercent by remember { mutableStateOf(35f) }
     var rotationDeg by remember { mutableStateOf(-30f) }
     var scalePercent by remember { mutableStateOf(100f) }
-    var colorIndex by remember { mutableStateOf(0) }
+    // 默认黑（[WatermarkColors] 的第 2 个）：截图这类浅底输入是常见来源，白字压不住
+    // （2026-10-12 用户口径）
+    var colorIndex by remember { mutableStateOf(1) }
     var busy by remember { mutableStateOf(false) }
 
     val pickImage = rememberSingleImagePicker { uri -> sourceUri = uri }
