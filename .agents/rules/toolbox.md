@@ -108,17 +108,27 @@
 - `Anchor` 的**声明顺序 = 界面选项顺序**（`ToolboxImageTest` 钉住一条），
   加锚点/改顺序时界面选项列表跟着一起改。
 
-## 位图 config 只走白名单（2026-10-12 真机 abort 的教训）
+## 平铺块尺寸取自文字实际渲染宽度（2026-10-12 真机 abort 的真因）
 
-- **不要**把 `src.config` 原样转发给 `createBitmap`。10-bit / HDR 照片在 API 34+ 会被解成
-  `RGBA_F16` / `RGBA_1010102` 这类非常规配置，`createBitmap` 拿它建图会让原生层报
-  `unknown bitmap configuration` **直接 abort**——整个进程被杀，不是抛异常。
-- 两道闸都要在：① 解码端钉死 `inPreferredConfig = ARGB_8888`（`ui/common/DecodeSampled.kt`
+- **`Layout.getWidth()` 返回的是构造时传进去的宽度，不是最长行的宽度。** 水印的平铺块
+  原先拿 `layout.width` 当位图宽，而 `StaticLayout` 为了「不换行」传的是 `Int.MAX_VALUE`，
+  于是成了 `Bitmap.createBitmap(2147483647, h, ARGB_8888)`：原生 `SkBitmap::setInfo`
+  失败、colorType 留成未知，`LOG_ALWAYS_FATAL("unknown bitmap configuration")`
+  **直接 abort 整个进程**（不是抛异常）。宽度只能现算：布局宽取最宽行的
+  `paint.measureText`，块宽再取 `layout.getLineWidth(i)` 的最大值
+  （`ToolboxRenderer.watermark`）。
+- **现象会骗人**：进程 abort 后 SubpageStack 会把恢复的页面放回上层，用户报的是
+  「选完图自动跳回上一页」。这类「页面自己退回去」先看 `adb logcat -b crash` 的
+  `Abort message` 与 backtrace（这次是 `Bitmap_creator → allocateHeapBitmap`），
+  别先查导航——2026-10-12 第一轮照 config 改过一轮，白改。
+
+## 位图 config 仍走白名单（防患，不是上面那次的病因）
+
+- 两道闸都保留：① 解码端钉死 `inPreferredConfig = ARGB_8888`（`ui/common/DecodeSampled.kt`
   两个解码口都钉）；② 出图端 `ToolboxRenderer.safeCopyConfig` 白名单
   （只放行 ARGB_8888 / RGB_565，HARDWARE 的 `getConfig()` 返回 null 也落回退）。
-- **现象会骗人**：进程 abort 后 SubpageStack 会把恢复的页面放回上层，用户报的是
-  「选完图自动跳回上一页」。这类「页面自己退回去」先看 `adb logcat -b crash`
-  的 `Abort message`，别先查导航。
+  目的只是别把 10-bit / HDR 照片解出的 `RGBA_F16` / `RGBA_1010102` 这类非常规 config
+  漏给 `createBitmap`。
 
 ## 加新工具时的固定动作
 

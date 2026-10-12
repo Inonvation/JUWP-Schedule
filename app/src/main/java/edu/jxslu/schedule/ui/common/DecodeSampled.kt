@@ -21,8 +21,7 @@ fun decodeFileSampled(file: File, targetLongSidePx: Int): Bitmap? {
     val options = BitmapFactory.Options().apply {
         inSampleSize = sampleSizeFor(maxOf(bounds.outWidth, bounds.outHeight), targetLongSidePx)
         // 钉死 8888：不再往下游漏非常规 color config（10-bit / HDR 照片在 API 34+ 会被解成
-        // RGBA_F16 / RGBA_1010102，拿它去 createBitmap 会让原生层直接 abort，
-        // 2026-10-12 真机崩过：`unknown bitmap configuration`）。
+        // RGBA_F16 / RGBA_1010102，这类 config 不该传给 createBitmap）。
         inPreferredConfig = Bitmap.Config.ARGB_8888
     }
     return BitmapFactory.decodeFile(file.absolutePath, options)

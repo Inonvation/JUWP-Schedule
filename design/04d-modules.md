@@ -1171,13 +1171,20 @@ UI 见 §3.29。
 `ShortcutLauncher`（二级页拉起外部应用的过渡口径）。**改链接任何一段前先在真机重验；
 通道哪天收紧时 `CainiaoQuery` 是唯一改动点。**
 
-**位图 config 只走白名单（2026-10-12 真机崩溃的教训）**：解码端两遍都钉死
+**水印平铺块的宽度取自文字实际渲染宽度（2026-10-12 真机 abort 的真因）**：
+`Layout.getWidth()` 返回的是构造时传进去的宽度（`StaticLayout` 为「不换行」传的是
+`Int.MAX_VALUE`），不是最长行的宽度。拿它当位图宽就是
+`Bitmap.createBitmap(2147483647, h, ARGB_8888)`——原生 `SkBitmap::setInfo` 失败、
+colorType 留成未知，`LOG_ALWAYS_FATAL("unknown bitmap configuration")` **直接 abort**
+（整个进程被杀；用户看到的现象是「选完图页面自己跳回去了」，因为 SubpageStack 把恢复的
+页面又放回最上层——别拿这个现象去查导航）。布局宽取最宽行的 `paint.measureText`，
+块宽取 `layout.getLineWidth(i)` 的最大值。
+
+**位图 config 只走白名单（同日的防患，不是上面那次的病因）**：解码端两遍都钉死
 `inPreferredConfig = ARGB_8888`（`ui/common/DecodeSampled.kt`），出图端
 `ToolboxRenderer.safeCopyConfig` 只放行 ARGB_8888 / RGB_565、其余回退 ARGB_8888。
 **不要把 `src.config` 原样转发给 `createBitmap`**——10-bit / HDR 照片在 API 34+ 会解成
-RGBA_F16 / RGBA_1010102 这类非常规配置，原生层报 `unknown bitmap configuration`
-后**直接 abort**（整个进程被杀；用户看到的现象是「选完图页面自己跳回去了」，
-因为 SubpageStack 把恢复的页面又放回最上层——别拿这个现象去查导航）。
+RGBA_F16 / RGBA_1010102 这类非常规配置，不该漏给出图侧。
 
 **出口**：保存到相册走 `ui/common/BitmapSave`（MediaStore `Pictures/水贝贝`）；
 分享复用课表导出的 `ScheduleShareStore` 机制、目录换 `toolbox_share/`

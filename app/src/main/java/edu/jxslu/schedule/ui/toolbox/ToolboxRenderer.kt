@@ -47,12 +47,25 @@ object ToolboxRenderer {
             textAlign = Paint.Align.LEFT
         }
         val pattern = ToolboxImage.watermarkPattern(text, density)
+        // 平铺块宽度只能来自**文字实际渲染宽度**，不能用 `layout.width`：
+        // `Layout.getWidth()` 返回的是构造时传进去的宽度，不是最长行的宽度。
+        // 之前为「不换行」传了 Int.MAX_VALUE，`layout.width` 就跟着是 Int.MAX_VALUE，
+        // `Bitmap.createBitmap(2147483647, h, …)` 会让原生 `SkBitmap::setInfo` 失败、
+        // colorType 留成未知，`LOG_ALWAYS_FATAL("unknown bitmap configuration")`
+        // **直接 abort 整个进程**——用户看到的是「选完图自动跳回上一页」
+        // （2026-10-12 真机，见 .agents/rules/toolbox.md）。
+        val wrapWidth = pattern.split('\n')
+            .maxOf { paint.measureText(it) }
+            .let { ceil(it.toDouble()).toInt() }
+            .coerceAtLeast(1)
         val layout = StaticLayout.Builder
-            .obtain(pattern, 0, pattern.length, paint, Int.MAX_VALUE)
+            .obtain(pattern, 0, pattern.length, paint, wrapWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(0f, 1f)
             .build()
-        val tileWidth = ceil(layout.width.toFloat()).toInt().coerceAtLeast(1)
+        val widestLine = (0 until layout.lineCount)
+            .maxOfOrNull { layout.getLineWidth(it).toDouble() } ?: 0.0
+        val tileWidth = ceil(widestLine).toInt().coerceAtLeast(1)
         val tileHeight = ceil(layout.height.toFloat()).toInt().coerceAtLeast(1)
         val tile = Bitmap.createBitmap(tileWidth, tileHeight, Bitmap.Config.ARGB_8888)
         layout.draw(Canvas(tile))
@@ -212,11 +225,10 @@ object ToolboxRenderer {
     /**
      * 出图用的 config：只放行 ARGB_8888 / RGB_565，其余一律回退 ARGB_8888。
      *
-     * **不要**直接转发 `src.config`（2026-10-12 真机教训）：10-bit / HDR 照片在 API 34+
-     * 会被解成 RGBA_F16 / RGBA_1010102 这类非常规配置，`createBitmap` 拿它建图，
-     * 原生层报 `unknown bitmap configuration` 后**直接 abort**（整个进程被杀，
-     * 用户看到的现象像「页面自己跳回去了」）。
+     * **不要**直接转发 `src.config`：10-bit / HDR 照片在 API 34+ 会被解成
+     * RGBA_F16 / RGBA_1010102 这类非常规配置，不该漏给 `createBitmap`。
      * `src.config` 对 HARDWARE 位图返回 null，也落进这里的回退。
+     * （2026-10-12 那次真机 abort 的病因不是这里，是平铺块宽度取错，见 [watermark]。）
      */
     private fun safeCopyConfig(src: Bitmap): Bitmap.Config =
         when (src.config) {
