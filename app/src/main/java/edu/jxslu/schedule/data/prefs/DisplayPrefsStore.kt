@@ -17,6 +17,7 @@ import edu.jxslu.schedule.domain.BgScale
 import edu.jxslu.schedule.domain.BalanceAlert
 import edu.jxslu.schedule.domain.BalanceAlertSource
 import edu.jxslu.schedule.domain.BikeMapViewport
+import edu.jxslu.schedule.domain.CainiaoQuery
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.EbikeAutoReturn
@@ -1361,6 +1362,14 @@ class DisplayPrefsStore(private val context: Context) {
         EbikeQr.decodeRecent(p[KEY_EBIKE_RECENT_IDS])
     }.distinctUntilChanged()
 
+    /**
+     * 菜鸟批量查的最近提交（DESIGN §4.47）。键缺失/脏 JSON 回空列表——
+     * 历史只是回填入口，坏了不该打扰页面。
+     */
+    val cainiaoQueryHistory: Flow<List<String>> = context.displayDataStore.data.map { p ->
+        CainiaoQuery.decodeHistory(p[KEY_CAINIAO_QUERY_HISTORY])
+    }.distinctUntilChanged()
+
     /** 今日页校园卡付款码卡开关（DESIGN §3.10）。全局项，**默认关**（涉及凭证与资金）。 */
     val campusCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_CAMPUS_CARD_ENABLED] ?: false
@@ -1987,6 +1996,15 @@ class DisplayPrefsStore(private val context: Context) {
         }
     }
 
+    /** 菜鸟批量查历史统一写入口（DESIGN §4.47）：读-改-写整个 JSON，同值跳写。 */
+    suspend fun updateCainiaoQueryHistory(transform: (List<String>) -> List<String>) {
+        context.displayDataStore.edit { p ->
+            val current = CainiaoQuery.decodeHistory(p[KEY_CAINIAO_QUERY_HISTORY])
+            val next = transform(current)
+            if (next != current) p[KEY_CAINIAO_QUERY_HISTORY] = CainiaoQuery.encodeHistory(next)
+        }
+    }
+
     /** 成绩页统计口径开关（DESIGN §4.15）。 */
     suspend fun setScoreIncludeFreeElectives(value: Boolean) {
         context.displayDataStore.edit { it[KEY_SCORE_INCLUDE_FREE_ELECTIVES] = value }
@@ -2234,6 +2252,8 @@ class DisplayPrefsStore(private val context: Context) {
         const val MAX_MAP_ZOOM = 19.0f
         val KEY_EBIKE_PENDING_DELETE = stringSetPreferencesKey("ebike_pending_delete")
         val KEY_EBIKE_RECENT_IDS = stringPreferencesKey("ebike_recent_ids")
+        /** 菜鸟批量查的最近提交（DESIGN §4.47）：JSON 数组，缺省 = 无历史。 */
+        val KEY_CAINIAO_QUERY_HISTORY = stringPreferencesKey("cainiao_query_history")
         val KEY_CAMPUS_CARD_ENABLED = booleanPreferencesKey("campus_card_enabled")
         // 余额提醒（DESIGN §3.10 / §3.13）：两个来源各一套开关 / 阈值 / 检查间隔 /
         // 上次成功检查时刻 / 偏低已提醒标记。*_LAST_CHECK 是 2026-10-07 前的日期级旧键，

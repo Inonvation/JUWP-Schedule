@@ -1,7 +1,8 @@
-# 百宝箱（图片水印 · 图片拼接 · 活动截图）
+# 百宝箱（图片水印 · 图片拼接 · 活动截图 · 菜鸟批量查）
 
 作用域：改 `ui/toolbox/`、`domain/ToolboxImage`、工具页的分享 / 保存出口、今日页「+」里
-百宝箱那一行时读。规格见 DESIGN §3.30 / §4.47。
+百宝箱那一行时读。规格见 DESIGN §3.30 / §4.47。菜鸟批量查（非图片工具）的口径
+见本文件末节。
 
 ## 预览即所得（两条渲染入口共享一套参数）
 
@@ -121,12 +122,30 @@
 
 ## 加新工具时的固定动作
 
-图片工具走全 4 步：
+图片工具走全 4 步；**非图片工具**（如菜鸟批量查）只做 1–2 步，3–4 步不适用——
+纯逻辑按领域另起文件（`domain/CainiaoQuery`），不要为凑格式硬塞 `ToolboxImage` 那套。
 
 1. `ui/toolbox/` 加一个页面（骨架照抄现有三页：预览卡 → 参数卡 → 动作行）；
 2. `SubpageScreen` 加一个值 + `SubpageActivity` 加路由 + `ToolboxScreen` 加一张卡；
 3. 排版口径进 `domain/ToolboxImage` 并补测试；渲染进 `ToolboxRenderer`；
 4. 出口直接用 `ToolboxExport`（保存 / 分享），不要再写一套。
+
+## 菜鸟批量查（非图片工具，2026-10-12）
+
+- 链接模板只在 `domain/CainiaoQuery` 一处：
+  `cainiao://startapp/search_alert?querySourceId=68719476739&prePath=Pasteboard&content=<单号逗号分隔>`。
+  它走菜鸟导出的三方路由（`OpenGuoGuoUrlActivity`）转内部路由，**改任何一段前先在
+  真机重验**（搜索页预填 →「去批量查询」→ 添加包裹页全部查完 →「添加到包裹列表」）。
+  通道哪天收紧：换链接或整体下线，`CainiaoQuery` 是唯一改动点。
+- 拉起复用 `ShortcutLauncher`（二级页拉起外部应用要换静止过渡，它有现成处理）；
+  未装菜鸟先判 `getLaunchIntentForPackage` 给明确提示。
+- 输入清洗在 `CainiaoQuery.parseInput`：全角折半角 → 只留 [A-Za-z0-9-] → 8~40 位且
+  含数字才算单号（否则计入忽略）→ 大小写不敏感去重 → 上限 20；返回 `ParseResult`
+  （numbers + duplicates / ignored / overflow 三个计数，页面的计数行照它报数）。
+  判据在 `CainiaoQueryTest` 里钉着，动它先想清楚粘贴场景：「运单号：JT…」要能洗出
+  单号，「您有1个包裹」这类要挡住，丢弃的东西必须报数、不静默。
+- 最近提交存 `cainiao_query_history`（`DisplayPrefsStore.updateCainiaoQueryHistory`，
+  同值跳写、脏 JSON 回空表）；页面不做网络请求、不碰菜鸟账号。
 
 ## 页面骨架的两条注意
 

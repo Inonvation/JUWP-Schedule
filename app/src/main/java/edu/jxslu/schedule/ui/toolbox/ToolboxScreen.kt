@@ -29,6 +29,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.IdCard
 import me.rerere.hugeicons.stroke.ImageComposition
+import me.rerere.hugeicons.stroke.PackageSearch01
 import me.rerere.hugeicons.stroke.Stamp01
 
 /**
@@ -47,6 +48,7 @@ fun ToolboxScreen(
     onOpenWatermark: () -> Unit,
     onOpenStitch: () -> Unit,
     onOpenIdShot: () -> Unit,
+    onOpenCainiao: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -72,7 +74,7 @@ fun ToolboxScreen(
         ) {
             item {
                 Text(
-                    text = "小工具：加个水印、拼成长图、给截图落上姓名学号。",
+                    text = "小工具：加个水印、拼成长图、给截图落上姓名学号，还能把快递单号批量送进菜鸟。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.padding(bottom = 4.dp),
@@ -100,6 +102,14 @@ fun ToolboxScreen(
                     title = "活动截图",
                     subtitle = "姓名学号贴角",
                     onClick = onOpenIdShot,
+                )
+            }
+            item {
+                ToolboxTile(
+                    icon = HugeIcons.PackageSearch01,
+                    title = "菜鸟批量查",
+                    subtitle = "多单号一次查",
+                    onClick = onOpenCainiao,
                 )
             }
         }
