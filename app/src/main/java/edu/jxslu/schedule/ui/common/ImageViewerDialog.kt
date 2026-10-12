@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.TransformableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -31,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
@@ -99,6 +101,39 @@ fun ImageViewerDialog(
         offset = if (scale <= 1f) Offset.Zero else offset + offsetChange
     }
 
+    ImageViewerBody(image = image, scale = scale, offset = offset, transformable = transformable, onDismiss = onDismiss)
+}
+
+/**
+ * 全屏看**内存里的位图**（比 2026-10-12：百宝箱三个工具页的成品预览点开看大图）。
+ *
+ * 与按文件名解码的那个入口共用同一个弹窗体（黑底 + 双指缩放 + 点空白关闭），
+ * 不复制交互代码；调用方持有位图，弹窗只负责显示。
+ */
+@Composable
+fun ImageViewerDialog(
+    bitmap: Bitmap,
+    onDismiss: () -> Unit,
+) {
+    val image = remember(bitmap) { bitmap.asImageBitmap() }
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val transformable = rememberTransformableState { zoomChange, offsetChange, _ ->
+        scale = (scale * zoomChange).coerceIn(1f, 5f)
+        offset = if (scale <= 1f) Offset.Zero else offset + offsetChange
+    }
+    ImageViewerBody(image = image, scale = scale, offset = offset, transformable = transformable, onDismiss = onDismiss)
+}
+
+/** 看图弹窗的本体（两个入口共用）：黑底 + 双指缩放/拖动 + 点空白关闭 + 右上关闭键。 */
+@Composable
+private fun ImageViewerBody(
+    image: ImageBitmap?,
+    scale: Float,
+    offset: Offset,
+    transformable: TransformableState,
+    onDismiss: () -> Unit,
+) {
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),

@@ -63,6 +63,10 @@ import edu.jxslu.schedule.ui.ujing.UjingScreen
 import edu.jxslu.schedule.ui.water.WaterScreen
 import edu.jxslu.schedule.ui.weather.WeatherScreen
 import edu.jxslu.schedule.ui.weather.WeatherSettingsScreen
+import edu.jxslu.schedule.ui.toolbox.IdShotScreen
+import edu.jxslu.schedule.ui.toolbox.StitchScreen
+import edu.jxslu.schedule.ui.toolbox.ToolboxScreen
+import edu.jxslu.schedule.ui.toolbox.WatermarkScreen
 import edu.jxslu.schedule.ui.week.ScheduleShareScreen
 import edu.jxslu.schedule.ui.wenqu.WenquGrabScreen
 import edu.jxslu.schedule.ui.wenqu.WenquRecordsScreen
@@ -198,6 +202,14 @@ enum class SubpageScreen {
     WEATHER,
     /** 天气设置（今日页顶栏提示开关，DESIGN §3.29，2026-10-11） */
     WEATHER_SETTINGS,
+    /** 今日页「+」→ 百宝箱（小工具集合，DESIGN §4.47，2026-10-12） */
+    TOOLBOX,
+    /** 百宝箱 → 图片水印（文字平铺满图，DESIGN §4.47） */
+    TOOLBOX_WATERMARK,
+    /** 百宝箱 → 图片拼接（多图竖拼长图，DESIGN §4.47） */
+    TOOLBOX_STITCH,
+    /** 百宝箱 → 活动截图（姓名学号贴底，DESIGN §4.47） */
+    TOOLBOX_ID_SHOT,
 }
 
 /**
@@ -424,6 +436,22 @@ class SubpageActivity : ComponentActivity() {
                 onBack = onBack,
                 onOpenWeather = { SubpageActivity.start(this, SubpageScreen.WEATHER) },
             )
+            // 百宝箱（DESIGN §4.47）：工具列表页 → 各工具独立窗口，与其它二级页同规格
+            SubpageScreen.TOOLBOX -> ToolboxScreen(
+                onBack = onBack,
+                onOpenWatermark = {
+                    SubpageActivity.start(this, SubpageScreen.TOOLBOX_WATERMARK)
+                },
+                onOpenStitch = {
+                    SubpageActivity.start(this, SubpageScreen.TOOLBOX_STITCH)
+                },
+                onOpenIdShot = {
+                    SubpageActivity.start(this, SubpageScreen.TOOLBOX_ID_SHOT)
+                },
+            )
+            SubpageScreen.TOOLBOX_WATERMARK -> WatermarkScreen(onBack = onBack)
+            SubpageScreen.TOOLBOX_STITCH -> StitchScreen(onBack = onBack)
+            SubpageScreen.TOOLBOX_ID_SHOT -> IdShotScreen(onBack = onBack)
             SubpageScreen.WIDGET_CALENDAR_HUB -> WidgetCalendarHubScreen(
                 onBack = onBack,
                 onOpenWidgetSettings = {

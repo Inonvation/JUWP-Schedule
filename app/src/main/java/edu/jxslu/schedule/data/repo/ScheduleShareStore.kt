@@ -5,9 +5,10 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 /**
- * 课表导出图片的**分享**落盘（DESIGN §4.12）。
+ * 一次性图片的**分享**落盘（DESIGN §4.12 课表导出 / §4.47 百宝箱共用一套机制）。
  *
- * 位置固定 `cacheDir/schedule_share/`：
+ * 位置 = `cacheDir/<dirName>/`，目录名由调用方给（课表导出 = [DIR_NAME]，
+ * 百宝箱 = [DIR_TOOLBOX]，FileProvider 各配一个根）：
  * - 分享用的图是一次性的——系统分享面板把内容 Uri 读完就没用了，落 cache 既不进
  *   云备份（只有 filesDir 进备份，也省掉往两份备份排除 xml 里再登记一条），
  *   也不污染私有目录；
@@ -15,10 +16,10 @@ import java.io.File
  *
  * 目录只留最近 [KEEP] 份，保存后顺带清理，不留后台任务。
  */
-class ScheduleShareStore(context: Context) {
+class ScheduleShareStore(context: Context, dirName: String = DIR_NAME) {
 
     private val appContext = context.applicationContext
-    private val dir: File = File(appContext.cacheDir, DIR_NAME)
+    private val dir: File = File(appContext.cacheDir, dirName)
 
     /**
      * 写入一份待分享的图片，返回落盘文件。
@@ -59,9 +60,14 @@ class ScheduleShareStore(context: Context) {
 
     private fun authority(): String = "${appContext.packageName}.fileprovider"
 
-    private companion object {
+    companion object {
+        /** 课表导出的分享目录（DESIGN §4.12）。 */
         const val DIR_NAME = "schedule_share"
-        const val KEEP = 5
-        const val PART_SUFFIX = ".part"
+
+        /** 百宝箱分享出口（DESIGN §4.47）：与课表导出各占一个目录、各自裁到 5 份。 */
+        const val DIR_TOOLBOX = "toolbox_share"
+
+        private const val KEEP = 5
+        private const val PART_SUFFIX = ".part"
     }
 }

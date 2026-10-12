@@ -84,6 +84,12 @@ data class DisplayPrefs(
      */
     val lifeTabEnabled: Boolean = true,
     /**
+     * 百宝箱（DESIGN §4.47）。全局项，**默认开**：今日页顶栏「+」下拉里的
+     * 「百宝箱」一行（图片水印 · 图片拼接 · 活动截图 · 菜鸟批量查）。
+     * 关 = 该行从「+」菜单消失，与其余功能开关同一语义（关闭后全部入口隐藏）。
+     */
+    val toolboxEnabled: Boolean = true,
+    /**
      * 启动页（DESIGN §3.1 / §3.3）。全局项，**默认 [StartPage.Today]**：主窗口每次
      * 新建时落的那个 Tab。生活页关掉时「生活」这一项在设置里同步消失，存着的旧值
      * 由 [StartPage.effectivePage] 落回今日页（不写回存储，生活页开回来时旧选择还在）。
@@ -399,6 +405,11 @@ class DisplayPrefsStore(private val context: Context) {
     /** 生活页开关（DESIGN §3.13）。默认开：新 Tab 直接可用，嫌底栏挤的人再关。 */
     val lifeTabEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_LIFE_TAB_ENABLED] ?: true
+    }
+
+    /** 百宝箱开关（DESIGN §4.47）。默认开：今日页「+」下拉里的图片工具入口。 */
+    val toolboxEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_TOOLBOX_ENABLED] ?: true
     }
 
     /**
@@ -1588,6 +1599,10 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_LIFE_TAB_ENABLED] = value }
     }
 
+    suspend fun setToolboxEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_TOOLBOX_ENABLED] = value }
+    }
+
     /** 启动页（DESIGN §3.3）。写的是用户的选择本身，不因为生活页此刻关着就改写它。 */
     suspend fun setStartPage(value: StartPage) {
         context.displayDataStore.edit { it[KEY_START_PAGE] = value.name }
@@ -2158,6 +2173,8 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_THEME_PALETTE = stringPreferencesKey("theme_palette")
         val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")
         val KEY_LIFE_TAB_ENABLED = booleanPreferencesKey("life_tab_enabled")
+        /** 百宝箱（DESIGN §4.47）：缺省 = true（今日页「+」里显示图片工具入口）。 */
+        val KEY_TOOLBOX_ENABLED = booleanPreferencesKey("toolbox_enabled")
         val KEY_START_PAGE = stringPreferencesKey("start_page")
         val KEY_WATER_REQUIRE_DOUBLE_CLICK = booleanPreferencesKey("water_require_double_click")
         val KEY_CALENDAR_REMINDER_MINUTES = intPreferencesKey("calendar_reminder_minutes")

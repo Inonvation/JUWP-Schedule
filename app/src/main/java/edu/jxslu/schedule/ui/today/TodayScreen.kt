@@ -154,6 +154,7 @@ import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
+import me.rerere.hugeicons.stroke.Toolbox
 import me.rerere.hugeicons.stroke.Wallet01
 import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
 import edu.jxslu.schedule.domain.PendingHomework
@@ -203,8 +204,10 @@ fun TodayScreen(
     onOpenInbox: () -> Unit = {},
     /** 顶栏「+ → 志愿服务」：问渠 · 志愿服务页（DESIGN §3.28，2026-10-08） */
     onOpenWenqu: () -> Unit = {},
-        /** 顶栏天气提示那一行（DESIGN §3.29）：点它进天气详情页 */
-        onOpenWeather: () -> Unit = {},
+    /** 顶栏「+ → 百宝箱」：小工具集合（图片工具 + 菜鸟批量查，DESIGN §4.47，2026-10-12） */
+    onOpenToolbox: () -> Unit = {},
+    /** 顶栏天气提示那一行（DESIGN §3.29）：点它进天气详情页 */
+    onOpenWeather: () -> Unit = {},
     /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
     onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
@@ -271,6 +274,10 @@ fun TodayScreen(
     val inboxUnread by remember(context) { Graph.inboxRepository(context) }
         .unreadCount
         .collectAsStateWithLifecycle(initialValue = 0)
+    // 百宝箱入口开关（DESIGN §4.47，默认开）：关掉时「+」菜单里整行不出现
+    val toolboxEnabled by remember(context) { Graph.displayPrefs(context) }
+        .toolboxEnabled
+        .collectAsStateWithLifecycle(initialValue = true)
     val dockExpanded by viewModel.todayDockExpanded.collectAsStateWithLifecycle()
     var showWaterEntrySheet by remember { mutableStateOf(false) }
     // 趣智校园的余额面板（DESIGN §3.18）：与开水面板同形态，入口也是卡片右侧的余额
@@ -624,6 +631,22 @@ fun TodayScreen(
                                     onOpenWenqu()
                                 },
                             )
+                            // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合
+                            // （水印 / 拼接 / 活动截图 / 菜鸟批量查）；总开关在 通用设置 → 功能，
+                            // 关掉时整行不出现
+                            if (toolboxEnabled) {
+                                DropdownMenuItem(
+                                    text = { Text("百宝箱") },
+                                    leadingIcon = {
+                                        Icon(HugeIcons.Toolbox, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        quickMenuOpen = false
+                                        quickHaptics.tap()
+                                        onOpenToolbox()
+                                    },
+                                )
+                            }
                         }
                     }
                 },

@@ -485,10 +485,11 @@ class ScheduleRepository(
         val qzxyCardEnabled: Boolean,
     )
 
-    /** 杂项单值的收拢切片：校园卡开关 + 字体缩放锁定（combine 参数上限的同款处理）。 */
+    /** 杂项单值的收拢切片：校园卡开关 + 字体缩放锁定 + 百宝箱开关（combine 参数上限的同款处理）。 */
     private data class MiscPrefs(
         val campusCard: Boolean,
         val fontScaleLocked: Boolean,
+        val toolboxEnabled: Boolean,
     )
 
     // ------------------------------------------------------------------
@@ -553,10 +554,11 @@ class ScheduleRepository(
             prefs.ebikeUseMode,
             ::EbikePrefs,
         ),
-        // 校园卡开关 + 字体缩放锁定：两个单值并一槽（外层 combine 五参已满）
+        // 校园卡开关 + 字体缩放锁定 + 百宝箱开关：单值并一槽（外层 combine 五参已满）
         combine(
             prefs.campusCardEnabled,
             prefs.fontScaleLocked,
+            prefs.toolboxEnabled,
             ::MiscPrefs,
         ),
         prefs.viewPrefs,
@@ -585,6 +587,7 @@ class ScheduleRepository(
             ebikeRecentIds = ebike.recentIds,
             ebikeUseMode = ebike.useMode,
             campusCardEnabled = misc.campusCard,
+            toolboxEnabled = misc.toolboxEnabled,
             floatingNavBar = shell.floatingNavBar,
             todayDockExpanded = shell.todayDockExpanded,
             lifeTabEnabled = shell.lifeTabEnabled,
@@ -829,6 +832,9 @@ class ScheduleRepository(
 
     /** 生活页开关（DESIGN §3.13）。 */
     suspend fun setLifeTabEnabled(value: Boolean) = prefs.setLifeTabEnabled(value)
+
+    /** 百宝箱开关（DESIGN §4.47）：今日页「+」下拉里的图片工具入口，默认开。 */
+    suspend fun setToolboxEnabled(value: Boolean) = prefs.setToolboxEnabled(value)
 
     /** 启动页（DESIGN §3.3）。重启应用后生效（读口径见 MainActivity 的启动期冻结）。 */
     suspend fun setStartPage(value: StartPage) = prefs.setStartPage(value)

@@ -236,6 +236,9 @@ object Graph {
     private var scheduleShareStore: ScheduleShareStore? = null
 
     @Volatile
+    private var toolboxShareStore: ScheduleShareStore? = null
+
+    @Volatile
     private var campusCalendarStore: CampusCalendarStore? = null
 
     @Volatile
@@ -521,6 +524,18 @@ object Graph {
         scheduleShareStore ?: synchronized(this) {
             scheduleShareStore ?: ScheduleShareStore(context.applicationContext)
                 .also { scheduleShareStore = it }
+        }
+
+    /**
+     * 百宝箱图片的分享落盘单例（DESIGN §4.47）：cacheDir/toolbox_share，
+     * 与课表导出共用 [ScheduleShareStore] 的机制、各占一个目录。
+     */
+    fun toolboxShareStore(context: Context): ScheduleShareStore =
+        toolboxShareStore ?: synchronized(this) {
+            toolboxShareStore ?: ScheduleShareStore(
+                context.applicationContext,
+                ScheduleShareStore.DIR_TOOLBOX,
+            ).also { toolboxShareStore = it }
         }
 
     /**

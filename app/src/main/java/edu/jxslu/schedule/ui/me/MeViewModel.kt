@@ -440,6 +440,11 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setLifeTabEnabled(value) }
     }
 
+    /** 百宝箱开关（DESIGN §4.47）：默认开，关掉后今日页「+」菜单不显示这一行。 */
+    fun setToolboxEnabled(value: Boolean) {
+        viewModelScope.launch { repo.setToolboxEnabled(value) }
+    }
+
     /**
      * 启动页（DESIGN §3.3）：写入用户的选择本身——生活页关着时也不把它改写成今日，
      * 生活页开回来旧选择还在（生效页由 `StartPage.effectivePage` 算）。

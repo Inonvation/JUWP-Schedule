@@ -1041,6 +1041,11 @@ internal fun JuwApp(
                             onOpenWenqu = {
                                 SubpageActivity.start(context, SubpageScreen.WENQU)
                             },
+                            // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合，
+                            // 「+」菜单里那一行的总开关在通用设置（默认开）
+                            onOpenToolbox = {
+                                SubpageActivity.start(context, SubpageScreen.TOOLBOX)
+                            },
                             // 天气详情（DESIGN §3.29，2026-10-11）：顶栏那行提示的落点
                             onOpenWeather = {
                                 SubpageActivity.start(context, SubpageScreen.WEATHER)

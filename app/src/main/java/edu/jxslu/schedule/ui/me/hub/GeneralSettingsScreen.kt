@@ -73,6 +73,7 @@ import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.SwatchBook
 import me.rerere.hugeicons.stroke.SunCloud01
 import me.rerere.hugeicons.stroke.TextFont
+import me.rerere.hugeicons.stroke.Toolbox
 import me.rerere.hugeicons.stroke.Vibrate
 import me.rerere.hugeicons.stroke.Wallet03
 
@@ -273,6 +274,14 @@ fun GeneralSettingsScreen(
                     subtitle = "编辑今日页快捷入口 · 预设与自定义",
                     icon = HugeIcons.Flash,
                     onClick = onOpenShortcuts,
+                )
+                // 百宝箱（DESIGN §4.47）：今日页「+」下拉里的图片工具，默认开
+                SettingSwitchRow(
+                    title = "百宝箱",
+                    subtitle = "今日页「+」里的图片工具：水印 · 拼接 · 活动截图",
+                    checked = state.displayPrefs.toolboxEnabled,
+                    onCheckedChange = viewModel::setToolboxEnabled,
+                    icon = HugeIcons.Toolbox,
                 )
                 SettingSwitchRow(
                     title = "快趣出行码",

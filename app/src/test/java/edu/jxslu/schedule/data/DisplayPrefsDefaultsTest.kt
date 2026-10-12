@@ -24,6 +24,7 @@ class DisplayPrefsDefaultsTest {
         assertFalse("一卡通付款码默认关（涉及凭证）", prefs.campusCardEnabled)
         assertTrue("触感反馈默认开", prefs.hapticsEnabled)
         assertTrue("开水双击确认默认开", prefs.waterRequireDoubleClick)
+        assertTrue("百宝箱默认开（DESIGN §4.47）", prefs.toolboxEnabled)
     }
 
     @Test
