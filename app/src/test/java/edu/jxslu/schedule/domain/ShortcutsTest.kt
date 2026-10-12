@@ -112,7 +112,7 @@ class ShortcutsTest {
             assertNull("预设必须自带合法目标", Shortcuts.validate(item))
         }
         val pdd = Shortcuts.PRESET_SHORTCUTS[0]
-        assertEquals("pinduoduo://com.xunmeng.pinduoduo/mdkd/package", pdd.uri)
+        assertEquals("pinduoduo://com.xunmeng.pinduoduo/mdkd/package?tab=ID_CODE", pdd.uri)
         assertEquals("com.xunmeng.pinduoduo", pdd.pkg)
         val taobao = Shortcuts.PRESET_SHORTCUTS[1]
         assertTrue(taobao.uri.startsWith("https://pages-fast.m.taobao.com/"))
@@ -275,16 +275,19 @@ class ShortcutsTest {
 
     @Test
     fun migrate_publishedHistoryUpgradesUntouchedSlots() {
-        // 真实发布态历史（v1 表）：存量用户未编辑的槽位应自动升级到当前预设。
-        // 这里同时守住维护契约——v1 表首行必须仍是「拼多多取件码」时代的原值，
-        // 若这条断言失败，说明有人改了 v1 表而不是追加新历史（老用户将无法迁移）。
-        val v1 = Shortcuts.PRESET_HISTORY.first()
-        assertEquals("preset_pdd", v1[0].id)
-        assertEquals("pinduoduo://com.xunmeng.pinduoduo/mdkd/package", v1[0].uri)
-        assertEquals("preset_cainiao", v1[2].id)
-        assertEquals("菜鸟", v1[2].name)
-        // 存量未编辑：整表按 v1 存储 → 迁移后应与当前预设完全一致（名与目标都换新）
-        val migrated = Shortcuts.migratePresets(v1, history = Shortcuts.PRESET_HISTORY)
-        assertEquals(Shortcuts.PRESET_SHORTCUTS, migrated)
+        // 真实发布态历史：每张历史表的未编辑槽位都应升级到当前预设（名与目标都换新）。
+        // 这里守住维护契约——改预设必须先追加旧表：若某张表迁不出当前值，说明有人改动了
+        // 历史表本身或漏了追加（老用户将无法迁移）。
+        Shortcuts.PRESET_HISTORY.forEachIndexed { i, table ->
+            assertEquals(
+                "历史表 #$i（越靠前越新）的未编辑槽位应完整升级到当前预设",
+                Shortcuts.PRESET_SHORTCUTS,
+                Shortcuts.migratePresets(table, history = Shortcuts.PRESET_HISTORY),
+            )
+        }
+        // 最新一条历史仍是「拼多多目标加 `?tab=ID_CODE` 之前」的原值，守住 v3 改动确实入了史
+        val latest = Shortcuts.PRESET_HISTORY.first()
+        assertEquals("preset_pdd", latest[0].id)
+        assertEquals("pinduoduo://com.xunmeng.pinduoduo/mdkd/package", latest[0].uri)
     }
 }

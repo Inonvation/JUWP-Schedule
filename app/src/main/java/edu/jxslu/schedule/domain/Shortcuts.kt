@@ -55,14 +55,15 @@ object Shortcuts {
     const val MAX_COUNT = 8
 
     /**
-     * 内置预设。拼多多/淘宝两条目标取自 light-life 实测可用的值；
+     * 内置预设。拼多多目标带 `?tab=ID_CODE` 直达「身份码」页（2026-10-12 真机实测：
+     * 不带参数只落「取快递」页）；淘宝口径取自 light-life 实测可用的值；
      * 菜鸟走显式 Activity 直达首页（跳过开屏广告），Activity 名变更时用户可在编辑表单里自己改。
      */
     val PRESET_SHORTCUTS = listOf(
         ShortcutItem(
             id = "preset_pdd",
             name = "拼多多取件码",
-            uri = "pinduoduo://com.xunmeng.pinduoduo/mdkd/package",
+            uri = "pinduoduo://com.xunmeng.pinduoduo/mdkd/package?tab=ID_CODE",
             pkg = "com.xunmeng.pinduoduo",
             presetIndex = 0,
         ),
@@ -93,6 +94,31 @@ object Shortcuts {
      * 追加到这里，否则老用户的「未编辑预设槽」无法自动升级到新目标。
      */
     val PRESET_HISTORY: List<List<ShortcutItem>> = listOf(
+        // v2 → v3（2026-10-12）：拼多多目标追加 `?tab=ID_CODE` 直达「身份码」页
+        //（改动前只到「取快递」页；真机实测两个落点分属两页）。
+        listOf(
+            ShortcutItem(
+                id = "preset_pdd",
+                name = "拼多多取件码",
+                uri = "pinduoduo://com.xunmeng.pinduoduo/mdkd/package",
+                pkg = "com.xunmeng.pinduoduo",
+                presetIndex = 0,
+            ),
+            ShortcutItem(
+                id = "preset_taobao",
+                name = "淘宝身份码",
+                uri = "https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code",
+                pkg = "com.taobao.taobao",
+                presetIndex = 1,
+            ),
+            ShortcutItem(
+                id = "preset_cainiao",
+                name = "菜鸟（无广启动）",
+                pkg = "com.cainiao.wireless",
+                activity = "com.cainiao.wireless.homepage.view.activity.HomePageActivity",
+                presetIndex = 2,
+            ),
+        ),
         // v1 → v2（2026-09-20）：菜鸟改名「菜鸟（无广启动）」，目标是让它自述「跳开屏广告」
         // 这一差异（目标字段未变，但整表入史才能让未编辑槽自动换名）。
         listOf(
@@ -122,8 +148,9 @@ object Shortcuts {
 
     /**
      * 预设目标自动迁移：存储里的预设槽如果与某个历史版本的预设**目标字段完全一致**，
-     * 说明用户没动过目标——整条升级到当前预设（目标与名称都换新）；
-     * 只改过名的保留用户名、目标照样升级；改过目标的槽位不动。
+     * 说明用户没动过目标。存储值与任一条历史**整条**一致（含名称）时整条升级到当前预设
+     * （目标与名称都换新）——整条一致优先判断，历史多版本叠加后老用户不会因旧版改过名
+     * 而被误判成「只改过名」留下旧名；只改过名的保留用户名、目标照样升级；改过目标的槽位不动。
      *
      * 不在存储里记版本号：与所有历史值都不匹配就视为自定义，天然幂等，
      * 且跨多个版本直接跳迁也成立（每个历史表只用来识别「从那时起没动过」）。
@@ -138,11 +165,11 @@ object Shortcuts {
             if (index < 0) return@map item
             val current = PRESET_SHORTCUTS.firstOrNull { it.presetIndex == index }
                 ?: return@map item
-            val matched = history.asSequence()
-                .mapNotNull { table -> table.firstOrNull { it.presetIndex == index } }
-                .firstOrNull { old ->
+            val candidates = history.mapNotNull { table -> table.firstOrNull { it.presetIndex == index } }
+                .filter { old ->
                     item.uri == old.uri && item.pkg == old.pkg && item.activity == old.activity
                 }
+            val matched = candidates.firstOrNull { it == item } ?: candidates.firstOrNull()
                 ?: return@map item
             if (item == matched) current else current.copy(name = item.name)
         }
