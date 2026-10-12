@@ -1,15 +1,22 @@
 package edu.jxslu.schedule.domain
 
+import java.time.LocalDate
 import java.time.LocalDateTime
 import kotlin.math.roundToInt
 
 /**
- * 今日页顶栏那一行天气提示（DESIGN §3.29）：emoji + 一句话。
+ * 今日页顶栏那一行的提示（DESIGN §3.29）：emoji + 一句话。
  *
- * 两条口径（用户 2026-10-11 定的，别自行改）：
+ * 三条口径（用户 2026-10-11 / 2026-10-12 定的，别自行改）：
  * 1. **18:00 分界**：18:00 前讲今天，18:00 起讲明天（[referenceDayIndex]）；
  * 2. 提示按优先级取**第一条命中**的话术，从「要带伞」这类行动项往下排，
- *    全不命中才退回「天气 + 温度区间」的中性描述。
+ *    全不命中才退回「天气 + 温度区间」的中性描述；
+ * 3. **天气句与课表句各自独立成句、轮换显示**（[segments]，用户 2026-10-12 定）：
+ *    顶栏那一行本来窄（还要给日期留位），两句拼一起必被截断；改成各占整行、
+ *    每 5 秒轮换一条（轮换节奏归 `TodayViewModel.ROTATE_MILLIS`，本类只负责给出候选句）。
+ *    课表句有实验课时只出实验课句，不再出南北楼句（[ScheduleTips]）。
+ *    快下课有雨（[ScheduleTips.dismissalTipFor]）**独占整行**——那一刻的行动只有「拿伞」一件，
+ *    与「18:00 后讲明天」无关（它永远看今天）。
  *
  * 纯函数，JVM 可测（WeatherAdviceTest 钉住每条优先级）。
  */
@@ -36,6 +43,9 @@ object WeatherAdvice {
     /** 日最大风速 ≥ 这个值提醒风大。 */
     const val WINDY_KMH = 30.0
 
+    /** 「快下课有雨」的提醒窗口（分钟）：距下课进入这个窗口才提示。 */
+    const val DISMISSAL_WINDOW_MINUTES = 15
+
     /**
      * 参考日下标：18:00 前 = 今天（0），18:00 起 = 明天（1）。
      * 越界时调用方按「取不到」处理（快照只有 3 天，正常取得到）。
@@ -44,14 +54,48 @@ object WeatherAdvice {
         if (now.hour < TOMORROW_FROM_HOUR) 0 else 1
 
     /**
-     * 今日页顶栏那一行。快照里没有参考日时给 null（页面不占位，不显示半截提示）。
+     * 顶栏那行要**轮换**的候选句（DESIGN §3.29），按显示优先级排列：
+     * 1. 快下课有雨（独占，命中即只回这一条）；
+     * 2. 天气句（emoji + 话术）；
+     * 3. 课表句（南北楼 / 实验课，有才加）。
+     *
+     * 每条都是「emoji + 一句话」的完整形态，调用方按顺序轮换显示即可。
+     * 快照里没有参考日、且没有快下课 / 课表句时给空表（页面不占位）。
+     *
+     * 天气关着时调用方走「只取课表句」的另一条路（本函数需要快照里的逐小时数据判快下课）。
      */
-    fun line(snapshot: WeatherSnapshot, now: LocalDateTime): String? {
+    fun segments(
+        snapshot: WeatherSnapshot,
+        now: LocalDateTime,
+        semester: SemesterConfig? = null,
+        slots: List<TimeSlot> = emptyList(),
+        courses: List<Course> = emptyList(),
+        overrides: List<ScheduleOverride> = emptyList(),
+    ): List<String> {
+        // 快下课有雨：独占整行（那一刻的行动只有「拿伞」一件）
+        ScheduleTips.dismissalTipFor(
+            semester = semester,
+            slots = slots,
+            courses = courses,
+            overrides = overrides,
+            now = now,
+            hourly = snapshot.hourly,
+        )?.let { return listOf(it.prefix + it.text) }
+
         val index = referenceDayIndex(now)
-        val day = snapshot.day(index) ?: return null
+        val day = snapshot.day(index) ?: return emptyList()
         // 只有「讲今天」才用实时码判「正在下雨」；讲明天时实时码与主题无关
         val emoji = WeatherCodes.emoji(day.code, isDay = index == 0 && snapshot.current.isDay)
-        return "$emoji ${tip(snapshot, day, today = index == 0)}"
+        val weather = "$emoji ${tip(snapshot, day, today = index == 0)}"
+        val date = now.toLocalDate().plusDays(index.toLong())
+        val schedule = ScheduleTips.dayTipFor(
+            date = date,
+            semester = semester,
+            slots = slots,
+            courses = courses,
+            overrides = overrides,
+        )
+        return listOfNotNull(weather, schedule?.let { it.prefix + it.text })
     }
 
     /**

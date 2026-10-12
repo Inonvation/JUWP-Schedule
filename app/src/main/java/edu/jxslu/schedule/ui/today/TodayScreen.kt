@@ -12,6 +12,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -494,33 +495,67 @@ fun TodayScreen(
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                // 次标题**让位给提示行**（2026-10-12）：提示行不带 weight、在 Row 的
+                                // 非加权首轮里先按整行宽量（优先拿满），日期是唯一的加权子项、只拿
+                                // 剩下的那点宽度——内容超了就用省略号收尾。
+                                // `fill = false` 必留：默认 fill = true 会把「分给它的那格」整个占下，
+                                // 短日期也会在身后留空档、把提示顶到右半边（2026-10-12 用户报
+                                // 「提示语偏右」的根因）；fill = false 按内容宽占位，两段自然挨着。
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                             )
-                            // 天气提示（DESIGN §3.29，2026-10-11）：**接在次标题同一行的后面**，
+                            // 天气 / 课表提示（DESIGN §3.29）：**接在次标题同一行的后面**，
                             // emoji + 一句话（18:00 前讲今天、之后讲明天），点它进天气详情页。
                             //
                             // 为什么不做成顶栏里的第三行：M3 的 TopAppBar 高度是固定的 64dp，
                             // 标题区塞三行、用户又关掉「固定字体大小」时会被裁掉底边
                             // （现有标题两行合计 44sp，加上第三行 16sp 已到 60sp，没有余量）。
                             // 同一行渲染则任何字号下都只是省略号收尾，不会裁字。
-                            // 功能关着 / 取不到数据时是 null——这里什么都不占，不留空位。
-                            weatherLine?.let { line ->
-                                Text(
-                                    text = line,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            quickHaptics.tap()
-                                            onOpenWeather()
-                                        }
-                                        // 竖向 4dp 是把命中区从一行字（约 14dp）撑到约 22dp，
-                                        // 标题区三行合计 62dp 仍在 TopAppBar 的 64dp 之内；
-                                        // 再加大就会顶出顶栏被裁，别动这个数
-                                        .padding(start = 6.dp, top = 4.dp, bottom = 4.dp),
-                                )
+                            //
+                            // 2026-10-12 加动画：轮换时**交叉淡入淡出**（不硬切）；首次出现
+                            // （打开软件 / 数据刚到）额外加一点上浮，避免突然蹦出来。
+                            // 空态（功能关着 / 取不到数据）渲染零尺寸占位，不占位也不闪。
+                            AnimatedContent(
+                                targetState = weatherLine,
+                                transitionSpec = {
+                                    if (initialState == null) {
+                                        // 入场：淡入 + 轻微上浮
+                                        (fadeIn(tween(400)) +
+                                            slideInVertically(tween(400)) { it / 3 }) togetherWith
+                                            fadeOut(tween(150))
+                                    } else {
+                                        // 轮换：交叉淡入淡出
+                                        fadeIn(tween(400)) togetherWith fadeOut(tween(400))
+                                    }
+                                },
+                                contentAlignment = Alignment.CenterStart,
+                                label = "todayWeatherTip",
+                            ) { line ->
+                                if (line == null) {
+                                    // 首帧 / 无数据：零尺寸占位
+                                    Box(Modifier)
+                                } else {
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            // **不带 weight**：Row 先量非加权子项，提示行因此拿到整行宽度
+                                            // （优先于日期）；日期是加权项，只分到剩余宽度。见次标题的说明。
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                quickHaptics.tap()
+                                                onOpenWeather()
+                                            }
+                                            // 竖向 4dp 是把命中区从一行字（约 14dp）撑到约 22dp，
+                                            // 标题区三行合计 62dp 仍在 TopAppBar 的 64dp 之内；
+                                            // 再加大就会顶出顶栏被裁，别动这个数
+                                            .padding(start = 6.dp, top = 4.dp, bottom = 4.dp),
+                                    )
+                                }
                             }
                         }
                     }

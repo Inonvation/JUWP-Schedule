@@ -73,6 +73,20 @@ object WeatherCodes {
 
     fun isFog(code: Int): Boolean = code == 45 || code == 48
 
+    /**
+     * 这一小时会不会下（雨 / 雪 / 雷暴，或降水概率 ≥ [PRECIP_PERCENT]）。
+     *
+     * 「快下课有雨」的判据（DESIGN §3.29）：天冷时预报的「有雨」落到地上是雪，
+     * 但话术是固定的「可能有雨」，与其拆成两套文案，不如统一按「有降水」判。
+     * 概率门槛与主句的软提醒同值（30%）——低于它属于「大概率不下」，不该主动喊人带伞。
+     */
+    fun willPrecipitate(hour: WeatherHour): Boolean =
+        isRain(hour.code) || isSnow(hour.code) || isThunder(hour.code) ||
+            (hour.precipProbability ?: 0) >= PRECIP_PERCENT
+
+    /** 逐小时降水概率的门槛：与 [WeatherAdvice.RAIN_HINT_PERCENT] 同口径（软提醒起点）。 */
+    const val PRECIP_PERCENT = 30
+
     /** 白天与夜间的「晴」分开给（夜里给太阳会显得奇怪）。 */
     fun emoji(code: Int, isDay: Boolean = true): String = when (code) {
         0, 1 -> if (isDay) "☀️" else "🌙"

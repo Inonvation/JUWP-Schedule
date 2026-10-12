@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -24,7 +25,7 @@ class WeatherAdviceTest {
         uv: Double? = 3.0,
         wind: Double? = 10.0,
     ) = WeatherDay(
-        date = LocalDate.of(2026, 10, 11),
+        date = LocalDate.of(2026, 10, 12),
         code = code,
         tempMaxC = max,
         tempMinC = min,
@@ -39,6 +40,7 @@ class WeatherAdviceTest {
         currentCode: Int = 0,
         isDay: Boolean = true,
         daily: List<WeatherDay> = listOf(day(), day()),
+        hourly: List<WeatherHour> = emptyList(),
     ) = WeatherSnapshot(
         current = WeatherNow(
             tempC = 22.0,
@@ -48,12 +50,20 @@ class WeatherAdviceTest {
             code = currentCode,
             isDay = isDay,
         ),
-        hourly = emptyList(),
+        hourly = hourly,
         daily = daily,
     )
 
+    /**
+     * 10-12 周一：课文按周一排（[course] 的 day 默认 1）。
+     * 18:00 后讲 10-13 周二——「明天」那一路的课表也取得到（否则会静默退化成只有天气句）。
+     */
     private fun at(hour: Int, minute: Int = 0): LocalDateTime =
-        LocalDateTime.of(2026, 10, 11, hour, minute)
+        LocalDateTime.of(2026, 10, 12, hour, minute)
+
+    /** 只取天气句：没有课表句 / 快下课句时，[WeatherAdvice.segments] 的第一条就是它。 */
+    private fun weatherOf(snapshot: WeatherSnapshot, now: LocalDateTime): String? =
+        WeatherAdvice.segments(snapshot, now).firstOrNull()
 
     // ---- 18:00 分界 ----
 
@@ -73,7 +83,7 @@ class WeatherAdviceTest {
         val snapshot = snapshot(
             daily = listOf(day(code = 0), day(code = 63, prob = 80)),
         )
-        val line = WeatherAdvice.line(snapshot, at(20))
+        val line = weatherOf(snapshot, at(20))
         assertEquals("🌧️ 明天有雨，记得带伞", line)
     }
 
@@ -161,19 +171,151 @@ class WeatherAdviceTest {
     @Test
     fun `晴天夜间用月亮`() {
         val snapshot = snapshot(isDay = false, daily = listOf(day(code = 0), day()))
-        val line = WeatherAdvice.line(snapshot, at(9))
+        val line = weatherOf(snapshot, at(9))
         assertTrue(line!!.startsWith("🌙"))
     }
 
     @Test
     fun `参考日取不到时不给提示`() {
         val snapshot = snapshot(daily = emptyList())
-        assertNull(WeatherAdvice.line(snapshot, at(9)))
+        assertNull(weatherOf(snapshot, at(9)))
     }
 
     @Test
     fun `只有今天一天时 18点后不给提示`() {
         val snapshot = snapshot(daily = listOf(day()))
-        assertNull(WeatherAdvice.line(snapshot, at(20)))
+        assertNull(weatherOf(snapshot, at(20)))
+    }
+
+    // ---- 课表句拼接（2026-10-12） ----
+
+    /** 2026-10-12 周一（第 6 周）的课表上下文。 */
+    private val semester = SemesterConfig(startDate = "2026-09-07", totalWeeks = 20)
+
+    private val slots = listOf(
+        TimeSlot(1, "08:30", "09:10"),
+        TimeSlot(2, "09:15", "09:55"),
+        TimeSlot(3, "10:15", "10:55"),
+        TimeSlot(4, "11:00", "11:40"),
+    )
+
+    private fun course(
+        id: Long,
+        name: String,
+        position: String,
+        start: Int,
+        end: Int,
+        day: Int = 1,
+    ) = Course(
+        id = id,
+        name = name,
+        teacher = "",
+        position = position,
+        day = day,
+        startSection = start,
+        endSection = end,
+        weeks = setOf(6),
+    )
+
+    // ---- 天气句 / 课表句 / 快下课句：各成一条、轮换显示（2026-10-12） ----
+
+    @Test
+    fun `天气句与课表句各成一条`() {
+        // 白天 9:00 讲今天：晴 → 太阳图标；上午两节都在北楼 → 一条课表句
+        val snapshot = snapshot(
+            daily = listOf(day(code = 0, max = 28.0, min = 19.0, prob = 0), day()),
+        )
+        val segments = WeatherAdvice.segments(
+            snapshot = snapshot,
+            now = at(9),
+            semester = semester,
+            slots = slots,
+            courses = listOf(
+                course(1, "液压", "教学北大楼(北B102)", 1, 2),
+                course(2, "PLC", "教学北大楼(北B402)", 3, 4),
+            ),
+        )
+        assertEquals(2, segments.size)
+        assertEquals("☀️ 今天晴，19~28°C", segments[0])
+        assertTrue("实际=${segments[1]}", segments[1].startsWith("🧭 "))
+        assertTrue("实际=${segments[1]}", segments[1].contains("上午"))
+    }
+
+    @Test
+    fun `只有天气没有课表时给一条`() {
+        val snapshot = snapshot(
+            daily = listOf(day(code = 0, max = 28.0, min = 19.0, prob = 0), day()),
+        )
+        assertEquals(listOf("☀️ 今天晴，19~28°C"), WeatherAdvice.segments(snapshot, at(9)))
+    }
+
+    @Test
+    fun `有实验课时只出天气句与实验课句`() {
+        val snapshot = snapshot(
+            daily = listOf(day(code = 0, max = 28.0, min = 19.0, prob = 0), day()),
+        )
+        val segments = WeatherAdvice.segments(
+            snapshot = snapshot,
+            now = at(9),
+            semester = semester,
+            slots = slots,
+            courses = listOf(
+                course(1, "液压", "教学北大楼(北B102)", 1, 2),
+                course(2, "PLC", "教学北大楼(北B402)", 3, 4),
+                course(3, "实验", "工程训练中心208", 1, 2).copy(kind = CourseKind.Lab),
+            ),
+        )
+        assertEquals(2, segments.size)
+        assertEquals("☀️ 今天晴，19~28°C", segments[0])
+        assertTrue("实际=${segments[1]}", segments[1].startsWith("🔬 "))
+        assertTrue("实际=${segments[1]}", segments[1].contains("实验课"))
+        assertTrue("不该有南北楼句：${segments[1]}", !segments[1].contains("往返跑"))
+    }
+
+    @Test
+    fun `快下课有雨时只回那一条`() {
+        // 9:40 距第 1-2 节（9:55）下课 15 分钟，逐小时 9 点有雨 → 独占整行
+        val snapshot = snapshot(
+            hourly = listOf(
+                WeatherHour(LocalDateTime.parse("2026-10-12T09:00"), 20.0, 80, 61),
+            ),
+        )
+        val segments = WeatherAdvice.segments(
+            snapshot = snapshot,
+            now = at(9, 40),
+            semester = semester,
+            slots = slots,
+            courses = listOf(course(1, "液压", "教学北大楼(北B102)", 1, 2)),
+        )
+        assertEquals(1, segments.size)
+        assertTrue("实际=${segments[0]}", segments[0].startsWith("🌧️ "))
+        assertTrue("实际=${segments[0]}", segments[0].contains("下课"))
+    }
+
+    @Test
+    fun `课表数据不传时只有天气句`() {
+        val snapshot = snapshot(
+            daily = listOf(day(code = 0, max = 28.0, min = 19.0, prob = 0), day()),
+        )
+        assertEquals("☀️ 今天晴，19~28°C", weatherOf(snapshot, at(9)))
+    }
+
+    // ---- 逐小时「会不会下」 ----
+
+    @Test
+    fun `逐小时降水判据`() {
+        fun h(code: Int, prob: Int? = 0) = WeatherHour(
+            time = LocalDateTime.of(2026, 10, 13, 9, 0),
+            tempC = 20.0,
+            precipProbability = prob,
+            code = code,
+        )
+        assertTrue(WeatherCodes.willPrecipitate(h(61)))
+        assertTrue(WeatherCodes.willPrecipitate(h(71)))
+        assertTrue(WeatherCodes.willPrecipitate(h(95)))
+        // 概率两档：≥30 算「可能下」，29 不算
+        assertTrue(WeatherCodes.willPrecipitate(h(0, prob = 30)))
+        assertTrue(WeatherCodes.willPrecipitate(h(0, prob = 29)).not())
+        assertTrue(WeatherCodes.willPrecipitate(h(3, prob = null)).not())
     }
 }

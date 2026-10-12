@@ -11,17 +11,24 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.domain.PendingHomework.Companion.EMPTY
+import edu.jxslu.schedule.domain.ScheduleOverride
+import edu.jxslu.schedule.domain.ScheduleTips
+import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.ShortcutSettings
+import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.WeatherAdvice
 import edu.jxslu.schedule.domain.buildTodayState
 import edu.jxslu.schedule.domain.pendingHomework
 import edu.jxslu.schedule.ui.common.UndoableMessage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -131,28 +138,115 @@ class TodayViewModel(
         )
 
     /**
-     * 今日页顶栏天气提示那一行（DESIGN §3.29）。
+     * [weatherLine] 的输入快照：课表侧四个 Room 流 + 天气开关 + [tick]。
+     * 五个源是 combine 的标准重载上限，课表侧四个先套一层（类型都在 5 以内）。
+     * **声明在 [weatherLine] 之前**：Kotlin 属性按声明顺序初始化，反过来会读到未初始化值。
+     */
+    private val scheduleInputs = combine(
+        combine(
+            repo.semester,
+            repo.timeSlots,
+            repo.courses,
+            repo.overrides,
+        ) { semester, slots, courses, overrides ->
+            TipInputs(semester = semester, slots = slots, courses = courses, overrides = overrides)
+        },
+        repo.weatherEnabled,
+        tick,
+    ) { schedule, enabled, _ ->
+        schedule.copy(enabled = enabled)
+    }
+
+    /**
+     * 今日页顶栏那一行（DESIGN §3.29）：天气句 / 课表句 / 快下课有雨，**轮换显示**。
      *
-     * 三条口径：
-     * 1. **开关关着 = 一次网络都不发**（[repo] 的 weatherEnabled 是默认关的全局项）；
+     * 五条口径：
+     * 1. **天气开关关着 = 天气一次网络都不发**（[repo] 的 weatherEnabled 是默认关的全局项），
+     *    但**课表句照常出**（用户 2026-10-12：天气关着也显示课表提示）——课表句零网络，
+     *    数据就是本页已有的 semester / slots / courses / overrides；
      * 2. 随 [tick] 重算（页面每 30 秒一次）：`now` 跨过 18:00 时提示从「今天」自动切到
      *    「明天」，不用等页面重进；命中仓库的 30 分钟 TTL 缓存时零网络；
-     * 3. 取不到数据给 null，顶栏不占位、不显示半截内容。
+     * 3. 「快下课有雨」是**独立链路**（[ScheduleTips.dismissalTipFor]）：永远看今天的课，
+     *    命中就整行独占——即便 18:00 后正文讲的是明天，此刻还在上的课要下课了照样提示
+     *    （2026-10-12 复查补上，早先跟参考日走会在 18:00 后静默消失）；
+     *    它零网络（判据 = 课表 + 逐小时预报），天气关着也工作；
+     * 4. **天气句与课表句各自独立成句、每 [ROTATE_MILLIS] 轮换**（用户 2026-10-12 定）：
+     *    顶栏那一行窄，两句拼一起必被截断；轮换让每条都有整行宽度可读。
+     *    只有一条时不轮换、直接常显；
+     * 5. 取不到任何句子给 null，顶栏不占位、不显示半截内容。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val weatherLine: StateFlow<String?> = combine(repo.weatherEnabled, tick) { enabled, _ -> enabled }
-        .flatMapLatest { enabled ->
-            val weather = weatherRepo
-            if (!enabled || weather == null) {
-                // 显式标 String?：否则 flowOf(null) 推成 Flow<Nothing?>，与另一分支合不上
-                flowOf<String?>(null)
-            } else {
-                flow<String?> {
-                    emit(weather.snapshot()?.let { WeatherAdvice.line(it, nowProvider()) })
+    val weatherLine: StateFlow<String?> = scheduleInputs
+        .map { inputs -> segmentsFor(inputs) }
+        // 每 30 秒的 tick 大多产出同一组句子：只有这组句子真的变了才重开轮换，
+        // 否则每 30 秒会把轮换重置回第一条（2026-10-12 复查补上）
+        .distinctUntilChanged()
+        .flatMapLatest { segments -> rotate(segments) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * 算当前该显示的候选句（快下课独占 / 天气句 / 课表句），按显示优先级排列。
+     * 天气开关关着时零网络，只出课表句。
+     */
+    private suspend fun segmentsFor(inputs: TipInputs): List<String> {
+        val now = nowProvider()
+        val weather = weatherRepo
+        val snapshot = if (inputs.enabled && weather != null) {
+            runCatching { weather.snapshot() }.getOrNull()
+        } else {
+            null
+        }
+        if (snapshot != null) {
+            return WeatherAdvice.segments(
+                snapshot = snapshot,
+                now = now,
+                semester = inputs.semester,
+                slots = inputs.slots,
+                courses = inputs.courses,
+                overrides = inputs.overrides,
+            )
+        }
+        // 天气开关关着就不发请求（DESIGN §3.29 口径），但课表句照出（零网络）
+        val date = now.toLocalDate().plusDays(WeatherAdvice.referenceDayIndex(now).toLong())
+        return ScheduleTips.dayTipFor(
+            date = date,
+            semester = inputs.semester,
+            slots = inputs.slots,
+            courses = inputs.courses,
+            overrides = inputs.overrides,
+        )?.let { listOf(it.prefix + it.text) } ?: emptyList()
+    }
+
+    /** 多条时每 [ROTATE_MILLIS] 轮换一条；单条常显；空表给 null（页面不占位）。 */
+    private fun rotate(segments: List<String>): Flow<String?> = flow {
+        when {
+            segments.isEmpty() -> emit(null)
+            segments.size == 1 -> emit(segments.first())
+            else -> {
+                var index = 0
+                while (true) {
+                    emit(segments[index % segments.size])
+                    index++
+                    delay(ROTATE_MILLIS)
                 }
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    }
+
+    private companion object {
+        /** 顶栏多条提示的轮换间隔（毫秒）。 */
+        const val ROTATE_MILLIS = 5_000L
+    }
+
+    /** [weatherLine] 的输入快照：课表侧四个 Room 流 + 天气开关 + tick 的产物。 */
+    private data class TipInputs(
+        /** 天气开关；课表句不看它（详见 [weatherLine] 的口径 1）。 */
+        val enabled: Boolean = true,
+        val semester: SemesterConfig?,
+        val slots: List<TimeSlot>,
+        val courses: List<Course>,
+        val overrides: List<ScheduleOverride>,
+    )
 
     /**
      * 卡片开关的首帧初值。这三个开关独立于 [ready] 门闸（那管的是 Room 派生状态），

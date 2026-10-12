@@ -1054,7 +1054,9 @@ UI 规格见 §3.28。
 请求里只有坐标与字段清单；超时收到 20s）→ `data/weather/WeatherRepository`
 （30 分钟 TTL + `Mutex` 保证同刻只放一个请求 + **刷新失败回退旧快照**；`load()` 带
 `fresh` 标记供页面判「这份可能旧了」）→ `domain/Weather`（快照模型 + WMO 码 → emoji /
-中文短语的唯一映射处）+ `domain/WeatherAdvice`（18:00 分界与话术优先级，纯函数，可 JVM 测）。
+中文短语的唯一映射处）+ `domain/WeatherAdvice`（18:00 分界、话术优先级、候选句列表，
+纯函数）+ `domain/ScheduleTips`（顶栏课表句：南北楼 / 实验课 / 快下课有雨，纯函数）。
+UI 见 §3.29。
 
 **查询点**：校区坐标（`WeatherApi.CAMPUS_LAT/LNG`，与 `BikeNearby.DEFAULT_CENTER_*` 同一组数字）。
 那边是 GCJ-02、这里是 WGS84 口径，南昌一带差几百米——天气网格以公里计，不做反算；
@@ -1083,4 +1085,5 @@ UI 规格见 §3.28。
 单独一条流不进 `baseDisplayPrefs`（combine 已满员）；**关着时今日页一行网络都不发**。
 仓库单例走 `Graph.weatherRepository(context)`。
 
-**测试**：`WeatherAdviceTest` 17 例（18:00 边界 / 优先级顺序 / 兜底与容错 / 参考日取不到）。
+**测试**：`WeatherAdviceTest`（18:00 边界 / 优先级顺序 / 兜底与容错 / 候选句列表）与
+`ScheduleTipsTest`（半天分组 · ≥2 节课门槛 · 南/北楼判定 · 实验课优先 · 快下课窗口边界）。

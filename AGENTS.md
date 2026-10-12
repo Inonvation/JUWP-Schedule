@@ -265,6 +265,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  时刻 · `grabNextDelayMs` 退避 · `grabFirstMatch` 命中 · `grabShouldStop` 收工），§4.45）
  + Weather·WeatherAdvice（天气：WMO 码 → emoji/中文短语 · **18:00 分界**与话术优先级
  （正在下雨 > 雪/雷暴 > 有雨 > 降水概率 > 雾 > 防晒 > 防暑 > 添衣 > 大风 > 兜底），§3.29）
+ + ScheduleTips（顶栏课表句：上午/下午南北楼往返跑 / 都在一栋楼 · 有实验课只出实验课句 ·
+ 快下课有雨独占整行；≥2 节课且楼解析得出才说，否则整句丢弃，§3.29）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
