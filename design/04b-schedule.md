@@ -287,7 +287,7 @@ HugeIcons 的 `isTransitive = false` 仍保留（防 `androidx.core` 被抬到 1
 
 | 口径 | 条件 | 执行 |
 |------|------|------|
-| `ExplicitComponent` | activity 非空 | `setClassName(pkg, activity)` 直达（菜鸟跳开屏广告就靠这个） |
+| `ExplicitComponent` | activity 非空 | `setClassName(pkg, activity)` 直达（越过启动页 / 开屏类目标用它；当前预设没有用到这一档） |
 | `UriView` | uri 非空 | `ACTION_VIEW` + `setPackage`；失败去包名重试一次（lightlife 兜底链） |
 | `LaunchPackage` | 仅包名 | `getLaunchIntentForPackage` |
 

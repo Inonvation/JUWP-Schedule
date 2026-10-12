@@ -120,12 +120,13 @@ class ShortcutsTest {
         assertEquals("com.taobao.taobao", taobao.pkg)
         val cainiao = Shortcuts.PRESET_SHORTCUTS[2]
         assertEquals("com.cainiao.wireless", cainiao.pkg)
+        assertEquals("cainiao://startapp/take_express", cainiao.uri)
+        assertTrue("菜鸟改为三方路由直达后不再用显式 Activity", cainiao.activity.isEmpty())
+        // 菜鸟走三方路由直达取件码页，折算必须是 UriView 口径
         assertEquals(
-            "com.cainiao.wireless.homepage.view.activity.HomePageActivity",
-            cainiao.activity,
+            ShortcutLaunchPlan.UriView("cainiao://startapp/take_express", "com.cainiao.wireless"),
+            Shortcuts.resolveLaunchPlan(cainiao),
         )
-        // 菜鸟靠显式 Activity 跳过开屏广告，折算必须是 ExplicitComponent 口径
-        assertTrue(Shortcuts.resolveLaunchPlan(cainiao) is ShortcutLaunchPlan.ExplicitComponent)
     }
 
     // ---- JSON：脏数据回退预设、空列表保持为空、roundtrip ----
@@ -285,9 +286,17 @@ class ShortcutsTest {
                 Shortcuts.migratePresets(table, history = Shortcuts.PRESET_HISTORY),
             )
         }
-        // 最新一条历史仍是「拼多多目标加 `?tab=ID_CODE` 之前」的原值，守住 v3 改动确实入了史
+        // 最新一条历史仍是「菜鸟=显式 Activity 开首页」版本的原值，守住 v4 改动确实入了史；
+        // 再往上一张仍是拼多多加 `?tab=ID_CODE` 之前的原值，守住 v3 边界。
         val latest = Shortcuts.PRESET_HISTORY.first()
-        assertEquals("preset_pdd", latest[0].id)
-        assertEquals("pinduoduo://com.xunmeng.pinduoduo/mdkd/package", latest[0].uri)
+        assertEquals("preset_cainiao", latest[2].id)
+        assertEquals(
+            "com.cainiao.wireless.homepage.view.activity.HomePageActivity",
+            latest[2].activity,
+        )
+        assertEquals(
+            "pinduoduo://com.xunmeng.pinduoduo/mdkd/package",
+            Shortcuts.PRESET_HISTORY[1][0].uri,
+        )
     }
 }

@@ -7,7 +7,7 @@ import java.util.UUID
 
 /**
  * 一条快捷方式。目标三种填法（互不排斥，按 [resolveLaunchPlan] 的优先级折算）：
- * 只填包名 = 打开 App；包名 + Activity = 直达页面（菜鸟跳开屏广告就靠这个）；
+ * 只填包名 = 打开 App；包名 + Activity = 直达页面（越过启动页 / 开屏类目标用它）；
  * 填链接 = 打开链接（https 或私有 scheme，可再配包名限定宿主）。
  *
  * `presetIndex >= 0` 表示预设槽（0=拼多多 1=淘宝 2=菜鸟）：
@@ -57,7 +57,8 @@ object Shortcuts {
     /**
      * 内置预设。拼多多目标带 `?tab=ID_CODE` 直达「身份码」页（2026-10-12 真机实测：
      * 不带参数只落「取快递」页）；淘宝口径取自 light-life 实测可用的值；
-     * 菜鸟走显式 Activity 直达首页（跳过开屏广告），Activity 名变更时用户可在编辑表单里自己改。
+     * 菜鸟走三方路由 `cainiao://startapp/take_express` 直达取件码页（2026-10-12 真机实测：
+     * 冷启动 3 秒直达、无开屏广告；此前的显式 Activity 口径见 [PRESET_HISTORY] 最新一表）。
      */
     val PRESET_SHORTCUTS = listOf(
         ShortcutItem(
@@ -76,9 +77,9 @@ object Shortcuts {
         ),
         ShortcutItem(
             id = "preset_cainiao",
-            name = "菜鸟（无广启动）",
+            name = "菜鸟取件码",
+            uri = "cainiao://startapp/take_express",
             pkg = "com.cainiao.wireless",
-            activity = "com.cainiao.wireless.homepage.view.activity.HomePageActivity",
             presetIndex = 2,
         ),
     )
@@ -94,6 +95,31 @@ object Shortcuts {
      * 追加到这里，否则老用户的「未编辑预设槽」无法自动升级到新目标。
      */
     val PRESET_HISTORY: List<List<ShortcutItem>> = listOf(
+        // v3 → v4（2026-10-12）：菜鸟从「显式 Activity 开首页（无广启动）」换成三方路由
+        // 直达取件码页并改名「菜鸟取件码」（真机实测 startapp 转发不弹开屏）。
+        listOf(
+            ShortcutItem(
+                id = "preset_pdd",
+                name = "拼多多取件码",
+                uri = "pinduoduo://com.xunmeng.pinduoduo/mdkd/package?tab=ID_CODE",
+                pkg = "com.xunmeng.pinduoduo",
+                presetIndex = 0,
+            ),
+            ShortcutItem(
+                id = "preset_taobao",
+                name = "淘宝身份码",
+                uri = "https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code",
+                pkg = "com.taobao.taobao",
+                presetIndex = 1,
+            ),
+            ShortcutItem(
+                id = "preset_cainiao",
+                name = "菜鸟（无广启动）",
+                pkg = "com.cainiao.wireless",
+                activity = "com.cainiao.wireless.homepage.view.activity.HomePageActivity",
+                presetIndex = 2,
+            ),
+        ),
         // v2 → v3（2026-10-12）：拼多多目标追加 `?tab=ID_CODE` 直达「身份码」页
         //（改动前只到「取快递」页；真机实测两个落点分属两页）。
         listOf(
