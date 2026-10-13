@@ -7,6 +7,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
@@ -14,10 +17,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +31,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,7 +68,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -77,6 +82,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,8 +96,6 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.QuickScanTarget
-import edu.jxslu.schedule.domain.ShortcutItem
-import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
@@ -104,15 +109,18 @@ import edu.jxslu.schedule.ui.qzxy.WateringReconcileEffect
 import edu.jxslu.schedule.ui.qzxy.isQzxyWateringExpired
 import edu.jxslu.schedule.ui.qzxy.rememberQzxyWateringClock
 import edu.jxslu.schedule.ui.common.AppPermissions
-import edu.jxslu.schedule.domain.metaLine
+import edu.jxslu.schedule.domain.placeTeacherLine
 import edu.jxslu.schedule.domain.remarkPreview
 import edu.jxslu.schedule.domain.textbookTitlesLine
 import edu.jxslu.schedule.domain.sectionRange
+import edu.jxslu.schedule.domain.sectionShortLabel
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.ui.common.ResumedTickerEffect
 import edu.jxslu.schedule.ui.common.AppCardRow
+import edu.jxslu.schedule.ui.common.QuickCardMinHeight
+import edu.jxslu.schedule.ui.common.QuickEntryCard
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
@@ -127,9 +135,6 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.SectionHeader
-import edu.jxslu.schedule.ui.common.ShortcutIcon
-import edu.jxslu.schedule.ui.common.ShortcutLauncher
-import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.common.courseColor
 import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -143,15 +148,10 @@ import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.CalendarOff
 import me.rerere.hugeicons.stroke.CheckmarkCircle02
 import me.rerere.hugeicons.stroke.ChevronDown
-import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.ChevronUp
-import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
-import me.rerere.hugeicons.stroke.Edit02
-import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Inbox
-import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.Toolbox
@@ -202,14 +202,10 @@ fun TodayScreen(
     onOpenPayCode: () -> Unit = {},
     /** 顶栏「+ → 收件箱」：应用内重要事实的留痕页（DESIGN §3.24） */
     onOpenInbox: () -> Unit = {},
-    /** 顶栏「+ → 志愿服务」：问渠 · 志愿服务页（DESIGN §3.28，2026-10-08） */
-    onOpenWenqu: () -> Unit = {},
     /** 顶栏「+ → 百宝箱」：小工具集合（图片工具 + 菜鸟批量查，DESIGN §4.47，2026-10-12） */
     onOpenToolbox: () -> Unit = {},
     /** 顶栏天气提示那一行（DESIGN §3.29）：点它进天气详情页 */
     onOpenWeather: () -> Unit = {},
-    /** 快捷方式设置页（长按图标进；null=不定位，非 null=打开后直接编辑该条目，DESIGN §3.8） */
-    onOpenShortcuts: (String?) -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
     onOpenHomeworkTodo: () -> Unit = {},
     /** 某课程的笔记·课件（课程详情弹窗入口，DESIGN §3.11） */
@@ -245,7 +241,6 @@ fun TodayScreen(
     // 挂在课名右边（2026-10-08 收口，不再另起一行）；单独订阅不掺课表状态（与 homework
     // 同纪律）；空映射 = 无教材数据，卡片不占位
     val textbookTitles by viewModel.textbookTitles.collectAsStateWithLifecycle()
-    val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
     val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
     val qzxyCardEnabled by viewModel.qzxyCardEnabled.collectAsStateWithLifecycle()
     val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
@@ -288,20 +283,7 @@ fun TodayScreen(
     var pendingDelete by remember { mutableStateOf<Course?>(null) }
     val snackbar = remember { SnackbarHostState() }
 
-    // 快捷方式拉起失败的兜底通道（DESIGN §3.8）：Snackbar 带「去设置」动作，
-    // 比纯 Toast 多一步「就地修正配置」的出口（菜鸟 Activity 改名这类配置失效场景）；
-    // 动作携带失败条目 id，设置页打开后直接展开它的编辑弹层
     val scope = rememberCoroutineScope()
-    val showShortcutError: (String, String?) -> Unit = { message, itemId ->
-        scope.launch {
-            val result = snackbar.showNotice(
-                message,
-                actionLabel = "去设置",
-                duration = SnackbarDuration.Long,
-            )
-            if (result == SnackbarResult.ActionPerformed) onOpenShortcuts(itemId)
-        }
-    }
 
     // 教务导入成功的气泡（DESIGN §3.3）：今日页空态的「从教务导入」也是入口，落点就是这一页
     JwImportOutcomeEffect(snackbar)
@@ -403,15 +385,12 @@ fun TodayScreen(
     }
 
     // 底部固定区（DESIGN §3.3）三态共用：同一份组合函数喂给加载中/空态/有课态，
-    // 「快捷方式在上、开水卡最底」的顺序与贴底位置只有一处定义
+    // 「快趣出行卡在上、开水卡最底」的顺序与贴底位置只有一处定义。
+    // 快捷方式网格已于 2026-10-13 移出今日页（并入生活页「取快递」弹窗）。
     val bottomDock: @Composable () -> Unit = {
         TodayBottomDock(
             dockExpanded = dockExpanded,
-            shortcuts = shortcuts,
             onToggleDock = { viewModel.setTodayDockExpanded(dockExpanded != true) },
-            onOpenShortcuts = onOpenShortcuts,
-            onShortcutError = showShortcutError,
-            onNotice = showNotice,
             // 快趣出行 · 骑行卡（DESIGN §3.9，开关关 = 整卡不占位）：整卡点进「骑行」页。
             // 2026-09-29 结构重构后不再有右侧「附近单车 ›」二级入口——地图就是那个页面的主体
             ebikeCard = if (ebikeCardEnabled) {
@@ -620,20 +599,10 @@ fun TodayScreen(
                                     onOpenInbox()
                                 },
                             )
-                            // 志愿服务（DESIGN §3.28，2026-10-08）：问渠页在「我的 → 校园服务」
-                            // 里埋得深，顶栏给一条常驻近路
-                            DropdownMenuItem(
-                                text = { Text("志愿服务") },
-                                leadingIcon = { Icon(HugeIcons.HeartHandshake, contentDescription = null) },
-                                onClick = {
-                                    quickMenuOpen = false
-                                    quickHaptics.tap()
-                                    onOpenWenqu()
-                                },
-                            )
                             // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合
                             // （水印 / 拼接 / 菜鸟批量查）；总开关在 通用设置 → 功能，
                             // 关掉时整行不出现
+                            // （「志愿服务」一行 2026-10-13 删除：问渠已进生活页「校园服务」）
                             if (toolboxEnabled) {
                                 DropdownMenuItem(
                                     text = { Text("百宝箱") },
@@ -855,7 +824,6 @@ fun TodayScreen(
  */
 @Composable
 private fun TodayBottomDock(
-    shortcuts: ShortcutSettings,
     /**
      * 底部抽屉展开态（DESIGN §3.3）；持久化，进页面时按上次的来。
      * **null = DataStore 还没读出**，整块不渲染——先按默认值画一帧再纠回来
@@ -863,17 +831,13 @@ private fun TodayBottomDock(
      */
     dockExpanded: Boolean?,
     onToggleDock: () -> Unit,
-    onOpenShortcuts: (String?) -> Unit,
-    onShortcutError: (String, String?) -> Unit,
-    onNotice: (String, NoticeTone) -> Unit = { _, _ -> },
-    /** 快趣出行码整行卡（DESIGN §3.9）；快捷方式之下、开水卡之上 */
+    /** 快趣出行码整行卡（DESIGN §3.9）；恒为 dock 第一项 */
     ebikeCard: (@Composable () -> Unit)? = null,
     /** 生活卡片带：胖乖生活 + 趣智校园（§3.18），各自可关；恒为 dock 最后一项 */
     waterCard: (@Composable () -> Unit)? = null,
 ) {
     val expanded = dockExpanded ?: return
-    val hasShortcuts = shortcuts.enabled && shortcuts.items.isNotEmpty()
-    if (!hasShortcuts && ebikeCard == null && waterCard == null) return
+    if (ebikeCard == null && waterCard == null) return
 
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
     val bottomClearance = LocalBottomBarClearance.current
@@ -892,7 +856,7 @@ private fun TodayBottomDock(
                 .heightIn(max = maxHeight)
                 .verticalScroll(rememberScrollState()),
         ) {
-            // 把手恒在：整块内容（快捷方式网格 + 服务格 + 开水卡）都在它下面折叠
+            // 把手恒在：整块内容（快趣出行卡 + 开水卡）都在它下面折叠
             DockHandle(expanded = expanded, onToggle = onToggleDock)
             // 只做高度动画，锚点选 **Top**：卡片钉在底部，高度收缩时它的顶边向下走，
             // 内容锚在顶边于是整块跟着下移——读起来就是「抽屉整体下降」。
@@ -913,22 +877,13 @@ private fun TodayBottomDock(
                 // 底部留白挂在**被折叠的内容**里，不是挂在滚动容器上：
                 // 挂容器上时收起态也留着这 16dp，卡片比把手高一截，文字看着偏上。
                 Column(Modifier.padding(bottom = 16.dp)) {
-                    if (hasShortcuts) {
-                        ShortcutQuickGrid(
-                            shortcuts.items,
-                            { onOpenShortcuts(null) },
-                            onShortcutError,
-                            onNotice,
-                        )
-                    }
-                    // 快趣出行码整行卡（横内缩在 EbikeCard 自带）：上方有区块时给呼吸距离
+                    // 快趣出行码整行卡（横内缩在 EbikeCard 自带）
                     if (ebikeCard != null) {
-                        Box(Modifier.padding(top = if (hasShortcuts) 16.dp else 0.dp)) { ebikeCard() }
+                        ebikeCard()
                     }
                     if (waterCard != null) {
                         // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
-                        val hasAbove = hasShortcuts || ebikeCard != null
-                        Box(Modifier.padding(top = if (hasAbove) 16.dp else 0.dp)) { waterCard() }
+                        Box(Modifier.padding(top = if (ebikeCard != null) 16.dp else 0.dp)) { waterCard() }
                     }
                 }
             }
@@ -998,52 +953,45 @@ private fun TodayContent(
     onOpenHomeworkTodo: () -> Unit,
     bottomDock: @Composable () -> Unit,
 ) {
+    val sectionColumnWidth = rememberSectionColumnWidth(state.timeline)
     Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 16.dp),
         ) {
-            val focus = state.ongoing ?: state.next
-            // 焦点卡 ↔「上完/没课」的切换给淡入淡出：这是今日页最常发生的状态跳变
-            //（下课瞬间），硬切显得突兀
-            item(key = "focus") {
-                AnimatedContent(
-                    targetState = focus,
-                    contentKey = { it?.id },
-                    transitionSpec = {
-                        fadeIn(tween(220)) togetherWith fadeOut(tween(220))
-                    },
-                    label = "todayFocus",
-                ) { f ->
-                    when {
-                        f != null -> FocusCard(state, f, textbookTitles, onOpenCourse)
-                        // 远课态：下一节课在 60 分钟窗口外，不冒充「下一节」；
-                        // 给一行轻量提示交代落点（DESIGN §3.3），不弹焦点卡
-                        state.remaining.isNotEmpty() -> NextStartHint(state)
-                        else -> DoneBlock(state)
-                    }
+            // 今日课程：一列到底。正在上的课**留在原位**、就地套焦点卡形态；最近一节已上完的
+            // 课置灰保留（更早的不出现）——三态切换的动画在 TodayCourseCard 里。
+            // 今天没课 / 不在学期 / 全部上完：一行状态卡（DoneBlock）。
+            if (state.timeline.isNotEmpty() && !state.todayAllDone) {
+                item(key = "courses-header") {
+                    // 计数 = 列表里的卡片数（不是当天总节数）：已上完的会收起、正在上的会在位，
+                    // 标题数字必须和下面看到的卡数对上（2026-10-13 用户反馈）
+                    SectionHeader("今日课程", trailing = "${state.timeline.size} 节课")
                 }
-            }
-
-            // 「今天还有」只列焦点之外的课；正在上的课已在焦点卡里，不重复出现。
-            // 焦点课若是当天唯一剩余（focus 取走它后列表为空），整段标题也不出现——
-            // 「今天还有 1 节」下面空着比不显示更费解。
-            // 计数 = 列表里的课数（不含焦点卡那节）：旧版数 remaining，
-            // 「今天还有 2 节」下面只列 1 节，数字对不上页面课块数
-            if (state.listCourses.isNotEmpty()) {
-                item(key = "remaining-header") {
-                    SectionHeader("今天还有 ${state.listCourses.size} 节")
-                }
-                items(state.listCourses, key = { it.id }) { course ->
-                    CourseTimelineRow(
+                items(state.timeline, key = { it.id }) { course ->
+                    val isOngoing = state.ongoing?.id == course.id
+                    TodayCourseCard(
                         course = course,
                         slots = state.slots,
                         textbookTitle = textbookTitles[course.name],
+                        sectionColumnWidth = sectionColumnWidth,
+                        ongoing = isOngoing,
+                        isNext = state.ongoing == null && state.next?.id == course.id,
+                        done = state.endedRecent?.id == course.id,
+                        countdown = if (isOngoing) {
+                            state.ongoingCountdown
+                                ?: state.minutesToOngoingEnd?.let { "还有 $it 分钟下课" }
+                        } else {
+                            state.minutesToNext?.let { "还有 $it 分钟上课" }
+                        },
+                        progress = if (isOngoing) state.ongoingProgress else null,
                         onClick = { onOpenCourse(course) },
                         // 删除/新增课程时列表项平滑进出场，不再整列硬跳
                         modifier = Modifier.animateItem(),
                     )
                 }
+            } else {
+                item(key = "done") { DoneBlock(state) }
             }
 
             // 明天只在今天没有待上课程（上完 / 没课）时上桌，今天的信息优先
@@ -1071,125 +1019,238 @@ private fun TodayContent(
     }
 }
 
+/** 左列节次标签右侧的呼吸位（在实测最宽标签之外再加这一点，避免文字贴住竖分隔）。 */
+private val SectionColumnTrailingGap = 8.dp
+
 /**
- * 顶部焦点卡：正在上的课，或 60 分钟窗口内的下一节（DESIGN §3.3）。
+ * 左列（节次 + 时间）宽度：按这一批课里**最宽的节次标签**实测取齐，再留一点呼吸位。
  *
- * 满宽卡片样式（2026-09-21 定稿，用户拍板）：主色 8% 底 + 左缘 3dp 主色竖条，
- * 内部「状态行（正在上课 / 下一节 · 第N-M节 + 倒计时）→ 课名（+ 教材名，课名右侧）→
- * meta 行（+ 备注预览，右端）→ （正在上课时）进度条」。与时间轴行
- * （[CourseTimelineRow]）**同一卡片形态**：同为满宽、同圆角、同内边距体系，两处卡片
- * 左右缘天然对齐；区分靠底色（焦点卡主色 / 时间轴行课程色）与状态行。焦点课从列表里
- * 拿走（不两处重复）；点卡片弹只读详情（编辑/删除是详情里的二级动作，与课表页同口径）。
+ * 为什么不写死一个值：写死时短标签（如「3-4 节」）右侧会空出一大截，看着像排版坏了
+ * （2026-10-13 真机反馈「节数右侧留有好大的空白」）。取齐最宽标签既保证各卡竖分隔对齐，
+ * 又不留多余空白。实测走 `TextMeasurer`，跟随系统字体缩放。
  */
 @Composable
-private fun FocusCard(
-    state: TodayState,
-    focus: Course,
-    textbookTitles: Map<String, List<String>>,
-    onOpenCourse: (Course) -> Unit,
+private fun rememberSectionColumnWidth(courses: List<Course>): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+    return remember(courses, style, density) {
+        val maxPx = courses.maxOfOrNull {
+            measurer.measure(sectionShortLabel(it), style).size.width
+        } ?: 0
+        with(density) { maxPx.toDp() } + SectionColumnTrailingGap
+    }
+}
+
+/**
+ * 今日页统一课程卡（2026-10-13）：一列到底，三种形态**就地**切换。
+ *
+ * - **未上**：课程色 16% 底 + 左列节次/时间 + 竖分隔 + 课名（+ 教材）/ 地点·教师（+ 备注）
+ * - **正在上 / 下一节**：现版焦点卡形态——主色 8% 底 + 左缘主色竖条 + 状态行（含倒计时）
+ *   + 进度条（仅正在上）；左列节次/时间收起（宽度与透明度过渡）
+ * - **已上完**：整卡置灰 + 右端「已下课」
+ *
+ * 形态切换全部走 animate*（底色 / 左缘竖条 / 左列宽度 / 展开区高度），焦点在课程间
+ * 转移时不硬跳。点卡片弹只读详情（编辑/删除是详情里的二级动作，与课表页同口径）。
+ */
+@Composable
+private fun TodayCourseCard(
+    course: Course,
+    slots: List<TimeSlot>,
+    textbookTitle: List<String>?,
+    /** 左列（节次 + 时间）宽度：由 [rememberSectionColumnWidth] 按当天最宽的节次标签实测取齐 */
+    sectionColumnWidth: Dp,
+    ongoing: Boolean,
+    isNext: Boolean,
+    done: Boolean,
+    countdown: String?,
+    progress: Float?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val primary = MaterialTheme.colorScheme.primary
-    val ongoing = state.ongoing != null
+    val accent = courseColor(course.colorIndex)
+    val focused = ongoing || isNext
     val haptics = rememberAppHaptics()
 
-    val countdown: String? = if (ongoing) {
-        state.ongoingCountdown
-            ?: state.minutesToOngoingEnd?.let { "还有 $it 分钟下课" }
-    } else {
-        // 「下一节」进焦点卡的前提就是 ≤60 分钟（TodayState 的准入窗口），直接说分钟数
-        state.minutesToNext?.let { "还有 $it 分钟上课" }
-    }
+    val background by animateColorAsState(
+        targetValue = when {
+            focused -> primary.copy(alpha = 0.08f)
+            done -> onSurface.copy(alpha = 0.04f)
+            else -> accent.copy(alpha = 0.16f)
+        },
+        animationSpec = tween(340),
+        label = "todayCourseBg",
+    )
+    // 已上完：整卡内容淡出（底色另算）
+    val faded by animateFloatAsState(
+        targetValue = if (done) 0.55f else 1f,
+        animationSpec = tween(340),
+        label = "todayCourseFaded",
+    )
+    // 左缘主色竖条：仅焦点态显示，走透明度过渡（避免切换时竖条突然出现 / 消失）
+    val barAlpha by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(340),
+        label = "todayCourseBar",
+    )
+    // 左列（节次 + 时间）：焦点态宽度收成 0、内容淡出。宽度按实测的最宽节次标签取齐，
+    // 不写死——写死时「3-4 节」右侧会空出一大截（2026-10-13 真机反馈）
+    val leftWidth by animateDpAsState(
+        targetValue = if (focused) 0.dp else sectionColumnWidth,
+        animationSpec = tween(340),
+        label = "todayCourseLeftWidth",
+    )
+    val leftAlpha by animateFloatAsState(
+        targetValue = if (focused) 0f else 1f,
+        animationSpec = tween(220),
+        label = "todayCourseLeftAlpha",
+    )
+    val textbook = textbookTitlesLine(textbookTitle.orEmpty())
+    val meta = placeTeacherLine(course)
+    val remark = remarkPreview(course.remark)
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .clip(AppCardDefaults.Shape)
-            .background(primary.copy(alpha = 0.08f))
-            // 无界高度约束下 fillMaxHeight 是 no-op，竖条会缩成 0 高——必须先定等高基准
-            .height(IntrinsicSize.Min)
-            .clickable(onClickLabel = "查看课程") {
-                haptics.tap()
-                onOpenCourse(focus)
-            },
-    ) {
-        // 左缘主色竖条：焦点卡的视觉锚
-        Box(
-            Modifier
-                .width(3.dp)
-                .fillMaxHeight()
-                .background(primary),
-        )
-        Column(
-            Modifier
-                .weight(1f)
-                .padding(horizontal = 11.dp, vertical = 13.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = (if (ongoing) "正在上课" else "下一节") + " · " + sectionRange(focus),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = primary,
-                )
-                Spacer(Modifier.weight(1f))
-                if (countdown != null) {
-                    Text(
-                        text = countdown,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = primary,
-                        textAlign = TextAlign.End,
-                        maxLines = 2,
+            .background(background)
+            // 左缘主色竖条用绘制而不是子节点：无界高度下 fillMaxHeight 是 no-op，
+            // 而 IntrinsicSize.Min 与 AnimatedVisibility 的固有尺寸测量不兼容，故画出来。
+            .drawBehind {
+                if (barAlpha > 0f) {
+                    val inset = 11.dp.toPx()
+                    drawRect(
+                        color = primary.copy(alpha = barAlpha),
+                        topLeft = Offset(0f, inset),
+                        size = Size(3.dp.toPx(), (size.height - inset * 2).coerceAtLeast(0f)),
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            // 课名 + 教材名（DESIGN §4.31，2026-10-08 收口）：教材名挂在课名**右边**同一行，
-            // 不再另起一行抬卡高。课名先量（优先保完整、最长两行），教材名吃余量、不够省略号
-            val textbookLine = textbookTitlesLine(textbookTitles[focus.name].orEmpty())
+            .clickable(onClickLabel = "查看课程") {
+                haptics.tap()
+                onClick()
+            }
+            // 卡内统一内缩（与 AppCardDefaults.Padding 同档）：左列节次/时间与课名都从这里起，
+            // 不再让节次贴住卡片左缘（2026-10-13 真机反馈「节数和课程都偏左」）
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 左列：节次 + 起始时刻。焦点态宽度收成 0（外框裁剪，内容不压缩）
+        Box(
+            modifier = Modifier
+                .width(leftWidth)
+                .clipToBounds(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(sectionColumnWidth)
+                    .alpha(leftAlpha),
+            ) {
+                Text(
+                    text = sectionShortLabel(course),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = onSurface,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = clockOf(slots, course),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = onSurface.copy(alpha = 0.5f),
+                    maxLines = 1,
+                )
+            }
+        }
+        // 竖分隔：焦点态淡出并让位
+        if (leftWidth > 0.dp) {
+            Box(
+                Modifier
+                    .width(1.dp)
+                    .height(38.dp)
+                    .alpha(leftAlpha)
+                    .background(onSurface.copy(alpha = 0.12f)),
+            )
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .alpha(faded),
+        ) {
+            // 状态行（仅焦点态）：正在上课 / 下一节 + 倒计时
+            AnimatedVisibility(
+                visible = focused,
+                enter = expandVertically(tween(300)) + fadeIn(tween(300)),
+                exit = shrinkVertically(tween(260)) + fadeOut(tween(160)),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = (if (ongoing) "正在上课" else "下一节") + " · " + sectionRange(course),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = primary,
+                    )
+                    if (countdown != null) {
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            text = countdown,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = primary,
+                            textAlign = TextAlign.End,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            // 课名 + 教材名（DESIGN §4.31）：教材名挂在课名**右边**同一行，不再另起一行抬卡高。
+            // 课名先量（优先保完整、最长两行），教材名吃余量、不够省略号
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = focus.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = course.name,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    color = onSurface,
                 )
-                if (textbookLine != null) {
+                if (textbook != null) {
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = textbookLine,
-                        style = MaterialTheme.typography.bodySmall,
+                        text = textbook,
+                        style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        color = onSurface.copy(alpha = 0.62f),
+                        color = onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
             }
-            Spacer(Modifier.height(3.dp))
-            // meta 行 + 备注预览（DESIGN §4.3，2026-10-08 收口）：备注贴卡片**右下角**——
-            // 与 meta 同一行、右端对齐，不再另起一行；meta 先量保完整（时刻/地点/教师是
-            // 卡面主信息），备注吃余量。空 / 截断口径在 domain 的 remarkPreview（20 字上限），
-            // 完整内容在详情面板
-            val meta = metaLine(state.slots, focus)
-            val remark = remarkPreview(focus.remark)
+            // meta 行（地点·教师）+ 备注预览（贴卡片右下角）；左列已单列时刻，这里不再重复时间段
             if (meta.isNotBlank() || remark != null) {
+                Spacer(Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (meta.isNotBlank()) {
                         Text(
                             text = meta,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = onSurface.copy(alpha = 0.62f),
+                            color = onSurface.copy(alpha = 0.68f),
                         )
                     }
                     if (remark != null) {
                         Text(
                             text = remark,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = onSurface.copy(alpha = 0.45f),
@@ -1201,47 +1262,28 @@ private fun FocusCard(
                     }
                 }
             }
-            if (ongoing) {
-                val progress = state.ongoingProgress
-                if (progress != null) {
+            // 进度条（仅正在上）
+            AnimatedVisibility(
+                visible = ongoing && progress != null,
+                enter = expandVertically(tween(300)) + fadeIn(tween(300)),
+                exit = shrinkVertically(tween(260)) + fadeOut(tween(160)),
+            ) {
+                Column {
                     Spacer(Modifier.height(8.dp))
-                    ProgressBar(progress)
+                    ProgressBar(progress ?: 0f)
                 }
             }
         }
-    }
-}
-
-/**
- * 远课态的轻量提示（DESIGN §3.3）：下一节课在 60 分钟窗口外时不显示「下一节」焦点卡，
- * 给一行轻提示交代落点（「今天的课 14:00 开始」），随焦点卡淡入淡出同一动画通道。
- */
-@Composable
-private fun NextStartHint(state: TodayState) {
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val first = state.remaining.firstOrNull() ?: return
-    AppCardRow(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
-    ) {
-        Icon(
-            imageVector = HugeIcons.Clock01,
-            contentDescription = null,
-            tint = primary,
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // 「已下课」标签（仅已上完）
+        if (done) {
             Text(
-                text = "今天的课 ${clockOf(state.slots, first)} 开始",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = sectionRange(first),
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
+                text = "已下课",
+                style = MaterialTheme.typography.labelSmall,
+                color = onSurface.copy(alpha = 0.4f),
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.CenterVertically)
+                    .padding(start = 8.dp),
             )
         }
     }
@@ -1314,105 +1356,6 @@ private fun DoneBlock(state: TodayState) {
 }
 
 /**
- * 时间轴课程行：**满宽课程色卡**（2026-09-21 改版，用户拍板）。
- *
- * 与焦点卡（[FocusCard]）**同一卡片形态**：同为满宽、同圆角 12dp、同内边距体系
- * （horizontal 16dp + 卡内 11/13dp），两处卡片左右缘天然对齐；区分靠底色
- * （焦点卡主色 8% / 时间轴行课程色 16%）与焦点卡的状态行/进度条。
- * 卡内两行：课名（+ 教材名，课名右侧）→ 时刻范围+@地点 · 教师（+ 备注预览，右端）
- * （metaLine 已含 `10:15–11:40` 起止，旧版行首时刻列删除后时刻信息仍完整）；
- * 整行可点弹只读详情。
- */
-@Composable
-private fun CourseTimelineRow(
-    course: Course,
-    slots: List<TimeSlot>,
-    textbookTitle: List<String>?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val accent = courseColor(course.colorIndex)
-    val meta = metaLine(slots, course)
-    val textbook = textbookTitlesLine(textbookTitle.orEmpty())
-    val haptics = rememberAppHaptics()
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clip(AppCardDefaults.Shape)
-            .background(accent.copy(alpha = 0.16f))
-            .clickable(onClickLabel = "查看课程") {
-                haptics.tap()
-                onClick()
-            },
-    ) {
-        Column(
-            Modifier
-                .weight(1f)
-                .padding(horizontal = 11.dp, vertical = 13.dp),
-        ) {
-            // 课名 + 教材名（DESIGN §4.31，2026-10-08 收口）：教材名挂在课名**右边**同一行，
-            // 不再另起一行抬卡高。课名先量（优先保完整、最长两行），教材名吃余量、不够省略号
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = course.name,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = onSurface,
-                )
-                if (textbook != null) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = textbook,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = onSurface.copy(alpha = 0.55f),
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
-            }
-            // meta 行 + 备注预览（DESIGN §4.3，2026-10-08 收口）：备注贴卡片**右下角**——
-            // 与 meta 同一行、右端对齐，不再另起一行；meta 先量保完整（时刻/地点/教师是
-            // 卡面主信息），备注吃余量。空 / 截断口径在 domain 的 remarkPreview（20 字上限），
-            // 完整内容在详情面板
-            val remark = remarkPreview(course.remark)
-            if (meta.isNotBlank() || remark != null) {
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (meta.isNotBlank()) {
-                        Text(
-                            text = meta,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = onSurface.copy(alpha = 0.68f),
-                        )
-                    }
-                    if (remark != null) {
-                        Text(
-                            text = remark,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = onSurface.copy(alpha = 0.45f),
-                            textAlign = TextAlign.End,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(start = 8.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
  * 明日预告。只在 [TodayState.tomorrowVisible]（今天已无待上课程）时渲染，
  * 用与今天相同的行组件，保证「明天也是课表」而不是另一套排版。
  */
@@ -1423,6 +1366,7 @@ private fun TomorrowBlock(
     onOpenCourse: (Course) -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
+    val sectionColumnWidth = rememberSectionColumnWidth(state.tomorrowCourses)
 
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
@@ -1443,12 +1387,19 @@ private fun TomorrowBlock(
             )
             return@Column
         }
-        // 课程行自带 vertical 4dp 外间距，这里不再叠一层
+        // 课程行自带 vertical 4dp 外间距，这里不再叠一层。明天用与今天同一张卡
+        // （非焦点、非已上完形态）：左列节次/时间 + 课名 + 地点·教师
         state.tomorrowCourses.forEach { course ->
-            CourseTimelineRow(
+            TodayCourseCard(
                 course = course,
                 slots = state.slots,
                 textbookTitle = textbookTitles[course.name],
+                sectionColumnWidth = sectionColumnWidth,
+                ongoing = false,
+                isNext = false,
+                done = false,
+                countdown = null,
+                progress = null,
                 onClick = { onOpenCourse(course) },
             )
         }
@@ -1456,14 +1407,6 @@ private fun TomorrowBlock(
 }
 
 // monthDayFmt 已收拢为 domain/TodayFormat.kt 的 MONTH_DAY_FORMAT（与调课页共用）
-
-/**
- * 底部固定区整行卡的最小高度（快趣出行码卡 + 开水未登录态/已登录态）：
- * = 两行文本（bodyMedium 20dp + bodySmall 16dp）+ 上下 padding 22dp。
- * 统一 min 后，出行卡与开水卡高度恒定；系统大字体时自然高度超过 min 也不受影响
- * （min 只是下限）。
- */
-private val QuickCardMinHeight = 58.dp
 
 /**
  * 生活卡片带（胖乖 / 趣智校园）的间距规格：整行形态一套、半行形态一套。
@@ -1539,46 +1482,15 @@ private fun EbikeCard(
     /** 使用方式（DESIGN §3.9 / §4.32）：只改副行常态文案——两档的开车方式不一样。 */
     useMode: EbikeUseMode = EbikeUseMode.Default,
 ) {
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    AppCardRow(
-        modifier = Modifier
-            .padding(horizontal = 16.dp)
-            .heightIn(min = QuickCardMinHeight),
-        onClick = onOpen,
+    // 与生活页「U净 · 洗衣房」同一张入口卡（ui/common/QuickEntryCard，2026-10-13 统一）
+    QuickEntryCard(
+        icon = HugeIcons.ScooterElectric,
+        title = "快趣出行",
+        subtitle = rideSubtitle(rideStartAt, freeReminderEnabled, useMode),
         onClickLabel = "打开快趣出行",
-        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
-    ) {
-        Icon(
-            HugeIcons.ScooterElectric,
-            contentDescription = null,
-            tint = primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = "快趣出行",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = rideSubtitle(rideStartAt, freeReminderEnabled, useMode),
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            HugeIcons.ChevronRight,
-            contentDescription = null,
-            tint = onSurface.copy(alpha = 0.35f),
-            modifier = Modifier.size(16.dp),
-        )
-    }
+        onClick = onOpen,
+        modifier = Modifier.padding(horizontal = 16.dp),
+    )
 }
 
 /** 快趣卡副行的常态文案：两档的开车方式不同（DESIGN §3.9 / §4.32）。 */
@@ -2112,124 +2024,6 @@ private fun WaterCardTitle(text: String) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
-}
-
-/**
- * 快捷方式三列图标网格（DESIGN §3.8，2026-09-19 自横滑 chips 改，用户拍板）：
- * 应用图标样式——方形图标块 + 块下单行名称，三项一行、超出换行；新增条目按列表顺序
- * 落最后的新行，区块向上生长（生活卡片带恒在底部固定区最后一项）。
- * 点击立即拉起（执行层与错误口径见 [ShortcutLauncher]，失败走 [onShortcutError] 的
- * Snackbar 兜底，不做预检确认）；长按弹菜单：添加到桌面 / 快捷方式设置。
- */
-@Composable
-private fun ShortcutQuickGrid(
-    items: List<ShortcutItem>,
-    onOpenSettings: () -> Unit,
-    onShortcutError: (String, String?) -> Unit,
-    onNotice: (String, NoticeTone) -> Unit = { _, _ -> },
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items.chunked(3).forEach { rowItems ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                rowItems.forEach { item ->
-                    ShortcutGridCell(
-                        item = item,
-                        onOpenSettings = onOpenSettings,
-                        onShortcutError = onShortcutError,
-                        onNotice = onNotice,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                // 末行不满 3 个时补空位，保持三列对齐
-                repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
-    }
-}
-
-/** 三列网格单元：方形图标块（52dp，圆角 12dp）+ 块下单行名称。 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ShortcutGridCell(
-    item: ShortcutItem,
-    onOpenSettings: () -> Unit,
-    onShortcutError: (String, String?) -> Unit,
-    onNotice: (String, NoticeTone) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val haptics = rememberAppHaptics()
-    val tileShape = RoundedCornerShape(12.dp)
-    var menuOpen by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box {
-            Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(tileShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                    .combinedClickable(
-                        onClick = {
-                            haptics.tap()
-                            ShortcutLauncher.launch(context, item)?.let { message ->
-                                onShortcutError(message, item.id)
-                            }
-                        },
-                        onLongClick = {
-                            haptics.tap()
-                            menuOpen = true
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                ShortcutIcon(item, Modifier.size(28.dp))
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("添加到桌面") },
-                    leadingIcon = { Icon(HugeIcons.Link01, null, modifier = Modifier.size(18.dp)) },
-                    onClick = {
-                        menuOpen = false
-                        haptics.tap()
-                        // 钉桌面会弹系统确认框，成功无需再提示；失败（桌面不支持等）报结果。
-                        // 不走 onShortcutError：那条通道带「去设置」动作，而桌面不支持、
-                        // 目标未安装都不是设置页能修的，给出口反而误导
-                        ShortcutPinner.pin(context, item)?.let { message ->
-                            onNotice(message, NoticeTone.Warning)
-                        }
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("快捷方式设置") },
-                    leadingIcon = { Icon(HugeIcons.Edit02, null, modifier = Modifier.size(18.dp)) },
-                    onClick = {
-                        menuOpen = false
-                        onOpenSettings()
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = item.name,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
-    }
 }
 
 /**

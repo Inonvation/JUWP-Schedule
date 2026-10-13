@@ -1089,10 +1089,6 @@ internal fun JuwApp(
                             onOpenInbox = {
                                 SubpageActivity.start(context, SubpageScreen.INBOX)
                             },
-                            // 志愿服务（DESIGN §3.28，2026-10-08）：问渠页的近路，独立窗口
-                            onOpenWenqu = {
-                                SubpageActivity.start(context, SubpageScreen.WENQU)
-                            },
                             // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合，
                             // 「+」菜单里那一行的总开关在通用设置（默认开）
                             onOpenToolbox = {
@@ -1101,11 +1097,6 @@ internal fun JuwApp(
                             // 天气详情（DESIGN §3.29，2026-10-11）：顶栏那行提示的落点
                             onOpenWeather = {
                                 SubpageActivity.start(context, SubpageScreen.WEATHER)
-                            },
-                            // 快捷方式网格：长按图标进设置页（null）；Snackbar「去设置」带失败条目
-                            // id 直达该条目的编辑弹层（DESIGN §3.8 的就地修正闭环）
-                            onOpenShortcuts = { focusItemId ->
-                                SubpageActivity.start(context, SubpageScreen.SHORTCUTS, focusItemId)
                             },
                             // 作业卡 → 作业中心；课程详情弹窗 → 该课程的笔记·课件 / 作业（DESIGN §3.11）
                             onOpenHomeworkTodo = {
@@ -1166,6 +1157,29 @@ internal fun JuwApp(
                             },
                             onOpenCampusSettings = {
                                 SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
+                            },
+                            // 校园服务三格（2026-10-13）：问渠 / 成绩查询；取快递在页内弹窗
+                            onOpenWenqu = {
+                                SubpageActivity.start(context, SubpageScreen.WENQU)
+                            },
+                            onOpenScores = {
+                                SubpageActivity.start(context, SubpageScreen.SCORES)
+                            },
+                            // U净 整行卡：弹窗的「查看洗衣房空闲情况」进页；扫码走一次性令牌
+                            onOpenUjing = {
+                                SubpageActivity.start(context, SubpageScreen.UJING)
+                            },
+                            onUjingScan = { raw ->
+                                UjingScanHandoff.arm(raw)
+                                SubpageActivity.start(context, SubpageScreen.UJING)
+                            },
+                            // 取快递弹窗里的「新增」/ 长按编辑 → 快捷方式设置页
+                            onOpenShortcuts = { focusItemId ->
+                                SubpageActivity.start(context, SubpageScreen.SHORTCUTS, focusItemId)
+                            },
+                            // 取快递弹窗里的「菜鸟批量查」（2026-10-13 从百宝箱移入）
+                            onOpenCainiao = {
+                                SubpageActivity.start(context, SubpageScreen.TOOLBOX_CAINIAO)
                             },
                         )
                     }

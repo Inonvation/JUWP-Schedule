@@ -14,7 +14,6 @@ import edu.jxslu.schedule.domain.PendingHomework.Companion.EMPTY
 import edu.jxslu.schedule.domain.ScheduleOverride
 import edu.jxslu.schedule.domain.ScheduleTips
 import edu.jxslu.schedule.domain.SemesterConfig
-import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.WeatherAdvice
@@ -124,18 +123,6 @@ class TodayViewModel(
      */
     val textbookTitles: StateFlow<Map<String, List<String>>> = repo.textbookTitlesByCourse
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
-
-    /**
-     * 今日页快捷方式（DESIGN §3.8）。不并进 [uiState]：那是课表数据的派生状态，
-     * 快捷方式是纯设置值，分开订阅免得改一条快捷方式把整页状态重算一遍。
-     * 初值阻塞读真值（见 [initialPrefs]）：否则改过快捷方式的用户首帧先见默认网格。
-     */
-    val shortcuts: StateFlow<ShortcutSettings> = repo.shortcutSettings
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            runBlocking { repo.shortcutSettings.first() },
-        )
 
     /**
      * [weatherLine] 的输入快照：课表侧四个 Room 流 + 天气开关 + [tick]。

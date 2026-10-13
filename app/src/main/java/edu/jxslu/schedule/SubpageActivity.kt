@@ -436,7 +436,9 @@ class SubpageActivity : ComponentActivity() {
                 onBack = onBack,
                 onOpenWeather = { SubpageActivity.start(this, SubpageScreen.WEATHER) },
             )
-            // 百宝箱（DESIGN §4.47）：工具列表页 → 各工具独立窗口，与其它二级页同规格
+            // 百宝箱（DESIGN §4.47）：工具列表页 → 各工具独立窗口，与其它二级页同规格。
+            // 菜鸟批量查 2026-10-13 移出百宝箱（入口改在生活页「取快递」弹窗），
+            // 但 TOOLBOX_CAINIAO 路由保留（仍从那里进）
             SubpageScreen.TOOLBOX -> ToolboxScreen(
                 onBack = onBack,
                 onOpenWatermark = {
@@ -444,9 +446,6 @@ class SubpageActivity : ComponentActivity() {
                 },
                 onOpenStitch = {
                     SubpageActivity.start(this, SubpageScreen.TOOLBOX_STITCH)
-                },
-                onOpenCainiao = {
-                    SubpageActivity.start(this, SubpageScreen.TOOLBOX_CAINIAO)
                 },
             )
             SubpageScreen.TOOLBOX_WATERMARK -> WatermarkScreen(onBack = onBack)

@@ -2,17 +2,28 @@ package edu.jxslu.schedule.ui.life
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.style.TextAlign
+import me.rerere.hugeicons.stroke.Edit02
+import me.rerere.hugeicons.stroke.Link01
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,7 +31,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -28,7 +38,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -37,6 +46,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,7 +82,6 @@ import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.campus.CampusArrivalDialog
 import edu.jxslu.schedule.ui.campus.CampusCardViewModel
 import edu.jxslu.schedule.ui.campus.CampusPendingConfirmDialog
-import edu.jxslu.schedule.ui.campus.PayCodeViewModel
 import edu.jxslu.schedule.ui.campus.RechargeSheet
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
@@ -82,6 +91,7 @@ import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.RechargeDisclaimerDialog
 import edu.jxslu.schedule.ui.common.rememberResumeTick
+import edu.jxslu.schedule.ui.common.QuickEntryCard
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.SkeletonBox
@@ -95,38 +105,71 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.Bolt
 import me.rerere.hugeicons.stroke.CreditCard
-import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Receipt
 import me.rerere.hugeicons.stroke.Settings01
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.ui.graphics.Brush
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.client.android.Intents
+import edu.jxslu.schedule.domain.QuickScanTarget
+import edu.jxslu.schedule.domain.ShortcutItem
+import edu.jxslu.schedule.domain.ShortcutSettings
+import edu.jxslu.schedule.domain.quickScanTargetOf
+import edu.jxslu.schedule.ui.theme.PrimaryLight
+import edu.jxslu.schedule.ui.common.ShortcutIcon
+import edu.jxslu.schedule.ui.common.ShortcutLauncher
+import edu.jxslu.schedule.ui.common.ShortcutPinner
+import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.Analytics01
+import me.rerere.hugeicons.stroke.ChevronRight
+import me.rerere.hugeicons.stroke.HeartHandshake
+import me.rerere.hugeicons.stroke.InformationCircle
+import me.rerere.hugeicons.stroke.Package01
+import me.rerere.hugeicons.stroke.PackageSearch01
+import me.rerere.hugeicons.stroke.QrCodeScan
+import me.rerere.hugeicons.stroke.WashingMachine
 
 /** 充值入口的种类（免责声明放行后决定打开哪个弹层）。 */
 private enum class RechargeKind { Campus, Power }
 
 /**
- * 生活页（DESIGN 3.13）：付款码入口 / 一卡通与寝室电费 / 最近流水与账单入口。
+ * 生活页（DESIGN 3.13）：钱包卡（一卡通余额主视觉 + 充值 / 付款码 / 账单）→ 校园服务
+ * （取快递 / 问渠志愿 / 成绩查询）→ U净 整行卡 → 最近流水与账单入口。
  *
  * 三条口径：
- * 1. **码不预取**：本页只放一条入口，点进去才是 PayCodeScreen，取码发生在那一页的进页
- *    load()。本页不再内嵌码位（2026-09-26 收口：内嵌卡在未取码时要占掉半屏的空框与三个
- *    置灰按钮，而这些位置不产生任何信息）。
+ * 1. **码不预取**：付款码只在钱包卡上留一枚按钮，点进去才是 PayCodeScreen，取码发生在
+ *    那一页的进页 load()。本页不再内嵌码位，也不再单独占一条付款码卡（2026-10-13）。
  * 2. **失败不编数**：电费读失败时保留上次读数并标注「读取失败，显示上次读数」，不报零。
  * 3. **一处凭证**：电费与一卡通共用 YktCredentialStore，关掉一卡通时两栏一起回空态。
  *
- * 版式（自上而下）：付款码条 -> 我的钱包卡（一卡通 / 寝室电费两栏）-> 最近流水（按来源分
- * 两段，出口各自落在段标题上）。原来那行「常用」四格已拆掉：两个充值跟着各自的钱包栏走，
- * 消费流水与缴费账单跟着流水段走。
+ * 充值 / 取快递 / U净 三个入口都是**从下弹出的底部弹窗**（2026-10-13）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LifeScreen(
-    /** 消费流水页（一卡通消费明细 + 月度统计） */
+    /** 消费流水页（一卡通消费明细 + 月度统计）；钱包卡「账单」按钮的落点 */
     onOpenStatement: () -> Unit = {},
     /** 缴费账单页（寝室电费用电统计 + 充值账单，进页默认用电统计） */
     onOpenPowerBill: () -> Unit = {},
-    /** 全屏付款码页（付款码条的点击落点） */
+    /** 全屏付款码页（钱包卡「付款码」按钮的落点） */
     onOpenPayCode: () -> Unit = {},
     /** 一卡通设置页（凭证未开启时的「去开启」） */
     onOpenCampusSettings: () -> Unit = {},
+    /** 校园服务：问渠 · 志愿服务页 */
+    onOpenWenqu: () -> Unit = {},
+    /** 校园服务：成绩查询页 */
+    onOpenScores: () -> Unit = {},
+    /** U净 · 洗衣房页（U净 弹窗的副行落点） */
+    onOpenUjing: () -> Unit = {},
+    /** U净 扫码：扫到的机身码原文交给 U净 页识别（走一次性令牌） */
+    onUjingScan: (String) -> Unit = {},
+    /** 快捷方式设置页（取快递弹窗「新增」/ 长按编辑的落点；null=不定位） */
+    onOpenShortcuts: (String?) -> Unit = {},
+    /** 取快递弹窗里的「菜鸟批量查」（2026-10-13 从百宝箱移入）：多单号一次导入取件码 */
+    onOpenCainiao: () -> Unit = {},
     viewModel: LifeViewModel = viewModel(factory = LifeViewModel.Factory(LocalContext.current)),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -172,6 +215,17 @@ fun LifeScreen(
     val disclaimerSeenAt by displayPrefs.rechargeDisclaimerSeenAt
         .collectAsStateWithLifecycle(initialValue = 0L)
     var disclaimerFor by remember { mutableStateOf<RechargeKind?>(null) }
+
+    // ── 底部弹窗与校园服务（2026-10-13）──
+    // 充值选择：钱包卡「充值」→ 底部弹窗（一卡通 / 电费 二选一），选完再进各自的充值流程
+    var showRechargeChoice by remember { mutableStateOf(false) }
+    // 取快递：生活页「取快递」→ 底部弹窗（「取快递」预设 + 「其他」自定义，分割线区分）
+    var showShortcutSheet by remember { mutableStateOf(false) }
+    // U净：整行卡 → 底部弹窗（扫码按钮 + 进页副行）
+    var showUjingSheet by remember { mutableStateOf(false) }
+    // 快捷方式（预设 + 自定义）：直接订阅仓库那一份，与「取快递」弹窗的分组口径同源
+    val shortcutSettings by remember(context) { Graph.repository(context).shortcutSettings }
+        .collectAsStateWithLifecycle(initialValue = ShortcutSettings())
 
     fun reallyOpenRecharge(kind: RechargeKind) {
         when (kind) {
@@ -263,6 +317,39 @@ fun LifeScreen(
         scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
+    // U净 弹窗的扫码按钮：取景走原文模式（与今日页「+ → 扫一扫」同一套判据），
+    // 洗衣机机身码原文交给 U净 页识别；车身码 / 别家码就地提示，不跳页。
+    val ujingScanLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val raw = result.data?.getStringExtra(Intents.Scan.RESULT)
+        when (val target = quickScanTargetOf(raw)) {
+            null -> Unit
+            is QuickScanTarget.Washer -> {
+                showUjingSheet = false
+                onUjingScan(target.raw)
+            }
+            is QuickScanTarget.Ebike -> showNotice("这是快趣车身码，不是洗衣机机身码", NoticeTone.Warning)
+            is QuickScanTarget.Foreign -> showNotice(
+                "这是${target.label}的码，不是洗衣机机身码",
+                NoticeTone.Warning,
+            )
+        }
+    }
+    val startUjingScan: () -> Unit = {
+        haptics.tap()
+        ujingScanLauncher.launch(
+            Intent(context, EbikeScanActivity::class.java).apply {
+                putExtra(Intents.Scan.PROMPT_MESSAGE, "对准洗衣机机身上的二维码")
+                putExtra(EbikeScanActivity.EXTRA_RESULT_MODE, EbikeScanActivity.MODE_RAW)
+                // 机身码是二维码：限定格式，别让商品一维码也当码送出去。
+                // 键走 Intents.Scan.FORMATS 的**逗号分隔字符串**（DecodeFormatManager 只读 StringExtra）
+                putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)
+            },
+        )
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -302,74 +389,92 @@ fun LifeScreen(
             delay(650)
             if (!busy) manualRefreshing = false
         }
-        PullToRefreshBox(
-            isRefreshing = manualRefreshing,
-            onRefresh = {
-                haptics.tap()
-                manualRefreshing = true
-                viewModel.refreshAll()
-                campusViewModel.refreshBalance()
-            },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            Column(
+        // 关掉触底回弹（stretch overscroll，2026-10-13 用户报「上拉到底再下拉会弹动卡顿」，
+        // 与当时天气页同一个 bug）：本页是一条 `Column + verticalScroll` 的长内容（非懒加载），
+        // 拖到头之后系统把整块做拉伸（RenderEffect 图层）、那一帧要重栅格化，就是这个卡顿；
+        // 今日页/问渠那种 LazyColumn 的图层只有一屏高，所以没这问题。展示型页面的边到边回弹
+        // 没有信息量，直接关掉。`LocalOverscrollConfiguration provides null` 是这套 API 的正规
+        // 开关（glow 与 stretch 都归它管）；**别删**——删了就回到「触底卡一下」。
+        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+            PullToRefreshBox(
+                isRefreshing = manualRefreshing,
+                onRefresh = {
+                    haptics.tap()
+                    manualRefreshing = true
+                    viewModel.refreshAll()
+                    campusViewModel.refreshBalance()
+                },
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = if (bottomClearance > 0.dp) bottomClearance + 16.dp else 16.dp),
+                    .padding(padding),
             ) {
-                PayCodeBar(
-                    enabled = campusEnabled,
-                    onOpenPayCode = onOpenPayCode,
-                    onOpenSettings = onOpenCampusSettings,
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = if (bottomClearance > 0.dp) bottomClearance + 16.dp else 16.dp),
+                ) {
+                    WalletHeroCard(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        enabled = campusEnabled,
+                        balanceFen = balance?.cardFen,
+                        accountFen = balance?.accountFen,
+                        balanceFetchedAtMs = balance?.fetchedAtMs,
+                        balanceLoaded = balanceLoaded,
+                        balanceRefreshing = balanceRefreshing,
+                        arrivalWatching = arrival is CampusCardViewModel.ArrivalState.Watching,
+                        power = state.power,
+                        onRecharge = {
+                            haptics.tap()
+                            // 凭证未开启（一卡通 / 电费共用一份）时「去开启」，否则弹选择框
+                            if (campusEnabled) showRechargeChoice = true else onOpenCampusSettings()
+                        },
+                        onPayCode = {
+                            haptics.tap()
+                            if (campusEnabled) onOpenPayCode() else onOpenCampusSettings()
+                        },
+                        onStatement = {
+                            haptics.tap()
+                            onOpenStatement()
+                        },
+                    )
 
-                WalletCard(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    enabled = campusEnabled,
-                    balanceFen = balance?.cardFen,
-                    accountFen = balance?.accountFen,
-                    balanceLoaded = balanceLoaded,
-                    balanceRefreshing = balanceRefreshing,
-                    arrivalWatching = arrival is CampusCardViewModel.ArrivalState.Watching,
-                    balance = balance,
-                    power = state.power,
-                    onRefreshCampus = {
-                        haptics.tap()
-                        campusViewModel.refreshBalance()
-                    },
-                    onRefreshPower = {
-                        haptics.tap()
-                        viewModel.refreshPower()
-                    },
-                    onRechargeCampus = {
-                        haptics.tap()
-                        campusRechargePreferElectric = false
-                        openRecharge(RechargeKind.Campus)
-                    },
-                    onRechargePower = {
-                        haptics.tap()
-                        openRecharge(RechargeKind.Power)
-                    },
-                    onSetupRoom = {
-                        haptics.tap()
-                        openRoomSetup()
-                    },
-                    onOpenSettings = onOpenCampusSettings,
-                )
+                    // 区块标题与卡片都收一档间距（2026-10-13 用户反馈「各部分之间太宽松」）
+                    SectionHeader(title = "校园服务", topPadding = 12.dp, bottomPadding = 6.dp)
+                    CampusServicesCard(
+                        onPackagePickup = {
+                            haptics.tap()
+                            showShortcutSheet = true
+                        },
+                        onWenqu = {
+                            haptics.tap()
+                            onOpenWenqu()
+                        },
+                        onScores = {
+                            haptics.tap()
+                            onOpenScores()
+                        },
+                    )
 
-                SectionHeader(title = "最近流水")
-                FeedSectionsCard(
-                    sections = state.feed,
-                    campusLoading = state.campusFeedLoading,
-                    powerLoading = state.powerFeedLoading,
-                    credentialsEnabled = campusEnabled,
-                    onOpenStatement = onOpenStatement,
-                    onOpenPowerBill = onOpenPowerBill,
-                )
-                Spacer(Modifier.height(8.dp))
+                    UjingEntryCard(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        onClick = {
+                            haptics.tap()
+                            showUjingSheet = true
+                        },
+                    )
+
+                    SectionHeader(title = "最近流水", topPadding = 12.dp, bottomPadding = 6.dp)
+                    FeedSectionsCard(
+                        sections = state.feed,
+                        campusLoading = state.campusFeedLoading,
+                        powerLoading = state.powerFeedLoading,
+                        credentialsEnabled = campusEnabled,
+                        onOpenStatement = onOpenStatement,
+                        onOpenPowerBill = onOpenPowerBill,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
         }
     }
@@ -445,6 +550,65 @@ fun LifeScreen(
         )
     }
 
+    // 充值选择弹窗（从下弹出）：一排两个——一卡通 / 电费；选完再过免责声明闸进各自流程
+    if (showRechargeChoice) {
+        RechargeChoiceSheet(
+            onDismiss = { showRechargeChoice = false },
+            onPickCampus = {
+                showRechargeChoice = false
+                campusRechargePreferElectric = false
+                openRecharge(RechargeKind.Campus)
+            },
+            onPickPower = {
+                showRechargeChoice = false
+                openRecharge(RechargeKind.Power)
+            },
+        )
+    }
+
+    // 取快递弹窗：预设归「取快递」段、自定义归「其他」段，分割线区分；末尾「新增」进设置页
+    if (showShortcutSheet) {
+        ShortcutSheet(
+            settings = shortcutSettings,
+            onDismiss = { showShortcutSheet = false },
+            onLaunchItem = { item ->
+                showShortcutSheet = false
+                ShortcutLauncher.launch(context, item)?.let { message ->
+                    showNotice(message, NoticeTone.Warning)
+                }
+            },
+            onPinItem = { item ->
+                ShortcutPinner.pin(context, item)?.let { message ->
+                    showNotice(message, NoticeTone.Warning)
+                }
+            },
+            onEdit = { itemId ->
+                showShortcutSheet = false
+                onOpenShortcuts(itemId)
+            },
+            onAdd = {
+                showShortcutSheet = false
+                onOpenShortcuts(null)
+            },
+            onOpenCainiao = {
+                showShortcutSheet = false
+                onOpenCainiao()
+            },
+        )
+    }
+
+    // U净 弹窗：扫码按钮 + 进页副行
+    if (showUjingSheet) {
+        UjingEntrySheet(
+            onDismiss = { showUjingSheet = false },
+            onScan = startUjingScan,
+            onOpenPage = {
+                showUjingSheet = false
+                onOpenUjing()
+            },
+        )
+    }
+
     // 充值免责声明弹窗：点「继续充值」落「已确认」（勾选则再落一周静默）后放行，
     // 取消只落「已确认」不静默——下次充值还会再弹，但立即可关。
     disclaimerFor?.let { kind ->
@@ -511,60 +675,280 @@ internal fun openExternal(
 }
 
 /**
- * 付款码条：一行，点了进全屏付款码页。
+ * 我的钱包卡（2026-10-13 改版）：一卡通余额做主视觉的 hero 卡。
  *
- * 取代原来的「付款码卡」（2026-09-26）。那张卡在未取码时要占 QR 空框 1:1 + 条码位 + 三枚
- * 置灰按钮，按 392dp 宽的机器算是约 280dp 的空白，而它展示的信息是「还没有出示」。全屏码页
- * （PayCodeScreen）本来就有 QR、Code128、余额、消费流水入口与扣款自动退出，把出示这件事放在
- * 那边比在卡片里挤着看更清楚。**点击次数没有变多**：过去是「点占位条 -> 等取码 -> 在卡里看」，
- * 现在是「点这一条 -> 全屏看」，都是一次点击。
+ * 版式（参考图二）：一卡通余额大字 → 「电子账户 / 寝室电费」副行 → 充值 · 付款码 · 账单
+ * 三枚胶囊按钮。取代原来「一卡通 / 寝室电费」两栏等宽卡（两栏各约 160dp 内宽，房间号与
+ * 金额常被省略号吃掉；且为了两栏等高还搭了一套 IntrinsicSize.Min 骨架）。
  *
- * 凭证未开启时整条变「去开启」，落点是「我的 -> 校园卡」。
+ * 取数失败仍保留上次读数（口径不变）；凭证未开启时整卡转「去开启」。
  */
 @Composable
-private fun PayCodeBar(
+private fun WalletHeroCard(
+    modifier: Modifier,
     enabled: Boolean,
-    onOpenPayCode: () -> Unit,
-    onOpenSettings: () -> Unit,
+    balanceFen: Long?,
+    accountFen: Long?,
+    /** 一卡通余额的取数时刻（epoch 毫秒，0 / null = 没有），显示在卡片右上角。 */
+    balanceFetchedAtMs: Long?,
+    balanceLoaded: Boolean,
+    balanceRefreshing: Boolean,
+    arrivalWatching: Boolean,
+    power: PowerCardState,
+    onRecharge: () -> Unit,
+    onPayCode: () -> Unit,
+    onStatement: () -> Unit,
 ) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    AppCard(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-        onClick = if (enabled) onOpenPayCode else onOpenSettings,
-        onClickLabel = if (enabled) "出示付款码" else "去开启一卡通",
+    // hero 卡固定走品牌青、不吃动态取色（2026-10-13 用户口径）：钱包是主视觉，方案稿定的
+    // 就是这套青；跟随壁纸变蓝 / 变紫会和整页其它卡片脱节
+    val heroTop = PrimaryLight
+    val heroBottom = lerp(PrimaryLight, Color.Black, 0.22f)
+    val onHero = Color.White
+    val haptics = rememberAppHaptics()
+    var showNote by remember { mutableStateOf(false) }
+
+    val statusText = when {
+        !enabled -> null
+        arrivalWatching -> "有充值正在确认到账…"
+        balanceRefreshing -> "正在查询余额…"
+        else -> null
+    }
+    // 右上角：正常显示取数时刻（2026-10-13 用户口径），有正在进行的动作时让位给状态文案
+    val metaText = statusText ?: if (enabled) {
+        walletTimeText(balanceFetchedAtMs)?.let { "更新于 $it" }
+    } else {
+        null
+    }
+    val balanceText = when {
+        !enabled || balanceFen == null -> "—"
+        else -> "¥%.2f".format(balanceFen / 100.0)
+    }
+    val accountText = "电子账户 " + if (enabled && accountFen != null) {
+        "¥%.2f".format(accountFen / 100.0)
+    } else {
+        "—"
+    }
+
+    val meter = power.snapshot?.meter
+    val pricePerUnit = power.snapshot?.feeItem?.priceYuan
+    val powerText = when {
+        power.noCredentials || power.roomNotBound -> "寝室电费 —"
+        meter?.remain != null -> {
+            // 「元」的换算只有一处口径（domain/BalanceAlert.remainingYuan，余额提醒共用）
+            val remainYuan = BalanceAlert.remainingYuan(meter.remain, pricePerUnit)
+            if (remainYuan != null && pricePerUnit != null) {
+                "寝室电费 %.2f 度 · ≈¥%.2f".format(meter.remain, remainYuan)
+            } else {
+                "寝室电费 %.2f 度".format(meter.remain)
+            }
+        }
+        power.loading -> "寝室电费 读取中…"
+        power.error != null -> "寝室电费 读取失败"
+        else -> "寝室电费 —"
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.linearGradient(listOf(heroTop, heroBottom))),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 16.dp),
         ) {
-            Icon(
-                HugeIcons.CreditCard,
-                contentDescription = null,
-                tint = if (enabled) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    onSurface.copy(alpha = 0.45f)
-                },
-            )
-            Spacer(Modifier.width(11.dp))
-            Column(Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (enabled) "付款码" else "付款码未开启",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    text = if (enabled) "一卡通余额" else "一卡通未开启",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onHero.copy(alpha = 0.8f),
+                )
+                Spacer(Modifier.weight(1f))
+                if (metaText != null) {
+                    Text(
+                        text = metaText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = onHero.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // 「钱包说明」入口（2026-10-13 补回：hero 化时误删，2026-09-24 用户要求的口径）
+                if (enabled) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .clickable(onClickLabel = "查看说明") {
+                                haptics.tap()
+                                showNote = true
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            HugeIcons.InformationCircle,
+                            contentDescription = null,
+                            tint = onHero.copy(alpha = 0.75f),
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = balanceText,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                color = onHero,
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(9.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                Text(
+                    text = accountText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onHero.copy(alpha = 0.92f),
+                    maxLines = 1,
                 )
                 Text(
-                    text = if (enabled) "等同现金，也能刷宿舍门禁" else "开启后才能出示，凭证加密存本机",
+                    text = powerText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = onSurface.copy(alpha = 0.62f),
+                    color = onHero.copy(alpha = 0.92f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            LinkLabel(if (enabled) "出示" else "去开启")
+            Spacer(Modifier.height(15.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HeroPillButton(if (enabled) "充值" else "去开启", HugeIcons.Add01, Modifier.weight(1f), onRecharge)
+                HeroPillButton("付款码", HugeIcons.QrCodeScan, Modifier.weight(1f), onPayCode)
+                HeroPillButton("账单", HugeIcons.Receipt, Modifier.weight(1f), onStatement)
+            }
         }
     }
+
+    // 钱包说明（2026-09-24 用户要求；2026-10-13 hero 化时误删，同日补回）
+    if (showNote) {
+        AlertDialog(
+            onDismissRequest = { showNote = false },
+            title = { Text("钱包说明") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(BALANCE_NOTE)
+                    Text(ELECTRICITY_NOTE)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showNote = false }) { Text("知道了") }
+            },
+        )
+    }
+}
+
+/** 钱包 hero 卡上的胶囊按钮：半透明白底 + 图标 + 文字。 */
+@Composable
+private fun HeroPillButton(
+    label: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val onHero = Color.White
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(onHero.copy(alpha = 0.17f))
+            .clickable(onClickLabel = label) { onClick() }
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = onHero, modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = onHero,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * 校园服务卡：三格入口（取快递 / 问渠志愿 / 成绩查询）。
+ * U净 不在这格里——它单独占一整行（[UjingEntryCard]）。
+ */
+@Composable
+private fun CampusServicesCard(
+    onPackagePickup: () -> Unit,
+    onWenqu: () -> Unit,
+    onScores: () -> Unit,
+) {
+    AppCard(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ServiceTile("取快递", HugeIcons.Package01, onPackagePickup)
+            ServiceTile("问渠志愿", HugeIcons.HeartHandshake, onWenqu)
+            ServiceTile("成绩查询", HugeIcons.Analytics01, onScores)
+        }
+    }
+}
+
+/** 校园服务的一格：圆角图标块 + 单行名称。 */
+@Composable
+private fun ServiceTile(label: String, icon: ImageVector, onClick: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClickLabel = label) { onClick() }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(15.dp))
+                .background(primary.copy(alpha = 0.09f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = primary, modifier = Modifier.size(26.dp))
+        }
+        Spacer(Modifier.height(7.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * U净 · 洗衣房 整行卡（2026-10-13）：点击弹底部弹窗（扫码按钮 + 进页副行）。
+ *
+ * 复用 `ui/common/QuickEntryCard`——与今日页「快趣出行」同一张入口卡（2026-10-13 统一：
+ * 此前这里是自带图标底座的另一套样式，和今日页那张对不上）。
+ */
+@Composable
+private fun UjingEntryCard(modifier: Modifier, onClick: () -> Unit) {
+    QuickEntryCard(
+        icon = HugeIcons.WashingMachine,
+        title = "U净 · 洗衣房",
+        subtitle = "空闲看板 · 扫码下单",
+        onClickLabel = "U净 · 洗衣房",
+        onClick = onClick,
+        modifier = modifier,
+    )
 }
 
 /** 主色文字 + 右向箭头，作为「会跳走」的出口标记（同 SettingsRow 的箭头口径）。 */
@@ -588,330 +972,389 @@ private fun LinkLabel(text: String) {
 }
 
 /**
- * 我的钱包卡：一卡通与寝室电费并排两栏，中间一条竖分隔。
- *
- * 合并的理由（2026-09-26）：两张半宽卡各只有约 160dp 内宽，房间号与「约 ¥34.45 · 0.62 元/度」
- * 常被省略号吃掉；且为了两卡恒等高，外面还搭了一套 IntrinsicSize.Min 加双向 weight 的骨架。
- * 合成一张全宽卡后两栏各自的信息都放得下，等高仍由同一个 IntrinsicSize.Min 解决。
- *
- * 更新时间从底行挪到各栏标题行右侧（底行那套 24dp 钉高与说明图标随之取消）：一卡通与电费的
- * 取数时刻本来就不一样，摆在同一行会让人以为两个数字是同时取的。说明文字改由卡头那枚圆圈
- * 问号承载，两个来源的口径合成一个弹窗。
+ * 充值选择弹窗（从下弹出）：一排两个——一卡通充值 / 寝室电费充值。
+ * 选完由调用方再过充值免责声明闸，然后进各自的充值流程。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WalletCard(
-    modifier: Modifier,
-    enabled: Boolean,
-    balanceFen: Long?,
-    accountFen: Long?,
-    balanceLoaded: Boolean,
-    balanceRefreshing: Boolean,
-    arrivalWatching: Boolean,
-    balance: PayCodeViewModel.BalanceSnapshot?,
-    power: PowerCardState,
-    onRefreshCampus: () -> Unit,
-    onRefreshPower: () -> Unit,
-    onRechargeCampus: () -> Unit,
-    onRechargePower: () -> Unit,
-    /** 未设置寝室时电费栏的出口（「设置寝室」按钮与整栏点击都落到它）。 */
-    onSetupRoom: () -> Unit,
-    onOpenSettings: () -> Unit,
+private fun RechargeChoiceSheet(
+    onDismiss: () -> Unit,
+    onPickCampus: () -> Unit,
+    onPickPower: () -> Unit,
 ) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    var showNote by remember { mutableStateOf(false) }
-
-    // 卡头状态只承载「正在发生什么」；两个数字的新鲜度各自写在栏内
-    val statusText = when {
-        !enabled -> null
-        arrivalWatching -> "有充值正在确认到账…"
-        balanceRefreshing -> "正在查询余额…"
-        else -> null
-    }
-
-    val campusValue = when {
-        !enabled || balanceFen == null -> "—"
-        else -> "¥%.2f".format(balanceFen / 100.0)
-    }
-    val campusSub = when {
-        !enabled -> "未开启凭证"
-        balanceFen == null -> if (balanceLoaded) "余额暂不可用" else "读取中…"
-        else -> "电子账户 ¥%.2f".format((accountFen ?: 0L) / 100.0)
-    }
-
-    val meter = power.snapshot?.meter
-    val pricePerUnit = power.snapshot?.feeItem?.priceYuan
-    val powerValue = when {
-        power.noCredentials -> "—"
-        // 未设置寝室：不能拿旧读数（也许是别的房间的）当数，直接空值 + 出口文案
-        power.roomNotBound -> "—"
-        meter?.remain != null -> "%.2f 度".format(meter.remain)
-        else -> "—"
-    }
-    val powerSub = when {
-        power.noCredentials -> "未开启凭证"
-        power.roomNotBound -> "未设置寝室，点此设置"
-        meter?.remain != null && power.error != null -> "读取失败，显示上次读数"
-        meter?.remain != null -> {
-            // 「元」的换算只有一处口径（domain/BalanceAlert.remainingYuan，余额提醒共用）：
-            // 电量或单价缺失就只报电量字段，不折算金额
-            val remainYuan = BalanceAlert.remainingYuan(meter.remain, pricePerUnit)
-            if (remainYuan != null && pricePerUnit != null) {
-                "≈ ¥%.2f · %.2f 元/度".format(remainYuan, pricePerUnit)
-            } else {
-                meter.remainField.orEmpty()
-            }
-        }
-        power.loading -> "读取中…"
-        power.error != null -> power.error
-        else -> "点一下刷新"
-    }
-
-    AppCard(
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-    ) {
-        Row(
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 6.dp, end = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Text("选择充值项目", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                text = "我的钱包",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
+                text = "两个系统各充各的，请确认要充哪一个",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
-            if (statusText != null) {
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = onSurface.copy(alpha = 0.5f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (enabled && !arrivalWatching) {
-                InfoDot(onClick = { showNote = true })
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SheetBigTile("一卡通充值", "正式卡 / 电子账户", HugeIcons.CreditCard, Modifier.weight(1f), onPickCampus)
+                SheetBigTile("寝室电费充值", "缴费平台 · 房间电表", HugeIcons.Bolt, Modifier.weight(1f), onPickPower)
             }
         }
-        Spacer(Modifier.height(6.dp))
-        // IntrinsicSize.Min：两栏取较高者的内容高，矮的一栏用内部 weight 补齐并把「充值」
-        // 按钮压到底——两个按钮落在同一水平线
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-        ) {
-            WalletPane(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                icon = HugeIcons.CreditCard,
-                label = "一卡通",
-                timeText = if (enabled && balance != null) formatTime(balance.fetchedAtMs) else null,
-                value = campusValue,
-                valueMuted = !enabled || balanceFen == null,
-                sub = campusSub,
-                subIsError = false,
-                actionLabel = if (enabled) "充值" else "去开启",
-                onAction = if (enabled) onRechargeCampus else onOpenSettings,
-                onRefresh = if (enabled) onRefreshCampus else null,
-                onClickLabel = "刷新一卡通余额",
-            )
-            Spacer(
-                Modifier
-                    .width(1.dp)
-                    .fillMaxHeight()
-                    .padding(vertical = 6.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant),
-            )
-            WalletPane(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                icon = HugeIcons.Bolt,
-                label = "寝室电费",
-                // 未设置寝室时旧读数的房间/时刻一并隐藏（那个数字不属于「现在」的状态）
-                room = if (power.roomNotBound) null else meter?.room?.room?.takeIf { it.isNotBlank() },
-                timeText = if (enabled && meter != null && !power.roomNotBound) {
-                    formatTime(meter.fetchedAtMs)
-                } else {
-                    null
-                },
-                value = powerValue,
-                valueMuted = power.noCredentials || power.roomNotBound || meter == null,
-                sub = powerSub,
-                subIsError = power.error != null && !power.roomNotBound,
-                // 未设置寝室：两枚出口（按钮与整栏点击）都换成「设置寝室」，
-                // 充值要先有房间（DESIGN §4.24 的闸门在 openRecharge 一侧兜底）
-                actionLabel = when {
-                    !enabled -> "去开启"
-                    power.roomNotBound -> "设置寝室"
-                    else -> "充值"
-                },
-                onAction = when {
-                    !enabled -> onOpenSettings
-                    power.roomNotBound -> onSetupRoom
-                    else -> onRechargePower
-                },
-                onRefresh = when {
-                    !enabled -> null
-                    power.roomNotBound -> onSetupRoom
-                    else -> onRefreshPower
-                },
-                onClickLabel = if (power.roomNotBound) "设置寝室" else "刷新寝室电费读数",
-            )
-        }
-    }
-
-    if (showNote) {
-        AlertDialog(
-            onDismissRequest = { showNote = false },
-            title = { Text("钱包说明") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(BALANCE_NOTE)
-                    Text(ELECTRICITY_NOTE)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showNote = false }) { Text("知道了") }
-            },
-        )
     }
 }
 
-/**
- * 钱包卡的一栏：标题行（图标 + 名称 + 房间 + 取数时刻）/ 数值 / 副行 / 「充值」。
- *
- * 整栏可点刷新（onRefresh 非 null 时），但「充值」按钮自己吃掉点击，不会连带触发刷新
- * （父级 clickable 收不到已被子级消费的事件）。
- */
+/** 弹窗里的大图标块（充值两项并排用）。 */
 @Composable
-private fun WalletPane(
-    modifier: Modifier,
-    icon: ImageVector,
-    label: String,
-    room: String? = null,
-    timeText: String?,
-    value: String,
-    valueMuted: Boolean,
+private fun SheetBigTile(
+    title: String,
     sub: String,
-    subIsError: Boolean,
-    actionLabel: String,
-    onAction: () -> Unit,
-    onRefresh: (() -> Unit)?,
-    onClickLabel: String?,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
 ) {
-    val haptics = rememberAppHaptics()
-    val onSurface = MaterialTheme.colorScheme.onSurface
+    val primary = MaterialTheme.colorScheme.primary
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .then(
-                if (onRefresh == null) {
-                    Modifier
-                } else {
-                    Modifier.clickable(onClickLabel = onClickLabel) {
-                        haptics.tap()
-                        onRefresh()
-                    }
-                },
-            )
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .clickable(onClickLabel = title) { onClick() }
+            .padding(vertical = 16.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(13.dp),
-                tint = onSurface.copy(alpha = 0.6f),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.7f),
-                maxLines = 1,
-            )
-            if (room != null) {
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = room,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = onSurface.copy(alpha = 0.5f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
-            if (timeText != null) {
-                Text(
-                    text = timeText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = onSurface.copy(alpha = 0.5f),
-                    maxLines = 1,
-                )
-            }
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(primary.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = primary, modifier = Modifier.size(23.dp))
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (valueMuted) onSurface.copy(alpha = 0.5f) else onSurface,
-            maxLines = 1,
-        )
-        Spacer(Modifier.height(2.dp))
+        Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
         Text(
             text = sub,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (subIsError) MaterialTheme.colorScheme.error else onSurface.copy(alpha = 0.62f),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        // 弹性空隙：两栏内容不等高时多出来的高度堆在副行与按钮之间，
-        // 两个「充值」按钮因此落在同一水平线上
-        Spacer(Modifier.weight(1f))
-        Spacer(Modifier.height(10.dp))
-        OutlinedButton(
-            onClick = {
-                haptics.tap()
-                onAction()
-            },
-            modifier = Modifier.height(32.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
-        ) {
-            Text(actionLabel, style = MaterialTheme.typography.labelLarge)
-        }
     }
 }
 
 /**
- * 卡头那枚圆圈问号说明图标：24dp 触摸面，点击弹说明。
+ * 取快递弹窗（从下弹出）：预设归「取快递」段、自定义归「其他」段，中间一条分割线；
+ * 条目并列铺开。长按条目弹菜单（添加到桌面 / 编辑），末尾虚线「新增」进设置页。
  *
- * 用圆圈问号而不是感叹号（2026-09-24 用户反馈「看着像账号有风险」）：这里补的是中性说明，
- * 不是告警；感叹号只留给真的出错（消息条 NoticeTone.Warning 用它）。
+ * 「取快递」段末尾另有一条「菜鸟批量查」整宽行（2026-10-13 从百宝箱移入）——
+ * 它是 App 内页面（粘贴多个单号一次导入菜鸟），与「点一下拉起外部 App」的图标块不同，
+ * 故单独一行、放在预设块之下。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun InfoDot(onClick: () -> Unit) {
-    val haptics = rememberAppHaptics()
+private fun ShortcutSheet(
+    settings: ShortcutSettings,
+    onDismiss: () -> Unit,
+    onLaunchItem: (ShortcutItem) -> Unit,
+    onPinItem: (ShortcutItem) -> Unit,
+    onEdit: (String) -> Unit,
+    onAdd: () -> Unit,
+    onOpenCainiao: () -> Unit,
+) {
+    val presets = settings.items.filter { it.presetIndex >= 0 }
+    val customs = settings.items.filter { it.presetIndex < 0 }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Text("快捷方式", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = "点一下直接跳转，长按可编辑",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
+            )
+            if (presets.isNotEmpty()) {
+                ShortcutCategoryLabel("取快递", presets.size)
+                ShortcutTileGrid(
+                    items = presets,
+                    onLaunch = onLaunchItem,
+                    onPin = onPinItem,
+                    onEdit = onEdit,
+                    onAdd = null,
+                )
+                Spacer(Modifier.height(12.dp))
+                SheetActionRow(
+                    icon = HugeIcons.PackageSearch01,
+                    title = "菜鸟批量查",
+                    subtitle = "多单号一次导入取件码",
+                    onClick = onOpenCainiao,
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+            }
+            ShortcutCategoryLabel("其他", customs.size)
+            ShortcutTileGrid(
+                items = customs,
+                onLaunch = onLaunchItem,
+                onPin = onPinItem,
+                onEdit = onEdit,
+                onAdd = onAdd,
+            )
+        }
+    }
+}
+
+/** 弹窗里的分类标题：「取快递 · 3 项」。没有条目（count = 0）时不带计数后缀，只留分类名。 */
+@Composable
+private fun ShortcutCategoryLabel(title: String, count: Int) {
+    Row(Modifier.padding(bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+        )
+        if (count > 0) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "· $count 项",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+            )
+        }
+    }
+}
+
+/** 弹窗里的一条整宽动作行（图标 + 标题 + 副标题 + 右箭头）：如「菜鸟批量查」。 */
+@Composable
+private fun SheetActionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val onSurface = MaterialTheme.colorScheme.onSurface
     Row(
         modifier = Modifier
-            .size(24.dp)
-            .clip(CircleShape)
-            .clickable(onClickLabel = "查看说明") {
-                haptics.tap()
-                onClick()
-            },
-        horizontalArrangement = Arrangement.Center,
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .clickable(onClickLabel = title) { onClick() }
+            .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(icon, contentDescription = null, tint = primary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = onSurface.copy(alpha = 0.6f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Icon(
-            HugeIcons.InformationCircle,
+            HugeIcons.ChevronRight,
             contentDescription = null,
-            modifier = Modifier.size(15.dp),
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            tint = onSurface.copy(alpha = 0.35f),
+            modifier = Modifier.size(18.dp),
         )
+    }
+}
+
+/** 三列图标块网格；[onAdd] 非空时末尾补一枚虚线「新增」格子。 */
+@Composable
+private fun ShortcutTileGrid(
+    items: List<ShortcutItem>,
+    onLaunch: (ShortcutItem) -> Unit,
+    onPin: (ShortcutItem) -> Unit,
+    onEdit: (String) -> Unit,
+    onAdd: (() -> Unit)?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val cells: List<Pair<ShortcutItem?, Boolean>> =
+            items.map { it to false } + listOfNotNull(onAdd?.let { null to true })
+        cells.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { (item, isAdd) ->
+                    if (isAdd) {
+                        AddShortcutTile(Modifier.weight(1f)) { onAdd?.invoke() }
+                    } else {
+                        ShortcutSheetTile(
+                            item = item!!,
+                            modifier = Modifier.weight(1f),
+                            onLaunch = { onLaunch(item) },
+                            onPin = { onPin(item) },
+                            onEdit = { onEdit(item.id) },
+                        )
+                    }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+/** 弹窗里的一枚快捷方式：图标块 + 名称；长按弹「添加到桌面 / 编辑」。 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ShortcutSheetTile(
+    item: ShortcutItem,
+    modifier: Modifier = Modifier,
+    onLaunch: () -> Unit,
+    onPin: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val haptics = rememberAppHaptics()
+    var menuOpen by remember { mutableStateOf(false) }
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .combinedClickable(
+                        onClick = {
+                            haptics.tap()
+                            onLaunch()
+                        },
+                        onLongClick = {
+                            haptics.tap()
+                            menuOpen = true
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                ShortcutIcon(item, Modifier.size(30.dp))
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("添加到桌面") },
+                    leadingIcon = { Icon(HugeIcons.Link01, null, modifier = Modifier.size(18.dp)) },
+                    onClick = {
+                        menuOpen = false
+                        haptics.tap()
+                        onPin()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("编辑") },
+                    leadingIcon = { Icon(HugeIcons.Edit02, null, modifier = Modifier.size(18.dp)) },
+                    onClick = {
+                        menuOpen = false
+                        onEdit()
+                    },
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = item.name,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/** 虚线「新增」格子。 */
+@Composable
+private fun AddShortcutTile(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(onSurface.copy(alpha = 0.03f))
+                .clickable(onClickLabel = "新增快捷方式") { onClick() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                HugeIcons.Add01,
+                contentDescription = null,
+                tint = onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.size(26.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "新增",
+            style = MaterialTheme.typography.labelMedium,
+            color = onSurface.copy(alpha = 0.6f),
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * U净 弹窗（从下弹出）：与胖乖 / 趣智校园那种入口面板同形态。
+ * 主按钮「扫码识别洗衣机」，副行进 U净 页。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UjingEntrySheet(
+    onDismiss: () -> Unit,
+    onScan: () -> Unit,
+    onOpenPage: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("U净 · 洗衣房", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = "扫洗衣机机身上的二维码即可下单",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+            Button(
+                onClick = onScan,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Icon(HugeIcons.QrCodeScan, contentDescription = null, modifier = Modifier.size(21.dp))
+                Spacer(Modifier.width(9.dp))
+                Text("扫码识别洗衣机", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClickLabel = "查看洗衣房空闲情况") { onOpenPage() }
+                    .padding(vertical = 11.dp, horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("查看洗衣房空闲情况", style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    HugeIcons.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
     }
 }
 
@@ -1108,17 +1551,22 @@ private fun FeedRow(item: LifeFeedItem) {
     }
 }
 
-/** 一卡通余额说明（钱包卡说明弹窗的前一段，2026-09-24 口径）。 */
+/** 一卡通余额说明（钱包说明弹窗的前一段，2026-09-24 口径）。 */
 private const val BALANCE_NOTE =
     "一卡通余额与流水都来自一卡通平台，服务端落账有延迟，刚发生的消费或充值可能暂时不计入。"
 
-/** 电费说明（钱包卡说明弹窗的后一段，2026-09-24 用户给的原话；只有这一处口径）。 */
+/** 电费说明（钱包说明弹窗的后一段，2026-09-24 用户给的原话；只有这一处口径）。 */
 private const val ELECTRICITY_NOTE = "受服务器影响，实际费用可能有延迟，电费不足时请及时缴费"
 
-private val TIME_FORMAT = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+private val WalletTimeFormat = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 
-private fun formatTime(epochMs: Long): String = runCatching {
-    java.time.Instant.ofEpochMilli(epochMs)
-        .atZone(java.time.ZoneId.systemDefault())
-        .format(TIME_FORMAT)
-}.getOrDefault("—")
+/** 取数时刻 → `22:56`；0 / null / 解析失败给 null（卡片不显示时刻）。 */
+private fun walletTimeText(epochMs: Long?): String? = epochMs
+    ?.takeIf { it > 0 }
+    ?.let {
+        runCatching {
+            java.time.Instant.ofEpochMilli(it)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(WalletTimeFormat)
+        }.getOrNull()
+    }

@@ -162,6 +162,49 @@ class TodayStateTest {
     }
 
     @Test
+    fun timeline_hidesEndedOnceNextClassStarts() {
+        // 14:30：5-6 节（14:00–15:25）正在上 → 上一节（3-4）收起，时间轴 = [正在上] + [未上]
+        val s = stateAt(LocalTimeLike(14, 30))
+        assertNull(s.endedRecent)
+        assertEquals("机械制造基础A", s.ongoing?.name)
+        assertEquals(
+            listOf("机械制造基础A", "人机交互技术"),
+            s.timeline.map { it.name },
+        )
+    }
+
+    @Test
+    fun timeline_showsOnlyLatestEndedDuringBreak() {
+        // 11:50：3-4 节（10:15–11:40）已结束、5-6 节 14:00 未开始 → 课间：
+        // 最近一节已上完的（3-4）置灰露一次 + 未上
+        val s = stateAt(LocalTimeLike(11, 50))
+        assertNull(s.ongoing)
+        assertEquals("机电传动控制B", s.endedRecent?.name)
+        assertEquals(
+            listOf("机电传动控制B", "机械制造基础A", "人机交互技术"),
+            s.timeline.map { it.name },
+        )
+    }
+
+    @Test
+    fun timeline_lastClassEnded_keepsEndedForDoneState() {
+        // 17:30：三节全上完 → todayAllDone，界面走「今天的课都上完了」提示；
+        // endedRecent 仍指向最后一节，但 timeline 只留它、不渲染置灰卡
+        val s = stateAt(LocalTimeLike(17, 30))
+        assertTrue(s.todayAllDone)
+        assertEquals("人机交互技术", s.endedRecent?.name)
+        assertEquals(listOf("人机交互技术"), s.timeline.map { it.name })
+    }
+
+    @Test
+    fun timeline_beforeFirstClass_hasNoEnded() {
+        // 7:00：一节都还没上 → 无已上完，时间轴 = 全部未上
+        val s = stateAt(LocalTimeLike(7, 0))
+        assertNull(s.endedRecent)
+        assertEquals(s.remaining.map { it.name }, s.timeline.map { it.name })
+    }
+
+    @Test
     fun ongoingCountdown_duringSubSectionAndBreak() {
         val c = thursdayCourses.first() // 3-4 节：10:15-10:55 / 11:00-11:40
         // 第 1 小节课内：节次号用作息小节号（与焦点卡「第3-4节」同一套坐标），不再用课程内序号

@@ -50,6 +50,22 @@ data class TodayState(
     val next: Course? = null,
     /** 焦点卡下方的列表 = [remaining] 去掉焦点那门，避免同一节课两处重复 */
     val listCourses: List<Course> = emptyList(),
+    /**
+     * 今天最近一节已结束的课——今日页统一列表里**唯一保留的「已上完」**（置灰展示）；
+     * null = 今天还没有上完的课。与 [remaining] / [ongoing] 互斥，更早的已结束课不出现。
+     *
+     * **只在「课间」出现**（2026-10-13 用户口径）：正在上的课一开始，上一节就收起
+     * （[ongoing] 非空时恒为 null）；这一节又是当天最后一节时 [todayAllDone] 为真，
+     * 界面改走「今天的课都上完了」提示，不显示置灰卡。
+     */
+    val endedRecent: Course? = null,
+    /**
+     * 今日页**统一时间轴**：[endedRecent?] + [ongoing?] + [remaining]，按开始时刻。
+     * 正在上的课**留在原位**（不再单独置顶），界面按 `course.id == focus?.id` 决定
+     * 是否就地套焦点卡形态、按 `== endedRecent?.id` 决定是否置灰。
+     * **小组件不走这个字段**（仍用 [focus] / [listCourses]），故两者保持原语义。
+     */
+    val timeline: List<Course> = emptyList(),
     /** 距下一节上课还有几分钟；仅 [next] 非空时有效（远课时为 null） */
     val minutesToNext: Int? = null,
     /** 当前这节还剩几分钟下课（整门课口径，自定义时间/兜底用） */
@@ -127,6 +143,21 @@ fun buildTodayState(
     }
     val focus = ongoing ?: next
 
+    // 今日页统一时间轴（2026-10-13）：最近一节已结束的课 + 正在上的课 + 未开始的课。
+    // 正在上的课留在原位（不再单独置顶）。**已上完的只在「课间」露一次**：正在上的课
+    // 一开始就收起（ongoing 非空时 endedRecent = null），更早的已结束课一概不出现。
+    // `sorted` 按开始时刻排序，已结束的是前缀，故「最后一门已结束」即最近上完那节。
+    val endedRecent = if (ongoing == null) {
+        sorted.lastOrNull { phases[it.id] == CoursePhase.Ended }
+    } else {
+        null
+    }
+    val timeline = buildList {
+        endedRecent?.let { add(it) }
+        ongoing?.let { add(it) }
+        addAll(remaining)
+    }
+
     val tomorrow = today.plusDays(1)
     val tomorrowDay = tomorrow.dayOfWeek.value
     val tomorrowWeek = semester?.let { ScheduleCalculator.weekNumberOf(it, tomorrow) } ?: 0
@@ -145,6 +176,8 @@ fun buildTodayState(
         ongoing = ongoing,
         next = next,
         listCourses = remaining.filter { it.id != focus?.id },
+        endedRecent = endedRecent,
+        timeline = timeline,
         minutesToNext = next?.let { minutesUntilStart(slots, it, now) },
         minutesToOngoingEnd = ongoing?.let { minutesUntilEnd(slots, it, now) },
         ongoingCountdown = ongoing?.let { ongoingCountdownLabel(slots, it, now) },

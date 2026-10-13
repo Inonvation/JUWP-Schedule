@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -24,12 +25,16 @@ fun SectionHeader(
     title: String,
     modifier: Modifier = Modifier,
     trailing: String? = null,
+    /** 上边距，默认 18dp。区块之间本来就密的页面（如生活页）可以收一档。 */
+    topPadding: Dp = 18.dp,
+    /** 下边距，默认 8dp。 */
+    bottomPadding: Dp = 8.dp,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 8.dp),
+            .padding(start = 16.dp, end = 16.dp, top = topPadding, bottom = bottomPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

@@ -49,6 +49,27 @@ fun metaLine(slots: List<TimeSlot>, course: Course): String {
     ).joinToString(" · ")
 }
 
+/**
+ * `@南B208 · 陈磊`（**不含时刻**）。今日页统一课程卡的左列已单列开始时刻
+ * （[clockOf]），meta 行不再重复时间段，故这里只给地点与教师。
+ * 桌面小组件仍用 [metaLine]（那边没有独立的时刻列）。
+ */
+fun placeTeacherLine(course: Course): String {
+    val location = compactPosition(course.position)
+    return listOfNotNull(
+        location.takeIf { it.isNotBlank() }?.let { "@$it" },
+        course.teacher.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
+}
+
+/** `3-4 节` / `5 节`：今日页统一卡左列的节次短标签（与 [sectionRange] 的「第3-4节」区分）。 */
+fun sectionShortLabel(course: Course): String =
+    if (course.endSection > course.startSection) {
+        "${course.startSection}-${course.endSection} 节"
+    } else {
+        "${course.startSection} 节"
+    }
+
 /** `1` → `一`（星期几的单字写法）。 */
 fun dayLabel(day: Int): String = when (day) {
     1 -> "一"
