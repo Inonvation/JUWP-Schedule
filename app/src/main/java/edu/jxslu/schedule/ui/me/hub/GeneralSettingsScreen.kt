@@ -75,6 +75,7 @@ import me.rerere.hugeicons.stroke.SunCloud01
 import me.rerere.hugeicons.stroke.TextFont
 import me.rerere.hugeicons.stroke.Toolbox
 import me.rerere.hugeicons.stroke.Vibrate
+import me.rerere.hugeicons.stroke.Wallet01
 import me.rerere.hugeicons.stroke.Wallet03
 
 /**
@@ -121,6 +122,8 @@ fun GeneralSettingsScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 悬浮球开关（DESIGN §3.1）：独立单流（combine 已满员），单独收一次
+    val floatingBallEnabled by viewModel.floatingBallEnabled.collectAsStateWithLifecycle()
     val haptics = rememberAppHaptics()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -242,6 +245,15 @@ fun GeneralSettingsScreen(
                     checked = state.displayPrefs.lifeTabEnabled,
                     onCheckedChange = viewModel::setLifeTabEnabled,
                     icon = HugeIcons.Wallet03,
+                )
+                // 悬浮球（DESIGN §3.1）：主窗口四个 Tab 常驻的快捷入口，默认开。
+                // 位置在球上长按拖动改，这里只管显隐。
+                SettingSwitchRow(
+                    title = "悬浮球",
+                    subtitle = "常驻快捷入口：付款码 · 扫一扫，可拖动",
+                    checked = floatingBallEnabled,
+                    onCheckedChange = viewModel::setFloatingBallEnabled,
+                    icon = HugeIcons.Wallet01,
                 )
             }
 

@@ -25,6 +25,7 @@ import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.FirstRunNotice
+import edu.jxslu.schedule.domain.FloatingBall
 import edu.jxslu.schedule.domain.QuietWindow
 import edu.jxslu.schedule.domain.QuietWindows
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
@@ -412,6 +413,24 @@ class DisplayPrefsStore(private val context: Context) {
     val toolboxEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_TOOLBOX_ENABLED] ?: true
     }
+
+    /** 应用内悬浮球开关（DESIGN §3.1）。全局项，**默认开**：主窗口四个 Tab 常驻的快捷入口。 */
+    val floatingBallEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_FLOATING_BALL_ENABLED] ?: true
+    }.distinctUntilChanged()
+
+    /**
+     * 悬浮球归一化位置（DESIGN §3.1）：x/y ∈ [0,1]，缺省 = 右下角。
+     * 读路径夹取防线脏数据（含非有限值）；位置不吸附边缘，落在哪存哪。
+     */
+    val floatingBallPosition: Flow<FloatingBall.Position> = context.displayDataStore.data.map { p ->
+        FloatingBall.clamp(
+            FloatingBall.Position(
+                x = p[KEY_FLOATING_BALL_X] ?: FloatingBall.DefaultPosition.x,
+                y = p[KEY_FLOATING_BALL_Y] ?: FloatingBall.DefaultPosition.y,
+            ),
+        )
+    }.distinctUntilChanged()
 
     /**
      * 启动页（DESIGN §3.3）。默认今日页；认不出的存储值一律退回今日页（[StartPage.fromName]）。
@@ -1612,6 +1631,20 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_TOOLBOX_ENABLED] = value }
     }
 
+    /** 应用内悬浮球开关（DESIGN §3.1）。 */
+    suspend fun setFloatingBallEnabled(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_FLOATING_BALL_ENABLED] = value }
+    }
+
+    /** 悬浮球位置（DESIGN §3.1）。写入前夹取到 [0,1]。 */
+    suspend fun setFloatingBallPosition(position: FloatingBall.Position) {
+        val clamped = FloatingBall.clamp(position)
+        context.displayDataStore.edit {
+            it[KEY_FLOATING_BALL_X] = clamped.x
+            it[KEY_FLOATING_BALL_Y] = clamped.y
+        }
+    }
+
     /** 启动页（DESIGN §3.3）。写的是用户的选择本身，不因为生活页此刻关着就改写它。 */
     suspend fun setStartPage(value: StartPage) {
         context.displayDataStore.edit { it[KEY_START_PAGE] = value.name }
@@ -2193,6 +2226,10 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_LIFE_TAB_ENABLED = booleanPreferencesKey("life_tab_enabled")
         /** 百宝箱（DESIGN §4.47）：缺省 = true（今日页「+」里显示图片工具入口）。 */
         val KEY_TOOLBOX_ENABLED = booleanPreferencesKey("toolbox_enabled")
+        // 应用内悬浮球（DESIGN §3.1）：开关 + 归一化位置（缺省 = 右下角，见 floatingBallPosition）
+        val KEY_FLOATING_BALL_ENABLED = booleanPreferencesKey("floating_ball_enabled")
+        val KEY_FLOATING_BALL_X = floatPreferencesKey("floating_ball_x")
+        val KEY_FLOATING_BALL_Y = floatPreferencesKey("floating_ball_y")
         val KEY_START_PAGE = stringPreferencesKey("start_page")
         val KEY_WATER_REQUIRE_DOUBLE_CLICK = booleanPreferencesKey("water_require_double_click")
         val KEY_CALENDAR_REMINDER_MINUTES = intPreferencesKey("calendar_reminder_minutes")

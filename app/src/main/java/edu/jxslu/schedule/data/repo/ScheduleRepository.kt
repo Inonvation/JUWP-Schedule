@@ -30,6 +30,7 @@ import edu.jxslu.schedule.domain.ScheduleUndo
 import edu.jxslu.schedule.domain.ScheduleOverride
 import edu.jxslu.schedule.domain.ScheduleOverrides
 import edu.jxslu.schedule.domain.EbikeUseMode
+import edu.jxslu.schedule.domain.FloatingBall
 import edu.jxslu.schedule.domain.QuietWindow
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.BgScale
@@ -687,6 +688,16 @@ class ScheduleRepository(
      */
     val weatherEnabled: Flow<Boolean> = prefs.weatherEnabled
 
+    /**
+     * 应用内悬浮球（DESIGN §3.1）：开关 + 归一化位置。**独立单流**——
+     * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型；
+     * 消费方 = 外壳（`MainActivity.JuwApp`）与通用设置页，各自 collect。
+     */
+    val floatingBallEnabled: Flow<Boolean> = prefs.floatingBallEnabled
+
+    /** 悬浮球归一化位置（x/y ∈ [0,1]，缺省 = 右下角）。 */
+    val floatingBallPosition: Flow<FloatingBall.Position> = prefs.floatingBallPosition
+
     // ------------------------------------------------------------------
     // 偏好写入：视图偏好写全局 DataStore 键，主题等全局项同层
     // ------------------------------------------------------------------
@@ -705,6 +716,13 @@ class ScheduleRepository(
 
     /** 今日页顶栏天气提示开关（DESIGN §3.29）。 */
     suspend fun setWeatherEnabled(value: Boolean) = prefs.setWeatherEnabled(value)
+
+    /** 应用内悬浮球开关（DESIGN §3.1）。 */
+    suspend fun setFloatingBallEnabled(value: Boolean) = prefs.setFloatingBallEnabled(value)
+
+    /** 悬浮球位置（DESIGN §3.1）。 */
+    suspend fun setFloatingBallPosition(position: FloatingBall.Position) =
+        prefs.setFloatingBallPosition(position)
 
     /** 今日页校园卡付款码卡开关（DESIGN §3.10）。凭证的写/清走 YktCredentialStore，不在这里。 */
     suspend fun setCampusCardEnabled(value: Boolean) = prefs.setCampusCardEnabled(value)

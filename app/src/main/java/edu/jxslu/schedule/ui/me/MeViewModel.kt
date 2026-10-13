@@ -178,6 +178,18 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
             runBlocking { repo.weatherEnabled.first() },
         )
 
+    /**
+     * 应用内悬浮球开关（DESIGN §3.1）。**默认开**，单独一条流——
+     * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型。
+     * 首帧真值同 [initialPrefs] 的模式，开关不先按默认渲染再跳一次。
+     */
+    val floatingBallEnabled: StateFlow<Boolean> = repo.floatingBallEnabled
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            runBlocking { repo.floatingBallEnabled.first() },
+        )
+
     // ---- 背景图（DESIGN §4.21）：选图与移除都在 VM 里跑，转屏不丢进行中的导入 ----
 
     private val _bgImporting = MutableStateFlow(false)
@@ -480,6 +492,10 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
 
     /** 今日页顶栏天气提示开关（DESIGN §3.29）。关掉即从顶栏撤下，不残留占位。 */
     fun setWeatherEnabled(value: Boolean) = viewModelScope.launch { repo.setWeatherEnabled(value) }
+
+    /** 应用内悬浮球开关（DESIGN §3.1）：默认开，关掉后主窗口不再显示悬浮球。 */
+    fun setFloatingBallEnabled(value: Boolean) =
+        viewModelScope.launch { repo.setFloatingBallEnabled(value) }
 
     /** 兼容入口：老调用点一次改两天。 */
     fun setShowWeekend(value: Boolean) = viewModelScope.launch { repo.setShowWeekend(value) }

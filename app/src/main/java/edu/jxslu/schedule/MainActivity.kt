@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -37,6 +38,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,7 +68,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
+import edu.jxslu.schedule.domain.FloatingBall
+import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.FloatingBallOverlay
+import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.postNotice
+import edu.jxslu.schedule.ui.common.rememberQuickScan
 import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
 import edu.jxslu.schedule.ui.me.hub.UpdateAvailableDialogHost
 import kotlinx.coroutines.runBlocking
@@ -511,6 +519,12 @@ private val TabIconBaseSize = 22.dp
 private val FloatingPillHeight = 64.dp
 
 /**
+ * 普通（非悬浮）底栏的解析高度：M3 `NavigationBar` 的默认容器高 80dp。
+ * 只用于算悬浮球的可拖动区域（让开底栏），不参与布局测量。
+ */
+private val PlainBottomBarHeight = 80.dp
+
+/**
  * 悬浮胶囊底栏（DESIGN §4.22，2026-09-22 按用户给的参考形态改）。
  *
  * 全圆角 + 阴影 + 半透明底；选中态三重信号：淡主色底块 + 图标微放大 +
@@ -916,6 +930,44 @@ internal fun JuwApp(
     val bottomBarVisibleRequest = remember { mutableStateOf(true) }
     val bottomBarVisible by bottomBarVisibleRequest
 
+    // 应用内悬浮球（DESIGN §3.1）：开关 + 位置，独立单流各收一次（combine 已满员）。
+    // 首帧按「开 + 右下角」渲染，真值到达后归位——与底栏同纪律：宁可先显示再收。
+    val repo = remember(context) { Graph.repository(context) }
+    val floatingBallEnabled by remember { repo.floatingBallEnabled }
+        .collectAsStateWithLifecycle(initialValue = true)
+    val floatingBallPosition by remember { repo.floatingBallPosition }
+        .collectAsStateWithLifecycle(initialValue = FloatingBall.DefaultPosition)
+    // 外壳级提示通道：悬浮球「别家码」这类播报落在主窗口——页面各自的 Snackbar 在 NavHost
+    // 里，够不到壳层的球（球的动作是壳级、不属于任何一页）
+    val shellSnackbar = remember { SnackbarHostState() }
+    val shellScope = rememberCoroutineScope()
+    // 悬浮球的双击动作：扫一扫，复用与今日页「+ → 扫一扫」同一套三档分流（车码 / 机身码 / 别家码）
+    val startBallScan = rememberQuickScan(
+        onEbike = { carNum ->
+            openSubpage(context, SubpageRequest(screen = SubpageScreen.RIDE, focusItemId = carNum))
+        },
+        onWasher = { raw ->
+            UjingScanHandoff.arm(raw)
+            openSubpage(context, SubpageRequest(screen = SubpageScreen.UJING))
+        },
+        onForeign = { label ->
+            shellScope.postNotice(
+                shellSnackbar,
+                "这是${label}的码，不是快趣车身码或洗衣机机身码",
+                NoticeTone.Warning,
+            )
+        },
+    )
+    // 悬浮球让开状态栏与底栏：可拖动区域 = 窗口 − 状态栏 −（手势条 + 底栏高）
+    val statusBarTopDp = with(LocalDensity.current) {
+        WindowInsets.statusBars.getTop(this).toDp()
+    }
+    val bottomReserveDp = navBarInsetDp +
+        if (floatingNavBar) FloatingPillHeight + FloatingBarBottomMargin else PlainBottomBarHeight
+    // 悬浮球只在主窗口四个 Tab 显示（二级页是独立 Activity 窗口，本就看不到它）
+    val floatingBallOnTab = currentRoute == Routes.TODAY || currentRoute == Routes.WEEK ||
+        currentRoute == Routes.LIFE || currentRoute == Routes.ME
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         // 顶部 inset 归零（DESIGN §4.22）：垫了状态栏高度，课表页的背景图就铺不到状态栏。
@@ -1159,6 +1211,30 @@ internal fun JuwApp(
                         )
                     }
                 }
+            }
+            // 外壳级提示通道（悬浮球「别家码」等播报）：贴底、让开底栏。画在页面之上、
+            // 底栏之下——球被 inset 顶在底栏之上，这条提示与它同一带，互不遮挡。
+            AppSnackbarHost(
+                shellSnackbar,
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = bottomReserveDp),
+            )
+            // 应用内悬浮球（DESIGN §3.1）：主窗口四个 Tab 常驻。显示设置面板打开时
+            // （bottomBarVisible 为 false）一并收起，免得压在面板上。
+            if (floatingBallEnabled && floatingBallOnTab && bottomBarVisible) {
+                FloatingBallOverlay(
+                    position = floatingBallPosition,
+                    // 单击 → 付款码页（独立窗口）
+                    onTap = { openSubpage(context, SubpageRequest(screen = SubpageScreen.PAY_CODE)) },
+                    // 双击 → 扫一扫（车码 / 机身码 / 别家码三档分流，见 startBallScan）
+                    onDoubleTap = startBallScan,
+                    onPositionChange = { pos ->
+                        shellScope.launch { repo.setFloatingBallPosition(pos) }
+                    },
+                    topInset = statusBarTopDp,
+                    bottomInset = bottomReserveDp,
+                )
             }
         }
     }

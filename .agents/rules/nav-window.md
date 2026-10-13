@@ -102,3 +102,26 @@
   会就必须传钉住版；M3 `TopAppBar` 的默认 insets 是实时 systemBars，等于没防。
   代价：横屏这类状态栏高度真变小的形态，顶栏保留竖屏让位高度——宁可多让，
   不跟系统栏的瞬时变化跳舞。
+
+## 悬浮球（应用内快捷入口）
+
+- **悬浮球**（2026-10-13，DESIGN §3.1，`ui/common/FloatingBall.kt`）：主窗口四个 Tab 的
+  常驻圆形快捷入口。规格与交互见 `design/03a-ui-shell.md` §3.1；这里记实现口径：
+  - **渲染点在壳层 `JuwApp` 的内容 `Box` 里、`CompositionLocalProvider` 之后**
+    （画在页面之上），但**不是**外层再套一层 `Box`：Scaffold 的底栏画在内容之后，
+    球若与底栏同带会被压住。球的落位靠 `topInset`（状态栏）/ `bottomInset`
+    （手势条 + 底栏高，悬浮胶囊 = `FloatingPillHeight+margin`、普通底栏 = 80dp）把
+    可拖动区域**顶到底栏之上**，因此不会与底栏重叠——**别把这两个 inset 去掉**。
+  - **显示设置面板打开时（`bottomBarVisible` 为 false）球一并收起**，否则会浮在面板上。
+  - **位置存归一化分数**（`floating_ball_x/y`，`DisplayPrefsStore` 独立单流，combine 已满员），
+    纯几何（分数↔像素 / 夹取）全在 `domain/FloatingBall`，UI 不重算。**位置不吸附边缘**——
+    松手停在拖到的任意位置（用户拍板：贴边太丑）。
+  - **位置显示走弹簧**（`BallMotion`，`animateFloatAsState`）：拖动平滑跟手、松手原地停住。
+    **常态半透明**（`BallIdleAlpha` 0.8，压得住内容又不喧宾夺主）、**拖动时放大 1.08**
+    （`BallDragScale`）并提到全不透明。**别再写「松手吸附到最近边缘」**——
+    那会「啪」地闪到边上，用户已否掉。
+  - **手势是两个独立 `pointerInput`**（`detectTapGestures` + `detectDragGesturesAfterLongPress`）：
+    单击/双击共存意味着单击有一档 ~300ms 判定延迟；长按原地松手会误判成单击，
+    靠「拖动结束时刻」挡掉（`TapSuppressAfterDragMs`）。改手势前先在真机上对一遍手感。
+  - 双击的扫一扫复用 `ui/common/QuickScan.kt`（车码 / 机身码 / 别家码三档，与「+ → 扫一扫」
+    同判据）；「别家码」提示落在壳层 `SnackbarHostState`（页面各自的 Snackbar 够不到壳层）。
