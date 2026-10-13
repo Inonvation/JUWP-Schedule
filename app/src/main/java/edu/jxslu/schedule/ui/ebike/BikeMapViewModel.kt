@@ -108,11 +108,12 @@ data class BikeMapUiState(
     val userLat: Double? = null,
     val userLng: Double? = null,
     /**
-     * 蓝点的罗盘朝向（度，0–360，北 = 0 顺时针，按屏幕顶边计；2026-10-08）。
-     * null = 没有朝向（无磁力计 / 还没读到），蓝点只画圆点不画扇形。
-     * 只影响扇形绘制，与移镜头 / 重查 / 挪点互不相干。
+     * 用户位置的定位精度（米，半径）；0 = 系统没给 / 还没定位（2026-10-13）。
+     *
+     * 地图据此画精度圈：固定大小的光晕说明不了"这个点准不准"，而网络定位能偏出上百米
+     * ——圈大就是"别太信这个点"。
      */
-    val userHeading: Float? = null,
+    val userAccuracyMeters: Float = 0f,
     /**
      * 只看可用的车（离线、电量低于运营方阈值的都不显示）。
      * 默认开（2026-09-24 用户拍板）：找车就是要找能骑的；开关态进 DataStore，下次进页保持。
@@ -221,6 +222,17 @@ class BikeMapViewModel(
 
     private val _uiState = MutableStateFlow(BikeMapUiState())
     val uiState: StateFlow<BikeMapUiState> = _uiState.asStateFlow()
+
+    /**
+     * 蓝点的罗盘朝向（度，0–360，北 = 0 顺时针，按屏幕顶边计；2026-10-08）。
+     *
+     * **单独一条流、不进 [BikeMapUiState]**（2026-10-13）：`RideScreen` 整页读的是 `uiState`，
+     * 朝向若挂在状态对象上，罗盘每跳一下（≤10Hz）就重组整个页面（含底部车辆列表），而不只是
+     * 地图那一层。放这里由 `OsmMapView` 自己收集，重组范围就收在地图内。
+     * null = 没有朝向（无磁力计 / 还没读到），蓝点只画圆点不画扇形。
+     */
+    private val _userHeading = MutableStateFlow<Float?>(null)
+    val userHeading: StateFlow<Float?> = _userHeading.asStateFlow()
 
     private val _events = Channel<BikeMapEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
@@ -706,17 +718,23 @@ class BikeMapViewModel(
     }
 
     /**
-     * 定位成功（坐标已是 GCJ-02）。记下蓝点位置，把镜头移过去并立即重查。
+     * 定位成功（坐标已是 GCJ-02）。记下蓝点位置（含精度），把镜头移过去并立即重查。
      *
      * 同时**换参照点**重算距离：距离从此以"你"为准，拖动地图不会让这些数字变形。
      *
      * [animated] 为 false 用于进页面那一次：直接落位。进页面又没有起点可看，
      * 从校园中心滑过去纯属多此一举；用户主动点「定位」才需要一个缓动告诉他镜头动了。
      */
-    fun onLocated(lat: Double, lng: Double, animated: Boolean = true) {
+    fun onLocated(lat: Double, lng: Double, accuracyMeters: Float = 0f, animated: Boolean = true) {
         if (!lat.isFinite() || !lng.isFinite()) return
         locatedOnce = true
-        _uiState.update { it.copy(userLat = lat, userLng = lng) }
+        _uiState.update {
+            it.copy(
+                userLat = lat,
+                userLng = lng,
+                userAccuracyMeters = sanitizeAccuracy(accuracyMeters),
+            )
+        }
         rebuildClusters()
         pushCamera(lat, lng, zoom = null, animated = animated)
         pendingLat = lat
@@ -726,22 +744,35 @@ class BikeMapViewModel(
 
     /**
      * 连续定位的最新读数（坐标已是 GCJ-02，DESIGN §3.9「蓝点实时更新」）：
-     * **只挪蓝点**。
+     * **只挪蓝点（含精度圈）**。
      *
      * **不重设列表的参照点**（2026-09-30）：蓝点每动一下就把整张列表按新位置重排，
      * 用户站着不动也会看到顺序在变。参照点只在查询落地时定一次（见 [BikeMapUiState.anchorLat]）。
+     *
+     * **也不重算簇**（2026-10-13）：簇的距离用的是那个定死的参照点，与蓝点实时位置无关，
+     * 重算结果逐字段相同——纯浪费（还在主线程，走动时每 2 秒一次）。停车点距离读的是
+     * `state.userLat`，不经过簇，照常跟着蓝点走。
      *
      * 与 [onLocated] 的分工：镜头与重查仍归一次性定位（进页 / 点「定位」按钮）管。
      * 这里不移镜头——用户刚拖好的视野不能被走动的自己抢回去；也不重查接口——
      * 车辆列表是用户动作驱动（DESIGN §3.9 禁止轮询第三方接口），下次拖动 / 点刷新
      * 自然用上最新的参照点。
      */
-    fun onUserLocationChanged(lat: Double, lng: Double) {
+    fun onUserLocationChanged(lat: Double, lng: Double, accuracyMeters: Float = 0f) {
         if (!lat.isFinite() || !lng.isFinite()) return
         locatedOnce = true
-        _uiState.update { it.copy(userLat = lat, userLng = lng) }
-        rebuildClusters()
+        _uiState.update {
+            it.copy(
+                userLat = lat,
+                userLng = lng,
+                userAccuracyMeters = sanitizeAccuracy(accuracyMeters),
+            )
+        }
     }
+
+    /** 精度读数的清洗：非有限 / 非正一律当"系统没给"（0）。 */
+    private fun sanitizeAccuracy(meters: Float): Float =
+        if (meters.isFinite() && meters > 0f) meters else 0f
 
     /**
      * 罗盘朝向的最新读数（2026-10-08）：**只转蓝点的朝向扇形**。
@@ -749,10 +780,12 @@ class BikeMapViewModel(
      * 与 [onUserLocationChanged] 同一条纪律——不移镜头、不重查、不动参照点。
      * 传感器流已在 `BikeCompass` 内做过低通 + 节流（>2° 且 ≥100ms 才发），
      * 到这里的频率对 `MapOverlayInputs` 的值比对与整幅重绘都是安全的。
+     *
+     * 写进独立的 [userHeading]（不动 `uiState`）：罗盘的跳动不该重组整页，见那条流的注释。
      */
     fun onUserHeadingChanged(degrees: Float) {
         if (!degrees.isFinite()) return
-        _uiState.update { it.copy(userHeading = degrees) }
+        _userHeading.value = degrees
     }
 
     /**

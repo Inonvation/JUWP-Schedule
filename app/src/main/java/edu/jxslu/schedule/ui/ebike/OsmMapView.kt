@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.domain.BikeCluster
 import edu.jxslu.schedule.domain.BikeNearby
@@ -27,6 +28,7 @@ import edu.jxslu.schedule.domain.KvcxZones
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapListener
@@ -152,6 +154,8 @@ private data class MapOverlayInputs(
     val clusters: List<BikeCluster>,
     val selectedKey: String?,
     val userPoint: GcjPoint?,
+    /** 用户位置的定位精度（米，半径）；0 = 不画精度圈。新绘制输入必须进这份比对（红线）。 */
+    val userAccuracyMeters: Float,
     /** 蓝点的罗盘朝向（度，0–360）；null = 不画扇形。新绘制输入必须进这份比对（红线）。 */
     val userHeading: Float?,
     val ridePoint: GcjPoint?,
@@ -181,7 +185,10 @@ private class DrawnOverlayInputs(var value: MapOverlayInputs? = null)
  * @param camera 待执行的镜头移动（定位 / 回到校区）；按 `nonce` 触发，连点同一个坐标也生效。
  * @param onCameraApplied 镜头移动执行完的回调；调用方据此把请求清掉，别让它被重放。
  * @param userLat / userLng 已取到的用户位置（GCJ-02），画成蓝点；null 不画。
- * @param userHeading 蓝点的罗盘朝向（度，0–360，来自 [BikeCompass]）；null 不画朝向扇形。
+ * @param userAccuracyMeters 用户位置的定位精度（米，半径）；0 = 不画精度圈。
+ * @param userHeadingFlow 蓝点的罗盘朝向（度，0–360，来自 [BikeCompass]）；值为 null 不画朝向扇形。
+ *   收成**独立的一条流**、由本组件自己收集（2026-10-13）：罗盘 ≤10Hz 的更新只重组这一层，
+ *   不把整个 `RideScreen`（含底部车辆列表）一起重组。
  * @param rideLat / rideLng 当前用车的车位置（GCJ-02，与瓦片同基准），画成「我的车」标记；null 不画。
  * @param onRideTap 点中「我的车」标记（把镜头移过去）。
  * @param zones 还车点 / 禁停区图层（只读；空 = 不画）。「P」**不接点击**（只作信息展示）。
@@ -192,8 +199,10 @@ internal fun OsmMapView(
     selectedKey: String?,
     userLat: Double?,
     userLng: Double?,
-    /** 蓝点的罗盘朝向（度，0–360，北 = 0 顺时针；null = 不画朝向扇形）。 */
-    userHeading: Float? = null,
+    /** 用户位置的定位精度（米，半径）；0 = 不画精度圈。 */
+    userAccuracyMeters: Float = 0f,
+    /** 蓝点的罗盘朝向流（度，0–360，北 = 0 顺时针）；值为 null = 不画朝向扇形。 */
+    userHeadingFlow: StateFlow<Float?>,
     rideLat: Double?,
     rideLng: Double?,
     /** 识别高亮车的坐标（GCJ-02）；null = 没有要高亮的车。 */
@@ -219,6 +228,8 @@ internal fun OsmMapView(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    // 蓝点朝向在本层收集（见参数注释）：罗盘的跳动只重组地图这一层，不波及整页
+    val userHeading by userHeadingFlow.collectAsStateWithLifecycle()
     // 回调每次重组刷新：地图监听器只建一次，闭包捕获旧 lambda 会读到过期状态
     val settleCallback by rememberUpdatedState(onCenterSettled)
     val tapCallback by rememberUpdatedState(onClusterTap)
@@ -305,6 +316,7 @@ internal fun OsmMapView(
                 } else {
                     null
                 },
+                userAccuracyMeters = userAccuracyMeters,
                 userHeading = userHeading,
                 ridePoint = if (rideLat != null && rideLng != null) {
                     GcjPoint(rideLat, rideLng)
@@ -325,6 +337,7 @@ internal fun OsmMapView(
                 overlay.clusters = inputs.clusters
                 overlay.selectedKey = inputs.selectedKey
                 overlay.userPoint = inputs.userPoint
+                overlay.userAccuracyMeters = inputs.userAccuracyMeters
                 overlay.userHeading = inputs.userHeading
                 overlay.ridePoint = inputs.ridePoint
                 overlay.highlightPoint = inputs.highlightPoint

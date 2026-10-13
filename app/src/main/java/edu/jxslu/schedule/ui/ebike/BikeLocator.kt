@@ -22,8 +22,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** 一次定位的结果。 */
 internal sealed interface LocateResult {
-    /** 成功。[lat] / [lng] **已经是 GCJ-02**，可直接当瓦片与接口的中心点。 */
-    data class Ok(val lat: Double, val lng: Double) : LocateResult
+    /**
+     * 成功。[lat] / [lng] **已经是 GCJ-02**，可直接当瓦片与接口的中心点。
+     * [accuracyMeters] 是这次读数的精度半径（米）；0 = 系统没给，地图据此画精度圈。
+     */
+    data class Ok(
+        val lat: Double,
+        val lng: Double,
+        val accuracyMeters: Float = 0f,
+    ) : LocateResult
 
     /** 失败，[message] 直接给 Snackbar 用。 */
     data class Failed(val message: String) : LocateResult
@@ -228,7 +235,7 @@ internal object BikeLocator {
 
     private fun toResult(fix: LocationFix): LocateResult {
         val gcj = Gcj02.toGcj02(fix.lat, fix.lng)
-        return LocateResult.Ok(gcj.lat, gcj.lng)
+        return LocateResult.Ok(gcj.lat, gcj.lng, fix.accuracyMeters)
     }
 
     private fun Location.toFix(): LocationFix =
@@ -249,21 +256,36 @@ internal const val DOT_MOVE_MIN_METERS = 4f
 private const val DOT_ACCURACY_GAIN_RATIO = 0.6f
 
 /**
+ * 新读数比正在画的**粗**到这个倍数以上就不认（[shouldMoveDot]）。
+ *
+ * 防的是 GPS 与网络双源交替：网络定位在楼群里能偏出几十上百米，而每两秒一条的读数
+ * 位移都远超 [DOT_MOVE_MIN_METERS]，光靠位移闸门拦不住——蓝点会在准的 GPS 点与粗的
+ * 网络点之间来回跳（用户报的「定位乱跳」）。两者都粗（只有网络可用）时这条不触发，
+ * 照下面的位移口径正常跟随。
+ */
+private const val DOT_COARSER_RATIO = 2.5f
+
+/**
  * 连续定位流里决定「这个新读数要不要真的挪蓝点」（DESIGN §3.9，纯逻辑可单测）。
  *
- * 两条通过口径：
- * 1. 挪了够远（≥ [DOT_MOVE_MIN_METERS]）——走路时蓝点跟着人走；
- * 2. 原地没动但精度显著提升——从网络点换到 GPS 点时换上更准的位置。
+ * 三条口径：
+ * 1. 明显更粗的读数（精度比正在画的差 [DOT_COARSER_RATIO] 倍以上）**一律不认**——双源
+ *    交替里的网络点，别拿它把蓝点从准位置上拽走；
+ * 2. 挪了够远（≥ [DOT_MOVE_MIN_METERS]）——走路时蓝点跟着人走；
+ * 3. 原地没动但精度显著提升——从网络点换到 GPS 点时换上更准的位置。
  *
- * 其余一律不挪：GPS 与网络双源交替回读数，站定时每个读数都带几米随机抖动，
- * 不滤的话蓝点会在原地颤，列表里的「距你」也跟着一跳一跳。
+ * 其余一律不挪：站定时每个读数都带几米随机抖动，不滤的话蓝点会在原地颤，列表里的
+ * 「距你」也跟着一跳一跳。
  */
 internal fun shouldMoveDot(previous: LocationFix?, next: LocationFix): Boolean {
     if (previous == null) return true
-    val moved = BikeNearby.distanceMeters(previous.lat, previous.lng, next.lat, next.lng)
-    if (moved >= DOT_MOVE_MIN_METERS) return true
     val accuracy = next.accuracyMeters
     val shownAccuracy = previous.accuracyMeters
+    if (accuracy > 0f && shownAccuracy > 0f && accuracy > shownAccuracy * DOT_COARSER_RATIO) {
+        return false
+    }
+    val moved = BikeNearby.distanceMeters(previous.lat, previous.lng, next.lat, next.lng)
+    if (moved >= DOT_MOVE_MIN_METERS) return true
     return accuracy > 0f && shownAccuracy > 0f &&
         accuracy <= shownAccuracy * DOT_ACCURACY_GAIN_RATIO
 }

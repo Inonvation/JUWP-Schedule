@@ -67,4 +67,29 @@ class BikeLocatorLiveDotTest {
         val moved = fix(28.0001, 112.0000, accuracy = 0f)
         assertTrue(shouldMoveDot(previous, moved))
     }
+
+    /** 双源交替：网络点比 GPS 粗一大截，哪怕偏出上百米也不许把蓝点拽过去。 */
+    @Test
+    fun muchCoarserFixIgnored() {
+        val gps = fix(28.0000, 112.0000, accuracy = 10f)
+        // 网络点偏出约 110 米、精度 100 米：位移够大，但粗得多，不认
+        val network = fix(28.0010, 112.0000, accuracy = 100f)
+        assertFalse(shouldMoveDot(gps, network))
+    }
+
+    /** 从粗的网络点升到准的 GPS 点：精度大涨，换上去。 */
+    @Test
+    fun coarseToFineAccepted() {
+        val network = fix(28.0000, 112.0000, accuracy = 100f)
+        val gps = fix(28.0005, 112.0000, accuracy = 8f)
+        assertTrue(shouldMoveDot(network, gps))
+    }
+
+    /** 只有网络可用（两个读数一样粗）时，位移口径照常跟随，不该被上面那条闸住。 */
+    @Test
+    fun coarseOnlyStillFollows() {
+        val previous = fix(28.0000, 112.0000, accuracy = 120f)
+        val next = fix(28.0002, 112.0000, accuracy = 120f)
+        assertTrue(shouldMoveDot(previous, next))
+    }
 }

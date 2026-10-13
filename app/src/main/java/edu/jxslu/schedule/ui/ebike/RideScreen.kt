@@ -438,7 +438,11 @@ fun RideScreen(
             launch {
                 BikeLocator.updates(context).collect { result ->
                     if (result is LocateResult.Ok) {
-                        viewModel.onUserLocationChanged(result.lat, result.lng)
+                        viewModel.onUserLocationChanged(
+                            result.lat,
+                            result.lng,
+                            result.accuracyMeters,
+                        )
                     }
                 }
             }
@@ -624,7 +628,9 @@ fun RideScreen(
                         selectedKey = state.expandedKey,
                         userLat = state.userLat,
                         userLng = state.userLng,
-                        userHeading = state.userHeading,
+                        userAccuracyMeters = state.userAccuracyMeters,
+                        // 朝向走独立流、由地图那层自己收集：罗盘的跳动只重组地图，不波及整页
+                        userHeadingFlow = viewModel.userHeading,
                         rideLat = rideMarkerLat,
                         rideLng = rideMarkerLng,
                         highlightLat = state.highlightedCar?.lat,
@@ -1182,7 +1188,12 @@ private fun locate(
         try {
             when (val result = BikeLocator.currentLocation(context)) {
                 is LocateResult.Ok ->
-                    viewModel.onLocated(result.lat, result.lng, animated = !silent)
+                    viewModel.onLocated(
+                        result.lat,
+                        result.lng,
+                        result.accuracyMeters,
+                        animated = !silent,
+                    )
                 is LocateResult.Failed -> if (!silent) onIssue(result.message)
             }
         } finally {

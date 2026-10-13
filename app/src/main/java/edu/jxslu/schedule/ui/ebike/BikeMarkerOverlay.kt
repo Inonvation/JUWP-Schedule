@@ -3,10 +3,13 @@ package edu.jxslu.schedule.ui.ebike
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Point
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import edu.jxslu.schedule.domain.BikeCluster
@@ -18,6 +21,7 @@ import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /** 标记配色。由 UI 层按当前主题传进来，本类不碰 Compose。 */
@@ -91,6 +95,12 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
      * null = 没有朝向（无磁力计 / 还没读到），只画无方向的蓝点。
      */
     var userHeading: Float? = null
+
+    /**
+     * 用户位置的定位精度（米，半径）；0 = 系统没给 / 还没定位，不画精度圈（2026-10-13）。
+     * 固定大小的光晕说明不了"这个点准不准"——精度圈把这份不确定量画出来。
+     */
+    var userAccuracyMeters: Float = 0f
 
     /**
      * 当前用车的车位置（GCJ-02，来自 `queryUnderwayOrder`；快趣坐标与地图瓦片同基准，
@@ -208,6 +218,14 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     /** 还车点图标的底色圆角方块。 */
     private val badgeFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
+    /**
+     * 用户位置光晕的柔和径向渐变（主题色在中心、向边缘淡到全透明）。**按颜色缓存**：
+     * 渐变本身只跟颜色与半径走，逐帧只更新一次平移矩阵（[haloMatrix]），不每帧重建 Shader。
+     */
+    private val haloMatrix = Matrix()
+    private var haloShader: RadialGradient? = null
+    private var haloShaderColor = Int.MIN_VALUE
+
     /** 图标里的「P」：白字 + 一层暗影，压在任何底色上都读得出来。 */
     private val badgeGlyph = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
@@ -311,26 +329,36 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         // 反过来（先画）会被停车点聚合圈盖住——人站在车桩边上时正好是这种情形，
         // 而"我在哪"恰恰是点了定位之后要确认的事。代价是极少数情况下遮住一个聚合圈的
         // 数字，那点信息底部列表里还有。
+        //
+        // 蓝点正落在镜头中心时，中心针的针尖会插在它身上——两者说的是同一件事
+        // （"现在查的是这里"就是"我在这"），藏掉针让"我在哪"干净地读出来（见文件末的常量）
+        var userDotAtCenter = false
         userPoint?.let { point ->
             mapView.project(point.lat, point.lng, out)
             val x = out.x.toFloat()
             val y = out.y.toFloat()
+            userDotAtCenter = hypot(x - canvas.width / 2f, y - canvas.height / 2f) <=
+                CENTER_PIN_HIDE_RADIUS_DP * density
+            // 精度圈（2026-10-13）：真实定位精度折算成的屏幕半径，垫在最底下
+            drawUserAccuracy(canvas, mapView, point.lat, point.lng, x, y)
             // 朝向扇形（2026-10-08）：蓝点后方的锥形光带，先画、垫在圆点底下。
             // 罗盘朝向画在屏幕坐标——它与地图北方对齐，不随瓦片投影变形，
             // 坐标基准也不相干（方向角不是坐标，不过 Gcj02）。
             userHeading?.let { heading ->
                 drawHeadingWedge(canvas, x, y, heading)
             }
-            fill.color = colors.userHalo
-            canvas.drawCircle(x, y, 13f * density, fill)
+            // 光晕：柔和径向渐变，比一层平铺的实心圆更像「位置光圈」，边沿不再是一圈硬边
+            drawUserHalo(canvas, x, y)
+            // 圆点：白描边，压在明暗不定的瓦片上都读得出边界
+            val dotRadius = USER_DOT_RADIUS_DP * density
             fill.color = colors.userDot
-            canvas.drawCircle(x, y, 7f * density, fill)
-            ring.strokeWidth = 2.5f * density
+            canvas.drawCircle(x, y, dotRadius, fill)
+            ring.strokeWidth = USER_DOT_RING_DP * density
             ring.color = Color.WHITE
-            canvas.drawCircle(x, y, 7f * density, ring)
+            canvas.drawCircle(x, y, dotRadius, ring)
         }
 
-        drawCenterPin(canvas)
+        if (!userDotAtCenter) drawCenterPin(canvas)
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
@@ -387,6 +415,71 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 
     /**
+     * 用户位置的光晕：柔和径向渐变（主题色在中心、向边缘淡到全透明），比一层平铺的实心圆
+     * 更像「位置光圈」。渐变按颜色缓存（见 [haloShader]），逐帧只把中心挪到蓝点上——
+     * 不每帧重建 Shader，也不给 [fill] 留下 shader（画完立刻清掉，它后面还要按 color 用）。
+     */
+    private fun drawUserHalo(canvas: Canvas, x: Float, y: Float) {
+        val radius = USER_HALO_RADIUS_DP * density
+        val color = colors.userHalo
+        val shader = haloShader?.takeIf { haloShaderColor == color } ?: RadialGradient(
+            0f, 0f, radius,
+            intArrayOf(color, color, color and 0x00FFFFFF),
+            floatArrayOf(0f, 0.45f, 1f),
+            Shader.TileMode.CLAMP,
+        ).also {
+            haloShader = it
+            haloShaderColor = color
+        }
+        haloMatrix.setTranslate(x, y)
+        shader.setLocalMatrix(haloMatrix)
+        fill.shader = shader
+        canvas.drawCircle(x, y, radius, fill)
+        fill.shader = null
+    }
+
+    /**
+     * 用户位置的精度圈（2026-10-13）：把定位精度（米）按当前投影折成屏幕半径画一个淡色圆。
+     *
+     * 半径靠投影两个点现算（几百米尺度上投影局部线性，够用）——不引 osmdroid 的米/像素换算，
+     * 也不用猜瓦片尺寸与 dpi 的关系。半径不大于蓝点本体时直接不画（藏在圆点底下，白画）。
+     */
+    private fun drawUserAccuracy(
+        canvas: Canvas,
+        mapView: MapView,
+        lat: Double,
+        lng: Double,
+        x: Float,
+        y: Float,
+    ) {
+        if (userAccuracyMeters <= 0f) return
+        val radius = accuracyRadiusPx(mapView, lat, lng, userAccuracyMeters)
+        if (radius <= USER_DOT_RADIUS_DP * density) return
+        fill.color = colors.userHalo.scaleAlpha(ACCURACY_FILL_ALPHA_FACTOR)
+        canvas.drawCircle(x, y, radius, fill)
+        ring.strokeWidth = 1f * density
+        ring.color = colors.userHalo.scaleAlpha(ACCURACY_STROKE_ALPHA_FACTOR)
+        canvas.drawCircle(x, y, radius, ring)
+    }
+
+    /** 定位精度（米）在当前缩放下折算成的屏幕半径（像素）。 */
+    private fun accuracyRadiusPx(mapView: MapView, lat: Double, lng: Double, meters: Float): Float {
+        mapView.project(lat, lng, tmpPoint2)
+        val y0 = tmpPoint2.y.toFloat()
+        mapView.project(lat + meters / METERS_PER_DEGREE_LAT, lng, tmpPoint2)
+        return abs(tmpPoint2.y - y0)
+    }
+
+    /**
+     * 缩放 ARGB 颜色的 alpha（位运算，不引 ColorUtils），结果钳在 0..255。
+     * 朝向扇形的内层与精度圈都由它派生，避免两处各写一遍位运算。
+     */
+    private fun Int.scaleAlpha(factor: Float): Int {
+        val alpha = (Color.alpha(this) * factor).toInt().coerceIn(0, 255)
+        return (this and 0x00FFFFFF) or (alpha shl 24)
+    }
+
+    /**
      * 蓝点的朝向扇形光晕（2026-10-08，DESIGN §3.9「蓝点朝向」）。
      *
      * 画在蓝点本体之前（垫底）：两层同心锥形——外层更大更淡、内层同色但更实
@@ -402,10 +495,8 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         // 外层：半径约 20dp、半开角 30°（60° 锥形），比外晕（13dp）探出去一圈
         fill.color = colors.userHalo
         canvas.drawArc(setArcRect(x, y, WEDGE_OUTER_RADIUS_DP * density), -30f, 60f, true, fill)
-        // 内层：同色更实（约 1.6 倍不透明度），给光带一点根部渐实的层次。
-        // alpha 换算直接位运算（ARGB int），不引 ColorUtils
-        val innerAlpha = (Color.alpha(colors.userHalo) * 1.6f).toInt().coerceIn(0, 255)
-        fill.color = (colors.userHalo and 0x00FFFFFF) or (innerAlpha shl 24)
+        // 内层：同色更实（约 1.6 倍不透明度），给光带一点根部渐实的层次
+        fill.color = colors.userHalo.scaleAlpha(WEDGE_INNER_ALPHA_FACTOR)
         canvas.drawArc(setArcRect(x, y, WEDGE_INNER_RADIUS_DP * density), -30f, 60f, true, fill)
         canvas.restore()
     }
@@ -474,6 +565,9 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
      */
     private val tmpPoint = Point()
     private val tmpRect = RectF()
+
+    /** 精度圈折算用的第二个投影落点（不能与 [tmpPoint] 共用：投影基准点与偏移点要同时在场）。 */
+    private val tmpPoint2 = Point()
 
     /**
      * 簇内车辆数的文案缓存：`Int.toString()` 每簇每帧各来一发。数量只会是几十，
@@ -609,6 +703,30 @@ private const val WEDGE_OUTER_RADIUS_DP = 20f
 
 /** 朝向扇形内层半径（dp）：更实的内层，做「根部渐实」的层次。 */
 private const val WEDGE_INNER_RADIUS_DP = 13f
+
+/** 朝向扇形内层的 alpha 系数（相对外晕色）：比外层实一点，做出根部渐实。 */
+private const val WEDGE_INNER_ALPHA_FACTOR = 1.6f
+
+/** 用户位置光晕半径（dp）：柔和渐变从主题色淡到全透明；与朝向扇形内层同半径，两者不打架。 */
+private const val USER_HALO_RADIUS_DP = 13f
+
+/** 用户位置圆点半径（dp）。 */
+private const val USER_DOT_RADIUS_DP = 8f
+
+/** 用户位置圆点的白描边宽度（dp）。 */
+private const val USER_DOT_RING_DP = 2.5f
+
+/** 精度圈填充的 alpha 系数（相对外晕色）：压淡一档，别盖住底图。 */
+private const val ACCURACY_FILL_ALPHA_FACTOR = 0.45f
+
+/** 精度圈描边的 alpha 系数（相对外晕色）：比填充实一点，圈边看得清。 */
+private const val ACCURACY_STROKE_ALPHA_FACTOR = 1.1f
+
+/** 蓝点离镜头中心这么近（dp）就不画中心针：针尖与蓝点重合，说的是同一件事。 */
+private const val CENTER_PIN_HIDE_RADIUS_DP = 12f
+
+/** 一个纬度约合多少米（精度圈折算用；BikeNearby 里那份是私有的，这边另记一个常量）。 */
+private const val METERS_PER_DEGREE_LAT = 111_320.0
 
 /** 图层包围盒剔除的余量（度）：约 220 米，比任何一块还车点 / 禁停区都大。 */
 private const val ZONE_CULL_PADDING_DEG = 0.002

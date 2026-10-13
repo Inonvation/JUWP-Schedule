@@ -280,15 +280,29 @@
   这两条的理由都写在 DESIGN §3.9 的表里。
   蓝点实时更新（2026-09-26）：页面可见期间（`repeatOnLifecycle(STARTED)`）挂 `BikeLocator.updates`
   连续定位流，只走 `onUserLocationChanged`——**只挪蓝点与「距你」距离，不移镜头、不重查车辆接口**
-  （镜头归一次性定位、接口禁止轮询，见 DESIGN §3.9）。挪点口径 `shouldMoveDot`（位移 ≥4 米
-  或精度显著提升）是防双源交替与站定抖动的，**别删**；请求节奏 2 秒一次，别改回 0（费电不讨好）。
+  （镜头归一次性定位、接口禁止轮询，见 DESIGN §3.9）。挪点口径 `shouldMoveDot`（**明显更粗的
+  读数一律不认** + 位移 ≥4 米 + 原地没动但精度显著提升）是防双源交替与站定抖动的，**别删**；
+  请求节奏 2 秒一次，别改回 0（费电不讨好）。**「明显更粗不认」是 2026-10-13 修「定位乱跳」加的**
+  （`DOT_COARSER_RATIO` 2.5）：网络点在楼群里能偏出几十上百米、位移远超 4 米，只靠位移闸门拦不住，
+  蓝点会在准的 GPS 点与粗的网络点之间来回跳；两者都粗（只有网络可用）时这条不触发，照常跟随。
+  **`onUserLocationChanged` 里不许再调 `rebuildClusters()`**（2026-10-13 删）：簇的距离用查询落地
+  时定下的参照点（`anchorLat ?: fetchedLat`），与蓝点实时位置无关——重算结果逐字段相同，纯浪费
+  （还在主线程、走动时每 2 秒一次）。停车点距离读的是 `state.userLat`，不经过簇，照常跟着蓝点走。
+  **蓝点还画精度圈**（2026-10-13）：`LocateResult.Ok.accuracyMeters` 从 `BikeLocator` 透传到
+  `BikeMapUiState.userAccuracyMeters`，`BikeMarkerOverlay.drawUserAccuracy` 按当前投影把米折成屏幕
+  半径画淡圆（半径靠投影两个点现算，不引 osdroid 米/像素换算）；0 / 半径不大于圆点时不画。
+  **蓝点落在镜头中心时不画中心针**（同批）：`drawCenterPin` 的针尖就在视图中心，定位后蓝点也投影到
+  那里，两者说的是同一件事——`CENTER_PIN_HIDE_RADIUS_DP`（12dp）内藏掉针。
   蓝点朝向（2026-10-08）：同一段生命周期里并挂 `BikeCompass.heading`（`ui/ebike/BikeCompass.kt`）
   罗盘流，只走 `onUserHeadingChanged`——**只转蓝点的朝向扇形**，同样不移镜头、不重查。
-  语义是**罗盘朝向**（手机顶边指北偏角，站定也显示），不是 GPS 行进方向。三条硬口径：
+  语义是**罗盘朝向**（手机顶边指北偏角，站定也显示），不是 GPS 行进方向。四条硬口径：
   ① 传感器读数**必须节流**（流内已做：低通 0.15 + 变化 >2° 且 ≥100ms 才发，≈≤10Hz）——
   heading 的终点是 `MapOverlayInputs` 值比对 + 一次整幅重绘，高频直通就是复刻 10-01 掉帧；
   ② `userHeading` **必须进 `MapOverlayInputs`**（新绘制输入进比对是红线）；
-  ③ 屏幕旋转档取 `DisplayManager.getDisplay(Display.DEFAULT_DISPLAY)`——
+  ③ **朝向走独立流 `BikeMapViewModel.userHeading`，不进 `BikeMapUiState`**（2026-10-13）：
+  `RideScreen` 整页读 `uiState`，朝向挂在状态对象上会让 ≤10Hz 的跳动每下都重组整页（含车辆列表）；
+  现在由 `OsmMapView` 自己收（`userHeadingFlow`），重组范围收在地图层；
+  ④ 屏幕旋转档取 `DisplayManager.getDisplay(Display.DEFAULT_DISPLAY)`——
   **别改成 `SensorManager.getDisplay`**（API 30 起，minSdk 26 直接 NoSuchMethodError）。
   remap 轴向映射按官方示例口径（ROTATION_0 → AXIS_X/AXIS_Y …），`remapAxes` 有单测钉住；
   设备无磁力计 → 空流，蓝点退回无方向圆点，调用方零降级分支。
