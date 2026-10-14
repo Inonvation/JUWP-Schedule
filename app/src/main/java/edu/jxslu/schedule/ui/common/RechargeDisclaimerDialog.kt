@@ -69,7 +69,7 @@ fun RechargeDisclaimerDialog(
                 RechargeDisclaimer.ITEMS.forEachIndexed { index, item ->
                     Text(
                         text = "${index + 1}. $item",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
@@ -83,7 +83,7 @@ fun RechargeDisclaimerDialog(
                     Checkbox(checked = suppressWeek, onCheckedChange = { suppressWeek = it })
                     Text(
                         text = "一周内不再提醒",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                     )
                 }
             }

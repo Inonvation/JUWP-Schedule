@@ -96,7 +96,7 @@ fun UpdateAvailableDialog(
                 if (manifest.notes.isNotBlank()) {
                     Text(
                         manifest.notes,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier
                             .heightIn(max = 320.dp)
                             .verticalScroll(rememberScrollState()),
@@ -105,7 +105,7 @@ fun UpdateAvailableDialog(
                 if (UpdateCheck.hasUsableDigest(manifest)) {
                     Text(
                         "SHA-256：${manifest.sha256}",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -117,7 +117,7 @@ fun UpdateAvailableDialog(
                     )
                     Text(
                         "点按复制 · 镜像下载为第三方通道，可核对此值确认安装包完整",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
                     )
                 }

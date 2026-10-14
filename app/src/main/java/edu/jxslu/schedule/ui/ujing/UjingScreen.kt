@@ -826,7 +826,7 @@ private fun UjingNoticeDialog(onConfirm: () -> Unit) {
                 NoticeItems.forEachIndexed { index, item ->
                     Text(
                         "${index + 1}. $item",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }

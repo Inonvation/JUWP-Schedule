@@ -118,6 +118,13 @@
 - **长文声明弹窗只有 `ui/common/LegalDialogs.kt` 的 `NoticeDialog` 一个实现**
   （标题 / 开场句 / 逐条正文都由调用方从 `domain/` 取，弹窗只排版）。`DisclaimerDialog`
   是它的免责声明薄封装；加新的声明类弹窗就再包一层，**不要另写一个 AlertDialog**。
+- **「给人读」的声明 / 信息类弹窗正文比常规 +1 档**（2026-10-14）：更新日志
+  （`UpdateAvailableDialog`）、充值免责声明（`RechargeDisclaimerDialog`）、免责声明 /
+  用户须知 / 充值风险只读（`NoticeDialog`）、开源许可（`LicensesDialog`）、U净 使用须知
+  （`UjingScreen.UjingNoticeDialog`）这几处的正文——`bodySmall` 处写 `bodyMedium`、
+  `bodyMedium` 处写 `bodyLarge`、脚注 `labelSmall` 处写 `bodySmall`。字号仍取
+  `ui/theme/Type.kt` 现有角色，**不动全局档位**（那是「字体缩放锁定」的领地）。
+  确认 / 操作类弹窗（清缓存、清空课程、删除退出等）按常规档，不跟这条。
 - **关闭锁一律走 `rememberCloseLock(totalMs)`**（同文件）：锁住期间确认键置灰、返回与
   点遮罩无效。两个硬性口径：
   1. **用 `SystemClock.elapsedRealtime()`，不要用 `System.currentTimeMillis()`** ——

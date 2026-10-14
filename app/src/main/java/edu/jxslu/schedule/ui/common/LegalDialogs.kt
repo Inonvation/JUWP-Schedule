@@ -103,12 +103,12 @@ fun NoticeDialog(
             ) {
                 Text(
                     text = intro,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
                 items.forEach { item ->
                     Text(
                         text = "· $item",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
@@ -197,29 +197,29 @@ fun LicensesDialog(onDismiss: () -> Unit) {
             ) {
                 Text(
                     text = "${OpenSourceLicenses.SELF_NAME} · ${OpenSourceLicenses.SELF_LICENSE}",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
                 OpenSourceLicenses.ENTRIES.forEach { entry ->
                     Text(
                         text = entry.name,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
                         text = entry.license,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                         modifier = Modifier.padding(bottom = 10.dp),
                     )
                 }
                 Text(
                     text = OpenSourceLicenses.HUGEICONS_NOTE,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
                 Text(
                     text = OpenSourceLicenses.FOOTER,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.padding(top = 8.dp),
                 )
