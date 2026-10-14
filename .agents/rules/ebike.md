@@ -934,6 +934,22 @@
   `ride = if (caps.inAppRide) kvcx.ride else null` 收口）；单车详情两档都可用（接口不要凭证）；
   资产区只在快趣账号页（本页入口本身就按模式显隐）。**别为它们在页面里另写一份 `caps` 判断**。
 
+## 骑行卡券到期提醒（2026-10-14 用户要求）
+
+- **口径在 `domain/EbikeCardExpiry.kt`（纯 JVM，`EbikeCardExpiryTest` 钉住）**：
+  `WINDOW_MS` = 24 小时（`0 < endAt - now ≤ 24h`，已过期不提醒）；`parseEndAt` 收
+  `yyyy-MM-dd HH:mm:ss` 与只给日期的形态（后者按当天 23:59:59 收尾）；`dedupKey` =
+  `card|<endTime 原文>`；剩余文案按**日历天**（今天到期 / 明天到期 / 还剩 N 天）。
+- **落点在快趣账号页**（`KvcxScreen.CardExpiryDialog`），**不新增网络请求**：卡券随
+  `queryAssets` 一起回来，`KvcxViewModel.refreshAssets` 成功后算一次「未提醒过且在窗口内」
+  的卡券落 `KvcxUiState.cardExpiry`，页面据此弹窗；关掉时 `dismissCardExpiry()` 把
+  `dedupKey` 落盘（`DisplayPrefsStore.ebikeCardExpiryNotifiedKeys`，键 `ebike_card_expiry_notified`）。
+  **同一张卡只弹一次**，换卡（新 `endTime`）自然换键。骑行页不查资产、**别为它加资产查询**
+  （那是三接口）。
+- 文案唯一出处：逐条明细 `EbikeCardExpiry.reminderLines`，后果说明 `REMINDER_NOTE`
+  （含「前 15 分钟免费以骑行套餐卡为准」）——页面别再手抄一份。弹窗的
+  `DialogWindowFadeEffect()` 落在内容槽第一行（见 `ui-common.md`）。
+
 ## 快趣出行设置弹层（说明口径与沿革）
 
 - **分组沿革**：弹层自 2026-09-30 起按主题分组（账号 / 开锁与还车 / 自动还车 / 乘车码 /

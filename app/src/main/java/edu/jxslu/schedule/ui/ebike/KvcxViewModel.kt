@@ -8,6 +8,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.RideRecordStore
+import edu.jxslu.schedule.domain.EbikeCardExpiry
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.RideRecord
 import edu.jxslu.schedule.domain.KvcBusinessError
@@ -50,6 +51,11 @@ data class KvcxUiState(
     val assetsLoading: Boolean = false,
     /** 最近一次资产查询颗粒无收（三块全空或请求失败）；页面据此给重试出路。 */
     val assetsFailed: Boolean = false,
+    /**
+     * 待提醒的「临近到期」骑行卡券（DESIGN §4.32，2026-10-14）：非空 = 页面该弹一次
+     * 到期提醒。查资产时算出（未提醒过且在到期前一天窗口内），页面关掉时落「已提醒」键。
+     */
+    val cardExpiry: List<KqcxAuth.AssetCoupon>? = null,
 )
 
 class KvcxViewModel(
@@ -210,10 +216,38 @@ class KvcxViewModel(
                         it.copy(assetsLoading = false, assetsFailed = false, assets = assets)
                     }
                 }
+                // 骑行卡券临近到期（前一天）就弹一次（2026-10-14）：卡券随资产一起回来，
+                // 不必为它另发请求；已提醒过的卡（按 endTime 去重）不再进队列。
+                maybeRemindCardExpiry(assets.coupons)
             }
             .onFailure {
                 _uiState.update { it.copy(assetsLoading = false, assetsFailed = true) }
             }
+    }
+
+    /** 算一次「该提醒的到期卡券」并落状态；空列表不动（别把已展示的提醒抹掉）。 */
+    private suspend fun maybeRemindCardExpiry(coupons: List<KqcxAuth.AssetCoupon>) {
+        val notified = runCatching { prefs.ebikeCardExpiryNotifiedKeys.first() }.getOrDefault(emptySet())
+        val pending = EbikeCardExpiry.pendingReminders(coupons, notified, System.currentTimeMillis())
+        if (pending.isNotEmpty()) {
+            _uiState.update { it.copy(cardExpiry = pending) }
+        }
+    }
+
+    /**
+     * 关掉到期提醒：把这次提醒过的卡的 [EbikeCardExpiry.dedupKey] 落盘（同一张卡只提醒
+     * 一次），并清掉状态。写失败不重试——顶多下次进页再提醒一次，方向是保守那一侧。
+     */
+    fun dismissCardExpiry() {
+        val coupons = _uiState.value.cardExpiry ?: return
+        _uiState.update { it.copy(cardExpiry = null) }
+        val keys = coupons.mapNotNull { it.endAt?.trim()?.takeIf(String::isNotEmpty) }
+            .map(EbikeCardExpiry::dedupKey)
+            .toSet()
+        if (keys.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { prefs.updateEbikeCardExpiryNotifiedKeys { it + keys } }
+        }
     }
 
     // ── 结清复查（2026-09-30） ──

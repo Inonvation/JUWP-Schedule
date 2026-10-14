@@ -21,6 +21,7 @@ import edu.jxslu.schedule.domain.CainiaoQuery
 import edu.jxslu.schedule.domain.CalendarSyncDefaults
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.EbikeAutoReturn
+import edu.jxslu.schedule.domain.EbikeCardExpiry
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
 import edu.jxslu.schedule.domain.EbikeUseMode
@@ -1165,6 +1166,14 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 骑行卡券到期提醒的「已提醒键」集合（DESIGN §4.32）：键形如 `card|<endTime 原文>`，
+     * 唯一实现在 [EbikeCardExpiry.dedupKey]。同一张卡只提醒一次，换卡自然换键。
+     */
+    val ebikeCardExpiryNotifiedKeys: Flow<Set<String>> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_CARD_EXPIRY_NOTIFIED] ?: emptySet()
+    }
+
+    /**
      * 用车满 15 分钟自动还车开关（DESIGN §3.9，2026-10-10）。**默认关**：
      * 它会替用户执行有计费后果的写动作（自动还车），只能显式开启。
      */
@@ -1795,6 +1804,24 @@ class DisplayPrefsStore(private val context: Context) {
         }
     }
 
+    /**
+     * 骑行卡券到期提醒已提醒键的统一写入口（DESIGN §4.32）：读-改-写整个集合，同值跳写
+     * （口径同 [updateEbikeFreeNotifiedKeys]）。
+     */
+    suspend fun updateEbikeCardExpiryNotifiedKeys(transform: (Set<String>) -> Set<String>) {
+        context.displayDataStore.edit { p ->
+            val current = p[KEY_EBIKE_CARD_EXPIRY_NOTIFIED] ?: emptySet()
+            val next = transform(current)
+            if (next != current) {
+                if (next.isEmpty()) {
+                    p.remove(KEY_EBIKE_CARD_EXPIRY_NOTIFIED)
+                } else {
+                    p[KEY_EBIKE_CARD_EXPIRY_NOTIFIED] = next
+                }
+            }
+        }
+    }
+
     suspend fun setReminderLeadMinutes(value: Int) {
         context.displayDataStore.edit {
             it[KEY_REMINDER_LEAD] = ReminderDefaults.coerceLead(value)
@@ -2258,6 +2285,9 @@ class DisplayPrefsStore(private val context: Context) {
         // 2026-09-24 提醒改回 App 通知：日历事件 id（ebike_free_event_id）随之停用，
         // 键定义一并删掉——旧设备上的残留值没人读，也不会自己消失，但无害。
         val KEY_EBIKE_FREE_NOTIFIED_KEYS = stringSetPreferencesKey("ebike_free_notified_keys")
+
+        /** 骑行卡券到期提醒的「已提醒键」集合（DESIGN §4.32，键见 [EbikeCardExpiry.dedupKey]）。 */
+        val KEY_EBIKE_CARD_EXPIRY_NOTIFIED = stringSetPreferencesKey("ebike_card_expiry_notified")
 
         // 「精确倒计时」已删（2026-09-30）：开关与校准标记两键
         // （ebike_precise_countdown_enabled / ebike_precise_calibrated_at）随之停用，

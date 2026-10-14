@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -47,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.domain.EbikeCardExpiry
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.RideRecord
 import edu.jxslu.schedule.domain.capabilities
@@ -163,6 +165,53 @@ fun KvcxScreen(
             )
         }
     }
+
+    // 骑行卡券临近到期（前一天）的提醒：查资产时算出，关掉即落「已提醒」键（同一张卡只弹一次）
+    state.cardExpiry?.let { coupons ->
+        CardExpiryDialog(coupons = coupons, onDismiss = viewModel::dismissCardExpiry)
+    }
+}
+
+/**
+ * 「骑行卡即将到期」提醒弹窗（DESIGN §4.32，2026-10-14）：资产查询发现卡券落在
+ * 「到期前一天」窗口内时弹一次。明细与后果文案都从 [EbikeCardExpiry] 取（唯一出处），
+ * 这里只排版；长文配 `heightIn(max)` + `verticalScroll`，小屏与大字体档位下按钮不被挤出。
+ */
+@Composable
+private fun CardExpiryDialog(coupons: List<KqcxAuth.AssetCoupon>, onDismiss: () -> Unit) {
+    val lines = remember(coupons) {
+        EbikeCardExpiry.reminderLines(coupons, System.currentTimeMillis())
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("骑行卡即将到期") },
+        text = {
+            // 过渡效果必须落在弹窗窗口自己的组合里（内容槽第一行），放外面取到的是页面窗口
+            DialogWindowFadeEffect()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                lines.forEach { line ->
+                    Text(
+                        text = line,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
+                Text(
+                    text = EbikeCardExpiry.REMINDER_NOTE,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("知道了") }
+        },
+    )
 }
 
 // ── 本机骑行记录 ──
