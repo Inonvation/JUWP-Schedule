@@ -957,8 +957,7 @@ private fun LinkLabel(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
         )
@@ -966,7 +965,7 @@ private fun LinkLabel(text: String) {
             HugeIcons.ArrowRight01,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }
@@ -1400,7 +1399,10 @@ private fun FeedSectionsCard(
 }
 
 /**
- * 流水卡的一段：带底色的段标题（右侧是出口）+ 至多两条记录。
+ * 流水卡的一段：分组标题（标题 + 右侧出口，无底色）+ 至多两条记录（行间内缩细线）。
+ *
+ * 标题行下接一条整宽细线、记录之间接内缩细线，靠「整宽 / 内缩」区分分组边界与组内行；
+ * 不再给标题铺灰底（2026-10-14 整块重排：灰底标题条 + 彩色加粗链接视觉重量压过内容）。
  *
  * [loading] 时渲染两条骨架行（而不是空态文案）：真实数据多数时候正好两条，高度对上；
  * 只有一条时卡片会缩一次，这是「不该有的空态文案」与「绝对零位移」之间取的折中——
@@ -1421,15 +1423,14 @@ private fun FeedSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .padding(start = 14.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
+                .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = onSurface.copy(alpha = 0.75f),
+                color = onSurface.copy(alpha = 0.9f),
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1447,18 +1448,28 @@ private fun FeedSection(
                 LinkLabel(linkLabel)
             }
         }
+        AppCardDivider()
         when {
-            loading -> repeat(2) { FeedRowSkeleton() }
+            loading -> repeat(2) { index ->
+                if (index > 0) AppCardDivider(Modifier.padding(start = FEED_ROW_DIVIDER_INSET))
+                FeedRowSkeleton()
+            }
             items.isEmpty() -> Text(
                 text = emptyText,
                 style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.6f),
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                color = onSurface.copy(alpha = 0.55f),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
             )
-            else -> items.forEach { FeedRow(it) }
+            else -> items.forEachIndexed { index, item ->
+                if (index > 0) AppCardDivider(Modifier.padding(start = FEED_ROW_DIVIDER_INSET))
+                FeedRow(item)
+            }
         }
     }
 }
+
+/** 组内行分隔线的左缩进：与行内标题文字对齐（14dp 行边距 + 18dp 图标 + 12dp 间隔）。 */
+private val FEED_ROW_DIVIDER_INSET = 44.dp
 
 /**
  * 流水行的骨架：与 [FeedRow] 同内边距、同图标尺寸、同两行行高（行高取自样式，
@@ -1472,6 +1483,7 @@ private fun FeedSection(
 private fun FeedRowSkeleton() {
     val titleLine = lineHeightDp(MaterialTheme.typography.bodyMedium)
     val subLine = lineHeightDp(MaterialTheme.typography.bodySmall)
+    val amountLine = lineHeightDp(MaterialTheme.typography.bodyLarge)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1479,13 +1491,13 @@ private fun FeedRowSkeleton() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SkeletonBox(Modifier.size(18.dp), RoundedCornerShape(4.dp))
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             SkeletonLine(width = 132.dp, line = titleLine)
             SkeletonLine(width = 96.dp, line = subLine)
         }
         Spacer(Modifier.width(8.dp))
-        SkeletonLine(width = 52.dp, line = titleLine)
+        SkeletonLine(width = 56.dp, line = amountLine)
     }
 }
 
@@ -1506,7 +1518,13 @@ private fun SkeletonLine(width: Dp, line: Dp) {
 /** 骨架条占行盒高的比例：一行文字的字形大约只画行盒中间的六成。 */
 private const val SKELETON_LINE_RATIO = 0.62f
 
-/** 一条流水：来源图标 + 标题与副标题 + 金额（入账带 + 走主色）。 */
+/**
+ * 一条流水：来源图标 + 标题与副标题 + 金额。
+ *
+ * 行规格对齐消费流水页 `TurnoverRow` / 缴费账单页 `BillRow`（2026-10-14）：标题
+ * `bodyMedium` Medium、副标题 `bodySmall` 0.55、金额 `bodyLarge` SemiBold + `¥` 前缀，
+ * 入账走主色、支出用常规色与 `−`。
+ */
 @Composable
 private fun FeedRow(item: LifeFeedItem) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -1526,26 +1544,28 @@ private fun FeedRow(item: LifeFeedItem) {
                 onSurface.copy(alpha = 0.6f)
             },
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = item.subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.6f),
+                color = onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.width(8.dp))
         Text(
-            text = (if (item.income) "+" else "-") + "%.2f".format(kotlin.math.abs(item.amountFen) / 100.0),
-            style = MaterialTheme.typography.bodyMedium,
+            text = (if (item.income) "+" else "−") + "¥%.2f".format(kotlin.math.abs(item.amountFen) / 100.0),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
             color = if (item.income) MaterialTheme.colorScheme.primary else onSurface,
         )
     }

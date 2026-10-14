@@ -144,6 +144,11 @@
 - **流水卡按来源分两段**（`domain/LifeFeed.sections`，每段 `SECTION_LIMIT = 2` 条），
   段标题右侧各接自己的出口（一卡通 → `CAMPUS_STATEMENT`，电费 → `POWER_BILL`）。
   **别再退回混排**：混在一起挂两个出口，用户点之前看不出会跳去哪。
+  **段标题无底色、记录行规格与消费流水页 / 缴费账单页一致**（2026-10-14 整块重排）：标题下
+  一道整宽细线、记录之间内缩细线（`FEED_ROW_DIVIDER_INSET` = 44dp）；记录行 = 标题
+  `bodyMedium` Medium、副标题 `bodySmall` 0.55、金额 `bodyLarge` SemiBold + `¥`。改这块的
+  行距 / 字号时**三处一起对齐**（`LifeScreen.FeedRow`、`StatementScreen.TurnoverRow`、
+  `PowerBillScreen.BillRow`），别只动生活页。
 - **流水区分段先骨架再数据**：两个来源都异步，进页第一帧两段都是空的。两段各自的 loading
   （`LifeUiState.campusFeedLoading` / `powerFeedLoading`，2026-09-26 由整卡一个 `feedLoading`
   拆开——用户报「加载太慢」，根因是本地一卡通陪电费的网络请求一起挂骨架）都从 **true** 起，
