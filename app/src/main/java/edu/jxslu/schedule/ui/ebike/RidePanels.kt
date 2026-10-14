@@ -351,7 +351,7 @@ internal fun RideActionArea(
             // 参数在切换那一刻已被清空（还车后 `ride` 变 null、点「继续找车」时 `summary`
             // 变 null、结束计时时 `timerActive` 变 false）——直接画就是"内容先没了、区域
             // 再收回去"。所以：**当前档逐轮记账「最近一次实时值」，退场那份只读**（普通持有者，
-            // 不驱动重组，页面里 `DpHolder` 同法）。别退回"入场快照"——`remember(key)`
+            // 不驱动重组）。别退回"入场快照"——`remember(key)`
             // 只记首帧，会让「已骑」回跳、悬置色复活（2026-10-08 复核修）。
             val isCurrent = key == barKey
             val stash = remember(key) { RideUpperStash() }
@@ -466,21 +466,6 @@ private const val BAR_CAR = "car"
 private const val BAR_RIDING = "riding"
 private const val BAR_SETTLED = "settled"
 
-/**
- * 上区内容的粗略高度档（只用于判「这次切换块是变矮了」，不是布局值）：
- * 骑行仪表盘最高，结算卡与车辆卡居中，找车态没有上区内容最矮。
- * 结算卡与车辆卡谁高不一定——两者互切按「没变矮」处理（走升起那边的稳妥路径）。
- */
-internal fun barHeightTier(key: String): Int = when {
-    key == BAR_RIDING -> 3
-    key == BAR_SETTLED || key.startsWith(BAR_CAR) -> 2
-    else -> 1 // 找车态四种排版
-}
-
-/** 这次形态切换块会不会变矮（下沉）。页面据此决定地图让位高度的落位时机。 */
-internal fun barBlockShrinks(prev: String, next: String): Boolean =
-    barHeightTier(next) < barHeightTier(prev)
-
 /** 开锁/还车等写动作的「长时间等待」阈值（秒）：超过在按钮上补一句出路。 */
 private const val BUSY_LONG_WAIT_SECONDS = 20
 
@@ -489,7 +474,7 @@ private const val BUSY_LONG_WAIT_SECONDS = 20
  *
  * **不是入场快照**：当前档（key == barKey）逐轮把实时值记账进来，退场那份（还会继续
  * 组合 [BAR_FADE_OUT_MS]，原地淡出）只读——切换那一刻外层参数已被清空，读到的就是最后
- * 一帧的真实状态。普通持有者，不驱动重组（页面里 `DpHolder` 同法）。
+ * 一帧的真实状态。普通持有者，不驱动重组。
  */
 private class RideUpperStash {
     var ride: KqcxAuth.Ride? = null

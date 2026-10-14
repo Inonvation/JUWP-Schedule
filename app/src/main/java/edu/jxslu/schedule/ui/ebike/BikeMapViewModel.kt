@@ -1291,7 +1291,8 @@ class BikeMapViewModel(
  * 底部车辆面板的高度档位（dp），页面与状态共用一套口径。
  *
  * 存**定值**而不是屏幕比例：比例在窗口变化时会自己变，面板跟着跳，用户明确要求过别跳。
- * [PANEL_MAX_RATIO] 是第二道上限，窗口再矮也要给地图留三成，否则拖到顶只剩一条缝。
+ * 上限由页面按「窗口高度 − 固定预留」算（`RideScreen.BOTTOM_RESERVE_DP`），预留是**常数**、
+ * 不跟底部块实测高度走——跟着走会让卡片进出时面板被夹小（2026-10-14 修的「弹窗跳动」）。
  *
  * **2026-10-01 起面板只装列表**：把手 + 头行 + 列表。主动作条与免责那行搬到面板**之外**
  * （页面底部的常驻块，见 `RideScreen`）。旧版把动作条塞进这个定高面板的 footer 里，
@@ -1305,12 +1306,6 @@ class BikeMapViewModel(
 internal const val DEFAULT_PANEL_HEIGHT_DP = 270f
 internal const val MIN_PANEL_HEIGHT_DP = 240f
 internal const val MAX_PANEL_HEIGHT_DP = 620f
-
-/**
- * 「面板 + 页面底部常驻块」合计占窗口高度的上限（用户可拖的那部分是面板）。
- * 留出的三成给地图——把动作条搬到面板外之后，比例要按**整条底部**算，否则地图还是会被挤。
- */
-internal const val PANEL_MAX_RATIO = 0.72f
 
 /**
  * 列表用「距你」而不是「距查询中心」排的半径（米，2026-09-30）。

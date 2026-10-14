@@ -50,9 +50,12 @@
   - 面板高度 = `BikeMapUiState.panelHeightDp`（`DEFAULT_PANEL_HEIGHT_DP` **270dp** /
     `MIN` **240** / `MAX` 620），**可拖**（`PanelDragHandle`）、**默认就展开着**
     （用户 2026-09-30 口径：「附近车辆跟原来一样默认展开」）——别再退回"点一下才看得到列表"。
-    上限两道：`MAX_PANEL_HEIGHT_DP` 与「面板 + 底部常驻块 ≤ 窗口 72%」（`PANEL_MAX_RATIO`，
-    地图留三成）。常驻块高度**由页面实测**（`onGloballyPositioned` 写 `bottomBlockDp`，
-    `remember(phase)` 先用估值兜底：骑行 250dp / 找车 120dp），别改成写死的常数。
+    上限 = `min(MAX_PANEL_HEIGHT_DP, 窗口高度 − BOTTOM_RESERVE_DP)`，**`BOTTOM_RESERVE_DP`
+    是固定常数、不吃底部块实测高度**（2026-10-14 修用户报的「车辆信息卡片出现 / 消失时
+    弹窗跳动」）：旧口径是 `窗口*0.72 − 块实测高度`（已删的 `PANEL_MAX_RATIO`），块高随
+    车辆卡 / 骑行卡进出而变 → 上限跟着变 → `clampPanelHeight` 把面板夹小且**不还原** →
+    面板顶边先随块升起再跳回去。**别把块实测高度加回上限**。`BOTTOM_RESERVE_DP` 的取值
+    口径（最高档底部块 + 最小地图可见高度）写在 `RideScreen` 那段注释里；改它要重新量。
     导航栏内边距归常驻块吃，面板自己不再垫（旧版两处都垫）。
   - 三态由数据推导（`phase`），不另存可变状态：`Settled`（有还车结果）→ `Riding`
     （有订单或在案计时）→ `Finding`。「选中某辆车」「选中某停车点」**不在三态里**，
@@ -64,8 +67,7 @@
       直接上升就行」）：进 = 全高 `slideInVertically { it }` + 快速淡入（[BAR_FADE_IN_MS]）；
       出 = **原地淡出**（[BAR_FADE_OUT_MS] 120ms），不再向下沉——旧版进出两块反向滑动叠上
       容器长高（`SizeTransform` 240ms），合成的运动轨迹发斜、看着像"从右下角冒出来"。
-      **别把退场改回滑动**；容器高度动画两个方向都是 `BAR_RISE_MS` 240，页面靠它冻结
-      地图让位高度，落位时机分流见 [barBlockShrinks]。
+      **别把退场改回滑动**；容器高度动画两个方向都是 `BAR_RISE_MS` 240。
       **车辆卡的 key 带车号**（`car:100000398`）：换一辆车时上区要重走一遍升起动画，
       不然只有文字原地换掉。车号**从 key 里取**（`carNumOf`），别读外层那个 `pickedCar`
       ——退场那一份读的是最新值，会跟着变成新车、两层画同一张卡。
@@ -77,7 +79,7 @@
     **退场那一份会继续组合 120ms（`BAR_FADE_OUT_MS`，原地淡出）**，它读的是外层参数的**最新值**：还车时 `ride` 变 null、
     点「继续找车」时 `summary` 变 null、结束计时时 `timerActive` 变 false，退场路上那半秒
     就画不出东西（看着是"内容先没了、区域再收回去"）。所以 `RideActionArea` 里按 key
-    留了一份 `RideUpperStash`（普通持有者、不驱动重组，页面里 `DpHolder` 同法）：
+    留了一份 `RideUpperStash`（普通持有者、不驱动重组）：
     **当前档（key == barKey）逐轮记账「最近一次实时值」，退场那份只读**——悬置位/计时
     当前档一律实时值（重试成功、到点撤卡要立刻消解）。**别退回"入场快照"**——
     `remember(key)` 只记首帧，会让「已骑」回跳、悬置色复活（2026-10-08 复核修）；
@@ -240,28 +242,22 @@
   **别退回无条件 invalidate**；加新的绘制输入时记得一并进 `MapOverlayInputs`，
   漏进去就是"数据变了画面不动"的静默 bug。记账用的 `DrawnOverlayInputs` 是普通持有者，
   **别换成 `mutableStateOf`**（update 跑在 apply 阶段，写状态会再触发一轮重组）。
-- **地图让位高度的落位时机按方向分流**（2026-10-07 用户报「还车后点继续找车，
-  地图突然抽搐突变」）：`mapReserveDp` 落位原来一律等满程（`BAR_RISE_MS` + 60ms），
-  对**升起**方向没问题（落位时缩小的那截被已升起的块盖住，看不见），对**下沉**方向
-  （结算卡 → 继续找车、结束计时、还车出结算卡）却是「块贴底后地图还矮着，露几十 ms
-  空档，然后一次跳变猛地补齐」——用户报的抽搐就是它。现在 `barBlockShrinks(prev, next)`
-  （`RidePanels`，`RideBarKeyTest` 钉住）判出下沉时落位提前到块落底（升起余量 60ms、
-  下沉余量 `SHRINK_SETTLE_MS` 10ms，落位基数都是 `BAR_RISE_MS`）。**前提别弄反**：
-  容器高度动画（`SizeTransform`）**两个方向都是 `BAR_RISE_MS`**；上区退场 2026-10-08 起
-  只是 120ms 原地淡出（见上），**不参与**高度动画——落位基数别换、也别把两个余量并成一个
-  （升起多等无害、下沉多等就是多露空档）。**地图 resize 仍只发生一次，别改成逐帧
-  resize**（那是 10-01 修掉的掉帧来源）；结算卡与车辆卡谁高不一定，两者互切按
-  「没变矮」处理走稳妥路径，别给它们编方向。
-- **地图的让位高度在底部块换形态时冻结**（2026-10-01 同一条报障的另一半，`RideScreen`）：
-  动作区 `barKey` 一变，`AnimatedContent` 的 `SizeTransform` 走 240ms 高度动画；页面若让地图
-  跟着实测高度走，这 240ms 里**每帧 resize 一次地图**（osmdroid 每帧整幅重绘 + 每帧写状态
-  重组整页）。现在：`mapReserveDp` 是**冻结值**，动画期间不动（地图被升起来的底部块盖住），
-  动画结束取最终实测高度一次性落位——被切掉的那一截正好在块后面，看不见。
-  三个配套件别拆：① 页面结构是 `Box { 地图（按 panelHeight + mapReserveDp 让位）;
-  贴底的 Column（面板 + 常驻块，叠在地图之上）}`——不是 `Column` 里排，否则冻结会撑破容器；
-  ② `barKey` 由 `rideBarKey()` 唯一算出（页面与动作区共用），页面靠它触发冻结；
-  ③ 布局回调（`onGloballyPositioned`）在动画期间**只记账不写状态**（`DpHolder`），
-  不然每帧一次状态写就把省下来的又花回去。
+- **地图让位 = 恒定尺寸 + 整幅平移**（2026-10-11 起，2026-10-14 收口；用户报的
+  「车辆卡弹出时地图突变」「拖面板时地图游」「车辆信息卡片进出时弹窗跳动」都是这一族）：
+  地图视图**尺寸恒定**（= 整个可用区，`fillMaxSize`，**不带** `padding(bottom = panelHeight)`），
+  让位靠 `graphicsLayer.translationY = -(panelHeight + liveBlockDp) / 2`——可见区 = 地图层
+  减去被面板 + 底部块盖住的那段，把地图按这段的一半上移，视图中心就落回可见区中心
+  （相机中心语义不变）。上半截平移到窗口外的部分由外层 `clipToBounds` 裁掉。
+  **为什么尺寸必须恒定**：osmdroid 每次 resize 都重投影、把整幅内容平移 delta/2，视图尺寸
+  跟着面板高度走的话，面板一变（拖动 / 夹取）地图就跳一次；平移只是图层变换，不重投影、
+  不重绘瓦片。**别把 `padding(bottom = panelHeight)` 加回来**，也别改成逐帧 resize
+  （那是 10-01 修掉的掉帧来源）。
+  配套件别拆：① 页面结构是 `Box { 地图（恒定尺寸 + 平移）; 贴底的 Column（面板 + 常驻块，
+  叠在地图之上）}`——不是 `Column` 里排；② 常驻块高度 `liveBlockDp` 由 `onGloballyPositioned`
+  实测（含导航栏内边距），只喂地图平移与 Snackbar 抬升两处（读点各在自己的作用域里，
+  每帧写不贵），**不再喂面板上限**；③ 面板上限走固定预留 `BOTTOM_RESERVE_DP`（见上），
+  旧版的 `mapReserveDp` / `measuredBlockDp` / `blockAnimating` / `barBlockShrinks` /
+  `barHeightTier` / `PANEL_MAX_RATIO` 整套已删，**别当漏项加回来**。
 - 量法：debug 下 `BikeMapQuery` 打两行（首屏落地 / 合并落地，含条数与环点数）；
   `adb shell dumpsys gfxinfo <包名> framestats` 看拖动时段的掉帧。
   **展示上限 1200 米这次没收**：采样环只有 450 米，捞回来的车最远六百多米，

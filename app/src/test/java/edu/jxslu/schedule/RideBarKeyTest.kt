@@ -2,21 +2,18 @@ package edu.jxslu.schedule
 
 import edu.jxslu.schedule.domain.EbikeCapabilities
 import edu.jxslu.schedule.ui.ebike.RidePhase
-import edu.jxslu.schedule.ui.ebike.barBlockShrinks
 import edu.jxslu.schedule.ui.ebike.rideBarKey
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 动作区形态 key（DESIGN §3.9）：它一变，`RideActionArea` 就走一次高度动画，页面同时把地图的
- * 让位高度冻结 240ms（否则动画每帧都 resize 一次地图、osmdroid 每帧整幅重绘——2026-10-01
- * 用户报的「开锁后掉帧、然后骑行面板弹出来」）。
+ * 动作区形态 key（DESIGN §3.9）：它一变，`RideActionArea` 里的 `AnimatedContent` 就走一次
+ * 高度动画（升起 / 原地淡出）。所以这份 key 的语义是**契约**：该分开的形态必须分开
+ * （不然动画不播、形态硬切），同一形态必须稳定（不然每次重组都重新触发一次动画）。
  *
- * 所以这份 key 的语义是**契约**：该分开的形态必须分开（不然动画不播、还可能漏掉冻结），
- * 同一形态必须稳定（不然每次重组都重新触发一次冻结）。
+ * 2026-10-14 起页面不再按它冻结地图让位高度（地图改成恒定尺寸 + 整幅平移，见 `RideScreen`），
+ * 所以 `barBlockShrinks` / `barHeightTier` 连同它们的断言一并删了。
  */
 class RideBarKeyTest {
 
@@ -62,27 +59,5 @@ class RideBarKeyTest {
         // 电池/车辆卡不该影响骑行态与结算态的 key：phase 定了就是它
         assertNotEquals(riding, settled)
         assertEquals(riding, rideBarKey(RidePhase.Riding, account, loggedIn = true, pickedCar = "100000669", hasCode = true))
-    }
-
-    @Test
-    fun `下沉方向判定`() {
-        // 2026-10-07：落位时机按方向分流——下沉的块沉到底就落位（修「继续找车后地图抽搐」）
-        val plain = rideBarKey(RidePhase.Finding, mini, loggedIn = true, pickedCar = null, hasCode = false)
-        val settled = rideBarKey(RidePhase.Settled, account, loggedIn = true, pickedCar = null, hasCode = false)
-        val riding = rideBarKey(RidePhase.Riding, account, loggedIn = true, pickedCar = null, hasCode = false)
-        val car = rideBarKey(RidePhase.Finding, account, loggedIn = true, pickedCar = "100000669", hasCode = false)
-
-        // 结算卡 → 继续找车（用户报的场景）、骑行 → 结算卡、结束计时、车辆卡 → 找车：都变矮
-        assertTrue(barBlockShrinks(settled, plain))
-        assertTrue(barBlockShrinks(riding, settled))
-        assertTrue(barBlockShrinks(riding, plain))
-        assertTrue(barBlockShrinks(car, plain))
-        // 升起与同档互切不按下沉处理（走等满程的稳妥路径）
-        assertFalse(barBlockShrinks(plain, settled))
-        assertFalse(barBlockShrinks(plain, riding))
-        assertFalse(barBlockShrinks(settled, riding))
-        // 结算卡与车辆卡谁高不一定，互切不算下沉
-        assertFalse(barBlockShrinks(settled, car))
-        assertFalse(barBlockShrinks(car, settled))
     }
 }
