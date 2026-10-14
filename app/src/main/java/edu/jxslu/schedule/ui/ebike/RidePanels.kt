@@ -1367,16 +1367,16 @@ internal fun RideBikePanel(
                     onClick = onOpenFilter,
                 )
                 if (state.loading) {
+                    // 占位与右边那枚刷新按钮**同尺寸（40dp）**：旧版是 20dp 圈 + 12dp 横垫
+                    // （44dp），一加载头行的标题列就左右挪 4dp——刷新一次跳一下
                     Box(
-                        modifier = Modifier
-                            .padding(horizontal = 12.dp)
-                            .size(20.dp),
+                        modifier = Modifier.size(40.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator(
                             strokeWidth = 2.dp,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                 } else {
@@ -1674,9 +1674,12 @@ private fun RideClusterCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                // 箭头转到朝下表示展开，转场比直接换图标顺眼
+                // 箭头转到朝下表示展开，转场比直接换图标顺眼。
+                // 显式 tween + FastOutSlowInEasing（与同页其余过渡同族）——默认是 spring，
+                // 在"展开/收起走高度动画"旁边会显得比内容先到、节奏脱节
                 val rotation by animateFloatAsState(
                     targetValue = if (expanded) 90f else 0f,
+                    animationSpec = tween(BAR_FALL_MS, easing = FastOutSlowInEasing),
                     label = "clusterChevron",
                 )
                 Icon(
@@ -1907,10 +1910,18 @@ internal fun RideCarNumberSheet(
                 // 里面再放一枚同名按钮是重复。改了车号它自己回来，不必留常驻位。
                 AnimatedVisibility(
                     visible = !upToDate,
+                    // 高度过渡显式走 tween + FastOutSlowInEasing：默认 spring 与同处的
+                    // fadeIn/fadeOut（同族 tween）不同拍，一块里两种缓动最显眼
                     enter = fadeIn(animationSpec = tween(BAR_FADE_IN_MS)) +
-                        expandVertically(expandFrom = Alignment.Top),
+                        expandVertically(
+                            animationSpec = tween(BAR_RISE_MS, easing = FastOutSlowInEasing),
+                            expandFrom = Alignment.Top,
+                        ),
                     exit = fadeOut(animationSpec = tween(BAR_FADE_OUT_MS)) +
-                        shrinkVertically(shrinkTowards = Alignment.Top),
+                        shrinkVertically(
+                            animationSpec = tween(BAR_FALL_MS, easing = FastOutSlowInEasing),
+                            shrinkTowards = Alignment.Top,
+                        ),
                 ) {
                     RideActionButton(
                         text = "生成乘车码",

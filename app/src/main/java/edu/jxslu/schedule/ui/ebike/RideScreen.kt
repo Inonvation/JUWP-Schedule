@@ -914,11 +914,15 @@ fun RideScreen(
 
     // 结束计时（本地计时专用，与「还车」是两个动作）
     if (showEndTimerConfirm) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { showEndTimerConfirm = false },
             title = { Text("结束计时？") },
-            text = { Text("结束后将清空免费时长计时，并撤掉通知栏上的倒计时与提醒。开车 / 还车仍在微信小程序里完成。") },
+            text = {
+                // 过渡落在弹窗窗口自己的组合里（内容槽第一行）；放 AlertDialog 外面取到的是
+                // 页面窗口、挂不上本应用样式（等于没调用，见 ui-common.md）
+                DialogWindowFadeEffect()
+                Text("结束后将清空免费时长计时，并撤掉通知栏上的倒计时与提醒。开车 / 还车仍在微信小程序里完成。")
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showEndTimerConfirm = false
@@ -1034,12 +1038,13 @@ private fun KvcxConfirmDialog(
     danger: Boolean,
 ) {
     // 开锁 / 还车的弹窗开关不能瞬间抽动（2026-10-03 用户口径）：窗口层的
-    // 淡入放大 / 淡出收在这里，确认后动作区的 busy 态在这 190ms 淡出里露出来
-    DialogWindowFadeEffect()
+    // 淡入放大 / 淡出收在这里，确认后动作区的 busy 态在这 190ms 淡出里露出来。
+    // **必须落在内容槽里**（放 AlertDialog 外面取到的是页面窗口、等于没调用，见 ui-common.md）
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(dialog.title) },
         text = {
+            DialogWindowFadeEffect()
             Column(
                 modifier = Modifier
                     .heightIn(max = 400.dp)

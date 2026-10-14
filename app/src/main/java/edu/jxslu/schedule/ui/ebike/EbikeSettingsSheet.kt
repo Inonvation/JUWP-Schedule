@@ -39,6 +39,7 @@ import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppPermissions
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingItem
@@ -183,6 +184,9 @@ internal fun EbikeSettingsSheet(
             onDismissRequest = { if (!clearingCache) showClearCache = false },
             title = { Text("清除地图缓存？") },
             text = {
+                // 过渡落在弹窗窗口自己的组合里（内容槽第一行）；放 AlertDialog 外面取到的是
+                // 页面窗口、挂不上本应用样式（等于没调用，见 ui-common.md）
+                DialogWindowFadeEffect()
                 Text(
                     buildString {
                         append("将删除离线地图瓦片")

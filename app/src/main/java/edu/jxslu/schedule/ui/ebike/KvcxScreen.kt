@@ -252,11 +252,15 @@ private fun RideHistorySection(records: List<RideRecord>, onClear: () -> Unit) {
         }
     }
     if (confirmClear) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清空本机记录？") },
-            text = { Text("只清本机这份骑行史，快趣侧的订单与账单不受影响。") },
+            text = {
+                // 过渡落在弹窗窗口自己的组合里（内容槽第一行）；放 AlertDialog 外面取到的是
+                // 页面窗口、挂不上本应用样式（等于没调用，见 ui-common.md）
+                DialogWindowFadeEffect()
+                Text("只清本机这份骑行史，快趣侧的订单与账单不受影响。")
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
