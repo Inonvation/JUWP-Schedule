@@ -29,6 +29,7 @@
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 / 自动还车 | `.agents/rules/ebike.md` |
 | 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
+| 宿舍空调遥控（生活页 · 校园服务，红外） | `.agents/rules/ac-remote.md` |
 | 天气（今日页顶栏提示 · 天气页） | `.agents/rules/weather.md` |
 | 百宝箱（图片水印 / 拼接 / 菜鸟批量查） | `.agents/rules/toolbox.md` |
 | U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
@@ -245,7 +246,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                JwImportActivity 的 TeachingEval 模式（§4.44）；百宝箱 TOOLBOX +
               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
               菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
-               受通用设置开关控制，默认开，§4.47））
+               受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（生活页「校园服务」入口，
+               寝室美的空调红外，§3.31 / §4.48））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
@@ -283,6 +285,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  纯函数；默认开，只适合同页连续滚动的一批截图，§4.47）
  + CainiaoQuery（菜鸟批量查：三方路由链接拼装 · 多单号输入清洗拆分与丢弃计数 ·
  历史编解码，纯函数，§4.47）
+ + MideaAc（美的空调红外：48 位帧 · 校验位 · ConsumerIrManager 脉冲序列生成，
+ 纯函数，§3.31 / §4.48）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
@@ -308,7 +312,7 @@ data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成�
                  ScheduleSync（课表直取 + 首启自动导入 + 调课检查）/ ScheduleBaselineStore
                  （调课基线 filesDir JSON，§4.17）
                  InboxRepository（收件箱留痕层，旁路不发网络请求，§4.38；规则见 .agents/rules/inbox.md）
-data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）
+data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）+ 空调遥控状态（ac_remote_prefs，§4.48）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
                  + ScholarProgressParser（学业完成情况 = 教务返 HTML，按表头名映射，非 JSON）
@@ -367,6 +371,10 @@ data/weather/    天气（DESIGN §3.29 / §4.46；**Open-Meteo 免 Key 免注�
                  WeatherApi（裸 OkHttp，无日志拦截器；查询点 = 校区坐标，WGS84 口径）
                  + WeatherRepository（30 分钟 TTL · 同刻只放一个请求 · 刷新失败回退旧快照）
                  规则见 .agents/rules/weather.md
+data/ir/         空调红外发射（生活页「校园服务」入口，DESIGN §4.48）：
+                 AcIrBlaster（ConsumerIrManager 薄封装；TRANSMIT_IR 普通权限，无发射器机型
+                 进页只给提示）；协议纯逻辑见 domain/MideaAc，状态见 AcRemotePrefsStore
+                 规则见 .agents/rules/ac-remote.md
 ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|ai|toolbox
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新

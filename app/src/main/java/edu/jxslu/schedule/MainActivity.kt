@@ -1158,9 +1158,13 @@ internal fun JuwApp(
                             onOpenCampusSettings = {
                                 SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
                             },
-                            // 校园服务三格（2026-10-13）：问渠 / 成绩查询；取快递在页内弹窗
+                            // 校园服务四格（2026-10-13 三格；2026-10-16 加空调遥控）：
+                            // 问渠 / 空调遥控 / 成绩查询；取快递在页内弹窗
                             onOpenWenqu = {
                                 SubpageActivity.start(context, SubpageScreen.WENQU)
+                            },
+                            onOpenAcRemote = {
+                                SubpageActivity.start(context, SubpageScreen.AC_REMOTE)
                             },
                             onOpenScores = {
                                 SubpageActivity.start(context, SubpageScreen.SCORES)

@@ -131,6 +131,7 @@ import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.PackageSearch01
 import me.rerere.hugeicons.stroke.QrCodeScan
+import me.rerere.hugeicons.stroke.RemoteControl
 import me.rerere.hugeicons.stroke.WashingMachine
 
 /** 充值入口的种类（免责声明放行后决定打开哪个弹层）。 */
@@ -141,7 +142,7 @@ private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
 
 /**
  * 生活页（DESIGN 3.13）：钱包卡（一卡通余额主视觉 + 充值 / 付款码 / 账单）→ 校园服务
- * （取快递 / 问渠志愿 / 成绩查询）→ U净 整行卡 → 最近流水与账单入口。
+ * （取快递 / 问渠志愿 / 空调遥控 / 成绩查询）→ U净 整行卡 → 最近流水与账单入口。
  *
  * 三条口径：
  * 1. **码不预取**：付款码只在钱包卡上留一枚按钮，点进去才是 PayCodeScreen，取码发生在
@@ -164,6 +165,8 @@ fun LifeScreen(
     onOpenCampusSettings: () -> Unit = {},
     /** 校园服务：问渠 · 志愿服务页 */
     onOpenWenqu: () -> Unit = {},
+    /** 校园服务：空调遥控页（寝室美的空调 · 红外发射） */
+    onOpenAcRemote: () -> Unit = {},
     /** 校园服务：成绩查询页 */
     onOpenScores: () -> Unit = {},
     /** U净 · 洗衣房页（U净 弹窗的副行落点） */
@@ -467,6 +470,10 @@ fun LifeScreen(
                         onWenqu = {
                             haptics.tap()
                             onOpenWenqu()
+                        },
+                        onAcRemote = {
+                            haptics.tap()
+                            onOpenAcRemote()
                         },
                         onScores = {
                             haptics.tap()
@@ -897,13 +904,14 @@ private fun HeroPillButton(
 }
 
 /**
- * 校园服务卡：三格入口（取快递 / 问渠志愿 / 成绩查询）。
+ * 校园服务卡：四格入口（取快递 / 问渠志愿 / 空调遥控 / 成绩查询）。
  * U净 不在这格里——它单独占一整行（[UjingEntryCard]）。
  */
 @Composable
 private fun CampusServicesCard(
     onPackagePickup: () -> Unit,
     onWenqu: () -> Unit,
+    onAcRemote: () -> Unit,
     onScores: () -> Unit,
 ) {
     AppCard(
@@ -917,6 +925,7 @@ private fun CampusServicesCard(
         ) {
             ServiceTile("取快递", HugeIcons.Package01, onPackagePickup)
             ServiceTile("问渠志愿", HugeIcons.HeartHandshake, onWenqu)
+            ServiceTile("空调遥控", HugeIcons.RemoteControl, onAcRemote)
             ServiceTile("成绩查询", HugeIcons.Analytics01, onScores)
         }
     }

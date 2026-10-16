@@ -30,6 +30,7 @@ import edu.jxslu.schedule.ui.curriculum.CurriculumScreen
 import edu.jxslu.schedule.ui.ebike.KvcxScreen
 import edu.jxslu.schedule.ui.ebike.RideScreen
 import edu.jxslu.schedule.ui.exam.ExamScreen
+import edu.jxslu.schedule.ui.life.AcRemoteScreen
 import edu.jxslu.schedule.ui.life.PowerBillScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
 import edu.jxslu.schedule.ui.homework.HomeworkDetailScreen
@@ -210,6 +211,8 @@ enum class SubpageScreen {
     TOOLBOX_STITCH,
     /** 百宝箱 → 菜鸟批量查（多单号一次送菜鸟查件，DESIGN §4.47） */
     TOOLBOX_CAINIAO,
+    /** 生活页 → 校园服务 → 空调遥控（寝室美的空调红外，DESIGN §3.31 / §4.48，2026-10-16） */
+    AC_REMOTE,
 }
 
 /**
@@ -329,6 +332,8 @@ class SubpageActivity : ComponentActivity() {
                 onOpenRecords = { SubpageActivity.start(this, SubpageScreen.WENQU_RECORDS) },
             )
             SubpageScreen.WENQU_GRAB -> WenquGrabScreen(onBack = onBack)
+            // 生活页 → 校园服务 → 空调遥控（2026-10-16）：寝室美的空调，红外发射
+            SubpageScreen.AC_REMOTE -> AcRemoteScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
                 onOpenDiagnostics = { address ->

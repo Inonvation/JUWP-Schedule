@@ -43,6 +43,10 @@
          ——2026-09-30 用户报「通知了但没有震动」的根因就是一直没声明这一条
          （渠道里 `enableVibration(true)` 配了也发不出去）。 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 空调遥控（生活页 → 校园服务，DESIGN §3.31 / §4.48）：红外发射。
+         普通权限，安装即授予，无运行时申请；无红外发射器的机型由页面自行提示。 -->
+    <uses-permission android:name="android.permission.TRANSMIT_IR" />
     <!-- 重启后闹钟全部丢失：开机广播补排下一个提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 共享单车免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务。
