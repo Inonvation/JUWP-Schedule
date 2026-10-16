@@ -3,6 +3,7 @@ package edu.jxslu.schedule.ui.ebike
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -20,8 +21,8 @@ import edu.jxslu.schedule.ui.reminder.ReminderVibration
  *
  * 两个 channel 分工明确，别合并：
  * - [EbikeFreeRide.NotificationIds.COUNTDOWN_CHANNEL]（LOW）：前台服务的常驻倒计时。
- *   无声、不弹、`ongoing`，剩余时间由**系统 chronometer** 渲染（`setWhen` + countDown），
- *   App 不需要每秒 notify 一次；
+ *   无声、不弹、`ongoing`，文案由服务**每秒重发一次**（不用系统 chronometer，见
+ *   [countdownNotification]）；Android 16+ 上它被系统提升为 Live Update（灵动岛）。
  * - [EbikeFreeRide.NotificationIds.ALERT_CHANNEL]（HIGH）：两条到点提醒，要响要弹。
  *
  * 关于「弹不出来」（2026-09-30 用户报「只出现在通知栏，不在屏幕上弹出」）：App 这一侧
@@ -54,14 +55,62 @@ internal object EbikeFreeRideNotifier {
     internal const val LEAD_REQUEST_CODE = 2005
     internal const val END_REQUEST_CODE = 2006
 
+    /**
+     * 常驻倒计时**被划掉**的落点 requestCode（2026-10-16）。
+     * 与 2000（点通知）/ 2005 / 2006（两条提醒）/ 2007（自动还车结果）都错开。
+     */
+    private const val REQUEST_COUNTDOWN_DELETE = 2008
+
+    /**
+     * 落点 PendingIntent 的**进程内缓存**（2026-10-16 二轮）。
+     *
+     * `PendingIntent.getActivity/getBroadcast` 每次都是一趟到 ActivityManager 的 binder
+     * 往返；倒计时通知**每秒重发**，那两个落点却几乎不变（内容落点与起点无关，删除落点只
+     * 随起点变），所以缓存起来——每秒少两趟 IPC，观感与行为完全不变。
+     * 起点换了就换一份（`deleteIntent` 按起点比对）；进程被杀缓存即丢，重建即可。
+     * `getOrPut` 非原子也没关系：同一个 `(requestCode, intent)` 取回来的是**同一个系统
+     * PendingIntent**（值相等），最坏是并发时各建一次、其中一个被丢弃。
+     */
+    private val contentIntents = java.util.concurrent.ConcurrentHashMap<Int, PendingIntent>()
+
+    /**
+     * 删除落点的缓存。**必须是一个不可变持有者、一次原子读**（2026-10-16 二轮审查修）：
+     * 早先写成两个各自 `@Volatile` 的字段（先写 intent、再写 startAt），换车时
+     * `onStartCommand` 的主线程与上一轮还没取消的 tick 协程会并发进来，可能读到
+     * 「新的 intent + 旧的 startAt」→ 返回一个带错起点的删除落点（划掉会作废错的那一轮）。
+     * 起点只在一轮骑行里固定，所以单槽足够。
+     */
+    @Volatile
+    private var cachedDelete: Pair<Long, PendingIntent>? = null
+
     /** 点通知的落点：出码页（不是今日页——用户此刻的诉求是看码或结束计时）。 */
     private fun contentIntent(context: Context, requestCode: Int): PendingIntent =
-        PendingIntent.getActivity(
+        contentIntents.getOrPut(requestCode) {
+            PendingIntent.getActivity(
+                context,
+                requestCode,
+                subpageLaunchIntent(context, SubpageRequest(SubpageScreen.RIDE)),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+    /**
+     * 常驻倒计时**被划掉**的落点（2026-10-16）。官方对 Live Updates 的要求是
+     * 「别把用户划掉的再顶回去」，检测手段就是这个 `setDeleteIntent`。
+     * 带上这一轮的起点：划掉只作废**这一轮**，换车换起点自然重新请求提升。
+     */
+    private fun deleteIntent(context: Context, startAtMillis: Long): PendingIntent {
+        cachedDelete?.let { (cachedStartAt, cached) ->
+            if (cachedStartAt == startAtMillis) return cached
+        }
+        return PendingIntent.getBroadcast(
             context,
-            requestCode,
-            subpageLaunchIntent(context, SubpageRequest(SubpageScreen.RIDE)),
+            REQUEST_COUNTDOWN_DELETE,
+            Intent(context, EbikeCountdownDismissReceiver::class.java)
+                .putExtra(EbikeCountdownDismissReceiver.EXTRA_START_AT, startAtMillis),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        ).also { cachedDelete = startAtMillis to it }
+    }
 
     /** 通知是否可用：系统总开关或本应用被关掉时，发了也看不见（前台服务仍会跑）。 */
     fun notificationsEnabled(context: Context): Boolean =
@@ -113,6 +162,27 @@ internal object EbikeFreeRideNotifier {
      * 常驻倒计时通知（前台服务用）。文案由 [EbikeFreeRide.countdownText] 给出，
      * **服务每秒重发一次**——不用系统 chronometer：真机实测（Redmi K70 / 澎湃OS）
      * 面板静止时系统不主动重绘 chronometer，用户看到的是不动的数字。
+     *
+     * **灵动岛（DESIGN §3.9，2026-10-16）**：Android 16 起系统能把这条通知提升为
+     * Live Update——状态栏上出现一枚芯片、通知抽屉里是一条置顶常驻卡。请求提升只要
+     * 两件东西：`setRequestPromotedOngoing(true)`（compat 内部就是往 extras 塞
+     * `android.requestPromotedOngoing`）+ 芯片文案 `setShortCriticalText`；manifest 里
+     * 还得声明 `POST_PROMOTED_NOTIFICATIONS`（普通权限）。**开启通知即默认上岛，没有开关。**
+     * 低版本设备上这两条都被系统忽略，通知照旧（不是"分档实现"，就是同一份通知）。
+     *
+     * 官方给的资格清单我们都满足：`ongoing` ✓、有 contentTitle ✓、无自定义 RemoteViews ✓、
+     * 非 group summary ✓、不 colorized ✓、渠道是 LOW（不是 IMPORTANCE_MIN）✓、
+     * 样式是 `ProgressStyle`（清单里允许）✓。**别加 `setCustomContentView`、
+     * 别把渠道降成 IMPORTANCE_MIN**，那会当场取消资格。
+     *
+     * **进度条**：卡片走 `ProgressStyle`（填满 = 免费时长还剩满格，随免费时间流干；不设
+     * segment / tracker 图标，走默认「按进度着色」，无 segment 时满刻度 100）。
+     * **它曾经被当成「岛抖」的嫌疑犯撤掉过一次（2026-10-16 二轮），但用户确认抖动在它之前
+     * 就有，已按用户要求加回来**——别再拿它当抖动的原因；每秒重发本身（系统侧重绘）才是
+     * 那笔代价，要治只能减少更新次数，那就动功能了。
+     *
+     * **被划掉就收手（2026-10-16）**：用户划掉过这一轮，就**不再请求提升**（见
+     * [EbikeCountdownDismissal]）；划掉本身由 [deleteIntent] 收进 [EbikeCountdownDismissReceiver]。
      */
     fun countdownNotification(context: Context, startAtMillis: Long, nowMillis: Long) =
         NotificationCompat.Builder(context, EbikeFreeRide.NotificationIds.COUNTDOWN_CHANNEL)
@@ -125,6 +195,18 @@ internal object EbikeFreeRideNotifier {
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setStyle(
+                NotificationCompat.ProgressStyle()
+                    .setProgress(EbikeFreeRide.progressPercent(startAtMillis, nowMillis)),
+            )
+            .apply {
+                // 上岛（见 KDoc）：用户把这一轮划掉过就只按普通通知发，不再顶回去
+                if (!EbikeCountdownDismissal.isDismissed(startAtMillis)) {
+                    setRequestPromotedOngoing(true)
+                    setShortCriticalText(EbikeFreeRide.countdownChipText(startAtMillis, nowMillis))
+                }
+            }
+            .setDeleteIntent(deleteIntent(context, startAtMillis))
             .setContentIntent(contentIntent(context, REQUEST_COUNTDOWN))
             .build()
 
@@ -207,4 +289,46 @@ internal object EbikeFreeRideNotifier {
         runCatching {
             NotificationManagerCompat.from(context).notify(id, notification)
         }.isSuccess
+}
+
+/**
+ * 「用户把常驻倒计时划掉了」的本轮记账（2026-10-16）。
+ *
+ * 官方对 Live Updates 的要求是**别把用户划掉的再顶回去**。我们的通知是前台服务的，
+ * 划掉之后服务也没有存在理由了（它只干「让这条通知活着」这一件事），所以这里的实际含义是：
+ * **这一轮就此收手**——通知摘掉、不再请求提升；提醒闹钟与 App 内倒计时块不受影响。
+ *
+ * 进程内记账（与 `EbikeFreeRideService.runningStartAt` 同性质）：换车换起点自然失效
+ * （[isDismissed] 按起点比），进程被杀则记账丢失、下一轮照常上岛——那正是要的语义
+ * （重启后不该继承上一轮的"别打扰我"）。
+ */
+internal object EbikeCountdownDismissal {
+
+    @Volatile
+    private var dismissedStartAt = 0L
+
+    fun markDismissed(startAtMillis: Long) {
+        dismissedStartAt = startAtMillis
+    }
+
+    fun isDismissed(startAtMillis: Long): Boolean =
+        startAtMillis > 0L && dismissedStartAt == startAtMillis
+}
+
+/**
+ * 常驻倒计时被划掉的落点（[EbikeFreeRideNotifier.deleteIntent] 挂上来的）。
+ * 只做两件事：记下这一轮的起点、把常驻服务停掉（通知随之摘掉）。
+ */
+class EbikeCountdownDismissReceiver : BroadcastReceiver() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        val startAt = intent.getLongExtra(EXTRA_START_AT, 0L)
+        if (startAt <= 0L) return
+        EbikeCountdownDismissal.markDismissed(startAt)
+        EbikeFreeRideService.stop(context)
+    }
+
+    companion object {
+        const val EXTRA_START_AT = "ebike_countdown_dismissed_start_at"
+    }
 }

@@ -20,12 +20,17 @@ val releaseStoreFile = keystoreProps.getProperty("storeFile")
 
 android {
     namespace = "edu.jxslu.schedule"
-    compileSdk = 35
+    // compileSdk 36（Android 16）：倒计时通知要上灵动岛，用的是系统标准的 Live Updates
+    // （promoted ongoing notification）——`NotificationCompat.setRequestPromotedOngoing` /
+    // `setShortCriticalText` 要 androidx.core 1.17，而它的 AAR 元数据要求 compileSdk 36
+    // 与 AGP 8.9.1（见 DESIGN §3.9「灵动岛」）。targetSdk 一并跟到 36：官方示例与
+    // RikkaHub（同机型同 ROM 已跑通）都是 36+。
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "edu.jxslu.schedule"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 20
         versionName = "2.9.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -95,7 +100,10 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    implementation("androidx.core:core-ktx:1.15.0")
+    // 1.17.0 起有 NotificationCompat.setRequestPromotedOngoing / setShortCriticalText
+    // （倒计时通知上灵动岛用，DESIGN §3.9）。它的 AAR 元数据要求 compileSdk 36 + AGP 8.9.1，
+    // 所以这次工具链一起抬；别升到 1.18+（那要 compileSdk 36.1）。
+    implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
@@ -131,7 +139,7 @@ dependencies {
     // 小组件兜底刷新：WorkManager 15 分钟周期任务（进程被杀后仍能刷）
     implementation("androidx.work:work-runtime-ktx:2.7.1")
 
-    // 非传递：只取图标 AAR，避免拉到需 compileSdk 36 的 androidx.core 1.17
+    // 非传递：只用它的图标 AAR，不借它的依赖把 compose/core 的版本边界搅进来
     implementation("com.github.rikkahub:hugeicons-compose:1.4") {
         isTransitive = false
     }

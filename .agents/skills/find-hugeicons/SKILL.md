@@ -58,6 +58,6 @@ Icon(HugeIcons.Settings01, contentDescription = null)
 - 图标名是 PascalCase（如 `GlobalSearch`、`Settings03`、`GlassWater`）。
 - 全部图标在 `stroke` 包下：`import me.rerere.hugeicons.stroke.*`。
 - 本仓库**禁止 emoji 当功能图标**（见 `AGENTS.md` 硬性禁止）。
-- 不要升级依赖版本：`isTransitive = false` 是刻意为之，打开传递依赖会拉进需 compileSdk 36 的
-  `androidx.core` 1.17，导致 AGP 8.7 / compileSdk 35 编不过。
+- 不要升级依赖版本：`isTransitive = false` 是刻意为之，只用它的图标 AAR，打开传递依赖会把它那一套
+  compose / core 版本带进来，与项目的版本边界打架。
 - 若缓存里有多份同版本 JAR（不同 Gradle 版本目录各一份），取任意一份即可，内容相同。

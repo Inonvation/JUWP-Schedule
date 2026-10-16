@@ -179,7 +179,7 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
 
 | 项 | 值 |
 |----|-----|
-| 库 | `androidx.glance:glance-appwidget:1.2.0`（要求 compileSdk 35 / AGP 8.6+ / minSdk 23，本项目 35 / 8.7.3 / 26 均满足） |
+| 库 | `androidx.glance:glance-appwidget:1.2.0`（要求 compileSdk 35 / AGP 8.6+ / minSdk 23，本项目 36 / 8.9.1 / 26 均满足） |
 | 刷新 | 边界闹钟（`setAlarmClock` 精确闹钟，2026-09-24 起，理由见 §3.6）+ WorkManager 15 分钟周期 + 冷启动/数据变更主动刷；后台刷新 = 写状态 + `widget.update()` 双步（光写状态不重绘），首帧快照由 `provideGlance` 直接捕获进组合。15 分钟 Worker 里追加 `LifeWidgetSync.onPeriodicTick`（电费本地镜像 + 校园卡闸门取数，2026-09-27）与 `WaterWidgetSync.onPeriodicTick`（开水两卡本地镜像 + 胖乖/趣智余额闸门取数，2026-09-28） |
 | 尺寸 | **`SizeMode.Exact`**（2026-09-20）：宿主给多少 dp 就按多少算，`LocalSize` 量实测宽高后按 `WidgetScale` 分档（Compact / List / Week）；旧版是 `SizeMode.Responsive` 四档就近吸附 |
 | 条目 | **四条（按内容拆，2026-09-27 / 2026-09-28）**：4 个 `GlanceAppWidgetReceiver`——课表（`ScheduleWidgetReceiver` + `widget_info.xml`）、合并卡（`CampusCardWidgetReceiver` + `widget_campus_info.xml`）、胖乖开水（`QiekjWaterWidgetReceiver` + `widget_water_qiekj.xml`）与趣智开水（`QzxyWaterWidgetReceiver` + `widget_water_qzxy.xml`），`updatePeriodMillis="0"`；开水两卡**固定 2×2**（`resizeMode="none"`），前两条可拖。删条目会让桌面上旧实例失效，需重新添加——原 `PowerWidgetReceiver` 当天拆出来又合并回去，若桌面上加过电费条目需手动删掉 |
@@ -194,8 +194,8 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
 
 **依赖影响**（加 glance 时实测）：传递引入 `androidx.work:work-runtime`、`androidx.core:core-remoteviews`，
 `androidx.compose.runtime` 由 BOM 的 1.7.4 抬到 1.7.8（同 1.7 线，`dependencyInsight` 复核通过，
-`androidx.core` 仍解析到 1.15.0，未被抬到 1.17）。
-HugeIcons 的 `isTransitive = false` 仍保留（防 `androidx.core` 被抬到 1.17，compileSdk 35 编不过）。
+`androidx.core` 由项目显式依赖决定（2026-10-16 为倒计时上灵动岛从 1.15.0 抬到 **1.17.0**）。
+HugeIcons 的 `isTransitive = false` 仍保留（只用它的图标 AAR，不让它把自己的依赖版本带进来）。
 
 ### 4.14 考试安排导入（2026-09-19，与实验课同构的 kind 扩展）
 
@@ -462,7 +462,13 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   与上课的 4002 错开）。`ui/ebike/EbikeFreeRideService.kt` 是前台服务（`specialUse` 类型），
   只负责通知栏常驻倒计时——**亮屏时每秒**重发一次通知文案（`EbikeFreeRide.countdownText`）
   刷新剩余时间，**灭屏不刷**（协程阻塞等屏幕亮，点亮补刷一次），不用系统 chronometer
-  （真机实测澎湃OS 面板静止时不重绘，数字不动）；
+  （真机实测澎湃OS 面板静止时不重绘，数字不动）；**Android 16+ 上这条通知被系统提升为
+  Live Update（灵动岛）**——状态栏芯片显 `EbikeFreeRide.countdownChipText`（「剩mm:ss」）+
+  通知抽屉顶部常驻卡，开启通知即默认生效、无开关（manifest `POST_PROMOTED_NOTIFICATIONS` +
+  `setRequestPromotedOngoing` / `setShortCriticalText` + `ProgressStyle` 进度条，2026-10-16；
+  是系统标准 API，**不碰**小米私有的焦点通知 / 超级岛——那要小米平台白名单）；
+  **被划掉就收手**（`setDeleteIntent` → `EbikeCountdownDismissReceiver` → 记账 + 停常驻服务，
+  `start` 对同一轮起点直接拒绝），提醒闹钟与 App 内倒计时块不受影响；
   到点提醒**不**由服务里的协程负责（屏幕关闭后 CPU 挂起，`delay` 会迟到几分钟）。
   通知构建与两个 channel 在 `ui/ebike/EbikeFreeRideNotifier.kt`（倒计时 LOW 无震动 / 提醒 HIGH
   **带震动**、category `EVENT`；带震动的提醒 channel 用新 id `_v2`，早期无震动的旧 id 由

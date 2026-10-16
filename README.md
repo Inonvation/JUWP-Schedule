@@ -49,7 +49,7 @@
 
 ## 🛠 开发
 
-环境：JDK 17 · Android SDK 35 · Gradle Wrapper 8.10.2（随仓库配置，minSdk 26 / targetSdk 35）。
+环境：JDK 17 · Android SDK 36 · Gradle Wrapper 8.11.1（随仓库配置，minSdk 26 / targetSdk 36）。
 
 ```bash
 ./gradlew.bat :app:testDebugUnitTest :app:assembleDebug   # 单测 + Debug 包

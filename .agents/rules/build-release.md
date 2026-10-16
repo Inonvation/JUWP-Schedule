@@ -28,9 +28,10 @@
 
 ## wrapper 缓存
 
-- 换机/重装后若 wrapper 重复下载：把 Gradle 8.10.2 解压版拷进
-  `~/.gradle/wrapper/dists/gradle-8.10.2-bin/<distributionUrl 的 MD5-base36>/`，
-  补一个空的 `gradle-8.10.2-bin.zip.ok`、删掉 `.part`。**不要**改 `distributionUrl`（哈希变则缓存对不上）。
+- 换机/重装后若 wrapper 重复下载：把 Gradle 8.11.1 解压版拷进
+  `~/.gradle/wrapper/dists/gradle-8.11.1-bin/<distributionUrl 的 MD5-base36>/`，
+  补一个空的 `gradle-8.11.1-bin.zip.ok`、删掉 `.part`。**不要**改 `distributionUrl`（哈希变则缓存对不上）。
+  （`<GRADLE_USER_HOME>` 若不是 `~/.gradle` 就放那边——本机设的是 `E:\DevCache\gradle`。）
 
 ## 包名与两个独立应用
 

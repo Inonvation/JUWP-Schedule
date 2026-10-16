@@ -100,15 +100,27 @@ class EbikeFreeRideService : Service() {
      *
      * 到点提醒**不在这里发**——那是 `setAlarmClock` 的活；本协程只负责「刷新通知」
      * 与「到点后把常驻通知摘掉」两件事。
+     *
+     * **只在「看得见的东西变了」时才真的 notify**（2026-10-16 二轮）：每次 notify 都是一趟
+     * binder + 系统侧重绘，而点扫一扫后的 5 秒缓冲期内文案与进度都是满格不动的（`remainingSeconds`
+     * 钳上限），那几秒白刷。判据用文案 + 进度刻度拼的键，**观感与行为完全不变**（同内容重复发
+     * 本来就看不见）；灭屏那一支回来时会把键清掉，所以「点亮即准」照旧（亮屏后第一次一定发）。
      */
     private fun startTicking(startAt: Long) {
         tickJob?.cancel()
         tickJob = scope.launch {
+            // 上一轮发出去的内容（null = 还没发过，必须发一次）
+            var lastPosted: String? = null
             while (true) {
                 val now = System.currentTimeMillis()
                 if (!EbikeFreeRide.isActive(startAt, now)) break
                 if (screenOn) {
-                    EbikeFreeRideNotifier.updateCountdown(this@EbikeFreeRideService, startAt, now)
+                    val visible = EbikeFreeRide.countdownText(startAt, now) +
+                        '|' + EbikeFreeRide.progressPercent(startAt, now)
+                    if (visible != lastPosted) {
+                        EbikeFreeRideNotifier.updateCountdown(this@EbikeFreeRideService, startAt, now)
+                        lastPosted = visible
+                    }
                     // 等满一秒，或等屏幕状态变化（灭屏立刻停手，不用等满这一秒）
                     withTimeoutOrNull(TICK_MS) { screenEvents.receive() }
                 } else {
@@ -116,6 +128,8 @@ class EbikeFreeRideService : Service() {
                     // 免得整段灭屏时协程醒不过来、错过收尾
                     val remain = EbikeFreeRide.freeEndMillis(startAt) - System.currentTimeMillis()
                     withTimeoutOrNull(remain.coerceAtLeast(1L)) { screenEvents.receive() }
+                    // 灭屏期间系统可能把通知收走，重新亮屏后无论内容变没变都补一次
+                    lastPosted = null
                 }
             }
             // 免费结束：让结束点的闹钟先把提醒发出去，再把常驻通知摘掉。
@@ -194,10 +208,13 @@ class EbikeFreeRideService : Service() {
         private var runningStartAt = 0L
 
         /**
-         * 起常驻倒计时（起点变了就重建 tick）。返回 false = 起点非法、或这次没起成
-         * （多为后台启动前台服务被系统拒绝，见 `restrictions-bg-start`），不抛异常。
+         * 起常驻倒计时（起点变了就重建 tick）。返回 false = 起点非法、这一轮被用户划掉过、
+         * 或这次没起成（多为后台启动前台服务被系统拒绝，见 `restrictions-bg-start`），不抛异常。
          */
         fun start(context: Context, startAtMillis: Long): Boolean {
+            // 用户把这一轮的倒计时划掉了：别再顶回去（官方 Live Updates 口径，
+            // 见 EbikeCountdownDismissal）。`check` 每轮都会调这里，这道闸是唯一的拦点。
+            if (EbikeCountdownDismissal.isDismissed(startAtMillis)) return false
             if (!EbikeFreeRide.shouldStartCountdown(runningStartAt, startAtMillis)) {
                 // 同一起点已经在跑 = 幂等成功；起点非法（≤ 0）= 失败
                 return startAtMillis > 0L

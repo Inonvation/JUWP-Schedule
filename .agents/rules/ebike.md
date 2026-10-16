@@ -427,6 +427,36 @@
   **常驻一句 `TICKET_NOTE`（两档都显示）**；③ 设置弹层「免费时长提醒」副标题追加
   「；免费以骑行套餐卡为准（前 N 分钟免费）」——数字用 `FREE_MINUTES` 拼，**别手抄 15**。
 
+- **倒计时上「灵动岛」= 系统标准 Live Updates，不是小米私有焦点通知**（2026-10-16 用户要求）：
+  倒计时通知在 **Android 16+** 上被系统提升为 Live Update——状态栏芯片
+  （`EbikeFreeRide.countdownChipText`，「剩mm:ss」，压到 7 字符内，芯片 96dp 放得下）＋
+  通知抽屉顶部常驻卡；**开启通知即默认生效，没有开关**。做法只有两条：manifest 声明普通权限
+  `POST_PROMOTED_NOTIFICATIONS`（安装即授予），通知上 `.setRequestPromotedOngoing(true)` +
+  `.setShortCriticalText(...)`（androidx.core 1.17 的 compat，低版本自动 no-op，不是"分档实现"）。
+  **卡片带进度条**（`ProgressStyle`，填满 = 免费时长还剩满格、随免费时间流干；不设 segment /
+  tracker 图标，走默认「按进度着色」，无 segment 时满刻度 100）。**它曾被当成「岛抖」的嫌疑犯
+  撤掉过一次（2026-10-16 二轮），用户确认抖动在它之前就有、已按用户要求加回**——别再拿它当
+  抖动的原因：那笔代价是「每秒重发」本身（系统侧重绘），要治只能减少更新次数，那就动功能了。
+  这条链上做过两处**无损**优化（2026-10-16 二轮，观感与行为不变）：① 落点 PendingIntent
+  进程内缓存（`contentIntents` 按 requestCode / `cachedDelete` 按起点，每秒少两趟到
+  ActivityManager 的 IPC；删除落点那份**必须是单个不可变持有者、一次原子读**——拆成两个
+  `@Volatile` 字段会在换车时读到「新 intent + 旧起点」）；
+  ② 服务只在「文案 + 进度刻度」真变了时才 notify（扫一扫后那 5 秒缓冲期文案满格不动、原本白刷；
+  灭屏回来必补一次，所以「点亮即准」照旧）。
+  **被划掉就收手**（`setDeleteIntent` → `EbikeCountdownDismissReceiver` → `EbikeCountdownDismissal`
+  记账 + 停常驻服务；`EbikeFreeRideService.start` 对同一轮起点直接返回 false，`check` 每轮都调它，
+  那道闸是唯一拦点）——官方明写「别把用户划掉的 Live Update 再顶回去」，划掉 = **这一轮不要这条
+  倒计时**（前台服务只为这条通知而活，没它就没存在理由）；提醒闹钟与 App 内倒计时块不受影响。
+  记账是**进程内**的（与 `runningStartAt` 同性质）：换车换起点自然失效，进程被杀就丢——重启后
+  不该继承上一轮的「别打扰我」。
+  **别去碰 `miui.focus.param` / 小米超级岛**——那要小米平台白名单（企业认证 + 上架 + 逐场景审核 +
+  证书指纹），本仓库私有、非官方、不分发，拿不到；参考实现是 RikkaHub（同机型同 ROM 已跑通），
+  它用的就是这套标准 API。官方资格清单现在全满足：Standard/BigText/Call/Progress/Metric 样式之一 ·
+  `ongoing` · 有 contentTitle · 无自定义 RemoteViews · 非 group summary · 不 colorized ·
+  渠道非 `IMPORTANCE_MIN`——**别加 `setCustomContentView`、别把倒计时渠道降成 IMPORTANCE_MIN**，
+  那会当场取消资格。工具链代价：compileSdk 36 + AGP 8.9.1 + androidx.core 1.17（见 AGENTS 工程实况）。
+  两条到点提醒**不做**提升（不是 ongoing）。
+
 - 免费时长提醒（DESIGN §3.9）：**走 App 通知 + 前台服务常驻倒计时，不写系统日历**
   （2026-09-24 用户拍板改回；2026-09-23 那次「改系统日历」已作废）。
   两个提醒点（提前量点、免费结束）由 `AlarmManager.setAlarmClock` **精确**触发：

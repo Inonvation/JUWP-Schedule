@@ -512,9 +512,9 @@ GET  /berserker-search/search/personal/turnover?size&current   消费流水（�
 
 | 项 | 现值 / 坑 |
 |----|-----------|
-| Gradle / AGP / Kotlin | Wrapper 8.10.2 / AGP 8.7.3 / Kotlin 2.1.21 |
+| Gradle / AGP / Kotlin | Wrapper 8.11.1 / AGP 8.9.1 / Kotlin 2.1.21；compileSdk 36 / targetSdk 36，AndroidX core 1.17.0 |
 | Room | **2.7.1**——2.6 配 Kotlin 2.1 会 KSP `unexpected jvm signature V`；**禁 destructive migration**；实体 `@Index` 必须与迁移 `CREATE INDEX` 逐字对齐；实体带默认值的列迁移建表必须写 `DEFAULT` |
-| HugeIcons | `com.github.rikkahub:hugeicons-compose`（JitPack，**必须 `isTransitive = false`**，否则拉 androidx.core 1.17 编不过） |
+| HugeIcons | `com.github.rikkahub:hugeicons-compose`（JitPack，**必须 `isTransitive = false`**，只用它的图标 AAR） |
 | osmdroid | 6.1.18（Maven Central，POM 无 `<dependencies>`）；加依赖后第一次构建要联网 resolve |
 | WebView | MIUI 硬件合成层会丢 → 软件渲染兜底（否则「功能正常但整面白屏」）；教务页无 viewport meta → `useWideViewPort` |
 | debug/release | 两个 applicationId（`.debug` 后缀）可共存；启动 debug 包必须写全限定 Activity 名 |

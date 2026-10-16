@@ -165,6 +165,20 @@ class EbikeFreeRideTest {
     }
 
     @Test
+    fun `通知进度条刻度与剩余比例同源`() {
+        // Android 16 的 ProgressStyle：不设 segment 时满刻度是 100，填充 = 剩余时间
+        // （官方要求「填充与剩余时间一致」），所以刻度就是 progressFraction × 100。
+        assertEquals(100, EbikeFreeRide.progressPercent(start, start))
+        assertEquals(50, EbikeFreeRide.progressPercent(start, start + 7 * 60_000L + 30_000L))
+        assertEquals(0, EbikeFreeRide.progressPercent(start, start + 60 * 60_000L))
+        // 点扫一扫后的缓冲期内满格（钳上限在 remainingSeconds / progressFraction 里）
+        assertEquals(
+            100,
+            EbikeFreeRide.progressPercent(start + EbikeFreeRide.SCAN_DELAY_MS, start),
+        )
+    }
+
+    @Test
     fun `倒计时文案`() {
         assertEquals("15:00", EbikeFreeRide.formatRemaining(900))
         assertEquals("12:07", EbikeFreeRide.formatRemaining(12 * 60 + 7))
@@ -203,6 +217,20 @@ class EbikeFreeRideTest {
         assertEquals("免费剩余 0:30", EbikeFreeRide.countdownText(start, minutesAfterStart(14) + 30_000L))
         // 到点及以后不出现负数（服务在这一刻已退出刷新循环，这里只是防线）
         assertEquals("免费剩余 0:00", EbikeFreeRide.countdownText(start, minutesAfterStart(16)))
+    }
+
+    @Test
+    fun `灵动岛芯片文案压到七字符内`() {
+        // Android 16 的 Live Update 芯片宽 96dp，**超过 7 个字符就可能只留图标**
+        // （官方芯片规则），所以这条文案不带「免费」二字（2026-10-16）。
+        assertEquals("剩15:00", EbikeFreeRide.countdownChipText(start, start))
+        assertEquals("剩0:30", EbikeFreeRide.countdownChipText(start, minutesAfterStart(14) + 30_000L))
+        // 到点兜底与 countdownText 同源，不出现负数
+        assertEquals("剩0:00", EbikeFreeRide.countdownChipText(start, minutesAfterStart(16)))
+        // 点扫一扫后的缓冲期内满格不走（钳上限在 remainingSeconds 里）
+        val delayedStart = start + EbikeFreeRide.SCAN_DELAY_MS
+        assertEquals("剩15:00", EbikeFreeRide.countdownChipText(delayedStart, start))
+        assertTrue(EbikeFreeRide.countdownChipText(start, start).length <= 7)
     }
 
     @Test

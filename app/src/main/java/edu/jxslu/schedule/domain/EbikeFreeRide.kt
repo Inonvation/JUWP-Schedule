@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.domain
 
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * 共享单车免费时长倒计时（DESIGN §3.9）。
@@ -18,7 +19,9 @@ import kotlin.math.max
  * 提醒通道的演变：2026-09-22 首版 = App 通知；2026-09-23 改系统日历；
  * **2026-09-24 改回 App 通知**（用户拍板）——日历 App 发提醒时 App 自己没法展示
  * 倒计时，体验与 App 内是两套。现在两个提醒点由 [NotificationIds] 那两条通知承担，
- * 倒计时由前台服务的常驻通知展示（数字由系统 chronometer 渲染，见 `EbikeFreeRideService`）。
+ * 倒计时由前台服务的常驻通知展示（服务每秒重发一次文案，见 `EbikeFreeRideService`）；
+ * 2026-10-16 起该通知在 Android 16+ 上被系统提升为 Live Update（灵动岛芯片显示
+ * [countdownChipText]）。
  */
 object EbikeFreeRide {
 
@@ -109,6 +112,19 @@ object EbikeFreeRide {
     fun countdownText(startAtMillis: Long, nowMillis: Long): String =
         "免费剩余 ${formatRemaining(remainingSeconds(startAtMillis, nowMillis))}"
 
+    /**
+     * 状态栏「灵动岛」芯片上的短文案（2026-10-16）：`剩mm:ss`。
+     *
+     * 只在 Android 16+ 上被系统用（[EbikeFreeRideService] 把它塞进
+     * `setShortCriticalText`）；低版本设备这个字段没人读。
+     *
+     * **为什么要单独一条、不复用 [countdownText]**：芯片宽 96dp，系统只在整段文字放得下时
+     * 才显示——**超过 7 个字符就可能只留图标**（官方 Live Updates 的芯片规则）。所以这里
+     * 去掉了「免费」二字，压到 5~6 个字符（`剩15:00`），保证一眼能看到秒数。
+     */
+    fun countdownChipText(startAtMillis: Long, nowMillis: Long): String =
+        "剩${formatRemaining(remainingSeconds(startAtMillis, nowMillis))}"
+
     /** 提前量提醒的标题。 */
     const val LEAD_TITLE = "免费时长快结束了"
 
@@ -187,6 +203,16 @@ object EbikeFreeRide {
         val elapsed = (nowMillis - startAtMillis).coerceIn(0L, total)
         return 1f - elapsed.toFloat() / total
     }
+
+    /**
+     * 通知里进度条的刻度 0..100（= [progressFraction] × 100）。
+     *
+     * 给 Android 16 的 `NotificationCompat.ProgressStyle` 用——不设 segment 时它的满刻度
+     * 就是 100。语义与 App 内倒计时块一致：**填满 = 免费时长还剩满格**，随免费时间被用掉
+     * 而流干（官方对 Live Updates 的要求：填充要与剩余时间一致）。
+     */
+    fun progressPercent(startAtMillis: Long, nowMillis: Long): Int =
+        (progressFraction(startAtMillis, nowMillis) * 100f).roundToInt()
 
     /** 倒计时文案 `mm:ss`；超过一小时不会出现（15 分钟上限），直接分钟兜底。 */
     fun formatRemaining(totalSeconds: Int): String {
