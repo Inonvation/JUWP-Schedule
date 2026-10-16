@@ -59,6 +59,12 @@ private val QIEKJ_DUMP_PATHS = setOf(
     // 「建单读账单」——要确认这两步在会话关闭后的原始返回，只能把它们也落盘
     "order/afterPay/creating",
     "order/detail",
+    // 2026-10-14 反编译补出：远程结束用水的返回形态只有真机落盘才能确认
+    // （2026-10-16 已取到样本：4072「结束失败，请在设备端操作结束」）。
+    // trade/check_device_status 已随「在线显示」整块删除（2026-10-16），不再采样。
+    "goods/endWater",
+    // 服务端账单历史（2026-10-14）：确认 OrderItemBean 的金额/时间字段口径
+    "order/list",
 )
 
 /** 每个端点最多留多少份样本：轮询 sync 一秒一条，不设上限会堆出几千个文件。 */

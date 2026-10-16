@@ -84,8 +84,14 @@ data class SkuData(
 )
 
 @Serializable
-data class ImeiData(
+data class GoodsDetailsData(
     @kotlinx.serialization.Serializable(LenientStringSerializer::class) val imei: String? = null,
+    /**
+     * 机型能否在 App 内结束用水（`goods/normal/details`，2026-10-16 起读）。
+     * false 的机型平台必然拒绝 `goods/endWater`——实样 4072「结束失败，请在设备端操作结束」，
+     * 结束分支据此改走「在设备上点击『结束』」引导，见 [shouldRequestRemoteEnd]。
+     */
+    @kotlinx.serialization.Serializable(LenientBooleanSerializer::class) val supportAppUserFinish: Boolean? = null,
 )
 
 // ── 开水流程 ──
@@ -193,6 +199,35 @@ data class PromotionItem(
     fun toLine() = PromotionLine(promotionType = promotionType, discountAmount = discountAmount)
 }
 
+// ── 服务端账单历史（order/list，2026-10-14 反编译补出） ──
+
+/** 分页信封（`ItemsList<T>`）：order/list 等列表接口的外层。 */
+@Serializable
+data class ItemsList<T>(
+    val items: List<T> = emptyList(),
+    val total: Int? = null,
+)
+
+/**
+ * 服务端账单条目（`order/list` 的 OrderItemBean 子集）。
+ * 只声明要展示的字段——完整 34 字段里其余与本页无关，`ignoreUnknownKeys` 会丢掉。
+ * 时间/金额都是服务端字符串原样（形态未验证），展示层再解释。
+ */
+@Serializable
+data class ServerOrderItem(
+    /** 服务端订单标识：`order/detail` 的 `orderId`、`order/hidden` 的入参都用它。 */
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val id: String? = null,
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val orderNo: String? = null,
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val machineName: String? = null,
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val shopName: String? = null,
+    /** 标价（原价）。 */
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val markPrice: String? = null,
+    /** 现金实付（服务端口径）。 */
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val payPrice: String? = null,
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val createTime: String? = null,
+    val orderStatus: Int? = null,
+)
+
 // ── 订单快照（本地存储模型，含领域优惠明细） ──
 
 @Serializable
@@ -229,7 +264,8 @@ class UnlockException(
 class UnlockStoppedException(message: String = "已结束等待") : Exception(message)
 
 /**
- * 开水流程的手动结束开关：UI 点「结束用水」置位，仓库在轮询循环里看到就收尾。
+ * 开水流程的手动结束开关：UI 点「结束用水」置位，仓库在轮询循环里看到就进入结束分支
+ * （支持远程关阀的机型发 `goods/endWater`，其余提示到设备上结束；两条路都继续等设备回报）。
  * 每次 [QiekjRepository.unlockDevice] 新建一个，流程结束即作废。
  */
 class UnlockStopSignal {
@@ -239,6 +275,14 @@ class UnlockStopSignal {
         flag.set(true)
     }
 }
+
+/**
+ * 是否值得请求平台远程关阀（2026-10-16）：机型明确不支持 App 结束
+ * （`supportAppUserFinish=false`）时不发注定被拒的 `goods/endWater`
+ * （实样 4072「结束失败，请在设备端操作结束」）；字段缺失（旧形态）按「尝试」处理，
+ * 被拒也有设备端引导兜底。
+ */
+fun shouldRequestRemoteEnd(appEndSupported: Boolean?): Boolean = appEndSupported != false
 
 class TokenExpiredException(
     message: String = "登录已失效，请重新登录",

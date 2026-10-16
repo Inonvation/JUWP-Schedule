@@ -67,6 +67,32 @@ object LenientStringNonNullSerializer : KSerializer<String> {
     override fun serialize(encoder: Encoder, value: String) = encoder.encodeString(value)
 }
 
+/**
+ * 宽松布尔：`true` / `"true"` / `1` / `"1"` 都算真，其余算假，缺失/`null` 回 null。
+ * 服务端布尔字段也可能以裸数字或字符串两种形态出现（与其余字段同一套脏数据容错）。
+ */
+object LenientBooleanSerializer : KSerializer<Boolean?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("LenientBoolean?", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean? {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return decoder.decodeBoolean()
+        return when (val element = jsonDecoder.decodeJsonElement()) {
+            is JsonNull -> null
+            is JsonPrimitive -> when (element.content.lowercase()) {
+                "true", "1" -> true
+                else -> false
+            }
+            else -> null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean?) {
+        if (value == null) encoder.encodeNull() else encoder.encodeBoolean(value)
+    }
+}
+
 /** 占位类型：仅用于消费 `data` 里的任意值（等价 EmptyDataJsonAdapter）。 */
 @Serializable(with = EmptyDataSerializer::class)
 class EmptyData {

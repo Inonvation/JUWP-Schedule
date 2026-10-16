@@ -42,12 +42,16 @@ interface QiekjApi {
         @Field("token") token: String,
     ): ApiEnvelope<List<SkuData>>
 
+    /**
+     * 设备信息：拿 imei（位置风控要传）与机型能力 `supportAppUserFinish`
+     * （能否在 App 内结束用水，2026-10-16 起读）。
+     */
     @FormUrlEncoded
     @POST("goods/normal/details")
-    suspend fun getImei(
+    suspend fun getGoodsDetails(
         @Field("goodsId") goodsId: String,
         @Field("token") token: String,
-    ): ApiEnvelope<ImeiData>
+    ): ApiEnvelope<GoodsDetailsData>
 
     @FormUrlEncoded
     @POST("userIntegral/checkUserIsRisk")
@@ -83,6 +87,19 @@ interface QiekjApi {
         @Field("token") token: String,
     ): ApiEnvelope<SyncData>
 
+    /**
+     * 远程结束用水（2026-10-14 从胖乖 1.123.0 反编译补出）：`{ goodsId }` → 布尔。
+     * **官方 App 只对 `goods/normal/details` 里 `supportAppUserFinish=true` 的机型调用它**；
+     * 实测的直饮水机该字段为 false，服务端回 4072「结束失败，请在设备端操作结束」
+     * （2026-10-16 真机样本）。调用方按 [shouldRequestRemoteEnd] 门控，被拒时退回设备端引导。
+     */
+    @FormUrlEncoded
+    @POST("goods/endWater")
+    suspend fun endWater(
+        @Field("goodsId") goodsId: String,
+        @Field("token") token: String,
+    ): ApiEnvelope<EmptyData>
+
     @FormUrlEncoded
     @POST("order/afterPay/creating")
     suspend fun createAfterPay(
@@ -96,4 +113,16 @@ interface QiekjApi {
         @Field("orderId") orderId: String,
         @Field("token") token: String,
     ): ApiEnvelope<OrderDetailData>
+
+    /**
+     * 服务端账单历史（2026-10-14 反编译补出）：`{ page, pageSize }` → `ItemsList<OrderItemBean>`。
+     * 与本地快照（最多 20 笔、只记本机结算）互补，能看到账号下的全部订单。
+     */
+    @FormUrlEncoded
+    @POST("order/list")
+    suspend fun orderList(
+        @Field("page") page: String,
+        @Field("pageSize") pageSize: String,
+        @Field("token") token: String,
+    ): ApiEnvelope<ItemsList<ServerOrderItem>>
 }

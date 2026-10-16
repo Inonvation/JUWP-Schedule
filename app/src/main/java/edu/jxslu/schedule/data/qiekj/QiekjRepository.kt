@@ -24,7 +24,7 @@ class NotLoggedInException(message: String = "请先登录") : Exception(message
  * 胖乖生活仓库：登录态、余额、历史设备与开水全流程（DESIGN §4.10）。
  *
  * 开水调用链的顺序以参考实现 light-life unlockDevice 为准，**不可调整**：
- * latestUsed → skus → sync(预检，可失败) → details(imei) → 积分风控 → 开后付 →
+ * latestUsed → skus → sync(预检，可失败) → details(imei / 机型能力) → 积分风控 → 开后付 →
  * 位置风控 → unlock → 轮询 sync(等 workStatus 离开 2) → afterPay/creating → order/detail →
  * 写本地订单快照。前置步骤里风控/后付/位置任一失败都阻断；预检失败仅记录不阻断。
  * 轮询遇到 sync 无 data（设备侧结算关闭会话，2026-10-09 实测）按「会话已结束」收尾，
@@ -139,9 +139,14 @@ class QiekjRepository(
      * 一键开水。挂在调用方协程上（页面级生命周期），轮询期间协程取消即停止观察，
      * 但服务端会继续按 165s 超时自动关阀结算，不会出现"关不上水"。
      *
-     * [stopSignal] 是 UI 的「结束用水」（2026-10-05）：置位后轮询就地收尾，
-     * 设备已回报结束（`status==5` + 单号）则照常结算读账单，否则抛
-     * [UnlockStoppedException] 交给调用方按「未确认用水」收尾。
+     * [stopSignal] 是 UI 的「结束用水」（2026-10-05 起，2026-10-16 改）：
+     * - 机型不支持 App 结束（`supportAppUserFinish=false`）：不发注定被拒的
+     *   `goods/endWater`，提示「请在设备上点击『结束』」并**继续轮询**，
+     *   等设备回报结束照常结算读账单；
+     * - 支持（或字段缺失）：best-effort 请求远程关阀，被平台拒绝同样退回
+     *   设备端提示继续等——2026-10-16 前这里直接抛错收尾，被拒即丢单，是当时的真 bug；
+     * - 只有「平台已受理但 [REMOTE_END_WAIT_MS] 内设备没回报」才抛
+     *   [UnlockStoppedException] 交给调用方按「未确认用水」收尾。
      */
     suspend fun unlockDevice(
         device: DeviceItem,
@@ -160,9 +165,12 @@ class QiekjRepository(
         onStep("正在检测设备状态")
         runCatching { api.syncWater(skuId = skuId, token = token) }
 
-        onStep("正在获取 IMEI")
-        val imei = api.getImei(goodsId = goodsId, token = token).requireData().imei
-            ?: error("未获取到 imei")
+        onStep("正在读取设备信息")
+        val details = api.getGoodsDetails(goodsId = goodsId, token = token).requireData()
+        val imei = details.imei ?: error("未获取到 imei")
+        // 机型能否在 App 内结束用水（2026-10-16）：false 的机型平台必然拒绝远程关阀，
+        // 结束分支据此跳过 endWater、改走设备端引导
+        val appEndSupported = details.supportAppUserFinish
 
         onStep("正在检查积分")
         api.checkUserIsRisk(token).throwIfFailed()
@@ -196,6 +204,20 @@ class QiekjRepository(
         var everWorked = false
         var attempts = 0
         var emptyStreak = 0
+        // 手动结束（2026-10-16 改）：机型支持才请求远程关阀（goods/endWater），
+        // 不支持或平台拒绝都退回「在设备上点击『结束』」引导并**继续轮询**等设备回报，
+        // 照常结算读账单（旧实现被拒即抛错收尾，账单丢单，2026-10-16 用户实测报障）。
+        // remoteEndAttempted 保证只发一次；remoteEndOk + remoteEndDeadline 只管
+        // 「平台已受理」这条路的技术超时。
+        var remoteEndAttempted = false
+        var remoteEndOk = false
+        var remoteEndDeadline = 0L
+        var endWaitStep: String? = null
+        val idleWorkingStep = if (shouldRequestRemoteEnd(appEndSupported)) {
+            "设备工作中，正在等待完成"
+        } else {
+            "设备工作中；如需结束，请在设备上点击『结束』"
+        }
         while (true) {
             val envelope = diagnosed(
                 step = "设备状态轮询",
@@ -224,14 +246,41 @@ class QiekjRepository(
             if (attempts >= MAX_POLL_ATTEMPTS) {
                 throw diagnosedOf(Exception("设备使用超时（${MAX_POLL_ATTEMPTS} 秒）"), "设备状态轮询")
             }
-            // 手动结束（2026-10-05）：刚拿到的这条如果已经是结束态就照常结算，
-            // 否则按「未确认用水」收尾——设备没回报过结束，建单也没账单可读
+            // 手动结束（2026-10-16）：机型支持才请求远程关阀；不支持 / 被拒都退回设备端引导。
+            // 三条路都在下一轮继续轮询，设备回报结束态（shouldSettleOnManualStop）即跳出结算。
             if (stopSignal?.isRequested == true) {
-                if (!shouldSettleOnManualStop(sync)) throw UnlockStoppedException()
+                if (!remoteEndAttempted) {
+                    remoteEndAttempted = true
+                    if (shouldRequestRemoteEnd(appEndSupported)) {
+                        onStep("正在结束用水，等待设备回报")
+                        remoteEndOk = try {
+                            api.endWater(goodsId = goodsId, token = token).throwIfFailed()
+                            true
+                        } catch (e: TokenExpiredException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            false
+                        }
+                        endWaitStep = if (remoteEndOk) {
+                            remoteEndDeadline = System.currentTimeMillis() + REMOTE_END_WAIT_MS
+                            "正在结束用水，等待设备回报"
+                        } else {
+                            "结束请求未被平台受理：请在设备上点击『结束』，等待设备回报"
+                        }
+                    } else {
+                        endWaitStep = "该机型不支持 App 结束：请在设备上点击『结束』，等待设备回报"
+                    }
+                }
+                if (shouldSettleOnManualStop(sync)) break
+                if (remoteEndOk && System.currentTimeMillis() >= remoteEndDeadline) {
+                    throw UnlockStoppedException("已请求结束用水，设备未回报结束，账单以平台为准")
+                }
+                // 平台未受理 / 机型不支持：不再中断等待（旧实现在这里抛错丢单），
+                // 继续按 endWaitStep 提示并轮询，等设备侧结束或 165s 服务端兜底
+            } else if (sync.workStatus != 2) {
                 break
             }
-            if (sync.workStatus != 2) break
-            onStep("设备工作中，正在等待完成")
+            onStep(endWaitStep ?: idleWorkingStep)
             delay(1_000)
         }
 
@@ -246,32 +295,7 @@ class QiekjRepository(
 
         onStep("正在查询订单详情")
         val detail = api.orderDetail(orderId = orderId, token = token).requireData()
-        val tradeItem = detail.tradeOrderItem.firstOrNull()
-        val ticketCost = detail.promotionList.firstOrNull { it.promotionType == 4 }
-            ?.discountAmount ?: "-"
-        val integralCost = detail.promotionList.firstOrNull { it.promotionType == 8 }
-            ?.discountAmount ?: "-"
-        val otherPromotions = detail.promotionList
-            .filter { it.promotionType != 4 && it.promotionType != 8 }
-            .map { PromotionLine(promotionType = it.promotionType, discountAmount = it.discountAmount) }
-
-        // 现金实付走服务端账单口径（DESIGN §4.10）：tradeOrderItem.realPrice → payPrice → null（回退公式）。
-        // 小票支付（promotionList type=4，回退 tokenCoinDiscount）不在这里合并——
-        // 「本次花费 = 小票支付 + 现金实付」由 domain.calculateActualCost 统一计算。
-        val realPrice = tradeItem?.realPrice ?: detail.payPrice
-
-        val result = UnlockResult(
-            orderNo = finalOrderNo,
-            orderId = orderId,
-            originPrice = tradeItem?.originPrice ?: "-",
-            ticketCost = ticketCost,
-            integralCost = integralCost,
-            otherPromotions = otherPromotions,
-            completedAt = System.currentTimeMillis(),
-            realPrice = realPrice,
-            payTypeName = detail.payTypeName,
-            tokenCoinDiscount = detail.tokenCoinDiscount,
-        )
+        val result = toUnlockResult(detail = detail, orderNo = finalOrderNo, orderId = orderId)
         orderHistoryStore.add(
             OrderHistoryItem(
                 orderNo = result.orderNo,
@@ -288,6 +312,55 @@ class QiekjRepository(
             ),
         )
         result
+    }
+
+    /**
+     * 服务端账单历史（`order/list`，2026-10-14）：账号下的全部订单，分页。
+     * 与本地快照（最多 20 笔、只记本机结算）互补；失败照常抛给上层。
+     */
+    suspend fun serverOrders(page: Int = 1, pageSize: Int = 20): List<ServerOrderItem> {
+        val resp = api.orderList(page = page.toString(), pageSize = pageSize.toString(), token = requireToken())
+        resp.throwIfFailed()
+        return resp.data?.items ?: emptyList()
+    }
+
+    /**
+     * 拉一条服务端账单的明细（`order/detail`）并转成界面用的 [UnlockResult]。
+     * `orderId` 取 [ServerOrderItem.id]（服务端订单标识）；`orderNo` 原样回填展示用。
+     */
+    suspend fun serverOrderDetail(item: ServerOrderItem): UnlockResult {
+        val orderId = item.id ?: error("账单缺少订单标识")
+        val detail = api.orderDetail(orderId = orderId, token = requireToken()).requireData()
+        return toUnlockResult(detail = detail, orderNo = item.orderNo ?: orderId, orderId = orderId)
+    }
+
+    /**
+     * `order/detail` → 界面用的 [UnlockResult]（DESIGN §4.10 账单口径）。
+     * 现金实付走服务端 `tradeOrderItem.realPrice` → `payPrice` → null（回退公式）；
+     * 小票支付（promotionList type=4，回退 tokenCoinDiscount）不在这里合并——
+     * 「本次花费 = 小票支付 + 现金实付」由 domain.calculateActualCost 统一计算。
+     */
+    private fun toUnlockResult(detail: OrderDetailData, orderNo: String, orderId: String): UnlockResult {
+        val tradeItem = detail.tradeOrderItem.firstOrNull()
+        val ticketCost = detail.promotionList.firstOrNull { it.promotionType == 4 }
+            ?.discountAmount ?: "-"
+        val integralCost = detail.promotionList.firstOrNull { it.promotionType == 8 }
+            ?.discountAmount ?: "-"
+        val otherPromotions = detail.promotionList
+            .filter { it.promotionType != 4 && it.promotionType != 8 }
+            .map { PromotionLine(promotionType = it.promotionType, discountAmount = it.discountAmount) }
+        return UnlockResult(
+            orderNo = orderNo,
+            orderId = orderId,
+            originPrice = tradeItem?.originPrice ?: "-",
+            ticketCost = ticketCost,
+            integralCost = integralCost,
+            otherPromotions = otherPromotions,
+            completedAt = System.currentTimeMillis(),
+            realPrice = tradeItem?.realPrice ?: detail.payPrice,
+            payTypeName = detail.payTypeName,
+            tokenCoinDiscount = detail.tokenCoinDiscount,
+        )
     }
 
     // ── 错误包装 ──
@@ -317,6 +390,13 @@ class QiekjRepository(
     private companion object {
         /** 轮询上限与参考实现一致：1s × 300 次；UI 层另有 165s 自动结算兜底。 */
         const val MAX_POLL_ATTEMPTS = 300
+
+        /**
+         * **平台已受理**远程关阀后，最多再等多久让设备回报结束态（`status==5` + 单号）。
+         * 等不到就按「未确认用水」收尾——账单仍会由平台生成，只是这次读不到。
+         * 机型不支持 / 平台拒绝的路不走这条超时（继续正常轮询等设备回报）。
+         */
+        const val REMOTE_END_WAIT_MS = 20_000L
 
         /**
          * promotions 两套常量取自 light-life unlockDevice，字段原样保留：

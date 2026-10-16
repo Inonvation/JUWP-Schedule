@@ -52,50 +52,75 @@ fun WaterFlowStatusHost(
     ) { current -> content(current) }
 }
 
+/** 出水中的动作位三态：还不能结束 / 可结束 / 结束中（等设备回报账单）。 */
+private enum class WaterEndAction { Waiting, Endable, Stopping }
+
 /**
  * 出水中的动作位（2026-10-05 用户拍板，开水页与今日页开水面板共用）：
  * 出水满 [WaterViewModel.END_SESSION_MIN_SECONDS] 秒前是禁用的「开水进行中…」，
- * 之后**原地**换成可点的「结束用水」。
+ * 之后**原地**换成可点的「结束用水」；点下后转禁用的「正在结束用水…」等设备回报。
  *
  * 切换交给 [AnimatedContent] 的淡入淡出与自带尺寸动画：早先把按钮塞在状态区里，
  * 5 秒一到整块内容往下长一截，看着像弹窗突然变了（用户反馈）。
  *
- * 点一下只是**结束本地等待**：QiekjApi 那 13 个端点里没有远程关阀的入口
- * （2026-10-05 逐端点核对），水流由设备自己或平台超时停。所以副行话术不写「已关阀」，
- * 免得用户以为机器立刻停了。
+ * 2026-10-16 改：机型不支持 App 结束（或平台拒绝）时，结束要靠设备上的「结束」键——
+ * 副行给出「未停止时请在设备上点击『结束』」的引导，仓库侧继续轮询等账单；
+ * 不写「已关阀」这类拿不到证据的话。
  */
 @Composable
 fun WaterWorkingAction(
     canEndSession: Boolean,
     onEndSession: () -> Unit,
+    stopping: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val action = when {
+        stopping -> WaterEndAction.Stopping
+        canEndSession -> WaterEndAction.Endable
+        else -> WaterEndAction.Waiting
+    }
     AnimatedContent(
-        targetState = canEndSession,
+        targetState = action,
         transitionSpec = {
             fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(120))
         },
         label = "water-working-action",
         modifier = modifier.fillMaxWidth(),
-    ) { endable ->
+    ) { state ->
         Column(modifier = Modifier.fillMaxWidth()) {
-            if (endable) {
-                Button(
-                    onClick = onEndSession,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                ) { Text("结束用水") }
-                Text(
-                    "只结束 App 的等待；出水由设备侧或平台超时停止",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            } else {
-                Button(
-                    onClick = {},
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                ) { Text("开水进行中…") }
+            when (state) {
+                WaterEndAction.Endable -> {
+                    Button(
+                        onClick = onEndSession,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    ) { Text("结束用水") }
+                    Text(
+                        "未停止时，请在设备上点击『结束』",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                WaterEndAction.Stopping -> {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    ) { Text("正在结束用水…") }
+                    Text(
+                        "等待结束回报；未停止时请在设备上点击『结束』",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                WaterEndAction.Waiting -> {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    ) { Text("开水进行中…") }
+                }
             }
         }
     }

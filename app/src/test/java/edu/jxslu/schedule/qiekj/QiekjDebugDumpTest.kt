@@ -31,6 +31,10 @@ class QiekjDebugDumpTest {
         // 结算链路（2026-10-09 加）：确认会话关闭后建单读账单的原始返回
         assertTrue(isQiekjDumpTarget("order/afterPay/creating"))
         assertTrue(isQiekjDumpTarget("order/detail"))
+        // 2026-10-14 反编译补出的远程结束端点（2026-10-16 已取到 4072 样本）
+        assertTrue(isQiekjDumpTarget("goods/endWater"))
+        // 服务端账单历史（2026-10-14）：确认 OrderItemBean 的金额/时间字段口径
+        assertTrue(isQiekjDumpTarget("order/list"))
     }
 
     @Test

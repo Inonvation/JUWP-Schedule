@@ -68,6 +68,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
+import edu.jxslu.schedule.data.qiekj.ServerOrderItem
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.UnlockResult
 import edu.jxslu.schedule.domain.QzxyPhoneMask
@@ -312,6 +313,7 @@ fun WaterScreen(
                         is UnlockFlowState.Working -> WaterWorkingAction(
                             canEndSession = flow.elapsedSeconds >= WaterViewModel.END_SESSION_MIN_SECONDS,
                             onEndSession = { viewModel.endSession() },
+                            stopping = flow.stopping,
                         )
                         is UnlockFlowState.Success -> OutlinedButton(
                             onClick = { viewModel.dismissFlow() },
@@ -332,7 +334,12 @@ fun WaterScreen(
 
                     OrderSection(
                         orders = state.orderHistory,
+                        serverOrders = state.serverOrders,
+                        serverLoading = state.loadingServerOrders,
+                        serverLoaded = state.serverOrdersLoaded,
+                        onLoadServer = { viewModel.loadServerOrders() },
                         onClick = { detailItem = it },
+                        onClickServer = { viewModel.openServerOrder(it) },
                     )
 
                     WaterSettingsSection(
@@ -363,6 +370,11 @@ fun WaterScreen(
         is edu.jxslu.schedule.domain.UnlockResult -> OrderDetailDialog(item = d, onDismiss = { detailItem = null })
         is OrderHistoryItem -> OrderDetailDialog(item = toResult(d), onDismiss = { detailItem = null })
         null -> {}
+    }
+
+    // 服务端账单明细（点了「服务端账单」某一条后由 VM 拉到）
+    state.serverOrderDetail?.let { result ->
+        OrderDetailDialog(item = result, onDismiss = { viewModel.dismissServerOrderDetail() })
     }
 
     // 退出二次确认（2026-09-27）：顶栏图标就在返回键旁边，一次误触就得重新收短信才能回来
@@ -842,38 +854,60 @@ private fun DeviceSheet(
  * 历史订单：卡片入口 + 底部弹层明细（2026-10-07 收口）。
  *
  * 订单列表原先整块平铺在页面上（十几笔时把「开水卡设置」一路顶出屏外），现在
- * 收成一行入口（共 N 笔 · 点看明细），明细装进与设备选择同规格的底部弹层——
- * 页面只留「要做的事」，明细按需展开。行点击仍开订单详情弹窗。
+ * 收成一行入口，明细装进与设备选择同规格的底部弹层。
+ *
+ * 2026-10-14：弹层里分两段——**本地快照**（本机结算留痕，最多 20 笔，含支付构成）与
+ * **服务端账单**（`order/list`，账号下全部订单，点单笔拉 `order/detail` 看构成）。
+ * 两段的分工与生活页「流水两段」同一约定：来源不同就分开列，别混。
  */
 @Composable
-private fun OrderSection(orders: List<OrderHistoryItem>, onClick: (OrderHistoryItem) -> Unit) {
+private fun OrderSection(
+    orders: List<OrderHistoryItem>,
+    serverOrders: List<ServerOrderItem>,
+    serverLoading: Boolean,
+    serverLoaded: Boolean,
+    onLoadServer: () -> Unit,
+    onClick: (OrderHistoryItem) -> Unit,
+    onClickServer: (ServerOrderItem) -> Unit,
+) {
     var showOrders by remember { mutableStateOf(false) }
-    SettingsSection(title = "历史订单", subtitle = "本地快照，最多保留 20 笔") {
-        val openDetail: (() -> Unit)? = if (orders.isEmpty()) null else ({ showOrders = true })
+    SettingsSection(title = "历史订单", subtitle = "本地快照最多 20 笔；服务端账单看账号全部") {
         SettingItem(
-            title = if (orders.isEmpty()) "还没有订单" else "共 ${orders.size} 笔",
+            title = if (orders.isEmpty()) "还没有本地订单" else "本地 ${orders.size} 笔",
             subtitle = "点看明细",
             icon = HugeIcons.History,
-            onClick = openDetail,
+            onClick = { showOrders = true },
         )
     }
     if (showOrders) {
         OrderListSheet(
             orders = orders,
+            serverOrders = serverOrders,
+            serverLoading = serverLoading,
+            serverLoaded = serverLoaded,
+            onLoadServer = onLoadServer,
             onClick = onClick,
+            onClickServer = onClickServer,
             onDismiss = { showOrders = false },
         )
     }
 }
 
-/** 订单明细弹层：与「选择开水设备」同规格，行点击开订单详情弹窗。 */
+/** 订单明细弹层：本地快照 + 服务端账单两段，行点击各开订单详情弹窗。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OrderListSheet(
     orders: List<OrderHistoryItem>,
+    serverOrders: List<ServerOrderItem>,
+    serverLoading: Boolean,
+    serverLoaded: Boolean,
+    onLoadServer: () -> Unit,
     onClick: (OrderHistoryItem) -> Unit,
+    onClickServer: (ServerOrderItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // 进弹层按需拉一次服务端账单（VM 里已拉过就跳过，不会重复请求）
+    LaunchedEffect(Unit) { onLoadServer() }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -888,40 +922,120 @@ private fun OrderListSheet(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
+
+            // ── 段一：本地快照 ──
+            Spacer(Modifier.height(10.dp))
             Text(
                 "本地快照 · 点单笔看支付构成",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
-            Spacer(Modifier.height(8.dp))
-            orders.take(20).forEachIndexed { index, order ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onClick(order) }
-                        .padding(vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
+            Spacer(Modifier.height(4.dp))
+            if (orders.isEmpty()) {
+                Text(
+                    "还没有本地订单",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            } else {
+                val shown = orders.take(20)
+                shown.forEachIndexed { index, order ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onClick(order) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                order.goodsName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                            Text(
+                                DATE_FORMAT.format(Date(order.completedAt)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            )
+                        }
                         Text(
-                            order.goodsName,
+                            "¥${calculateActualCost(toResult(order))}",
                             style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                        )
-                        Text(
-                            DATE_FORMAT.format(Date(order.completedAt)),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            fontWeight = FontWeight.Medium,
                         )
                     }
+                    if (index < shown.size - 1) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    }
+                }
+            }
+
+            // ── 段二：服务端账单（order/list，2026-10-14） ──
+            Spacer(Modifier.height(18.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "服务端账单 · 账号全部订单，点单笔看支付构成",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            Spacer(Modifier.height(4.dp))
+            when {
+                serverLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
                     Text(
-                        "¥${calculateActualCost(toResult(order))}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
+                        "读取中…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
                 }
-                if (index < (orders.size.takeIf { it < 20 } ?: 20) - 1) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                !serverLoaded -> Text(
+                    "还没拉取服务端账单",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                serverOrders.isEmpty() -> Text(
+                    "服务端没有账单",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                else -> serverOrders.forEachIndexed { index, order ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onClickServer(order) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                order.machineName?.takeIf { it.isNotBlank() }
+                                    ?: order.shopName?.takeIf { it.isNotBlank() }
+                                    ?: "订单",
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                            Text(
+                                order.createTime.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                maxLines = 1,
+                            )
+                        }
+                        Text(
+                            "¥${order.markPrice ?: "-"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    if (index < serverOrders.size - 1) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    }
                 }
             }
         }

@@ -47,8 +47,17 @@ sealed interface UnlockFlowState {
     /** 出水前的准备步骤（取 SKU / 风控 / 开后付…），step 文案直接来自仓库层 onStep 回调。 */
     data class PreChecking(val step: String = "正在准备…") : UnlockFlowState
 
-    /** 已在出水：UI 层显示 165s 自动结算倒计时（服务端超时自动关阀）。 */
-    data class Working(val step: String, val elapsedSeconds: Int = 0) : UnlockFlowState
+    /**
+     * 已在出水：UI 层显示 165s 自动结算倒计时（服务端超时自动关阀）。
+     *
+     * [stopping] 是「结束用水」已请求（2026-10-14）：置位后动作位禁用并显示「正在结束用水…」，
+     * 直到流程离开 Working（成功结算 / 未确认收尾）自动作废——它只是 UI 过渡态，不参与仓库判定。
+     */
+    data class Working(
+        val step: String,
+        val elapsedSeconds: Int = 0,
+        val stopping: Boolean = false,
+    ) : UnlockFlowState
 
     data class Success(val result: UnlockResult) : UnlockFlowState
 

@@ -185,13 +185,18 @@ sign = sha256("appSecret=$s&channel=$c&timestamp=$t&token=$tok&version=$v" + pat
 goods/latestUsed(categoryCode=5) 取设备
 → goods/normal/skus(goodsId)         取 skuId（必需）
 → goods/water/sync                   预检（失败不阻断）
-→ goods/normal/details(goodsId)      取 imei（必需）
+→ goods/normal/details(goodsId)      取 imei + supportAppUserFinish（机型能力，必需）
 → userIntegral/checkUserIsRisk       积分风控（必需）
 → payChannelRoute/addUserAfterPayChannel(method=15)  开通后付（必需）
 → orderRisk/isCheckLocation          位置风控（必需）
 → goods/water/unlock(skuId, promotions)  出水
 → 轮询 goods/water/sync（1s × ≤300，workStatus==2 为出水中）
+   └─ 用户点「结束用水」→ 机型支持才发 goods/endWater(goodsId)（best-effort；不支持/被拒走设备端提示）→ 继续轮询等 status==5 → 结算
 → order/afterPay/creating(orderNo) → order/detail(orderId) 取账单
+
+旁路（2026-10-14 从胖乖 1.123.0 反编译补出）：
+  order/list(page, pageSize) → ItemsList<OrderItemBean>      服务端账单历史（点单笔走 order/detail）
+  （trade/check_device_status 已删，2026-10-16）
 ```
 
 **账单口径最容易读反**：`tokenCoinDiscount`（小票）是**账户余额抵扣**，不是平台优惠——
@@ -214,15 +219,18 @@ debug 包把只读与开水链路的响应原文落到 `filesDir/qiekj_debug/`�
 致命错误，就是「未知错误（code: -1）+ 账单读不到」的来源。结算两步的响应也已进 debug
 落盘白名单。
 
-**设备在线检测：实测判不了（2026-10-05）**。同一台饮水机在「通电正常」与「拔掉电源」两种状态下，
-`sync` 都回 `status=1 / workStatus=2`（会话已开、等设备回报），`latestUsed.workStatus` 都是 10，
-`details.deviceErrorCode` 都是 null。差别只在通电那次 19 秒后收到设备回报的
-`status=5 / amount=275` 收尾，断电那次一直停在 `status=1` 直到服务端超时。也就是说这几个字段描述的
-是服务端会话，不是设备。剩下的候选是门店维度的设备清单（`appointNew/near/newMachines`，
-参数 shopId + machineTypeId），同一批样本里它回 `code=-1`（HTTP 200、`msg` 与 `data` 都是 null），
-旧协议下拿不到，社区文档记新版（1.139.0）要求 `deviceId` 头与双签。另一处观察：会话状态会黏住，
-断电那笔过了 15 分钟仍回 `status=1 / workStatus=2`，服务端不关它。**结论：现有接口判不出设备在线。**
-可用的判据只剩「结束态」：`status=5` 且 `amount>0` 才算真的出过水。
+**设备在线检测已删（2026-10-16）**：`trade/check_device_status` 的 `health` 实测恒为 true
+（2026-10-15/16 共 11 份样本，含「人不在寝室」时段），官方只当故障闸用、判不了在线；
+App 侧在线显示与端点调用整块移除。旧结论仍成立：同一台饮水机「通电」与「拔电」两态下
+`sync` 都回 `status=1 / workStatus=2`、`latestUsed.workStatus` 都是 10、
+`details.deviceErrorCode` 都是 null（字段描述的是服务端会话，不是设备），门店设备清单
+（`appointNew/near/newMachines`）在旧协议下回 `code=-1`，会话状态还会黏住（断电那笔
+15 分钟后仍回 `status=1`）。可用的判据仍是「结束态」：`status=5` 且 `amount>0` 才算真的出过水。
+
+`goods/endWater { goodsId }` 远程关阀的真实口径（2026-10-16 样本）：**只有
+`goods/normal/details.supportAppUserFinish=true` 的机型可用**；本机该字段 false，服务端
+对结束请求回 `4072「结束失败，请在设备端操作结束」`。App 不再把它当失效路径报错：不支持 /
+被拒都提示到设备上点击「结束」并继续等账单。细节见 `.agents/rules/life-power.md`。
 
 **充值不在 REST 层**：胖乖没有充值端点，实为支付宝小程序深链（appId `2018072460764274`）。
 剥掉分享短链的埋点参数（chInfo/shareTimestamp 等）钉住业务参数；`page` 值要**整体百分号

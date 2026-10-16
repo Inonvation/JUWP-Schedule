@@ -699,7 +699,7 @@ v3 时代「旧全局键 → 课表 1 行」的迁移被本迁移替代合并（
 ```
 data/qiekj/
   QiekjApiConfig.kt          Base/VERSION/channel/secret/promotions 常量（对齐 light-life ApiConfig）
-  QiekjApi.kt                Retrofit Form POST 接口（§4.5 的 13 个端点）
+  QiekjApi.kt                Retrofit Form POST 接口（§4.5 的 13 个端点 + 2026-10-14 补 3 个，见决策 7）
   QiekjHeaderInterceptor.kt  统一头 + sign 装配（登录接口不带 sign/token）
   QiekjModels.kt             ApiEnvelope + 各端点 DTO + TokenExpiredException
   QiekjJson.kt               脏数据容错（data 可能是 ""、数字当字符串，见下）
@@ -727,9 +727,12 @@ Graph.kt                     增 qiekjRepository(context) 单例
    LOGIN_CHANNEL 且不带 sign。
 4. **开水状态机**：`UnlockFlowState` 进 domain，ViewModel 驱动；Mutex 防重入；Working 阶段 UI 显示
    165s 自动结算倒计时兜底（light-life 同款，服务端超时自动关阀）。
-   **出水满 5 秒给「结束用水」**（2026-10-05 用户拍板）：只结束本地等待，设备已回报结束
-   （`status==5` + 单号）就照常建单读账单，否则按「未确认用水」收尾（`UnlockStoppedException`
-   → Idle + 提示，不建单）。开水页与今日页开水面板共用 `ui/water/WaterFlowControls.kt`。
+   **出水满 5 秒给「结束用水」**（2026-10-05 用户拍板；2026-10-16 按真机样本重定）：
+   点下后按机型能力（`goods/normal/details` 的 `supportAppUserFinish`，决策 7）分流——
+   支持时 best-effort 调 `goods/endWater(goodsId)`，不支持则不发（平台必拒 4072）并提示
+   「请在设备上点击『结束』」；两条路都继续轮询，设备回报结束（`status==5` + 单号）照常
+   建单读账单。只有「平台已受理但 20 秒没回报」才抛 `UnlockStoppedException`
+   → Idle + 提示，不建单。开水页与今日页开水面板共用 `ui/water/WaterFlowControls.kt`。
    同一批实测还改掉了两条话术：165s 兜底不再说「已自动关闭并结算」（设备断电时根本走不到建单，
    说结算是假话），改说「设备未回报结束，实际用量以平台账单为准」。
 5. **轮询**：`goods/water/sync` 等 `workStatus==2`，1s 间隔、上限 300 次，放 repository suspend +
@@ -743,6 +746,20 @@ Graph.kt                     增 qiekjRepository(context) 单例
    「未知错误（code: -1）」且账单读不到，别再退回。
 6. **网络层**：复用工程 Retrofit 2.11 + OkHttp 4.12；`HttpLoggingInterceptor` BASIC 级（不打 header，
    token/sign 不进日志）；共享单例 client（20s 超时）。
+7. **2026-10-14 补三个端点**（从胖乖 1.123.0 反编译挖出，主接口仍是 SHA-256 单签，与现有
+   `QiekjSign` 同构，`appSecret` 一致——走当前签名即可；真机样本 2026-10-16 回填）：
+   - **`goods/endWater { goodsId }`**：远程关阀，**官方 App 只对 `supportAppUserFinish=true`
+     的机型调用**。`unlockDevice` 轮询里看到 `UnlockStopSignal` 时按 `shouldRequestRemoteEnd`
+     分流（支持才发）；平台受理后 20 秒（`REMOTE_END_WAIT_MS`）内没回报才抛
+     `UnlockStoppedException` 走「未确认用水」收尾，被拒则退回设备端提示继续等。
+     按钮转 `Working.stopping`（禁用 + 走字）。实测本机（该字段 false）服务端回
+     `4072「结束失败，请在设备端操作结束」`，口径见 `.agents/rules/life-power.md`。
+   - **`trade/check_device_status { goodsId }` —— 已删**（2026-10-16）：`health` 实测恒 true、
+     判不了在线，App 侧在线显示整块移除，端点 / 模型 / 白名单一并清掉（UI 侧见 §3.4 对应节）。
+   - **`order/list { page, pageSize }`** → `ItemsList<OrderItemBean>`：服务端账单历史。
+     开水页「历史订单」弹层分**本地快照 / 服务端账单**两段（沿用生活页流水两段约定），
+     点单笔走 `order/detail { orderId = ServerOrderItem.id }`。
+   相关响应原文都进了 debug 落盘白名单（`.agents/rules/life-power.md`「胖乖」节）。
 
 **开水调用链（顺序不可乱，对齐 light-life unlockDevice，每步失败走诊断）**
 
@@ -750,16 +767,21 @@ Graph.kt                     增 qiekjRepository(context) 单例
 goods/latestUsed(categoryCode=5) 取设备
 → goods/normal/skus(goodsId)        取 skuId（必需，缺失即报错）
 → goods/water/sync                  设备预检（失败不阻断，仅记录）
-→ goods/normal/details(goodsId)     取 imei（必需）
+→ goods/normal/details(goodsId)     取 imei + supportAppUserFinish（机型能力，必需）
 → userIntegral/checkUserIsRisk      积分风控检查（必需，失败阻断）
 → payChannelRoute/addUserAfterPayChannel(method=15)  开通后付（必需）
 → orderRisk/isCheckLocation(categoryCode=04, imei)   位置风控（必需）
 → goods/water/unlock(skuId, promotions, token)       启动出水；promotions 两套常量 JSON
   （带积分 / 不带积分，按设置开关选择）
 → 轮询 goods/water/sync（1s × ≤300，workStatus==2 为出水中）
+   └─ 用户点「结束用水」→ 机型支持才发 goods/endWater(goodsId)（best-effort）→ 继续等 status==5
 → order/afterPay/creating(orderNo)  创建后付订单（orderNo 取 sync.identify ?: unlock.orderNo）
 → order/detail(orderId)             取真实账单（字段语义见下方「账单口径」，2026-09-20 实测回填）
 → 写本地订单快照 OrderHistoryStore
+
+旁路（2026-10-14 补，见关键技术决策 7）：
+  order/list(page, pageSize)          服务端账单历史 → 历史订单弹层第二段
+  （trade/check_device_status 已删，2026-10-16）
 ```
 
 **账单口径（2026-09-21 修订，真机数据 + 参考实现交叉验证）**

@@ -39,7 +39,7 @@ import java.math.RoundingMode
 /**
  * 今日页点余额弹出的开水操作面板（DESIGN §3.3，2026-09-23 起）：
  * 小票余额 + 积分（追「约可抵扣」折算）+ 开水按钮 + 流程态（进度/结算/失败详情）+
- * 积分抵扣开关（附「确保积分充足」提醒）+ 底部常驻在线说明（2026-10-08 起），
+ * 积分抵扣开关（附「确保积分充足」提醒）+ 底部未选设备引导（设备状态显示已于 2026-10-16 删除），
  * 与开水页共享同一份 [WaterViewModel]——弹窗内发起的解锁流程两页状态一致，
  * 弹窗关闭不取消流程（副行给简报，重开弹窗看完整进度）。
  *
@@ -124,6 +124,7 @@ fun WaterEntrySheet(
                     canEndSession = workingFlow != null &&
                         workingFlow.elapsedSeconds >= WaterViewModel.END_SESSION_MIN_SECONDS,
                     onEndSession = onEndSession,
+                    stopping = workingFlow?.stopping == true,
                 )
                 // 完成 = 这次开水到此为止：先归位流程态，再把面板收掉。
                 // 开水页上的同名按钮只归位、不收页（那里本来就是页面）——面板收掉才是
@@ -136,6 +137,9 @@ fun WaterEntrySheet(
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("完成") }
             }
+            // 设备「在线状态」显示整块删除（2026-10-16 用户拍板）：trade/check_device_status
+            // 的 health 只是「没报故障」，判不了真实在线（真机样本恒 true），不再向用户展示；
+            // 只保留未选设备时的引导。
             if (state.selectedDevice == null) {
                 Text(
                     "未选择设备：请先到开水页选择饮水机",
@@ -143,14 +147,6 @@ fun WaterEntrySheet(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
-            // 设备在线状态判不了（2026-10-05 实测，见 .agents/rules/life-power.md
-            // 「设备在线检测」节）——2026-10-08 用户要求把这一点写给用户：
-            // App 只是开水接口的入口，失败时别先怀疑 App，先看设备是否通电、靠近
-            Text(
-                "软件无法识别设备是否在线，仅提供开水接口，请确保靠近设备且在线",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
         }
     }
 

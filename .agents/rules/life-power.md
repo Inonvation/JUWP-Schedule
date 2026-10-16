@@ -38,25 +38,35 @@
   （对齐趣智「复制会话串」）。这是 token 唯一的主动出 App 通道，别再加别的口。
 - **设备状态样本靠 debug 落盘**（2026-10-05）：`goods/latestUsed`、`goods/normal/details`、
   `goods/normal/skus`、`goods/water/sync`、`goods/water/unlock`、`order/afterPay/creating`、
-  `order/detail` 七个端点的**响应体原文**（后两个 2026-10-09 补，为确认会话关闭后结算两步的返回）
+  `order/detail`、`goods/endWater`、`order/list` 九个端点的
+  **响应体原文**（后两个 2026-10-14 补，为确认远程关阀与服务端账单字段的返回形态；
+  `trade/check_device_status` 2026-10-16 已随「在线显示」整块删除、不再采样）
   在 debug 包落 `filesDir/qiekj_debug/`（`data/qiekj/QiekjDebugDumpInterceptor.kt`；
   每个端点只留最新 40 份，落盘前把 `token` / `phone` 字段替换成 `<redacted>`；
   `Graph.qiekj` 按 `BuildConfig.DEBUG` 传目录，release 一个字节都不写）。
-  为什么不在仓库层落盘：`SyncData` / `DeviceItem` 只声明了少数字段，`QiekjJson` 又开了
-  `ignoreUnknownKeys`，服务端多给的字段在解码那步就没了，要确认「设备在线」有没有字段可读
-  只能拿原文。（`SyncData.status` / `amount` 是解出来在用的字段，见下条。）
+  为什么不在仓库层落盘：`SyncData` / `DeviceItem` / `GoodsDetailsData` 只声明了少数字段，
+  `QiekjJson` 又开了 `ignoreUnknownKeys`，服务端多给的字段在解码那步就没了，
+  要确认响应里还有什么只能拿原文。（`SyncData.status` / `amount` 是解出来在用的字段，见下条。）
   取样本：`adb exec-out run-as edu.jxslu.schedule.debug sh -c 'cd files/qiekj_debug && tar -cf - .' > qiekj_dump.tar`。
   这三条纯逻辑（白名单 / 脱敏 / 裁剪）由 `QiekjDebugDumpTest` 钉住。
-- **设备在线检测：判不了，别再试这三组实验**（2026-10-05 实测）：
-  ① `sync` 的 `status` / `workStatus` 是**服务端会话状态**，设备拔电后照样回
-  `status=1 / workStatus=2`，而且会**黏住**（断电那笔会话 15 分钟后仍回 1/2，服务端不关它）
-  ——下次开水若提示设备忙或失败，先怀疑这笔挂单；
-  ② `latestUsed` 回的 `workStatus` 恒为 10（通电 / 断电 / 空闲都一样），`details` 的
-  `deviceErrorCode` / `deviceErrorMsg` 恒为 null，与设备死活无关；
-  ③ 门店设备清单 `appointNew/near/newMachines` 在旧协议下回 `{"code":-1,"msg":null,"data":null}`
-  （HTTP 200、业务码 -1），社区文档记新版 1.139.0 要求 `deviceId` 头与双签，这套 1.60.3 凑不齐。
-  能判的只有**结束态**：`status==5` 且 `amount>0` 才算真的出过水。为实验加过的只读探测
-  （`QiekjProbe` / `probeDeviceState`）已随收尾删除，别再照那个思路加回来。
+- **设备在线检测：整块删除**（2026-10-16 用户拍板）：`trade/check_device_status` 的 `health`
+  实测**恒为 true**（2026-10-15 至 10-16 共 11 份真机样本，含用户不在寝室时段），官方 App
+  也只拿它当**故障闸**（`health=false` 弹 `faultDesc`、`msgId` 非空才多一步 `deviceSync`，
+  反编译出处见 `.re-tmp/` 的 d8 dump）——它判不了「通没通电、在不在线」。所以 App 侧
+  **不再向用户展示任何在线/故障状态**（开水页设备行副行与今日页面板底部那行均已删），
+  端点调用、`QiekjDeviceHealth`、`DeviceHealthData`、`QiekjApi.checkDeviceStatus` 与 debug
+  落盘白名单里的它一并删除。**别再把它当在线判据加回来**；将来若要做故障提示，
+  `faultDesc` 的官方用法（弹窗文案）在 d8 dump 里有据可查。
+  - **旧三组实验的结论仍成立，别再照那三条路走**：
+    ① `sync` 的 `status` / `workStatus` 是**服务端会话状态**，设备拔电后照样回
+    `status=1 / workStatus=2`，而且会**黏住**（断电那笔会话 15 分钟后仍回 1/2，服务端不关它）
+    ——下次开水若提示设备忙或失败，先怀疑这笔挂单；
+    ② `latestUsed` 回的 `workStatus` 平时恒为 10（见过一次结束后回 20 的样本，语义未定，
+    别拿它判状态）；`details` 的 `deviceErrorCode` / `deviceErrorMsg` 恒为 null，与设备死活无关；
+    ③ 门店设备清单 `appointNew/near/newMachines` 在旧协议下回 `{"code":-1,"msg":null,"data":null}`
+    （HTTP 200、业务码 -1），社区文档记新版 1.139.0 要求 `deviceId` 头与双签，这套 1.60.3 凑不齐。
+  - 能判的**结束态**不变：`status==5` 且 `amount>0` 才算真的出过水。为实验加过的只读探测
+    （`QiekjProbe` / `probeDeviceState`）已随收尾删除，别再照那个思路加回来。
 - **设备侧「结算」后 sync 回 `data:null`，是「会话已结束」不是错误**（2026-10-09 实测 + 修复）：
   用户在饮水机上点「结算」后平台会关闭会话，轮询可能先收到
   `{"code":0,"msg":"成功","data":null}`（HTTP 200、业务成功、无数据），也可能随后一拍再收到
@@ -67,10 +77,11 @@
   ——那正是「未知错误（code: -1）」的根因（异常里没有错误码，诊断回退文案就是 code -1），
   且账单读不到、订单快照丢。轮询改用 `throwIfFailed` + 判空后，业务失败（code 非 0/200）
   的诊断口径不变。
-- **上述结论的用户侧口径**（2026-10-08 用户要求）：今日页开水面板
-  （`ui/water/WaterEntrySheet.kt`）底部常驻一行说明「软件无法识别设备是否在线，仅提供
-  开水接口，请确保靠近设备且在线」（`bodySmall` + 0.55），别删——失败时用户先看到它，
-  才知道该去查设备通电与靠近，而不是先怀疑 App。
+- **设备状态显示已删**（2026-10-16 用户拍板，取代 2026-10-08「常驻说明」与 2026-10-14
+  「状态感知一行」）：今日页开水面板（`ui/water/WaterEntrySheet.kt`）底部只在**未选设备**时
+  报「未选择设备：请先到开水页选择饮水机」；开水页设备行的副行恢复「已选中 · 点右侧可换」
+  （`WaterScreen.kt` 的 `DeviceRow`）。**别再给设备加「在线 / 离线 / 未报故障」这类文案**
+  ——平台没有可用判据（见上条），写了就是过度承诺；失败引导由开水失败的诊断建议承担。
 - **积分折算用服务端 `integralAmount`，别算比例**（2026-10-08 接入）：`user/balance` 回的
   `integralAmount`（元）就是「积分可抵的价格」（语义由社区饮水脚本 3ryng1um/qiekj 注释
   交叉确认；我们自己的 debug 落盘不含余额端点，没有样本），面板积分行显示
@@ -80,17 +91,40 @@
   **口径（2026-10-08 用户订正）**：积分不足**不会拒绝开水**（照常可用、只是不抵扣
   积分）；`QiekjErrorDiagnosis` 里那条「积分余额不足」是从参考工程搬来的关键词分类，
   别拿它当「积分不足会失败」的依据。
-- **「结束用水」与超时话术**（2026-10-05 用户拍板）：出水满
+- **「结束用水」按机型能力分流**（2026-10-05 起；2026-10-16 按真机样本重定）：出水满
   `WaterViewModel.END_SESSION_MIN_SECONDS`（5 秒）在开水页与今日页开水面板同时给出
-  「结束用水」（共用 `ui/water/WaterFlowControls.kt`）。它只**结束本地等待**：
-  `UnlockStopSignal` 置位 → 仓库轮询下一轮就地收尾 → 设备已回报结束
-  （`isSessionFinished`，即 `status==5` + `identify` 非空，判定函数 `shouldSettleOnManualStop`）
-  才照常建单读账单，否则抛 `UnlockStoppedException`，VM 走 `finishWithoutSettlement`：
-  Idle + 提示「本次未确认用水」，不建单、不刷新订单快照。**QiekjApi 没有远程关阀端点**
-  （13 个端点逐条对过），按钮副行话术因此写「出水由设备侧或平台超时停止」，别改成「已关阀」。
-  同一批实测还改了 165s 兜底话术：不再说「饮水机已自动关闭并结算」（设备断电时 `workStatus`
-  一直回 2，仓库走不到建单那步，说结算是假话），改成「设备未回报结束，实际用量以平台账单为准」。
-  收尾判定由 `QiekjModelsTest` 的「会话结束判定只认 status5」与「手动结束_read到账单才结算」两例钉住。
+  「结束用水」（共用 `ui/water/WaterFlowControls.kt`）。点下后 `endSession()` 置
+  `Working.stopping`（按钮转「正在结束用水…」）→ `UnlockStopSignal` 置位 → 仓库下一轮按
+  `goods/normal/details` 的 **`supportAppUserFinish`** 分流（`shouldRequestRemoteEnd`）：
+  - **支持**（官方 App 只对这种机型显示「结束使用」按钮）：best-effort 调
+    `goods/endWater { goodsId }`（`QiekjApi.endWater`，2026-10-14 反编译补出）。被拒不再
+    抛错，退回设备端提示继续轮询；受理后等 `REMOTE_END_WAIT_MS`（20 秒）回报结束（`status==5`
+    + `identify` 非空，`shouldSettleOnManualStop`），等不到才抛 `UnlockStoppedException`
+    （「已请求结束用水，设备未回报结束，账单以平台为准」）。
+  - **不支持**（`supportAppUserFinish=false`，本校直饮水机 13B309 即此档）：**不发**
+    `goods/endWater`——平台必回 `4072「结束失败，请在设备端操作结束」`（2026-10-16 18:20
+    真机样本）。仓库改提示「该机型不支持 App 结束：请在设备上点击『结束』，等待设备回报」，
+    并**继续轮询**等设备回报结束，照常建单读账单。
+  - 两条路的收尾判定同一条：`shouldSettleOnManualStop`（`status==5` + `identify` 非空）
+    照常建单读账单。
+  - **旧 bug 别再犯**（2026-10-16 修）：被拒 / 不支持时曾经立即抛错收尾（「平台未受理，
+    本次未确认用水」）——用户随后在机器上结束的账单 App 就不再读，等于丢单（丢的这笔可在
+    「服务端账单」里找回）。现在只有「平台已受理但 20 秒没回报」一条路抛错走
+    `finishWithoutSettlement`。
+  - 文案（2026-10-16 用户订正）：设备侧结束是**点击**机器「结束」键（官方反编译文案是
+    「长按『结束』结束使用设备」，不适用本机，用户实测点击即可）。副行「未停止时，请在
+    设备上点击『结束』」/「等待结束回报；未停止时请在设备上点击『结束』」；不支持机型的工作
+    状态副行常驻「设备工作中；如需结束，请在设备上点击『结束』」。
+  165s 兜底话术不变（「设备未回报结束，实际用量以平台账单为准」——设备断电时 `workStatus`
+  一直回 2，仓库走不到建单那步，说结算是假话）。
+  `QiekjModelsTest` 的「会话结束判定只认 status5」「手动结束_read到账单才结算」「远程结束_
+  不支持机型不发注定被拒的请求」钉住口径。
+- **服务端账单历史**（2026-10-14，`order/list`，**待真机验证**）：开水页「历史订单」弹层分两段
+  （沿用生活页「流水两段」约定）——**本地快照**（最多 20 笔、含支付构成）+ **服务端账单**
+  （`QiekjRepository.serverOrders()`，账号全部订单，进弹层按需拉一次；点单笔走
+  `serverOrderDetail()` = `order/detail { orderId = ServerOrderItem.id }`）。列表行展示
+  `createTime / machineName(shopName) / markPrice`——**字段口径无样本**（`markPrice` 是标价，
+  不是「本次花费」；真实构成要点开看），真机核对后再回填。
 - 一卡通付款码（DESIGN §3.10/§4.19）：密码字段 = 安全键盘密文（字形 MD5 表一次替换）+ `$1$` + uuid；
   **未知字形/非双射/样板自检不过 = 立即报错不猜**；登录密码仅数字（键盘只映射 0-9）；
   token 只存内存不落盘；付款码不进日志/剪贴板/相册；凭证交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）

@@ -3,6 +3,8 @@ package edu.jxslu.schedule.qiekj
 import edu.jxslu.schedule.data.qiekj.ApiEnvelope
 import edu.jxslu.schedule.data.qiekj.BalanceData
 import edu.jxslu.schedule.data.qiekj.DeviceItem
+import edu.jxslu.schedule.data.qiekj.GoodsDetailsData
+import edu.jxslu.schedule.data.qiekj.ItemsList
 import edu.jxslu.schedule.data.qiekj.LoginData
 import edu.jxslu.schedule.data.qiekj.NoDataPollAction
 import edu.jxslu.schedule.data.qiekj.OrderDetailData
@@ -10,10 +12,12 @@ import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.QIEKJ_EMPTY_DATA_ABORT_STREAK
 import edu.jxslu.schedule.data.qiekj.QIEKJ_EMPTY_DATA_SETTLE_STREAK
 import edu.jxslu.schedule.data.qiekj.QiekjJson
+import edu.jxslu.schedule.data.qiekj.ServerOrderItem
 import edu.jxslu.schedule.data.qiekj.SyncData
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
 import edu.jxslu.schedule.data.qiekj.isSessionFinished
 import edu.jxslu.schedule.data.qiekj.noDataPollAction
+import edu.jxslu.schedule.data.qiekj.shouldRequestRemoteEnd
 import edu.jxslu.schedule.data.qiekj.shouldSettleOnManualStop
 import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
@@ -160,6 +164,62 @@ class QiekjModelsTest {
         val data = env.requireData()
         assertEquals(2, data.workStatus)
         assertEquals(null, data.amount)
+    }
+
+    // ── 设备详情与远程结束门控（2026-10-16） ──
+
+    @Test
+    fun goodsDetails_机型能力字段可解码() {
+        // 真机样本形态：imei 字符串 + supportAppUserFinish=false（这台直饮水机）
+        val data = QiekjJson.json.decodeFromString<ApiEnvelope<GoodsDetailsData>>(
+            """{"code":0,"data":{"imei":"862270064851831","supportAppUserFinish":false,"extraField":1}}""",
+        ).requireData()
+        assertEquals("862270064851831", data.imei)
+        assertEquals(false, data.supportAppUserFinish)
+    }
+
+    @Test
+    fun 远程结束_不支持机型不发注定被拒的请求() {
+        // supportAppUserFinish=false 的机型平台必拒（实样 4072「请在设备端操作结束」）
+        assertFalse(shouldRequestRemoteEnd(false))
+        assertTrue(shouldRequestRemoteEnd(true))
+        // 字段缺失（旧服务端形态）按「尝试」处理：被拒也有设备端引导兜底
+        assertTrue(shouldRequestRemoteEnd(null))
+    }
+
+    // ── 服务端账单历史（order/list，2026-10-14 反编译补出，无真实样本） ──
+
+    @Test
+    fun orderList_分页信封与字段解码() {
+        val env = QiekjJson.json.decodeFromString<ApiEnvelope<ItemsList<ServerOrderItem>>>(
+            """{"code":0,"msg":"成功","data":{"total":37,"items":[
+                {"id":"9001","orderNo":"NO1","machineName":"13B309","shopName":"直饮水",
+                 "markPrice":"0.16","payPrice":"0.00","createTime":"2026-10-14 12:00","orderStatus":2,
+                 "extraField":"ignored"}]}}""",
+        )
+        val data = env.requireData()
+        assertEquals(37, data.total)
+        val first = data.items.single()
+        assertEquals("9001", first.id)
+        assertEquals("NO1", first.orderNo)
+        assertEquals("13B309", first.machineName)
+        assertEquals("0.16", first.markPrice)
+        assertEquals("2026-10-14 12:00", first.createTime)
+    }
+
+    @Test
+    fun orderList_空与缺字段都容错() {
+        val empty = QiekjJson.json.decodeFromString<ApiEnvelope<ItemsList<ServerOrderItem>>>(
+            """{"code":0,"data":{"total":0,"items":[]}}""",
+        ).requireData()
+        assertEquals(0, empty.items.size)
+        // 裸数字字段（id / markPrice 是数字、createTime 缺失）走宽松字符串序列化器
+        val loose = QiekjJson.json.decodeFromString<ApiEnvelope<ItemsList<ServerOrderItem>>>(
+            """{"code":0,"data":{"items":[{"id":9002,"markPrice":0.3}]}}""",
+        ).requireData().items.single()
+        assertEquals("9002", loose.id)
+        assertEquals("0.3", loose.markPrice)
+        assertNull(loose.createTime)
     }
 
     // ── 「结束用水」的收尾判定（2026-10-05） ──

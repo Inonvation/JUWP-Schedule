@@ -7,11 +7,13 @@ import edu.jxslu.schedule.data.qiekj.BalanceData
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
+import edu.jxslu.schedule.data.qiekj.ServerOrderItem
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
 import edu.jxslu.schedule.data.qiekj.UnlockException
 import edu.jxslu.schedule.data.qiekj.UnlockStopSignal
 import edu.jxslu.schedule.data.qiekj.UnlockStoppedException
 import edu.jxslu.schedule.domain.UnlockFlowState
+import edu.jxslu.schedule.domain.UnlockResult
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.widget.WaterWidgetSync
@@ -59,6 +61,13 @@ data class WaterUiState(
     val usePoints: Boolean = true,
     // ── 订单 ──
     val orderHistory: List<OrderHistoryItem> = emptyList(),
+    // ── 服务端账单（order/list，2026-10-14）：账号下全部订单，与本地快照互补 ──
+    val serverOrders: List<ServerOrderItem> = emptyList(),
+    val loadingServerOrders: Boolean = false,
+    /** 服务端账单是否已成功拉过一次（进弹层按需拉，已拉过不重复）。 */
+    val serverOrdersLoaded: Boolean = false,
+    /** 正在查看的服务端账单明细（点了单笔后拉到）；null 表示没有打开的明细。 */
+    val serverOrderDetail: UnlockResult? = null,
 )
 
 sealed interface WaterEvent {
@@ -305,7 +314,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         }
     }).also { devicesJob = it }
 
-    fun selectDevice(device: DeviceItem) = _uiState.update { it.copy(selectedDevice = device) }
+    fun selectDevice(device: DeviceItem) {
+        _uiState.update { it.copy(selectedDevice = device) }
+    }
 
     /**
      * 小组件「去开水」直达（DESIGN §3.6 开水两卡，2026-09-28 用户拍板）：进页即开水。
@@ -355,9 +366,55 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         devicesJob.join()
         if (_uiState.value.loggedIn) {
             _uiState.update { it.copy(orderHistory = repo.orderHistory()) }
+            // 服务端账单跟着刷新走（已拉过才重拉，没进过账单弹层就不为它多打一次请求）
+            if (_uiState.value.serverOrdersLoaded) loadServerOrders(force = true)
         }
         _uiState.update { it.copy(refreshing = false) }
     }
+
+    // ── 服务端账单（order/list，2026-10-14） ──
+
+    /**
+     * 拉服务端账单列表。默认只在没拉过时拉（进弹层按需触发）；下拉刷新走 force=true。
+     * 在途不重发；Token 失效照常清登录态。
+     */
+    fun loadServerOrders(force: Boolean = false) {
+        if (!_uiState.value.loggedIn) return
+        if (_uiState.value.loadingServerOrders) return
+        if (!force && _uiState.value.serverOrdersLoaded) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingServerOrders = true) }
+            runCatching { repo.serverOrders() }
+                .onSuccess { list ->
+                    _uiState.update {
+                        it.copy(serverOrders = list, loadingServerOrders = false, serverOrdersLoaded = true)
+                    }
+                }
+                .onFailure {
+                    _uiState.update { it.copy(loadingServerOrders = false) }
+                    if (it is TokenExpiredException) {
+                        handleTokenExpired()
+                    } else {
+                        notice(it.message ?: "查询服务端账单失败", NoticeTone.Error)
+                    }
+                }
+        }
+    }
+
+    /** 点服务端账单某一条：拉明细（order/detail）后由界面弹详情。 */
+    fun openServerOrder(item: ServerOrderItem) = viewModelScope.launch {
+        runCatching { repo.serverOrderDetail(item) }
+            .onSuccess { result -> _uiState.update { it.copy(serverOrderDetail = result) } }
+            .onFailure {
+                if (it is TokenExpiredException) {
+                    handleTokenExpired()
+                } else {
+                    notice(it.message ?: "读取账单明细失败", NoticeTone.Error)
+                }
+            }
+    }
+
+    fun dismissServerOrderDetail() = _uiState.update { it.copy(serverOrderDetail = null) }
 
     fun toggleUsePoints() = _uiState.update { it.copy(usePoints = !it.usePoints) }
 
@@ -385,7 +442,14 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                         _uiState.update { s ->
                             s.copy(
                                 flow = if (working) {
-                                    UnlockFlowState.Working(step, (s.flow as? UnlockFlowState.Working)?.elapsedSeconds ?: 0)
+                                    // 保留 elapsedSeconds 与 stopping：onStep 会重建 Working，
+                                    // 不带上 stopping 会把「正在结束用水」态冲掉
+                                    val prev = s.flow as? UnlockFlowState.Working
+                                    UnlockFlowState.Working(
+                                        step = step,
+                                        elapsedSeconds = prev?.elapsedSeconds ?: 0,
+                                        stopping = prev?.stopping ?: false,
+                                    )
                                 } else {
                                     UnlockFlowState.PreChecking(step)
                                 },
@@ -409,9 +473,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                         handleTokenExpired()
                         return@launch
                     }
-                    // 手动结束：设备没回报结束，按「未确认用水」收尾，不套失败卡的诊断
+                    // 手动结束：仓库会先请求平台远程关阀再等回报；等不到就按「未确认用水」收尾
                     if (e is UnlockStoppedException) {
-                        finishWithoutSettlement("已结束等待。设备未回报结束，本次未确认用水")
+                        finishWithoutSettlement(e.message ?: "已结束等待。设备未回报结束，本次未确认用水")
                         return@launch
                     }
                     val failed = if (e is UnlockException) {
@@ -434,15 +498,20 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
     }
 
     /**
-     * 「结束用水」（2026-10-05 用户拍板）：只在出水中有意义，出水满
-     * [END_SESSION_MIN_SECONDS] 秒才给按钮（界面侧判）。置位后仓库会在下一轮轮询就地收尾，
-     * 设备已回报结束就照常读账单，否则按「未确认用水」收尾。
+     * 「结束用水」（2026-10-05 起；2026-10-16 改）：只在出水中有意义，出水满
+     * [END_SESSION_MIN_SECONDS] 秒才给按钮（界面侧判）。置位后交给仓库：机型支持时请求
+     * 平台远程关阀（`goods/endWater`）；机型不支持或平台拒绝时退回落「在设备上点击
+     * 『结束』」提示。两条路都**继续轮询**等设备回报结束照常读账单；只有平台已受理但
+     * 20 秒没回报才按「未确认用水」收尾。
      *
      * 这里**不取消协程**：收尾由仓库完成，取消会连结算路径一起掐掉。
+     * 立即把 flow 置 stopping 态（禁用按钮 + 走字），别让用户以为没点上。
      */
     fun endSession() {
-        if (_uiState.value.flow !is UnlockFlowState.Working) return
+        val flow = _uiState.value.flow
+        if (flow !is UnlockFlowState.Working || flow.stopping) return
         stopSignal?.request()
+        _uiState.update { it.copy(flow = flow.copy(stopping = true)) }
     }
 
     private fun startTimer() {
