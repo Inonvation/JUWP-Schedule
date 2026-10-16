@@ -87,6 +87,21 @@ fun WenquActivitySheet(
     actionError: String? = null,
     onApply: (() -> Unit)? = null,
     onCancel: (() -> Unit)? = null,
+    /**
+     * **盯这条**（2026-10-15，DESIGN §4.45「盯指定活动」）：非 null 才显示按钮。
+     * 记录视角（`WenquRecordsScreen`）不传——盯一条「我参加过的」没有意义。
+     */
+    onPin: (() -> Unit)? = null,
+    /** 这条活动**已预报名**时的报名开始时刻（0 = 没排）；非 0 显示「已预报名」状态行。 */
+    preregOpensAt: Long = 0L,
+    /**
+     * **预报名**（2026-10-16，DESIGN §4.45；用户拍板）：非 null 才显示按钮，
+     * 且只在「报名尚未开始」（[WenquRules.APPLY_NOT_STARTED]）时出现。
+     * 记录视角不传（记录里的活动谈不上「还没开始报名」）。
+     */
+    onRequestPrereg: (() -> Unit)? = null,
+    /** 取消预报名（已排上时状态行点它取消）。 */
+    onCancelPrereg: (() -> Unit)? = null,
 ) {
     // 底部动作行的「关掉再做一件事」（DESIGN §3.28，2026-10-11）：
     // 弹层是比页面高一层的独立窗口，页面级提示会被它盖住——所以先关弹层（退场动画走完
@@ -94,6 +109,8 @@ fun WenquActivitySheet(
     var afterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
     // 报名 / 取消的二次确认（DESIGN §3.28，2026-10-11）：写操作前必须过一道确认。
     var confirmKind by remember { mutableStateOf<SheetConfirm?>(null) }
+    // 「预报名」的二次确认（2026-10-16）：开启后到点自动提交，必须过一次确认。
+    var preregConfirm by remember { mutableStateOf(false) }
     val context = LocalContext.current
     ImeAwareModalBottomSheet(onDismiss = onDismiss, pendingDismiss = afterDismiss) {
         WenquActivityDetailContent(
@@ -121,6 +138,26 @@ fun WenquActivitySheet(
             onRequestCancel = { confirmKind = SheetConfirm.CANCEL },
             onCopyName = { afterDismiss = { onNotice("活动名已复制") } },
             onOpenWechat = { afterDismiss = { openWechatForSignup(context, onNotice) } },
+            onPin = onPin,
+            preregOpenAt = preregOpensAt,
+            preregEligible = onRequestPrereg != null &&
+                applyBlockReason == WenquRules.APPLY_NOT_STARTED,
+            onRequestPreregClick = { preregConfirm = true },
+            onCancelPrereg = onCancelPrereg,
+        )
+    }
+    if (preregConfirm) {
+        val openAt = WenquRules.stampMillis(activity.applyStartTime)
+        WenquPreregConfirmDialog(
+            activityName = activityName(activity),
+            opensAtText = openAt
+                ?.let { WenquRules.preregOpenLabel(it, System.currentTimeMillis()) }
+                .orEmpty(),
+            onConfirm = {
+                preregConfirm = false
+                onRequestPrereg?.invoke()
+            },
+            onDismiss = { preregConfirm = false },
         )
     }
     confirmKind?.let { kind ->
@@ -192,6 +229,52 @@ private fun WenquActionConfirmDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(if (isApply) "再想想" else "保留报名") }
         },
+    )
+}
+
+/**
+ * 「预报名」二次确认（DESIGN §3.28 / §4.45，2026-10-16；用户拍板）。
+ *
+ * 说清三件事：这是**自动提交**（本应用唯一一处）、会重试但有限次、结果通知 / 随时可取消。
+ */
+@Composable
+private fun WenquPreregConfirmDialog(
+    activityName: String,
+    opensAtText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DialogWindowFadeEffect()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("预报名确认") },
+        text = {
+            Column {
+                Text(
+                    text = activityName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (opensAtText.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "报名时间 $opensAtText",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "确认后本应用会代替你在开放时刻自动提交报名：从开始前 15 秒起，" +
+                        "最多试 20 发，成功或失败都会通知你；活动时间有变化会自动顺延。" +
+                        "平台有时提前几秒放行，自动提交就是为了吃到这几秒；期间随时可在本页取消。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("开启预报名") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("再想想") } },
     )
 }
 
@@ -330,6 +413,13 @@ private fun WenquActivityDetailContent(
     onRequestCancel: () -> Unit = {},
     onCopyName: () -> Unit = {},
     onOpenWechat: () -> Unit = {},
+    onPin: (() -> Unit)? = null,
+    /** 已预报名的报名开始时刻（>0 显示状态行；见主入口的 [preregOpensAt]）。 */
+    preregOpenAt: Long = 0L,
+    /** 满足「报名尚未开始」+ 调用方提供了回调时才给「预报名」按钮。 */
+    preregEligible: Boolean = false,
+    onRequestPreregClick: (() -> Unit)? = null,
+    onCancelPrereg: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -460,6 +550,46 @@ private fun WenquActivityDetailContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+            // 「预报名」（2026-10-16）：报名还没开始的活动的自动化出口，放在动作区最上方
+            // （「盯这条」是等名额，这里是到点自动抢）。
+            if (preregOpenAt > 0L) {
+                if (onCancelPrereg != null) {
+                    OutlinedButton(
+                        onClick = onCancelPrereg,
+                        enabled = !busy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp),
+                    ) {
+                        Text(
+                            "已预报名 · " + WenquRules.preregOpenLabel(
+                                preregOpenAt,
+                                System.currentTimeMillis(),
+                            ) + " 自动抢（点此取消）",
+                        )
+                    }
+                }
+            } else if (preregEligible && onRequestPreregClick != null) {
+                OutlinedButton(
+                    onClick = onRequestPreregClick,
+                    enabled = !busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 14.dp),
+                ) { Text("预报名 · 准点自动抢") }
+            }
+
+            // 「盯这条」（2026-10-15）：给已满 / 还没开抢的活动一个「等名额」的出口。
+            // 放在主动作行**上方**——它不是主路径（主路径仍是报名），但比复制更靠近主路径。
+            if (onPin != null) {
+                OutlinedButton(
+                    onClick = onPin,
+                    enabled = !busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 14.dp),
+                ) { Text("盯这条 · 名额空出时提醒我") }
             }
             WenquActivityActions(
                 activity = activity,

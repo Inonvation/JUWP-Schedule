@@ -163,6 +163,12 @@ object WenquRules {
     const val STATUS_RECRUITING: Int = 1
 
     /**
+     * [applyBlockReason] 的一句专用文案。预报名入口拿它当判据：回到这句 = 至少能推出
+     * 报名开始时刻、且还没到（认不出时间的活动回的是空串，见下面的「时间认不出时不拦」）。
+     */
+    const val APPLY_NOT_STARTED = "报名尚未开始"
+
+    /**
      * **报名闸门**：能报名回空串，不能报名回**原因**（详情弹层拿它禁用按钮并写一行说明）。
      *
      * 判据顺序有意为之——先给**最不容易变、最该先说**的原因：
@@ -194,7 +200,7 @@ object WenquRules {
         val end = stampMillis(applyEndTime, zone)
         if (end != null && end < now) return "报名已截止"
         val start = stampMillis(applyStartTime, zone)
-        if (start != null && start > now) return "报名尚未开始"
+        if (start != null && start > now) return APPLY_NOT_STARTED
         if (isFull(status, peopleNum, balanceNum)) return "名额已满"
         return ""
     }
@@ -679,83 +685,174 @@ object WenquRules {
     // ---- 蹲点（抢活动，2026-10-11；用户口径）------------------------------------
     //
     // 用户口径：学校很多志愿活动周日中午 12:00 发布、当场开抢，服务器一到点就卡。
-    // 「蹲点」= **手动开始、只轮询活动列表第一页、命中即弹二次确认**（**不自动提交**）：
+    // 「蹲点」= **手动开始、只轮询活动列表第一页、命中即弹二次确认**：
     // 检测自动化、提交人工化。与「每周日 12:00 提醒」互补——那条把人叫过来，
     // 这条在点到之后帮他盯着。规则见 `.agents/rules/wenqu.md`「蹲点模式」。
+    //
+    // 2026-10-16 两处改动（用户实测 + 拍板）：
+    // ① 平台**写接口会提前约 10 秒放行**（活动写着 12:00 开始报名，11:59:50 就能抢）——
+    //    加密窗口前缘放宽到 20 秒，窗口内失败也改成快重试；
+    // ② **新增「预报名」**（见文件后半「预报名」节）：全 App 唯一允许自动提交的入口，
+    //    只对用户点名的单条活动生效；蹲点命中仍只弹确认，不自动提交。
 
     /** 轮询间隔（成功路径）：3 秒（用户拍板）。 */
     const val GRAB_POLL_INTERVAL_MS: Long = 3_000L
 
+    /**
+     * **发布窗口内**的轮询间隔（成功路径）：1 秒（2026-10-15）。
+     *
+     * 3 秒一轮时，11:59:50 待机后的探测点落在 :50/:53/:56/:59/12:00:02…——新活动 12:00:00
+     * 出现，最早也要 12:00:02 才看到。发布时刻前后把间隔收到 1 秒，把「最多晚 3 秒」压到
+     * 「最多晚 1 秒」。**探测是串行的**（上一轮不回来不发下一轮），高峰时自然退化成服务器
+     * 响应速度，不会雪崩。
+     */
+    const val GRAB_POLL_INTERVAL_FAST_MS: Long = 1_000L
+
+    /**
+     * 加密轮询窗口：发布时刻**前** [GRAB_BURST_BEFORE_MS] 到**后** [GRAB_BURST_AFTER_MS]。
+     *
+     * 前缘 2026-10-16 由 5 秒放宽到 20 秒：用户实测平台的**写接口会提前约 10 秒放行**
+     * （活动写着 12:00 开始报名，11:59:50 就能抢），而读接口（列表 / 详情）未必跟着翻。
+     * 蹲点靠「多看一眼」接住这段提前量；预报名另有直接试发（见「预报名」节）。
+     * 成功与失败都按这个窗口加密（见 [grabNextDelayMs]）。
+     */
+    const val GRAB_BURST_BEFORE_MS: Long = 20_000L
+    const val GRAB_BURST_AFTER_MS: Long = 15_000L
+
     /** 探测请求的 call timeout（秒）：高峰时挂 30 秒等于一轮白等，失败要快、下一轮再来。 */
     const val GRAB_REQUEST_TIMEOUT_S: Long = 6L
 
-    /** 连续失败每多一次，下一轮多等这么久；封顶 [GRAB_BACKOFF_MAX_MS]。 */
+    /**
+     * **发布窗口内**探测请求的 call timeout（秒，2026-10-16）：窗口里挂 6 秒少试好几轮，
+     * 收到 3 秒、失败快重试（窗口内失败不再长退避，见 [grabNextDelayMs]）。
+     */
+    const val GRAB_BURST_TIMEOUT_S: Long = 3L
+
+    /** 连续失败每多一次，下一轮多等这么久；封顶 [GRAB_BACKOFF_MAX_MS]（仅窗口外）。 */
     const val GRAB_BACKOFF_STEP_MS: Long = 3_000L
     const val GRAB_BACKOFF_MAX_MS: Long = 12_000L
 
-    /** 检测窗口：自首个探测起算 10 分钟，跑完自动停。 */
+    /**
+     * 检测窗口：自首个探测起算 10 分钟，跑完自动停。
+     * 开始早于发布时刻时锚到「发布时刻 + 10 分钟」（见 [grabWindowEndAt]）——
+     * 否则 11:50 开蹲的窗口在 12:00 整就被掐断，正好错过要蹲的那一下。
+     */
     const val GRAB_WINDOW_MS: Long = 10 * 60 * 1000L
 
-    /** 单次蹲点的探测次数上限（安全阀，防呆：窗口内最多约 200 次）。 */
-    const val GRAB_MAX_CHECKS: Int = 300
-
-    /** 发布前先开检的提前量：周日 11:59:50 发第一轮（发布 = 周日 12:00）。 */
-    const val GRAB_PREROLL_MS: Long = 10 * 1000L
+    /**
+     * 单次蹲点的探测次数上限（安全阀）。2026-10-16 由 300 提到 900：
+     * 取消强制待机后，11:50 开蹲到 12:10 收工最长约 20 分钟（10 秒档 + 3 秒档 +
+     * 加密档合计约 500 次），旧值会在 12:03 前后把蹲点提前掐了。
+     */
+    const val GRAB_MAX_CHECKS: Int = 900
 
     /**
-     * 触发「待机到 11:59:50」的提前窗口：周日 11:50 之后开始蹲点才待机——
-     * 更早开始视为在蹲别的活动，立即检测（12:00 之前发再多请求也刷不出新活动，
-     * 待机能省几十个空请求）。
+     * **离发布还早**时的轮询间隔：10 秒（2026-10-16）。取消「11:50 后开始就待机到
+     * 11:59:50」之后，早开蹲不必用 3 秒节奏白刷十几分钟——省请求的初衷保留，
+     * 但待机不许再挡住「提前开放」（10 秒档一直在看，见 [grabNextDelayMs]）。
      */
-    const val GRAB_AUTO_WAIT_WINDOW_MS: Long = 10 * 60 * 1000L
+    const val GRAB_POLL_INTERVAL_RELAXED_MS: Long = 10_000L
+
+    /** 切回 3 秒档的阈值：离发布时刻不足这个时长就不再放慢。 */
+    const val GRAB_RELAXED_BEFORE_MS: Long = 5 * 60 * 1000L
 
     /** 蹲点探测每轮取第一页这么多条（新活动一定在开头，见 `mergeNewest` 的口径）。 */
     const val GRAB_PAGE_LIMIT: Int = 30
 
     /**
-     * 蹲点的**首个探测时刻**：周日 11:50–11:59:50 之间开始的话待机到 11:59:50，
-     * 其余时刻立即可发。
+     * 「盯着指定活动」的**后台检查间隔**（小时，2026-10-15）：搭 [ScoreAlertReminder] 那趟
+     * 共享周期任务用（小时制），取现有档位里最小的 1。
+     *
+     * 说清代价：WorkManager 的周期下限是 15 分钟，但这条走的是**共享**任务（还要顺手跑其它
+     * 五路），再密就是让整个进程频繁醒来。所以它**只救「名额能挂一小时」的冷活动**；
+     * 秒级热活动得靠前台蹲点（页面开着），后台追不上。
      */
-    fun grabDetectStartAt(
+    const val GRAB_PIN_CHECK_INTERVAL_HOURS: Int = 1
+
+    /**
+     * 蹲点锚定的**发布时刻**：周日 [WEEKLY_ALERT_HOUR]:[WEEKLY_ALERT_MINUTE]（本地时区）；
+     * 非周日回 0——没有已知发布点，就不做加密轮询（见 [grabNextDelayMs]）。
+     */
+    fun grabPublishAt(
         armedAt: Long,
         zone: ZoneId = ZoneId.systemDefault(),
     ): Long {
         val zoned = Instant.ofEpochMilli(armedAt).atZone(zone)
-        if (zoned.dayOfWeek != DayOfWeek.SUNDAY) return armedAt
-        val publishAt = zoned.toLocalDate()
+        if (zoned.dayOfWeek != DayOfWeek.SUNDAY) return 0L
+        return zoned.toLocalDate()
             .atTime(WEEKLY_ALERT_HOUR, WEEKLY_ALERT_MINUTE)
             .atZone(zone)
             .toInstant()
             .toEpochMilli()
-        val detectAt = publishAt - GRAB_PREROLL_MS
-        return if (armedAt in (publishAt - GRAB_AUTO_WAIT_WINDOW_MS) until detectAt) {
-            detectAt
-        } else {
-            armedAt
-        }
     }
 
-    /** 检测窗口的结束时刻（自首个探测起算）。 */
-    fun grabWindowEndAt(detectStartedAt: Long): Long = detectStartedAt + GRAB_WINDOW_MS
+    /**
+     * 检测窗口的结束时刻：默认自首个探测起算；**开始早于发布时刻**时锚到
+     * 「发布时刻 + [GRAB_WINDOW_MS]」——11:50 开蹲的人要覆盖到 12:10，
+     * 而不是 12:00 整被掐断。两个口径取较晚的那个；参数带默认值（老调用行为不变）。
+     */
+    fun grabWindowEndAt(detectStartedAt: Long, publishAt: Long = 0L): Long {
+        val natural = detectStartedAt + GRAB_WINDOW_MS
+        val anchored = if (publishAt > detectStartedAt) publishAt + GRAB_WINDOW_MS else 0L
+        return maxOf(natural, anchored)
+    }
 
-    /** 下一轮探测前的等待时长：成功 = 基础间隔；连续失败逐档退避到封顶。 */
-    fun grabNextDelayMs(consecutiveFailures: Int): Long {
-        if (consecutiveFailures <= 0) return GRAB_POLL_INTERVAL_MS
+    /** [now] 是否落在发布窗口里（前 [GRAB_BURST_BEFORE_MS] 到后 [GRAB_BURST_AFTER_MS]）。 */
+    fun grabInBurst(now: Long, publishAt: Long): Boolean = publishAt > 0L &&
+        now in (publishAt - GRAB_BURST_BEFORE_MS)..(publishAt + GRAB_BURST_AFTER_MS)
+
+    /**
+     * 下一轮探测前的等待时长。
+     *
+     * - 成功：发布窗口内 1 秒；离发布超过 [GRAB_RELAXED_BEFORE_MS] 的 10 秒档；其余 3 秒；
+     * - 失败（2026-10-16 改）：**窗口内也走 1 秒快重试**——原先窗口内失败照旧退避
+     *   6/9/12 秒，而 12:00 的拥堵恰好表现为超时，于是最该续命的时候反而最沉默。
+     *   窗口外维持 6/9/12 秒退避；退避等待由调用方用 [jitteredDelayMs] 加抖动
+     *   （本函数保持确定值，便于单测）。
+     */
+    fun grabNextDelayMs(consecutiveFailures: Int, now: Long = 0L, publishAt: Long = 0L): Long {
+        val inBurst = grabInBurst(now, publishAt)
+        if (consecutiveFailures <= 0) {
+            if (inBurst) return GRAB_POLL_INTERVAL_FAST_MS
+            if (publishAt > 0L && now < publishAt - GRAB_RELAXED_BEFORE_MS) {
+                return GRAB_POLL_INTERVAL_RELAXED_MS
+            }
+            return GRAB_POLL_INTERVAL_MS
+        }
+        if (inBurst) return GRAB_POLL_INTERVAL_FAST_MS
         return (GRAB_POLL_INTERVAL_MS + GRAB_BACKOFF_STEP_MS * consecutiveFailures)
             .coerceAtMost(GRAB_BACKOFF_MAX_MS)
     }
 
-    /** 该不该收工：探测次数触顶或窗口已到。 */
-    fun grabShouldStop(checks: Int, detectStartedAt: Long, now: Long): Boolean =
-        checks >= GRAB_MAX_CHECKS || now >= grabWindowEndAt(detectStartedAt)
+    /**
+     * 给退避等待加 ±20% 抖动（[random01] ∈ [0,1]，0.5 = 不加）。只在**窗口外的失败退避**
+     * 上叠——节奏太整齐是「脚本」的显性特征，也免得多个客户端同一秒撞进来。
+     * 窗口内的加密节奏不加抖动：那里要的是确定性。
+     */
+    fun jitteredDelayMs(base: Long, random01: Double): Long {
+        val jitter = (random01.coerceIn(0.0, 1.0) * 2.0 - 1.0) * 0.2
+        return (base + base * jitter).toLong().coerceAtLeast(1_000L)
+    }
+
+    /** 该不该收工：探测次数触顶或窗口已到（开始早于发布时窗口锚到发布后十分钟）。 */
+    fun grabShouldStop(
+        checks: Int,
+        detectStartedAt: Long,
+        now: Long,
+        publishAt: Long = 0L,
+    ): Boolean = checks >= GRAB_MAX_CHECKS || now >= grabWindowEndAt(detectStartedAt, publishAt)
 
     /**
-     * 蹲点**命中**：第一页里第一条「名称匹配 + 现在能报名」的活动；没有回 null。
+     * 蹲点**命中**：第一条「（名称匹配 **或** 是盯着的指定活动）+ 现在能报名」的活动；没有回 null。
      *
-     * 名称匹配与搜索同一份归一化（[matchesKeyword]，只收可见的四个字段）；
-     * 「能报名」走 [applyBlockReason]（已报名 / 已满 / 未到报名时间 / 被限制都不算命中）。
+     * 名称匹配与搜索同一份归一化（[matchesKeyword]，只收可见的四个字段）；「能报名」走
+     * [applyBlockReason]（已报名 / 已满 / 未到报名时间 / 被限制都不算命中）。
      * **不区分「是不是这次新出现的」**：蹲点是用户手动开启、命中后还要手动确认的
      * 工具，多一道新旧的判断只会把它变钝。
+     *
+     * [pinnedId] > 0 = **盯指定活动**（2026-10-15）：那一条不看名字，只要它现在能报名就命中
+     * ——已满的活动会一直不命中，直到有人退名额（`balance_num` 转正）才弹。
+     * 它**优先于名字匹配**（显式选择比模糊匹配更具体）。
      */
     fun grabFirstMatch(
         items: List<WenquActivity>,
@@ -763,23 +860,158 @@ object WenquRules {
         blacklisted: Boolean,
         now: Long,
         zone: ZoneId = ZoneId.systemDefault(),
+        pinnedId: Long = 0L,
     ): WenquActivity? {
+        if (keyword.isBlank() && pinnedId <= 0L) return null
+        fun applicable(item: WenquActivity): Boolean = applyBlockReason(
+            status = item.status,
+            applied = item.applied,
+            peopleNum = item.peopleNum,
+            balanceNum = item.balanceNum,
+            applyStartTime = item.applyStartTime,
+            applyEndTime = item.applyEndTime,
+            blacklisted = blacklisted,
+            now = now,
+            zone = zone,
+        ).isEmpty()
+        // 盯的那条先看：它是用户的显式选择，比名字匹配更具体
+        if (pinnedId > 0L) {
+            items.firstOrNull { it.id == pinnedId }?.let { if (applicable(it)) return it }
+        }
         if (keyword.isBlank()) return null
         return items.firstOrNull { item ->
             matchesKeyword(keyword, item.title, item.projectName, item.unit, item.address) &&
-                applyBlockReason(
-                    status = item.status,
-                    applied = item.applied,
-                    peopleNum = item.peopleNum,
-                    balanceNum = item.balanceNum,
-                    applyStartTime = item.applyStartTime,
-                    applyEndTime = item.applyEndTime,
-                    blacklisted = blacklisted,
-                    now = now,
-                    zone = zone,
-                ).isEmpty()
+                applicable(item)
         }
     }
+
+    // ---- 预报名（准点自动抢，2026-10-16；用户拍板）--------------------------------
+    //
+    // 用户口径：活动写着 12:00 开始报名，但平台实际会**提前约 10 秒**放行写请求，
+    // 手动抢不过。预报名 = 用户在详情里对**单条活动**显式开启，App 在报名开始前
+    // 60 秒由精确闹钟拉起，从开始前 15 秒起限次试发报名，成功 / 失败都通知。
+    // **这是全 App 唯一允许自动提交的路径**（其余写操作仍是「用户点一次发一次」）。
+    //
+    // 快照、闹钟、执行器分别落在 `WenquPreregReminder` / `WenquPreregRunner`（ui/wenqu）。
+
+    /** 预报名闹钟提前量：报名开始前 60 秒拉起执行器（先校对状态、预热 token 与连接）。 */
+    const val PREREG_LEAD_MS: Long = 60_000L
+
+    /**
+     * 开始试发报名的提前量：15 秒。实测平台可能提前约 10 秒放行，
+     * 留 5 秒余量给服务器时钟偏差与网络抖动。
+     */
+    const val PREREG_TRY_BEFORE_MS: Long = 15_000L
+
+    /** 两次试发之间的等待（串行：上一发连同核对落地才发下一发）。 */
+    const val PREREG_ATTEMPT_GAP_MS: Long = 2_000L
+
+    /** 单发报名请求的 call timeout（秒）：高峰期挂 30 秒等于把执行窗口全占了。 */
+    const val PREREG_ATTEMPT_TIMEOUT_S: Long = 5L
+
+    /** 一次预报名最多试发多少发（含第一发）。 */
+    const val PREREG_MAX_ATTEMPTS: Int = 20
+
+    /** 执行器总时长上限（自服务启动起算）：一次 shortService 的前台额度约 3 分钟。 */
+    const val PREREG_RUN_MS: Long = 150_000L
+
+    /** 另一个收闸：报名开始后最多再试这么久（迟到启动 / 时间被改早时兜底）。 */
+    const val PREREG_END_AFTER_MS: Long = 90_000L
+
+    /** 预报名闹钟的触发时刻（= 报名开始前 [PREREG_LEAD_MS]）。 */
+    fun preregAlarmAt(opensAt: Long): Long = opensAt - PREREG_LEAD_MS
+
+    /**
+     * 开始试发的**手机钟**时刻。服务器钟偏移 [serverOffsetMs]（= 服务器 − 手机，
+     * 来自 HTTP `Date` 头，见 [clockOffsetMs]）为正说明手机慢，要在手机钟更早的时刻动手。
+     */
+    fun preregTryStartAt(opensAt: Long, serverOffsetMs: Long): Long =
+        opensAt - serverOffsetMs - PREREG_TRY_BEFORE_MS
+
+    /**
+     * 预报名该不该收工：试发触顶 / 总时长用尽 / 报名开始后超过 [PREREG_END_AFTER_MS]。
+     * [phoneNow] 是手机钟；与 [opensAt]（平台墙钟）比较前先减 [serverOffsetMs] 换到服务器钟。
+     */
+    fun preregShouldStop(
+        attempts: Int,
+        startedAt: Long,
+        phoneNow: Long,
+        opensAt: Long,
+        serverOffsetMs: Long,
+    ): Boolean = attempts >= PREREG_MAX_ATTEMPTS ||
+        phoneNow - startedAt >= PREREG_RUN_MS ||
+        phoneNow - serverOffsetMs >= opensAt + PREREG_END_AFTER_MS
+
+    /** 预报名状态行 / 确认弹窗的时刻文案：`今天 12:00` / `明天 12:00` / `10 月 18 日 12:00`。 */
+    fun preregOpenLabel(opensAt: Long, now: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+        val at = Instant.ofEpochMilli(opensAt).atZone(zone)
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val time = at.format(DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT))
+        val day = when (at.toLocalDate()) {
+            today -> "今天"
+            today.plusDays(1) -> "明天"
+            else -> "${at.monthValue} 月 ${at.dayOfMonth} 日"
+        }
+        return "$day $time"
+    }
+
+    /**
+     * 平台对**报名写请求**的拒绝话术分类（2026-10-16）。按平台原话做子串匹配；
+     * 没实测过的措辞一律 [PreregRejectKind.Unknown]（继续试、靠次数封顶），**不硬认**
+     * ——把「未知异常」认成终结会把还能抢的当成没戏。
+     */
+    enum class PreregRejectKind { NotStarted, AlreadyApplied, Full, Blocked, Removed, Unknown }
+
+    fun classifyPreregReject(msg: String?): PreregRejectKind {
+        val text = msg.orEmpty()
+        if (text.isBlank()) return PreregRejectKind.Unknown
+        return when {
+            text.contains("已报名") || text.contains("已经报名") || text.contains("请勿重复") ->
+                PreregRejectKind.AlreadyApplied
+            text.contains("尚未开始") || text.contains("未开始") || text.contains("还没开始") ->
+                PreregRejectKind.NotStarted
+            text.contains("已满") || text.contains("报满") || text.contains("名额不足") ->
+                PreregRejectKind.Full
+            text.contains("限制") -> PreregRejectKind.Blocked
+            text.contains("不存在") || text.contains("下架") || text.contains("已删除") ->
+                PreregRejectKind.Removed
+            else -> PreregRejectKind.Unknown
+        }
+    }
+
+    /** 终结性的拒绝（收工）：已满 / 被限制 / 活动不存在。 */
+    fun preregRejectIsTerminal(kind: PreregRejectKind): Boolean =
+        kind == PreregRejectKind.Full || kind == PreregRejectKind.Blocked ||
+            kind == PreregRejectKind.Removed
+
+    /** 「已报名」类拒绝 = 实际已经报上了（先前某发已生效，或用户手动报了）。 */
+    fun preregRejectIsApplied(kind: PreregRejectKind): Boolean =
+        kind == PreregRejectKind.AlreadyApplied
+
+    // ---- 服务器时钟（预报名校准用，2026-10-16）----------------------------------
+    //
+    // 「写接口提前约 10 秒放行」的实测口径让「几点算 11:59:50」变得要紧。App 不依赖
+    // NTP：每个 HTTP 响应都带 `Date` 头（服务器自己盖的章），用「发出−收到」的中点
+    // 算与手机钟的偏移就够了（毫秒级网络抖动可以无视）。
+
+    /**
+     * 解析 HTTP `Date` 头（RFC 1123，如 `Thu, 16 Oct 2026 03:20:05 GMT`）→ epoch millis；
+     * 认不出回 null（格式变化时不猜）。
+     */
+    fun parseHttpDate(raw: String?): Long? {
+        val text = raw?.trim().orEmpty()
+        if (text.isEmpty()) return null
+        return runCatching {
+            Instant.from(DateTimeFormatter.RFC_1123_DATE_TIME.parse(text)).toEpochMilli()
+        }.getOrNull()
+    }
+
+    /**
+     * 服务器钟与手机钟的偏移（毫秒，服务器 − 手机）。[serverAt] 是 `Date` 头的时刻，
+     * [sentAt] / [receivedAt] 是手机钟的发 / 收时刻，取中点抵消单程网络延迟。
+     */
+    fun clockOffsetMs(serverAt: Long, sentAt: Long, receivedAt: Long): Long =
+        serverAt - (sentAt + receivedAt) / 2L
 
     /** 今天（含）之后的第一个周日。 */
     private fun nextOrSameSunday(now: Long, zone: ZoneId): LocalDate =

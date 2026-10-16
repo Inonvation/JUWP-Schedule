@@ -34,9 +34,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.repo.WenquCertStore
 import edu.jxslu.schedule.domain.WenquRules
+import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
+import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
@@ -46,9 +49,12 @@ import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.WenquActivityAlertReminder
 import edu.jxslu.schedule.ui.reminder.WenquWeeklyAlertReminder
 import edu.jxslu.schedule.ui.score.maybeRequestNotifPermission
+import edu.jxslu.schedule.ui.score.openPdf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AlarmClock
+import me.rerere.hugeicons.stroke.Certificate01
 import me.rerere.hugeicons.stroke.Logout03
 import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Notification03
@@ -86,6 +92,9 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
     var weeklyOffsetPickerOpen by remember { mutableStateOf(false) }
     var sortPickerOpen by remember { mutableStateOf(false) }
     var confirmingLogout by remember { mutableStateOf(false) }
+    /** 星级证书下载中（防连点；动作只读，但仍别并发打）。 */
+    var downloadingCert by remember { mutableStateOf(false) }
+    val certStore = remember { WenquCertStore(context) }
     /** 记录条数：进页读一次仓库缓存（冷缓存时它自己会抓一次），失败就不显示数字。 */
     var recordsCount by remember { mutableStateOf<Int?>(null) }
     val notifPermissionLauncher = rememberLauncherForActivityResult(
@@ -132,6 +141,38 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
                     icon = HugeIcons.Note01,
                     value = recordsCount?.let { "共 $it 条" },
                     onClick = onOpenRecords,
+                )
+                SettingItem(
+                    title = "下载星级证书",
+                    subtitle = "导出志愿星级证书 PDF（随时可重下）",
+                    icon = HugeIcons.Certificate01,
+                    value = if (downloadingCert) "下载中…" else null,
+                    enabled = !downloadingCert,
+                    onClick = {
+                        downloadingCert = true
+                        scope.launch {
+                            try {
+                                val cert = Graph.wenqu(context).downloadCert()
+                                val file = certStore.save(cert.bytes, cert.fileName)
+                                openPdf(context, certStore.uriOf(file)) { msg, tone ->
+                                    scope.launch {
+                                        snackbar.showNotice(AppNoticeVisuals(message = msg, tone = tone))
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                snackbar.showNotice(
+                                    AppNoticeVisuals(
+                                        message = e.message ?: "下载失败",
+                                        tone = NoticeTone.Error,
+                                    ),
+                                )
+                            } finally {
+                                downloadingCert = false
+                            }
+                        }
+                    },
                 )
             }
 

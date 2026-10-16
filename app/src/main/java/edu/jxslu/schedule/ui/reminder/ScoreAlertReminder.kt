@@ -113,11 +113,14 @@ object ScoreAlertReminder {
         runCatching {
             val prefs = Graph.displayPrefs(context)
             val workManager = WorkManager.getInstance(context)
+            // 盯了指定活动（问渠蹲点）也要靠这趟周期任务：没有它，「名额空出」永远看不到
+            val pinned = prefs.wenquGrabPinnedId.first() > 0L
             if (!prefs.scoreAlertEnabled.first() &&
                 !prefs.examAlertEnabled.first() &&
                 !prefs.selectionAlertEnabled.first() &&
                 !prefs.scheduleAlertEnabled.first() &&
-                !prefs.wenquActivityAlertEnabled.first()
+                !prefs.wenquActivityAlertEnabled.first() &&
+                !pinned
             ) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
                 prefs.setAlertPeriodicInterval(0)
@@ -129,6 +132,8 @@ object ScoreAlertReminder {
                 ScoreAlertDefaults.coerceIntervalHours(prefs.selectionAlertIntervalHours.first()),
                 ScheduleAlertDefaults.coerceIntervalHours(prefs.scheduleAlertIntervalHours.first()),
                 WenquRules.coerceActivityIntervalHours(prefs.wenquActivityIntervalHours.first()),
+                // 盯了活动时这一路要 1 小时一轮（其它路的检查时刻各自自判，不会被带快）
+                if (pinned) WenquRules.GRAB_PIN_CHECK_INTERVAL_HOURS else Int.MAX_VALUE,
             ).min()
             val request = PeriodicWorkRequestBuilder<ScoreAlertCheckWorker>(intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(connectedConstraint())
@@ -202,8 +207,12 @@ object ScoreAlertReminder {
     suspend fun check(context: Context, onlyChain: String? = null) {
         runCatching {
             val prefs = Graph.displayPrefs(context)
+            // 盯了指定活动（问渠蹲点）也要叫醒问渠那一路——见 WenquActivityAlertReminder.checkPinnedSlot
+            val wenquPinned = prefs.wenquGrabPinnedId.first() > 0L
             if (onlyChain == CHAIN_WENQU) {
-                if (prefs.wenquActivityAlertEnabled.first()) WenquActivityAlertReminder.check(context)
+                if (prefs.wenquActivityAlertEnabled.first() || wenquPinned) {
+                    WenquActivityAlertReminder.check(context)
+                }
                 return
             }
             val scoreOn = prefs.scoreAlertEnabled.first()
@@ -211,7 +220,7 @@ object ScoreAlertReminder {
             val selectionOn = prefs.selectionAlertEnabled.first()
             val scheduleOn = prefs.scheduleAlertEnabled.first()
             val wenquOn = prefs.wenquActivityAlertEnabled.first()
-            if (!scoreOn && !examOn && !selectionOn && !scheduleOn && !wenquOn) return
+            if (!scoreOn && !examOn && !selectionOn && !scheduleOn && !wenquOn && !wenquPinned) return
             val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
             if (scoreOn) checkScores(context, notificationsEnabled)
             if (examOn) checkExams(context, notificationsEnabled)
@@ -220,7 +229,8 @@ object ScoreAlertReminder {
             // 调课检测（DESIGN §4.17 重立）：第四路搭同一趟车，闸门与静默纪律在 ScheduleSync.check
             if (scheduleOn) ScheduleAlertReminder.check(context)
             // 问渠新活动（DESIGN §4.45）：第五路，自带开关 / 间隔闸门与首跑建基线
-            if (wenquOn) WenquActivityAlertReminder.check(context)
+            // （盯了指定活动时也走它——那一路自判，不受新活动开关与间隔影响）
+            if (wenquOn || wenquPinned) WenquActivityAlertReminder.check(context)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 

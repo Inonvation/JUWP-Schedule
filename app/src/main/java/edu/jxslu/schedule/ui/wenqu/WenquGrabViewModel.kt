@@ -5,10 +5,13 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.wenqu.WenquActivity
+import edu.jxslu.schedule.data.wenqu.WenquGrabSpeed
 import edu.jxslu.schedule.data.wenqu.WenquRepository
 import edu.jxslu.schedule.domain.WenquRules
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 /**
  * 蹲点抢活动页状态机（DESIGN §3.28 / §4.45，2026-10-11；用户口径）。
@@ -25,15 +29,18 @@ import kotlinx.coroutines.launch
  * 「手动刷新 → 找活动 → 点详情 → 报名 → 确认」压成「到点自动检测 → 点一下确认报名」：
  *
  * - **只发一种请求**：每轮 1 个 `volunteer/v2` 第一页探测（[WenquRepository.grabProbe]），
- *   不拉工时 / 星级 / 详情，不整份重抓；探测结果顺手并进快照，列表跟着刷新；
- * - **串行 + 退避**：上一轮不回来不发下一轮；失败按
- *   [WenquRules.grabNextDelayMs] 逐档退避到封顶，成功立刻回基础间隔；
+ *   不拉工时 / 星级、不整份重抓；探测结果顺手并进快照，列表跟着刷新。
+ *   盯了指定活动时**并发**拉它一发的实时详情（2026-10-16：改并发 + 短超时——原先
+ *   串行在后、还挂 30 秒超时，高峰期一个人就能把一轮拖到 30 秒以上）；
+ * - **串行 + 退避（2026-10-16 改）**：上一轮不回来不发下一轮；发布窗口内失败也走
+ *   1 秒快重试（12:00 的拥堵恰好表现为超时），窗口外才退避（6/9/12 秒 + ±20% 抖动）；
  * - **命中即弹、不自动提交**：`grabFirstMatch`（名称匹配 + 现在能报名）命中就弹
  *   「确认报名」框——提交仍然只由用户那一下点击触发（同 `writeOnce` 的写路径纪律）。
  *   同一条只弹一次，**弹过之后检测继续**（先弹到旧一批、12:00 新品出现还会再弹）；
- *   报名成功 / 手动停止 / 窗口到点才收工（2026-10-11 用户点验反馈）；
- * - **窗口有限**：周日 11:50–11:59:50 之间开始会先待机到 11:59:50（发布前 10 秒），
- *   之后检测 10 分钟自动停；手动停止随时生效。
+ *   报名成功 / 手动停止 / 窗口到点才收工。自动提交只发生在用户单独开启的「预报名」里；
+ * - **窗口（2026-10-16 改）**：点「开始蹲点」立即检测，不再待机到 11:59:50；
+ *   检测窗口自开蹲起算 10 分钟、开始早于发布时锚到「发布后 10 分钟」；
+ *   离发布超过 5 分钟走 10 秒慢档，加密窗口前缘放宽到 20 秒（平台可能提前放行）。
  *
  * 蹲点循环挂在 [viewModelScope] 上：**离开本页（VM 销毁）= 停止蹲点**，这是设计前提
  * （用户口径：手动开、人盯着）。屏幕常亮、命中震动由页面层负责。
@@ -44,21 +51,27 @@ class WenquGrabViewModel(
 ) : ViewModel() {
 
     /** 蹲点阶段。 */
-    enum class Phase { Idle, Waiting, Checking, Stopped }
+    enum class Phase { Idle, Checking, Stopped }
 
     data class UiState(
         val loggedIn: Boolean = false,
         /** 目标活动名（预填，落盘；匹配在开始那一刻取它的 trim 副本）。 */
         val keyword: String = "",
+        /** 盯着的指定活动 id（0 = 没盯）：每轮单独拉它的实时详情，见 `wenqu_grab_pinned_id`。 */
+        val pinnedId: Long = 0L,
+        /** 「预报名」瞄准的活动（0 = 没排）：状态行展示 + 取消入口，见 `WenquPreregReminder`。 */
+        val preregId: Long = 0L,
+        val preregTitle: String = "",
+        val preregOpensAt: Long = 0L,
         val phase: Phase = Phase.Idle,
         /** 已发出的探测次数（成功 / 失败都算）。 */
         val checks: Int = 0,
         /** 最近一次探测的完成时刻（0 = 还没查过）。 */
         val lastCheckAt: Long = 0L,
-        /** 待机中：首个探测的预定时刻。 */
-        val detectStartAt: Long = 0L,
-        /** 检测窗口的结束时刻（检测开始后才有值）。 */
-        val windowEndAt: Long = 0L,
+        /** 上一轮从开跑到落地的耗时（毫秒；0 = 还没查过）——给「上轮 X.Xs」诊断行用。 */
+        val lastRoundMs: Long = 0L,
+        /** 连续失败轮数（成功即清零）。 */
+        val failures: Int = 0,
         /** 收工原因（Stopped 时展示）：命中 / 手动停止 / 窗口结束 / 报名受限 / 报名成功。 */
         val stopReason: String = "",
         val items: List<WenquActivity> = emptyList(),
@@ -110,6 +123,10 @@ class WenquGrabViewModel(
                 return matched.sortedBy { WenquRules.displayRank(it.status) } +
                     rest.sortedBy { WenquRules.displayRank(it.status) }
             }
+
+        /** 盯着的指定活动（从快照里找）；没盯 / 快照里没有回 null。 */
+        val pinnedActivity: WenquActivity?
+            get() = if (pinnedId > 0L) items.firstOrNull { it.id == pinnedId } else null
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -129,6 +146,18 @@ class WenquGrabViewModel(
     init {
         viewModelScope.launch {
             prefs.wenquHideFull.collect { saved -> _state.update { it.copy(hideFull = saved) } }
+        }
+        viewModelScope.launch {
+            prefs.wenquGrabPinnedId.collect { id -> _state.update { it.copy(pinnedId = id) } }
+        }
+        viewModelScope.launch {
+            prefs.wenquPreregId.collect { saved -> _state.update { it.copy(preregId = saved) } }
+        }
+        viewModelScope.launch {
+            prefs.wenquPreregTitle.collect { saved -> _state.update { it.copy(preregTitle = saved) } }
+        }
+        viewModelScope.launch {
+            prefs.wenquPreregOpensAt.collect { saved -> _state.update { it.copy(preregOpensAt = saved) } }
         }
         viewModelScope.launch {
             repo.loggedIn.collect { loggedIn ->
@@ -182,17 +211,17 @@ class WenquGrabViewModel(
     }
 
     /**
-     * **开始蹲点**（用户显式动作）：预热 token →（周日窗口内先待机到 11:59:50）→
-     * 每 3 秒探测一次 → 命中 / 手动停止 / 窗口结束收工。
-     * **全程不自动提交**：命中只弹确认框，提交仍由用户点出来。
+     * **开始蹲点**（用户显式动作）：预热 token → 立即开跑 → 每 3 秒探测一次
+     * （发布窗口内 1 秒、离发布还远 10 秒）→ 命中 / 手动停止 / 窗口结束收工。
+     * **全程不自动提交**：命中只弹确认框，提交仍由用户点出来
+     * （自动提交只发生在用户单独开启的「预报名」里）。
      */
     fun start() {
         if (!repo.loggedIn.value) return
-        val phase = _state.value.phase
-        if (phase == Phase.Waiting || phase == Phase.Checking) return
+        if (_state.value.phase == Phase.Checking) return
         val keyword = _state.value.keyword.trim()
-        if (keyword.isBlank()) {
-            _state.update { it.copy(message = "先填要蹲的活动名") }
+        if (keyword.isBlank() && _state.value.pinnedId <= 0L) {
+            _state.update { it.copy(message = "先填要蹲的活动名，或盯一条活动") }
             return
         }
         // 「被限制报名」不在这里拦：快照里的 isBlack 在缓存期内只升不降，
@@ -201,14 +230,15 @@ class WenquGrabViewModel(
         grabJob?.cancel()
         shownHitIds.clear()
         val armedAt = System.currentTimeMillis()
-        val detectAt = WenquRules.grabDetectStartAt(armedAt)
+        // 周日 12:00 的发布点（非周日为 0）：发布窗口内加密轮询（见 `grabNextDelayMs`）
+        val publishAt = WenquRules.grabPublishAt(armedAt)
         _state.update {
             it.copy(
-                phase = if (detectAt > armedAt) Phase.Waiting else Phase.Checking,
+                phase = Phase.Checking,
                 checks = 0,
                 lastCheckAt = 0L,
-                detectStartAt = detectAt,
-                windowEndAt = 0L,
+                lastRoundMs = 0L,
+                failures = 0,
                 stopReason = "",
                 hit = null,
                 hitError = null,
@@ -219,17 +249,13 @@ class WenquGrabViewModel(
             // 预热 token：要重登就现在登，别让它挤在 12:00 的第一轮里（失败静默，
             // 探测自己也会走 authed 的续期路径）
             runCatching { repo.prewarmSession() }
-            val waitMs = detectAt - System.currentTimeMillis()
-            if (waitMs > 0) delay(waitMs)
-            _state.update {
-                it.copy(phase = Phase.Checking, windowEndAt = WenquRules.grabWindowEndAt(detectAt))
-            }
             var failures = 0
             while (isActive) {
                 if (WenquRules.grabShouldStop(
                         checks = _state.value.checks,
-                        detectStartedAt = detectAt,
+                        detectStartedAt = armedAt,
                         now = System.currentTimeMillis(),
+                        publishAt = publishAt,
                     )
                 ) {
                     _state.update {
@@ -243,23 +269,46 @@ class WenquGrabViewModel(
                     continue
                 }
                 // 目标名以**最新输入**为准（页面允许随时改）：改了就改蹲新名字，清空即停
+                // （盯了指定活动时不算空——那一路不看名字）
                 val keyword = _state.value.keyword.trim()
-                if (keyword.isBlank()) {
+                if (keyword.isBlank() && _state.value.pinnedId <= 0L) {
                     stopGrab(cancelJob = false, reason = "目标活动名为空，已停止")
                     break
                 }
-                val probe = try {
-                    repo.grabProbe()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    failures++
-                    null
+                val inBurst = WenquRules.grabInBurst(System.currentTimeMillis(), publishAt)
+                val speed = if (inBurst) WenquGrabSpeed.Burst else WenquGrabSpeed.Fast
+                val pinnedId = _state.value.pinnedId
+                val roundStartedAt = System.currentTimeMillis()
+                val probe = coroutineScope {
+                    // 盯的那条与列表探测**并发**（2026-10-16）：原先它串行在后、还挂
+                    // 30 秒超时，高峰期一个人就能把一轮拖到 30 秒以上。失败静默
+                    // （列表探测的失败已经计过退避，别把它算两次）。
+                    val pinnedJob = if (pinnedId > 0L) {
+                        async {
+                            try {
+                                repo.refreshIndexItem(pinnedId, speed)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    } else {
+                        null
+                    }
+                    val result = try {
+                        repo.grabProbe(speed = speed)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        failures++
+                        null
+                    }
+                    pinnedJob?.await()
+                    result
                 }
                 val checkedAt = System.currentTimeMillis()
-                if (probe == null) {
-                    _state.update { it.copy(checks = it.checks + 1, lastCheckAt = checkedAt) }
-                } else {
+                if (probe != null) {
                     failures = 0
                     if (probe.blacklisted) {
                         // 账号级限制：继续蹲没有意义，停 + 用平台原话说清
@@ -267,6 +316,8 @@ class WenquGrabViewModel(
                             it.copy(
                                 checks = it.checks + 1,
                                 lastCheckAt = checkedAt,
+                                lastRoundMs = checkedAt - roundStartedAt,
+                                failures = failures,
                                 blacklisted = true,
                                 stopApplyReason = probe.stopApplyReason.ifBlank { it.stopApplyReason },
                                 phase = Phase.Stopped,
@@ -278,22 +329,43 @@ class WenquGrabViewModel(
                         }
                         break
                     }
-                    _state.update { it.copy(checks = it.checks + 1, lastCheckAt = checkedAt) }
-                    syncFromRepo(fallback = probe.items)
-                    // 命中在**整份快照**里找（不只是刚才这一页）：列表里看得见、现在能报名的
-                    // 匹配项也要弹（2026-10-11 用户实测口径）。同一条只弹一次，
-                    // 弹过之后检测继续——先弹到旧的、12:00 新品出现还会再弹。
-                    val hit = WenquRules.grabFirstMatch(
-                        items = _state.value.items,
-                        keyword = keyword,
-                        blacklisted = false,
-                        now = System.currentTimeMillis(),
-                    )
-                    if (hit != null && hit.id > 0L && shownHitIds.add(hit.id)) {
-                        _state.update { it.copy(hit = hit) }
-                    }
                 }
-                delay(WenquRules.grabNextDelayMs(failures))
+                _state.update {
+                    it.copy(
+                        checks = it.checks + 1,
+                        lastCheckAt = checkedAt,
+                        lastRoundMs = checkedAt - roundStartedAt,
+                        failures = failures,
+                    )
+                }
+                syncFromRepo(fallback = probe?.items.orEmpty())
+                // 命中在**整份快照**里找（不只是刚才这一页）：列表里看得见、现在能报名的
+                // 匹配项也要弹（2026-10-11 用户实测口径）。同一条只弹一次，
+                // 弹过之后检测继续——先弹到旧的、12:00 新品出现还会再弹。
+                val hit = WenquRules.grabFirstMatch(
+                    items = _state.value.items,
+                    keyword = keyword,
+                    blacklisted = false,
+                    now = System.currentTimeMillis(),
+                    pinnedId = pinnedId,
+                )
+                if (hit != null && hit.id > 0L && shownHitIds.add(hit.id)) {
+                    _state.update { it.copy(hit = hit) }
+                }
+                val nowForDelay = System.currentTimeMillis()
+                val baseDelay = WenquRules.grabNextDelayMs(
+                    consecutiveFailures = failures,
+                    now = nowForDelay,
+                    publishAt = publishAt,
+                )
+                // 窗口外的失败退避加 ±20% 抖动（2026-10-16）；窗口内的加密节奏保持确定，
+                // 那里要的是「每一发都落在该落的点上」。
+                val delayMs = if (failures > 0 && !WenquRules.grabInBurst(nowForDelay, publishAt)) {
+                    WenquRules.jitteredDelayMs(baseDelay, Random.nextDouble())
+                } else {
+                    baseDelay
+                }
+                delay(delayMs)
             }
         }
     }
@@ -308,7 +380,7 @@ class WenquGrabViewModel(
         grabJob = null
         if (cancelJob) job?.cancel()
         _state.update {
-            if (it.phase == Phase.Waiting || it.phase == Phase.Checking) {
+            if (it.phase == Phase.Checking) {
                 it.copy(phase = Phase.Stopped, stopReason = reason)
             } else {
                 it
@@ -323,6 +395,30 @@ class WenquGrabViewModel(
     fun setKeyword(value: String) {
         _state.update { it.copy(keyword = value) }
         viewModelScope.launch { prefs.setWenquGrabKeyword(value) }
+    }
+
+    /**
+     * **盯一条指定活动**（2026-10-15，DESIGN §4.45「盯指定活动」）：落盘 + 立刻生效。
+     * 与目标名**并行**——名字那路照蹲，这一路只盯这一条（不看名字）；已满的活动会一直
+     * 不命中，直到有人退名额（`balance_num` 转正）才弹。
+     */
+    fun pin(activity: WenquActivity) {
+        if (activity.id <= 0L) return
+        viewModelScope.launch {
+            prefs.setWenquGrabPinnedId(activity.id)
+            // 换了目标：清「已报过」键，让这条也能报一次「名额空出」
+            prefs.setWenquGrabPinnedAlertedId(0L)
+        }
+        _state.update { it.copy(pinnedId = activity.id) }
+    }
+
+    /** 取消盯（落盘回 0）。 */
+    fun unpin() {
+        viewModelScope.launch {
+            prefs.setWenquGrabPinnedId(0L)
+            prefs.setWenquGrabPinnedAlertedId(0L)
+        }
+        _state.update { it.copy(pinnedId = 0L) }
     }
 
     /** 「过滤已满」（复用主页那份落盘值，一处开关两边一致）。 */

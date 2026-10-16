@@ -4,6 +4,8 @@ import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.domain.WenquRules
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +15,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import java.io.IOException
+import java.util.Base64
 
 /**
  * `volunteer/v2` 的**一页响应**（仓库层模型）。
@@ -44,6 +48,44 @@ data class WenquGrabProbe(
     val blacklisted: Boolean = false,
     val stopApplyReason: String = "",
 )
+
+/**
+ * 蹲点取数的**节奏档位**（2026-10-16）：同一份接口按场景切超时——
+ * [Fast] = 常规探针（[WenquRules.GRAB_REQUEST_TIMEOUT_S] 秒），
+ * [Burst] = 发布窗口内的加密探针（[WenquRules.GRAB_BURST_TIMEOUT_S] 秒）。
+ * **默认那份 30 秒的共享客户端不动**（登录 / 详情 / 手动写操作靠它）。
+ */
+enum class WenquGrabSpeed { Fast, Burst }
+
+/** 预报名**一次试发**的结果（网络异常不在这里——由执行器按「结果不明」处理）。 */
+sealed interface WenquPreregAttempt {
+    /** 平台收了。 */
+    data object Applied : WenquPreregAttempt
+
+    /** 平台按业务话术拒了（分类见 [WenquRules.classifyPreregReject]）。 */
+    data class Rejected(val msg: String, val kind: WenquRules.PreregRejectKind) : WenquPreregAttempt
+
+    /** 会话失效（`410000`）：预报名不自动重登重发，直接收工通知。 */
+    data class SessionExpired(val msg: String) : WenquPreregAttempt
+}
+
+/** 预报名**只读核对**的结果（写请求结果不明时用）。 */
+enum class WenquPreregCheck { Applied, NotApplied, Unknown }
+
+/**
+ * 预报名执行器的启动校对（列表第一页 + 本条详情，**并发**）：
+ * 前者带账号级限制（`isBlack` / `stop_apply_reason`），后者带这条的最新状态与名额。
+ * [activity] 为 null = 详情没取到（已下架 / 网络失败），执行器照常进入试发段
+ * ——到点真发才是权威。
+ */
+data class WenquPreregSnapshot(
+    val activity: WenquActivity?,
+    val blacklisted: Boolean = false,
+    val stopApplyReason: String = "",
+)
+
+/** 解码后的星级证书：PDF 字节 + 平台给的文件名（见 [WenquRepository.downloadCert]）。 */
+class WenquCertFile(val bytes: ByteArray, val fileName: String)
 
 /**
  * **本地全量快照**（仓库层模型）：平台上**全部**活动的一份索引。
@@ -135,8 +177,11 @@ internal fun mergeActivities(
  * 纪律：
  * - **只有 `status:410000`（请登录）算会话失效**；网络 / 5xx / 业务拒绝一律不标失效
  *   （对齐一卡通：把对的密码记成错的会把用户往改密码方向带）；
- * - 写操作只有**用户显式触发**的四处：发码 / 设密码 / **报名** / **取消报名**；
- *   一律**只发一次、失败不自动重试**（[writeOnce]），签到 / 提交材料仍不碰；
+ * - 写操作只有**用户显式触发**的路径：发码 / 设密码 / **报名** / **取消报名**；
+ *   一律**只发一次、失败不自动重试**（[writeOnce]），签到 / 提交材料仍不碰。
+ *   报名失败若是网络类错误，补一次**只读核对**——「其实报上了」不当失败报（2026-10-16）；
+ * - **唯一例外是预报名**（2026-10-16 用户拍板）：只对用户点名的单条活动、
+ *   在有限窗口与次数内自动试发（[preregApplyOnce]），见 `WenquPreregRunner`；
  * - 取数失败**不落任何影子**（宁旧勿空：账号卡那一行保留上次工时）。
  */
 class WenquRepository(
@@ -166,6 +211,19 @@ class WenquRepository(
      * **别**把共享那份的默认 30 秒改小（登录 / 详情 / 写操作都靠它）。
      */
     private val probeApi: WenquApi = WenquApi.create(WenquRules.GRAB_REQUEST_TIMEOUT_S)
+
+    /**
+     * 发布窗口内的探测 API（[WenquRules.GRAB_BURST_TIMEOUT_S] 秒，2026-10-16）：
+     * 窗口里挂 6 秒少试好几轮；窗口内的探测与盯的详情刷新都走它。
+     */
+    private val burstApi: WenquApi = WenquApi.create(WenquRules.GRAB_BURST_TIMEOUT_S)
+
+    /**
+     * 预报名执行器专用 API（[WenquRules.PREREG_ATTEMPT_TIMEOUT_S] 秒 + `Date` 头时钟记账）：
+     * 试发与只读核对都走它，走完整 30 秒等于把执行窗口全占了（见 `WenquServerClock`）。
+     */
+    private val preregApi: WenquApi =
+        WenquApi.create(WenquRules.PREREG_ATTEMPT_TIMEOUT_S, withServerClock = true)
 
     // ---- 进程内缓存（DESIGN §4.45「进页不重复取数」）------------------------------
     // 「我的记录 / 星级」只有一个资源，键用常量；活动列表按关键词缓存（换关键词 = 换一份）。
@@ -319,6 +377,24 @@ class WenquRepository(
             )
         }
         parsed
+    }
+
+    /**
+     * **下载星级证书 PDF**（2026-10-15）：`GET volunteer/star_cert/download` → base64 解码。
+     *
+     * 只读、只发一次（同其余取数路径）。仓库层**不碰文件系统**：字节与平台给的文件名
+     * 交给调用方，落盘由 [edu.jxslu.schedule.data.repo.WenquCertStore] 负责。
+     */
+    suspend fun downloadCert(): WenquCertFile = withContext(Dispatchers.IO) {
+        val payload = authed { token -> api.starCertDownload(token) }
+        val data = payload.decodeData<WenquCertData>()
+            ?: throw WenquApiException("证书数据为空")
+        val bytes = try {
+            Base64.getMimeDecoder().decode(data.pdfBase64)
+        } catch (e: IllegalArgumentException) {
+            throw WenquApiException("证书数据损坏", cause = e)
+        }
+        WenquCertFile(bytes = bytes, fileName = data.filename)
     }
 
     /**
@@ -505,9 +581,12 @@ class WenquRepository(
      * 详情接口的真实取数（绕过缓存）。把响应里的 `apply` 段并进活动模型：
      * - `apply` 非 null = 我报过这条活动 → [WenquActivity.applied] 置真（比列表的 `isApply` 权威）；
      * - `apply.id` = 报名 id → 收进 [WenquActivity.applyId]，供取消报名兜底。
+     *
+     * [client] 选超时档位（2026-10-16）：抓取路径（蹲点盯的活动 / 预报名）传短超时的
+     * 探针客户端；默认仍是共享的 30 秒那份（手动点开详情等）。
      */
-    private suspend fun fetchDetailUncached(id: Long): WenquActivity? {
-        val payload = authed { token -> api.volunteerDetail(token, id) }
+    private suspend fun fetchDetailUncached(id: Long, client: WenquApi = api): WenquActivity? {
+        val payload = authed { token -> client.volunteerDetail(token, id) }
         // `detail: null` 是平台的**正常回答**（活动已删 / 不可见），不是错误：
         // 调用方用列表或记录里已有的字段继续展示，别弹「取不到详情」吓用户
         // （2026-10-08 用户报「点记录弹详情，同时飘一条取不到详情」）。
@@ -520,22 +599,93 @@ class WenquRepository(
     }
 
     /**
+     * **把指定活动的最新详情并进快照**（DESIGN §4.45「盯指定活动」，2026-10-15）。
+     *
+     * 盯一条具体的活动要的是它的**实时名额**，而 [grabProbe] 只拉最新一页——深层条目的
+     * `balance_num` 会冻在抓取那一刻（见 `mergeNewest`），老活动空出名额也看不见。
+     * 这里绕过详情缓存真拉一次，用它替换快照里同 id 那条（列表与命中判定都跟着新）。
+     * 返回最新那条；活动已删 / 取不到回 null（调用方保留快照里那份）。
+     *
+     * [speed] 选超时档位（2026-10-16）：蹲点页按发布窗口传 Burst / Fast——
+     * 原先它串行在探测之后、还挂 30 秒超时，高峰期一个人就能把一轮拖到 30 秒以上；
+     * null = 共享的 30 秒客户端（后台「名额空出提醒」那条路照旧）。
+     */
+    suspend fun refreshIndexItem(id: Long, speed: WenquGrabSpeed? = null): WenquActivity? =
+        withContext(Dispatchers.IO) {
+            if (id <= 0L) return@withContext null
+            val client = when (speed) {
+                null -> api
+                WenquGrabSpeed.Fast -> probeApi
+                WenquGrabSpeed.Burst -> burstApi
+            }
+            val fresh = fetchDetailUncached(id, client) ?: return@withContext null
+            val current = indexCache.get(INDEX_KEY, now()) ?: return@withContext fresh
+            indexCache.put(
+                INDEX_KEY,
+                current.copy(items = current.items.map { if (it.id == id) fresh else it }),
+                now(),
+            )
+            fresh
+        }
+
+    /**
      * **报名**（DESIGN §4.45，2026-10-11 起本应用可写）。
      *
      * 写路径纪律（对齐选课 `fetchForAction`）：**只发一次、不自动重登重发**——报名不是幂等操作，
      * 撞上会话失效就报错让用户再点一次，绝不在客户端重放。token 的**续期在写之前**
      * （[writeOnce] 先 [ensureToken]），所以正常路径不会带着过期 token 去写。
      *
+     * **结果不明时的只读核对**（2026-10-16）：网络 / 超时 / 响应残缺时写可能已经成功，
+     * 补一发只读的详情核对（`apply` 段）——报上了就按成功收尾；**写请求本身不重发**。
+     * 平台业务话术的拒绝（`requireSuccess` 抛的）与会话失效确定没生效，不核对。
+     *
      * 成功后做**本地乐观更新**（索引里那条置「已报名」、名额 -1）并作废「我的记录」缓存；
      * 权威值等下一次同步（30 分钟闸门 / 下拉刷新 / 重进页）回来对齐。
      */
     suspend fun applyActivity(activityId: Long) = withContext(Dispatchers.IO) {
-        writeOnce { token -> api.volunteerApply(token, activityId) }.requireSuccess()
+        val envelope = try {
+            writeOnce { token -> api.volunteerApply(token, activityId) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isAmbiguousWriteFailure(e) && appliedNow(activityId) == true) {
+                patchAfterApply(activityId)
+                return@withContext
+            }
+            throw e
+        }
+        envelope.requireSuccess()
+        patchAfterApply(activityId)
+    }
+
+    /** 报名落地的本地收尾（乐观更新 + 作废相关缓存），手动与预报名两条路共用。 */
+    private fun patchAfterApply(activityId: Long) {
         patchIndexApplied(activityId, applied = true)
         detailCache.remove(activityId)
         volunteerCache.clear()
         activityCache.clear()
     }
+
+    /**
+     * 只读核对：这条活动**此刻**在平台上是不是已经报上了（详情 `apply` 段）。
+     * 走 6 秒探针超时——它服务的场景（报名响应超时）本身就是高峰。
+     * 取不到详情回 null（核对不了，不等于没报上）。
+     */
+    private suspend fun appliedNow(activityId: Long): Boolean? = try {
+        fetchDetailUncached(activityId, probeApi)?.applied
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * 写请求失败是否「结果不明」：网络层异常（[IOException] 家族，含超时）与响应解析失败
+     * （[WenquApiException] 里带 cause 的那种）都可能对应「服务端其实已经处理了」。
+     * 平台业务话术的拒绝（`requireSuccess` 抛的，无 cause）与会话失效都确定没生效，不算。
+     */
+    private fun isAmbiguousWriteFailure(e: Exception): Boolean =
+        e is IOException || (e is WenquApiException && e.cause != null)
 
     /**
      * **取消报名**（DESIGN §4.45）。
@@ -605,6 +755,106 @@ class WenquRepository(
         if (changed) indexCache.put(INDEX_KEY, current.copy(items = items), now())
     }
 
+    // ---- 预报名（DESIGN §4.45，2026-10-16；用户拍板）-------------------------------
+
+    /**
+     * 预报名执行器的启动校对：**并发**拉列表第一页与本条详情——
+     * 前者带账号级限制（`isBlack` / `stop_apply_reason`），后者带这条的最新状态与名额。
+     * 两者都失败时也返回（[WenquPreregSnapshot.activity] = null），执行器照常进入试发段
+     * ——到点真发才是权威。详情走 [preregApi]（5 秒 + `Date` 头时钟记账）。
+     */
+    suspend fun preregSnapshot(
+        id: Long,
+        speed: WenquGrabSpeed = WenquGrabSpeed.Fast,
+    ): WenquPreregSnapshot = withContext(Dispatchers.IO) {
+        coroutineScope {
+            val listJob = async {
+                try {
+                    val payload = authed { token ->
+                        val client = if (speed == WenquGrabSpeed.Burst) burstApi else probeApi
+                        client.volunteerList(
+                            token = token,
+                            page = 1,
+                            limit = WenquRules.GRAB_PAGE_LIMIT,
+                            keyword = "",
+                        )
+                    }
+                    val data = payload.decodeData<WenquActivityData>()
+                    (data?.blacklisted == true) to data?.stopApplyReason.orEmpty()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    false to ""
+                }
+            }
+            val detailJob = async {
+                try {
+                    fetchDetailUncached(id, preregApi)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            val (blacklisted, reason) = listJob.await()
+            val detail = detailJob.await()
+            WenquPreregSnapshot(
+                activity = detail,
+                blacklisted = blacklisted,
+                stopApplyReason = reason,
+            )
+        }
+    }
+
+    /**
+     * 预报名**试发一发**（串行单发、不自动重发）：成功 / 业务拒绝 / 会话失效三态。
+     * 网络异常（超时 / 断网 / 响应残缺）原样抛出，由执行器按「结果不明」处理
+     * （先只读核对，见 [WenquPreregCheck]）。
+     */
+    suspend fun preregApplyOnce(id: Long): WenquPreregAttempt = withContext(Dispatchers.IO) {
+        val session = ensureToken()
+        val envelope = preregApi.volunteerApply(session.token, id)
+        when {
+            envelope.status == WenquEnvelope.STATUS_OK -> {
+                patchAfterApply(id)
+                WenquPreregAttempt.Applied
+            }
+
+            envelope.status == WenquEnvelope.STATUS_NEED_LOGIN ->
+                WenquPreregAttempt.SessionExpired(
+                    envelope.msg?.takeIf { it.isNotBlank() } ?: "登录已失效",
+                )
+
+            else -> {
+                val msg = envelope.msg?.takeIf { it.isNotBlank() } ?: "请求失败（${envelope.status}）"
+                WenquPreregAttempt.Rejected(msg, WenquRules.classifyPreregReject(envelope.msg))
+            }
+        }
+    }
+
+    /**
+     * 预报名**只读核对**：这条活动此刻在平台上的 `apply` 段存在吗。
+     * 详情取不到（已下架 / 网络失败）回 [WenquPreregCheck.Unknown]——核对不了，继续试。
+     */
+    suspend fun preregAppliedNow(id: Long): WenquPreregCheck = withContext(Dispatchers.IO) {
+        try {
+            val detail = fetchDetailUncached(id, preregApi)
+            when {
+                detail == null -> WenquPreregCheck.Unknown
+                detail.applied -> {
+                    patchAfterApply(id)
+                    WenquPreregCheck.Applied
+                }
+
+                else -> WenquPreregCheck.NotApplied
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            WenquPreregCheck.Unknown
+        }
+    }
+
     /**
      * **扫一遍**第一页 `limit` 条（新增活动提醒用，DESIGN §4.45）。
      *
@@ -634,10 +884,14 @@ class WenquRepository(
      * 失败原样抛出：调用方（蹲点流程）按连续失败次数退避，**不在这里重试**
      * （同 `writeOnce` 的纪律：网络失败不自动重放，靠下一轮）。
      */
-    suspend fun grabProbe(limit: Int = WenquRules.GRAB_PAGE_LIMIT): WenquGrabProbe =
+    suspend fun grabProbe(
+        limit: Int = WenquRules.GRAB_PAGE_LIMIT,
+        speed: WenquGrabSpeed = WenquGrabSpeed.Fast,
+    ): WenquGrabProbe =
         withContext(Dispatchers.IO) {
             val payload = authed { token ->
-                probeApi.volunteerList(token = token, page = 1, limit = limit, keyword = "")
+                val client = if (speed == WenquGrabSpeed.Burst) burstApi else probeApi
+                client.volunteerList(token = token, page = 1, limit = limit, keyword = "")
             }
             val data = payload.decodeData<WenquActivityData>()
             val page = WenquGrabProbe(

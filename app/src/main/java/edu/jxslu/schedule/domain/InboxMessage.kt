@@ -73,6 +73,14 @@ object InboxKeys {
      * 之后再出现更新的活动（id 更大）才算新事实。
      */
     const val WENQU_ACTIVITY_PREFIX = "wenqu|activity|"
+
+    /**
+     * 问渠「盯着的活动名额空出」：`wenqu|slot|` + 活动 id（2026-10-15）。
+     *
+     * 与新活动那条（按批最大 id）不同——这里盯的是**具体一条**，所以键用活动 id：
+     * 同一条活动只留一条痕，之后不会因为又空出一次而重复。
+     */
+    const val WENQU_SLOT_PREFIX = "wenqu|slot|"
 }
 
 /**

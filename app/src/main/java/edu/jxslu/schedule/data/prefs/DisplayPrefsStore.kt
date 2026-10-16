@@ -859,6 +859,17 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 盯着的活动**已经报过「名额空出」的那条 id**（2026-10-15）：同一条只提醒一次。
+     * 重新盯一条 / 取消盯时清 0（见 `WenquGrabViewModel.pin` / `unpin`）。
+     */
+    suspend fun wenquGrabPinnedAlertedId(): Long =
+        context.displayDataStore.data.first()[KEY_WENQU_GRAB_PINNED_ALERTED_ID] ?: 0L
+
+    suspend fun setWenquGrabPinnedAlertedId(id: Long) {
+        context.displayDataStore.edit { it[KEY_WENQU_GRAB_PINNED_ALERTED_ID] = id }
+    }
+
+    /**
      * 活动列表的状态筛选。**存 [WenquRules.FILTER_ALL_STORED] 表示「全部」**
      * （DataStore 没有可空 Int）——用户专门要过「隐藏已满」，每次进页都重置一遍会烦
      * （2026-10-08）。
@@ -953,6 +964,55 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setWenquGrabKeyword(value: String) {
         context.displayDataStore.edit { p -> p[KEY_WENQU_GRAB_KEYWORD] = value }
+    }
+
+    /**
+     * 蹲点页**盯着的指定活动 id**（DESIGN §4.45「盯指定活动」，2026-10-15）：0 = 没盯。
+     *
+     * 与 [wenquGrabKeyword] 是两回事：名字匹配靠快照（深层条目的名额会冻住），
+     * 盯一条具体的活动则**每轮单独拉它的详情**（实时名额），所以老活动也能盯。
+     */
+    val wenquGrabPinnedId: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_GRAB_PINNED_ID] ?: 0L
+    }
+
+    suspend fun setWenquGrabPinnedId(value: Long) {
+        context.displayDataStore.edit { p -> p[KEY_WENQU_GRAB_PINNED_ID] = value }
+    }
+
+    /**
+     * 「预报名」瞄准的活动（DESIGN §4.45，2026-10-16；用户拍板）：id + 标题（展示用）+
+     * 报名开始时刻（平台墙钟，epoch millis）。id = 0 = 没排。
+     *
+     * 与 [wenquGrabPinnedId] 是两回事：盯是「名额空出提醒」，预报名是「到点自动提交」。
+     * 三个键一起写、一起清（[setWenquPrereg] / [clearWenquPrereg]），别只动一个。
+     */
+    val wenquPreregId: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_PREREG_ID] ?: 0L
+    }
+
+    val wenquPreregTitle: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_PREREG_TITLE].orEmpty()
+    }
+
+    val wenquPreregOpensAt: Flow<Long> = context.displayDataStore.data.map { p ->
+        p[KEY_WENQU_PREREG_OPENS_AT] ?: 0L
+    }
+
+    suspend fun setWenquPrereg(id: Long, title: String, opensAt: Long) {
+        context.displayDataStore.edit { p ->
+            p[KEY_WENQU_PREREG_ID] = id
+            p[KEY_WENQU_PREREG_TITLE] = title
+            p[KEY_WENQU_PREREG_OPENS_AT] = opensAt
+        }
+    }
+
+    suspend fun clearWenquPrereg() {
+        context.displayDataStore.edit { p ->
+            p.remove(KEY_WENQU_PREREG_ID)
+            p.remove(KEY_WENQU_PREREG_TITLE)
+            p.remove(KEY_WENQU_PREREG_OPENS_AT)
+        }
     }
 
     /**
@@ -2426,6 +2486,14 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_WENQU_WEEKLY_ALERT_LAST_FIRED_AT = longPreferencesKey("wenqu_weekly_alert_last_fired_at")
         // 蹲点模式的目标活动名（2026-10-11）：预填用，匹配在本地做
         val KEY_WENQU_GRAB_KEYWORD = stringPreferencesKey("wenqu_grab_keyword")
+        // 蹲点盯着的指定活动 id（2026-10-15）：0 = 没盯；每轮单独拉它的详情拿实时名额
+        val KEY_WENQU_GRAB_PINNED_ID = longPreferencesKey("wenqu_grab_pinned_id")
+        // 盯着的活动「名额空出」已报过的那条 id（2026-10-15）：同一条只提醒一次
+        val KEY_WENQU_GRAB_PINNED_ALERTED_ID = longPreferencesKey("wenqu_grab_pinned_alerted_id")
+        // 预报名（2026-10-16）：瞄准的活动 id / 标题 / 报名开始时刻（id = 0 = 没排）
+        val KEY_WENQU_PREREG_ID = longPreferencesKey("wenqu_prereg_id")
+        val KEY_WENQU_PREREG_TITLE = stringPreferencesKey("wenqu_prereg_title")
+        val KEY_WENQU_PREREG_OPENS_AT = longPreferencesKey("wenqu_prereg_opens_at")
 
         // AI 调课（DESIGN §4.39，2026-10-06）：服务地址 / 模型名 / 教师名脱敏 / 首次隐私确认。
         // API Key **不在这里**——它是账号凭据，走 AiCredentialStore 加密存储（secure_ai.xml）。

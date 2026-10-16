@@ -14,8 +14,10 @@ import edu.jxslu.schedule.SubpageRequest
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.repo.PendingLaunch
 import edu.jxslu.schedule.data.wenqu.WenquActivity
+import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.data.session.AutoSyncRules
+import edu.jxslu.schedule.data.wenqu.WenquRepository
 import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.WenquRules
@@ -56,6 +58,11 @@ object WenquActivityAlertReminder {
      *  （0 / 2000 / 3005 / 3006 / 3008–3012…）撞——撞了会互相改写 EXTRA。 */
     private const val CONTENT_REQUEST_CODE = 3013
 
+    /** 「盯着的活动名额空出」用另一套 id / 落点，别与新活动那条互相覆盖（2026-10-15）。 */
+    private const val SLOT_NOTIFICATION_TAG = "wenqu_slot"
+    private const val SLOT_NOTIFICATION_ID = 1016
+    private const val SLOT_REQUEST_CODE = 3015
+
     /** 一次扫描取多少条。见类注释口径 3：接口不保证排序，多取一点才圈得住新活动。 */
     private const val SCAN_LIMIT = 100
 
@@ -79,21 +86,35 @@ object WenquActivityAlertReminder {
     }
 
     /**
+     * 盯的活动变了（pin / unpin，2026-10-15）：共享周期任务要不要存在跟着变，重排一次。
+     * **只重排、不立刻叫醒**——盯一条活动没必要当场打一次接口，下一轮周期会看。
+     */
+    suspend fun onPinChanged(context: Context) {
+        runCatching { ScoreAlertReminder.ensurePeriodicWork(context) }
+            .onFailure { Log.w(TAG, "ensurePeriodicWork failed", it) }
+    }
+
+    /**
      * 核对一次。幂等，可任意重复调用；任何失败都不抛出（后台任务里失败不该让 Worker 报错重试，
      * 重试会再打一次第三方接口）。
      */
     suspend fun check(context: Context) {
         runCatching {
             val prefs = Graph.displayPrefs(context)
+            // 没登录就别试了：ensureToken 会直接抛，白跑一趟
+            val repo = Graph.wenqu(context)
+            if (!repo.loggedIn.value) return
+
+            // 「盯着的活动名额空出」（2026-10-15）：不挂「新增活动提醒」开关——盯它本身就是
+            // 用户的显式选择。也不进免扰时段：名额空出是**当下要动**的事，压到时段结束就没用了。
+            checkPinnedSlot(context, prefs, repo)
+
+            // 新增活动提醒：走它自己的开关与间隔
             if (!prefs.wenquActivityAlertEnabled.first()) return
             val intervalHours =
                 WenquRules.coerceActivityIntervalHours(prefs.wenquActivityIntervalHours.first())
             val now = System.currentTimeMillis()
             if (!AutoSyncRules.shouldAttemptAt(prefs.wenquActivityCheckMillis(), intervalHours, now)) return
-
-            // 没登录就别试了：ensureToken 会直接抛，白跑一趟
-            val repo = Graph.wenqu(context)
-            if (!repo.loggedIn.value) return
 
             val page = repo.scanActivities(SCAN_LIMIT)
             val lastSeen = prefs.wenquActivityLastSeenId()
@@ -141,6 +162,82 @@ object WenquActivityAlertReminder {
             )
             if (!held) postNotification(context, title, text)
         }.onFailure { Log.w(TAG, "check failed", it) }
+    }
+
+    /**
+     * **盯着的活动名额是否空出来了**（2026-10-15，DESIGN §4.45「盯指定活动」的后台一路）。
+     *
+     * 拉的是**详情**（`refreshIndexItem`，实时名额）而不是列表——快照里深层条目的名额会冻住。
+     * 空出（`applyBlockReason` 回空）→ 发通知 + 入箱；同一条只报一次（`wenqu_grab_pinned_alerted_id`，
+     * 重新盯 / 取消盯时清 0）。**不挂开关**（盯 = 用户显式选择）、**不过免扰时段**
+     * （名额空出是当下要动的事，压到时段结束就没意义了）。
+     */
+    private suspend fun checkPinnedSlot(
+        context: Context,
+        prefs: DisplayPrefsStore,
+        repo: WenquRepository,
+    ) {
+        val pinnedId = prefs.wenquGrabPinnedId.first()
+        if (pinnedId <= 0L) return
+        if (prefs.wenquGrabPinnedAlertedId() == pinnedId) return // 这条已经报过，别重复
+        val activity = runCatching { repo.refreshIndexItem(pinnedId) }.getOrNull() ?: return
+        val blocked = WenquRules.applyBlockReason(
+            status = activity.status,
+            applied = activity.applied,
+            peopleNum = activity.peopleNum,
+            balanceNum = activity.balanceNum,
+            applyStartTime = activity.applyStartTime,
+            applyEndTime = activity.applyEndTime,
+            blacklisted = repo.cachedIndex()?.blacklisted == true,
+            now = System.currentTimeMillis(),
+        )
+        if (blocked.isNotEmpty()) return // 还满着 / 已结束 / 已报名…：继续等
+        prefs.setWenquGrabPinnedAlertedId(pinnedId)
+
+        val name = activity.title.ifBlank { "你盯的志愿活动" }
+        val title = "名额空出：$name"
+        val text = "你盯的活动现在有名额了。去问渠报名（报名仍要你自己点一下）。"
+
+        Graph.inboxRepository(context).post(
+            kind = InboxKind.WENQU_ACTIVITY,
+            dedupeKey = InboxKeys.WENQU_SLOT_PREFIX + pinnedId,
+            title = title,
+            body = text,
+            route = SubpageScreen.WENQU.name,
+        )
+        if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            postSlotNotification(context, title, text)
+        }
+    }
+
+    /**
+     * 名额空出的通知（时间敏感）。渠道与新活动共用 `wenqu_activity`，但 id / 落点独立。
+     * **直接震动**（同每周日那条的理由：HyperOS 上第三方通知的振动默认关，不震等于静默）。
+     */
+    private fun postSlotNotification(context: Context, title: String, text: String) {
+        ensureChannel(context)
+        ReminderVibration.vibrate(context)
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_bell)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    context,
+                    SLOT_REQUEST_CODE,
+                    subpageLaunchIntent(context, SubpageRequest(SubpageScreen.WENQU))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(context)
+                .notify(SLOT_NOTIFICATION_TAG, SLOT_NOTIFICATION_ID, notification)
+        }.onFailure { Log.w(TAG, "slot notify failed", it) }
     }
 
     /** 通知与收件箱共用同一份正文，两处各写迟早漂。 */

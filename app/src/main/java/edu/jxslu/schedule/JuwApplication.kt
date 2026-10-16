@@ -19,6 +19,7 @@ import edu.jxslu.schedule.ui.reminder.LoginStateNotifier
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.reminder.SelectionAlertReminder
 import edu.jxslu.schedule.ui.reminder.WenquWeeklyAlertReminder
+import edu.jxslu.schedule.ui.wenqu.WenquPreregReminder
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
@@ -94,6 +95,9 @@ class JuwApplication : Application() {
             // 问渠「每周日 12:00 抢活动」提醒（DESIGN §4.45，2026-10-11）：精确闹钟同样不跨
             // 重启/安装存活，冷启动补一次本地重排——开关关着时是撤销闹钟的空跑，零网络。
             WenquWeeklyAlertReminder.scheduleNext(this@JuwApplication)
+            // 问渠「预报名」（DESIGN §4.45，2026-10-16）：同一条精确闹钟口径，冷启动补排——
+            // 没排上时是撤闹钟的空跑；错过窗口的会作废并通知，不让用户以为还排着。
+            WenquPreregReminder.scheduleNext(this@JuwApplication)
             // U净洗衣完成提醒（DESIGN §4.37，2026-10-02 补冷启动核对）：它的精确闹钟
             // 与其他提醒一样不跨安装/重启存活，但此前只有订单卡刷新时排——覆盖安装后
             // 「洗涤中」的完成提醒会静默消失。check 内部：无在案订单撤销闹钟（空跑）；

@@ -43,6 +43,7 @@ import edu.jxslu.schedule.domain.homeworkDisplayTitle
 import edu.jxslu.schedule.domain.nextClassStartPlan
 import edu.jxslu.schedule.domain.nextReminderPlan
 import edu.jxslu.schedule.domain.remarkPreview
+import edu.jxslu.schedule.ui.wenqu.WenquPreregReminder
 import kotlinx.coroutines.flow.first
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -581,6 +582,9 @@ class ReminderBootReceiver : BroadcastReceiver() {
                 SelectionAlertReminder.enqueueCheck(context)
                 // 问渠每周日抢活动提醒（2026-10-11）：同一条精确闹钟口径
                 WenquWeeklyAlertReminder.enqueueCheck(context)
+                // 问渠预报名（2026-10-16）：精确闹钟不跨重启 / 安装存活，补排——
+                // 没排上时是撤闹钟的空跑；错过窗口的在补排里作废并通知
+                WenquPreregReminder.enqueueReschedule(context)
             }
         }
     }

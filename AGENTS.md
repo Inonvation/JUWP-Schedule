@@ -238,7 +238,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                调课处置页 SCHEDULE_CHANGES，§4.17；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
                培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；问渠 WENQU +
                志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
-               WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交，§4.45），
+                WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交）+ 预报名
+                （详情弹层入口 · **唯一自动提交路径** · 精确闹钟 4008 + shortService，§4.45），
                §3.28；天气详情 WEATHER + 天气设置 WEATHER_SETTINGS（今日页顶栏那行提示的
                落点与开关，默认关，§3.29）；学生评教走
                JwImportActivity 的 TeachingEval 模式（§4.44）；百宝箱 TOOLBOX +
@@ -267,8 +268,11 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  + WenquRules（问渠：token 续期时机 · 验证码 5 分钟冷却 · 手机号/密码校验 · 星级与工时文案 ·
  活动状态文案 · 时间戳/时间段与名额文案 · **本地搜索**（关键词匹配 `matchesKeyword` · 命中高亮
  `keywordRanges` · 索引翻页判据 `shouldContinueIndexing`）· **排序档位 `Sort` 与截止排序键** ·
- **每周日 12:00 提醒点 `next/lastWeeklyAlertPoint`** · **蹲点**（`grabDetectStartAt` 周日待机
- 时刻 · `grabNextDelayMs` 退避 · `grabFirstMatch` 命中 · `grabShouldStop` 收工），§4.45）
+  **每周日 12:00 提醒点 `next/lastWeeklyAlertPoint`** · **蹲点**（`grabInBurst` 窗口 ·
+  `grabNextDelayMs` 四档节奏（窗口内失败也快试）· `jitteredDelayMs` 抖动 · `grabWindowEndAt`
+  窗口锚定 · `grabFirstMatch` 命中 · `grabShouldStop` 收工）· **预报名**（`preregAlarmAt` /
+  `preregTryStartAt` 服务器钟试发 · `preregShouldStop` 三闸 · `classifyPreregReject` 话术分类 ·
+  `parseHttpDate` / `clockOffsetMs` 时钟偏移），§4.45）
  + Weather·WeatherAdvice（天气：WMO 码 → emoji/中文短语 · **18:00 分界**与话术优先级
  （正在下雨 > 雪/雷暴 > 有雨 > 降水概率 > 雾 > 防晒 > 防暑 > 添衣 > 大风 > 兜底），§3.29）
  + ScheduleTips（顶栏课表句：上午/下午南北楼往返跑 / 都在一栋楼 · 有实验课只出实验课句 ·
@@ -347,10 +351,15 @@ data/wenqu/      问渠（志愿服务 / 劳动教育，DESIGN §4.45 / UI §3.2
                  + `volunteer/detail/{id}`（工时 / 群号只有详情有）
                  + scanActivities（新增活动提醒的扫描口：一次取 100 条，**不写任何缓存**；
                  要拿新数据走 `invalidateActivities()` + 下次进页增量同步）
-                 + grabProbe（蹲点探测：3 秒一轮只拉第一页、6 秒短超时、结果并进快照）
+                 + grabProbe（蹲点探测：一轮只拉第一页、6 秒 / 窗口内 3 秒短超时、结果并进快照）
+                 + preregSnapshot / preregApplyOnce / preregAppliedNow（预报名校对与试发，
+                 2026-10-16——**全 App 唯一允许自动提交的路径**）
                  + prewarmSession（开蹲前把 token 换新）
+                 WenquServerClock（HTTP `Date` 头 → 服务器时钟偏移，预报名试发窗口按它折算）
                  蹲点页 ui/wenqu/WenquGrabScreen.kt + WenquGrabViewModel.kt（手动开始 ·
                  命中弹确认**不自动提交** · 离开页面即停，§4.45）
+                 预报名 ui/wenqu/WenquPreregReminder.kt + WenquPreregRunner.kt +
+                 WenquPreregService.kt（shortService · 闹钟 4008 · 通知 1017 · 单条点名，§4.45）
                  新增活动提醒见 ui/reminder/WenquActivityAlertReminder.kt（第五路周期链）
                  每周日 12:00 抢活动提醒见 ui/reminder/WenquWeeklyAlertReminder.kt（零网络，§4.45）
                  规则见 .agents/rules/wenqu.md

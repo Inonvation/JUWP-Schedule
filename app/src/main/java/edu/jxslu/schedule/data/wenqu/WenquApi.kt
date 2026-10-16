@@ -17,7 +17,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * 问渠实践教育平台 裸 OkHttp 客户端（DESIGN §4.45）。
  *
  * 形态对齐 [edu.jxslu.schedule.data.ujing.UjingApi]：私有构造 + `create()`、手写请求头、
- * 解析交宽容序列化。**不用 Retrofit**——一共五个端点、无 query 参数，裸 OkHttp 更直白。
+ * 解析交宽容序列化。**不用 Retrofit**——端点都是 POST 一条 JSON（下载那条 GET）、无 query 参数，
+ * 裸 OkHttp 更直白。
  *
  * 红线：
  * - **无日志拦截器**——手机号 / 密码 / token 绝不进 Logcat（对齐一卡通 / 电费 / 快趣 / U净）；
@@ -44,13 +45,19 @@ class WenquApi private constructor(private val http: OkHttpClient) {
         /**
          * 共享池派生；[callTimeoutSeconds] 默认 30s（登录 / 详情 / 写操作都够用）。
          *
-         * **蹲点探测单独派生一份短超时的实例**（`WenquRepository.probeApi`，6s 见
-         * `WenquRules.GRAB_REQUEST_TIMEOUT_S`）：它是 3 秒一轮的高频轮询，
-         * 高峰时挂 30 秒等于一轮白等——别直接把这个默认值改小，会误伤写操作。
+         * **蹲点探测单独派生短超时的实例**（`WenquRepository.probeApi` / `burstApi`，
+         * 6s / 3s 见 `WenquRules.GRAB_REQUEST_TIMEOUT_S` / `GRAB_BURST_TIMEOUT_S`）：
+         * 高频轮询挂 30 秒等于一轮白等——别直接把这个默认值改小，会误伤写操作。
+         *
+         * [withServerClock] = true 时多挂一层 [WenquServerClockInterceptor]（预报名专用：
+         * 它要按服务器的钟算「提前 15 秒」，见 `WenquRules.preregTryStartAt`）。
          */
-        fun create(callTimeoutSeconds: Long = 30L): WenquApi = WenquApi(
-            AppHttp.withCallTimeout(callTimeoutSeconds).newBuilder().build(),
-        )
+        fun create(callTimeoutSeconds: Long = 30L, withServerClock: Boolean = false): WenquApi =
+            WenquApi(
+                AppHttp.withCallTimeout(callTimeoutSeconds).newBuilder()
+                    .apply { if (withServerClock) addInterceptor(WenquServerClockInterceptor()) }
+                    .build(),
+            )
     }
 
     /**
@@ -103,6 +110,17 @@ class WenquApi private constructor(private val http: OkHttpClient) {
         path = "volunteer/star_cert",
         token = token,
         body = buildJsonObject {},
+    )
+
+    /**
+     * **星级证书 PDF**（2026-10-15）：`GET volunteer/star_cert/download`。
+     *
+     * 平台回的是 **JSON**（`data.pdf_base64` + `filename` + `size`），不是文件流——
+     * 见 [WenquCertData]。只读。
+     */
+    suspend fun starCertDownload(token: String): WenquEnvelope = get(
+        path = "volunteer/star_cert/download",
+        token = token,
     )
 
     /**
@@ -165,16 +183,29 @@ class WenquApi private constructor(private val http: OkHttpClient) {
         body: JsonObject,
         token: String? = null,
     ): WenquEnvelope = withContext(Dispatchers.IO) {
+        send(baseBuilder(path, token).post(body.toString().toRequestBody(JSON_MEDIA)).build())
+    }
+
+    /** `GET` 版（星级证书下载用）。 */
+    private suspend fun get(path: String, token: String? = null): WenquEnvelope =
+        withContext(Dispatchers.IO) {
+            send(baseBuilder(path, token).get().build())
+        }
+
+    /** 公共请求头：`Accept` + CRMEB 特有拼写的 **`Authori-zation`**（写成 Authorization 会被判未登录）。 */
+    private fun baseBuilder(path: String, token: String?): Request.Builder {
         val builder = Request.Builder()
             .url(BASE + path)
             .header("Accept", "application/json, text/plain, */*")
-        // CRMEB 特有拼写：**`Authori-zation`**，写成 Authorization 会被判未登录
         if (!token.isNullOrBlank()) builder.header("Authori-zation", "Bearer $token")
-        builder.post(body.toString().toRequestBody(JSON_MEDIA))
-        val (httpCode, text) = http.newCall(builder.build()).execute().use { response ->
+        return builder
+    }
+
+    private fun send(request: Request): WenquEnvelope {
+        val (httpCode, text) = http.newCall(request).execute().use { response ->
             response.code to response.body?.string().orEmpty()
         }
-        try {
+        return try {
             QiekjJson.json.decodeFromString(WenquEnvelope.serializer(), text)
         } catch (e: SerializationException) {
             throw WenquApiException("响应格式异常（HTTP $httpCode）", httpCode, e)

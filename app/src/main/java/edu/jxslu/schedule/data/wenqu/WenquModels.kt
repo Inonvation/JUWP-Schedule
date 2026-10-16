@@ -164,6 +164,19 @@ data class WenquStarCertData(
 )
 
 /**
+ * `GET /api/volunteer/star_cert/download` 的 `data`：**星级证书 PDF**（2026-10-15）。
+ *
+ * 平台不回文件流，回的是 JSON——`pdf_base64` 是整份 PDF 的 base64，`filename` 是它给的
+ * 文件名（**可能含姓名**，只用来命名落盘文件，不进日志）。`size` 是字节数。
+ */
+@Serializable
+data class WenquCertData(
+    @SerialName("pdf_base64") val pdfBase64: String = "",
+    val filename: String = "",
+    val size: Long = 0,
+)
+
+/**
  * `POST /api/volunteer/v2` 的 `data`：平台上的**志愿服务活动**（分页）。
  *
  * 与 [WenquVolunteerData] 是两回事：那个是「我参加过的」（`volunteer/my`），

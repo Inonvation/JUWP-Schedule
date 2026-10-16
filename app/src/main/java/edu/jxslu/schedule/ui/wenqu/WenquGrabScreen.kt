@@ -34,7 +34,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -44,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -58,10 +58,13 @@ import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.reminder.ReminderChime
 import edu.jxslu.schedule.ui.reminder.ReminderVibration
-import kotlinx.coroutines.delay
+import edu.jxslu.schedule.ui.reminder.WenquActivityAlertReminder
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Bookmark01
+import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Target01
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -72,7 +75,7 @@ import java.util.Locale
  *
  * 从问渠主页顶栏的「蹲点」图标进来。页面两件事：
  * 1. **控制卡**：填目标活动名（预填 + 落盘）、开始 / 停止蹲点、状态行
- *    （待机倒计时 / 已检查次数 / 收工原因）；
+ *    （已检查次数 / 上轮耗时 / 收工原因），排了预报名时另挂一行「已预报名」；
  * 2. **活动列表**：与主页同一份本地快照（探测结果顺手并进来，通常零额外请求），
  *    点卡片看详情。
  *
@@ -103,15 +106,17 @@ fun WenquGrabScreen(onBack: () -> Unit) {
         vm.consumeMessage()
     }
 
-    // 命中那一刻震一下：用户可能没盯着屏幕（同提醒的直接震动口径）
+    // 命中那一刻震一下 + 响一声：用户可能没盯着屏幕（同提醒的直接震动口径）
     LaunchedEffect(state.hit?.id) {
-        if (state.hit != null) ReminderVibration.vibrate(context)
+        if (state.hit != null) {
+            ReminderVibration.vibrate(context)
+            ReminderChime.play(context)
+        }
     }
 
     // 蹲点期间保持屏幕常亮（用户口径）：息屏后系统可能把进程冻住，探测就断了。
     // 命中弹窗开着时也常亮，别让用户回来时屏幕已经黑了。
-    val keepScreenOn = state.phase == WenquGrabViewModel.Phase.Waiting ||
-        state.phase == WenquGrabViewModel.Phase.Checking ||
+    val keepScreenOn = state.phase == WenquGrabViewModel.Phase.Checking ||
         state.hit != null
     val view = LocalView.current
     DisposableEffect(keepScreenOn) {
@@ -181,6 +186,16 @@ fun WenquGrabScreen(onBack: () -> Unit) {
                             vm.start()
                         },
                         onStop = vm::stop,
+                        onUnpin = {
+                            vm.unpin()
+                            scope.launch { WenquActivityAlertReminder.onPinChanged(context) }
+                        },
+                        onCancelPrereg = {
+                            scope.launch {
+                                WenquPreregReminder.cancel(context)
+                                snackbar.showNotice("已取消预报名")
+                            }
+                        },
                     )
                 }
 
@@ -298,18 +313,47 @@ fun WenquGrabScreen(onBack: () -> Unit) {
             actionError = state.detailActionError,
             onApply = { vm.applyActivity(activity.id) },
             onCancel = { vm.cancelApply(activity.id, activity.applyId) },
+            preregOpensAt = if (state.preregId == activity.id) state.preregOpensAt else 0L,
+            onRequestPrereg = {
+                scope.launch {
+                    val opensAt = WenquRules.stampMillis(activity.applyStartTime)
+                    if (opensAt == null) {
+                        snackbar.showNotice("这条活动的报名时间读不出来，暂不能预报名")
+                    } else {
+                        WenquPreregReminder.arm(context, activity, opensAt)
+                        snackbar.showNotice(
+                            "已预报名：到点自动抢《${activity.title.ifBlank { "这条活动" }}》",
+                        )
+                    }
+                }
+            },
+            onCancelPrereg = {
+                scope.launch {
+                    WenquPreregReminder.cancel(context)
+                    snackbar.showNotice("已取消预报名")
+                }
+            },
+            onPin = {
+                vm.pin(activity)
+                vm.closeDetail()
+                scope.launch {
+                    WenquActivityAlertReminder.onPinChanged(context)
+                    snackbar.showNotice("已盯上「${activity.title.ifBlank { "这条活动" }}」，名额空出会提醒")
+                }
+            },
         )
     }
 }
 
 private const val GRAB_DISCLAIMER =
-    "蹲点只在打开本页时进行（离开页面即停止）；命中后仍需你点「确认报名」，本应用不会自动提交。" +
+    "蹲点只在打开本页时进行（离开页面即停止）；命中后仍需你点「确认报名」，本页不会自动提交" +
+        "（自动提交只发生在详情里单独开启的「预报名」）。" +
         "活动数据来自「问渠」实践教育平台（第三方系统，非学校官方功能）。"
 
 /**
  * 控制卡：目标活动名 + 开始 / 停止 + 状态行。
  *
- * 状态行的倒计时**只每 500ms 刷新这一处文字**（[tick]），不把整张列表拖着重组。
+ * 状态行给「上轮耗时 / 连败」诊断数据，供抢活动当天按实测调参。
  */
 @Composable
 private fun GrabControlCard(
@@ -317,17 +361,11 @@ private fun GrabControlCard(
     onKeyword: (String) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onUnpin: () -> Unit,
+    onCancelPrereg: () -> Unit,
 ) {
     val phase = state.phase
-    val armed = phase == WenquGrabViewModel.Phase.Waiting || phase == WenquGrabViewModel.Phase.Checking
-    var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(phase) {
-        if (phase != WenquGrabViewModel.Phase.Waiting) return@LaunchedEffect
-        while (true) {
-            tick = System.currentTimeMillis()
-            delay(500)
-        }
-    }
+    val armed = phase == WenquGrabViewModel.Phase.Checking
 
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -345,7 +383,7 @@ private fun GrabControlCard(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "到点每 3 秒自动看最新活动，出现目标且能报名时弹确认框（不会自动提交）",
+                text = "到点自动反复看最新活动，出现目标且能报名时弹确认框（不会自动提交）",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 maxLines = 2,
@@ -362,17 +400,77 @@ private fun GrabControlCard(
             supportingText = { Text("留空只浏览列表；检测中改名字会立即改蹲新名字，清空即停") },
             modifier = Modifier.fillMaxWidth(),
         )
+        // 「盯着的活动」（2026-10-15）：每轮单独拉它的实时详情，所以**已满的老活动**也能盯
+        // ——名额一空出就弹确认框。与上面的名字**并行**，两条路都在跑。
+        if (state.pinnedId > 0L) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = HugeIcons.Bookmark01,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "盯着：${state.pinnedActivity?.title.orEmpty().ifBlank { "这条活动" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onUnpin) {
+                    Icon(
+                        imageVector = HugeIcons.Cancel01,
+                        contentDescription = "不盯了",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+        // 「预报名」（2026-10-16）：详情里开的到点自动抢，这里只展示状态 + 取消入口。
+        if (state.preregId > 0L) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = buildString {
+                        append("已预报名：")
+                        append(
+                            WenquRules.preregOpenLabel(
+                                state.preregOpensAt,
+                                System.currentTimeMillis(),
+                            ),
+                        )
+                        append(" 自动抢")
+                        if (state.preregTitle.isNotBlank()) append("《${state.preregTitle}》")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onCancelPrereg) {
+                    Icon(
+                        imageVector = HugeIcons.Cancel01,
+                        contentDescription = "取消预报名",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = if (armed) onStop else onStart,
-                enabled = armed || state.keyword.isNotBlank(),
+                enabled = armed || state.keyword.isNotBlank() || state.pinnedId > 0L,
             ) {
                 Text(if (armed) "停止蹲点" else "开始蹲点")
             }
             Spacer(Modifier.width(10.dp))
             Text(
-                text = statusText(state, tick),
+                text = statusText(state),
                 style = MaterialTheme.typography.bodySmall,
                 color = when (phase) {
                     WenquGrabViewModel.Phase.Checking -> MaterialTheme.colorScheme.primary
@@ -388,30 +486,25 @@ private fun GrabControlCard(
     }
 }
 
-private fun statusText(state: WenquGrabViewModel.UiState, now: Long): String =
+private fun statusText(state: WenquGrabViewModel.UiState): String =
     when (state.phase) {
         WenquGrabViewModel.Phase.Idle ->
-            if (state.keyword.isBlank()) {
-                "未开始。填好活动名点「开始蹲点」；周日建议 11:50 后进来，检测会自动等到 11:59:50。"
-            } else {
-                "未开始。点「开始蹲点」；周日 11:50 后开始的话，检测会自动等到 11:59:50。"
+            "未开始。填好活动名点「开始蹲点」；开始即检测，发布前 20 秒到后 15 秒自动加密到 1 秒一轮。"
+
+        WenquGrabViewModel.Phase.Checking -> buildString {
+            append("检测中 · 蹲『")
+            append(state.keyword.trim().ifBlank { "盯着的活动" })
+            append("』· 已检查 ${state.checks} 次")
+            if (state.lastRoundMs > 0L) {
+                append(" · 上轮 ${"%.1f".format(state.lastRoundMs / 1000.0)}s")
+                if (state.failures > 0) append("（连败 ${state.failures}）")
             }
-
-        WenquGrabViewModel.Phase.Waiting ->
-            "已就位 · 距离开始检测 ${countdownText(state.detectStartAt - now)}（周日 12:00 前 10 秒开跑）"
-
-        WenquGrabViewModel.Phase.Checking ->
-            "检测中 · 蹲『${state.keyword.trim()}』· 已检查 ${state.checks} 次 · 最近 ${clockText(state.lastCheckAt)}"
+            if (state.lastCheckAt > 0L) append(" · 最近 ${clockText(state.lastCheckAt)}")
+        }
 
         WenquGrabViewModel.Phase.Stopped ->
             if (state.stopReason.isNotBlank()) "已停止 · ${state.stopReason}" else "已停止"
     }
-
-/** 剩余时长（mm:ss，负值收成 0:00）。 */
-private fun countdownText(remainingMs: Long): String {
-    val seconds = remainingMs.coerceAtLeast(0L) / 1000
-    return "%d:%02d".format(seconds / 60, seconds % 60)
-}
 
 /** 时刻（HH:mm:ss，本地时区）。 */
 private fun clockText(millis: Long): String =

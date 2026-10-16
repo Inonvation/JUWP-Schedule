@@ -98,6 +98,10 @@ class WenquViewModel(
          * 空串 = 没被限制。它是**账号级**的，与具体哪条活动无关。
          */
         val applyBlockedReason: String = "",
+        /** 「预报名」瞄准的活动（0 = 没排）：详情弹层据此显示状态行，见 `WenquPreregReminder`。 */
+        val preregId: Long = 0L,
+        val preregTitle: String = "",
+        val preregOpensAt: Long = 0L,
 
         // ---- 活动详情 ----
         /** 弹层里的活动：先用入口那条顶着，详情回来补齐（工时 / 群号只有详情有）。 */
@@ -217,6 +221,15 @@ class WenquViewModel(
             prefs.wenquSort.collect { saved ->
                 _state.update { it.copy(sort = WenquRules.coerceSort(saved)) }
             }
+        }
+        viewModelScope.launch {
+            prefs.wenquPreregId.collect { saved -> _state.update { it.copy(preregId = saved) } }
+        }
+        viewModelScope.launch {
+            prefs.wenquPreregTitle.collect { saved -> _state.update { it.copy(preregTitle = saved) } }
+        }
+        viewModelScope.launch {
+            prefs.wenquPreregOpensAt.collect { saved -> _state.update { it.copy(preregOpensAt = saved) } }
         }
         viewModelScope.launch {
             repo.loggedIn.collect { loggedIn ->

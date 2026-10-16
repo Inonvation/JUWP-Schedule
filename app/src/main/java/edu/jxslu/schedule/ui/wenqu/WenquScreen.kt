@@ -75,6 +75,7 @@ import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.reminder.WenquActivityAlertReminder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -467,6 +468,42 @@ fun WenquScreen(
             actionError = state.detailActionError,
             onApply = { vm.applyActivity(activity.id) },
             onCancel = { vm.cancelApply(activity.id, activity.applyId) },
+            preregOpensAt = if (state.preregId == activity.id) state.preregOpensAt else 0L,
+            onRequestPrereg = {
+                scope.launch {
+                    val opensAt = WenquRules.stampMillis(activity.applyStartTime)
+                    if (opensAt == null) {
+                        snackbar.showNotice("这条活动的报名时间读不出来，暂不能预报名")
+                    } else {
+                        WenquPreregReminder.arm(context, activity, opensAt)
+                        snackbar.showNotice(
+                            "已预报名：到点自动抢《${activity.title.ifBlank { "这条活动" }}》",
+                        )
+                    }
+                }
+            },
+            onCancelPrereg = {
+                scope.launch {
+                    WenquPreregReminder.cancel(context)
+                    snackbar.showNotice("已取消预报名")
+                }
+            },
+            // 「盯这条」（2026-10-15）：落盘给蹲点页，那一页每轮单独拉它的实时详情。
+            // 本页不自动跳蹲点页——用户可能还想接着翻列表，给一句提示让他自己决定。
+            onPin = {
+                scope.launch {
+                    val prefs = Graph.displayPrefs(context)
+                    prefs.setWenquGrabPinnedId(activity.id)
+                    // 换了目标：清「已报过」键，让这条也能报一次「名额空出」
+                    prefs.setWenquGrabPinnedAlertedId(0L)
+                    // 盯了活动，共享周期任务必须存在（全关时它本来被取消了）
+                    WenquActivityAlertReminder.onPinChanged(context)
+                    vm.closeDetail()
+                    snackbar.showNotice(
+                        "已盯上「${activity.title.ifBlank { "这条活动" }}」· 去蹲点页开蹲",
+                    )
+                }
+            },
         )
     }
 }

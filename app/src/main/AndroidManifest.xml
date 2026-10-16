@@ -294,6 +294,20 @@
             android:name=".ui.reminder.WenquWeeklyAlertReceiver"
             android:exported="false" />
 
+        <!-- 预报名（DESIGN §4.45，2026-10-16）：精确闹钟落点直接拉起短时前台服务
+             （精确闹钟触发属于「允许从后台启动前台服务」的官方豁免，见 .agents/rules/wenqu.md）；
+             起不来时由它排一条一次性 Work 兜底。 -->
+        <receiver
+            android:name=".ui.wenqu.WenquPreregAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 预报名执行（DESIGN §4.45，2026-10-16）：短时前台服务（约 3 分钟额度），
+             只在「排了预报名 + 到点」这几分钟里存在；执行完自退，平时零常驻。 -->
+        <service
+            android:name=".ui.wenqu.WenquPreregService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
+
         <!-- 洗衣完成提醒（DESIGN §4.37）：U净 订单洗涤中的精确闹钟落点——到点查一次
              订单详情，已完成发「衣服洗好了」，还在跑按新剩余时间重排 -->
         <receiver

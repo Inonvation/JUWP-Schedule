@@ -835,6 +835,7 @@ UI 规格见 §3.28。
 | 登录 | `POST /api/login` | `{account:手机号, password}` → `{token, expires_time}`；**账号是手机号，学号不行** |
 | 我的记录 | `POST /api/volunteer/my` | `{status:"", start_time:"", end_time:""}` → `total_score` + `list`（我参加过的） |
 | 星级证书 | `POST /api/volunteer/star_cert` | `{}` → `volunteer_score_total` + `star_level` |
+| **证书 PDF** | `GET /api/volunteer/star_cert/download` | 无参 → `pdf_base64` + `filename` + `size`（**JSON，不是文件流**）；2026-10-15 实测 |
 | **活动列表** | `POST /api/volunteer/v2` | `{page, limit, keyword}` → `list` + `qj_count` / `qx_count` / `isBlack` / `stop_apply_reason`；**需要登录**（无 token 回 `410000 请登录`） |
 | **活动详情** | `POST /api/volunteer/detail/{id}` | id 走路径、请求体 `{}` → `detail` + `apply`；**工时 `score` 与活动群号 `group_id` 只有这里才有**，`apply` 段 = 我对这条活动的报名（报名 id / 状态） |
 | **报名**（写） | `POST /api/volunteer/apply` | `{"id": <活动id>}`；实测 `{}` / `id=0` → `参数错误`（id 必填）、id 不存在 → `服务项目不存在或已下架`（它查的是**活动**）⇒ `id` 是活动 id |
@@ -1011,34 +1012,71 @@ UI 规格见 §3.28。
 - **只发一种请求**：每轮 1 个 `volunteer/v2` 第一页（`GRAB_PAGE_LIMIT = 30`、空关键词）；
   不拉工时 / 星级 / 详情、不整份重抓。成功后 `mergeNewest` 并进快照并推 `syncedAt`
   （探测 = 一次「只看最新」的同步，页面列表跟着新，不需要下拉）。
-- **短超时**：探测走单独派生的 `probeApi`（`WenquApi.create(GRAB_REQUEST_TIMEOUT_S = 6)`）；
-  共享那份 30 秒**不动**（登录 / 详情 / 写操作靠它）。`prewarmSession` 在开蹲时先把
-  token 换新，可能的登录请求不挤进 12:00 的第一轮。
-- **串行 + 退避**：上一轮不回来不发下一轮；成功间隔 `GRAB_POLL_INTERVAL_MS = 3` 秒，
-  连续失败按 `grabNextDelayMs` 逐档退避到 `GRAB_BACKOFF_MAX_MS = 12` 秒封顶，成功恢复。
-- **窗口**：`grabDetectStartAt`——周日 11:50–11:59:50 之间开始先待机到 11:59:50
-  （`GRAB_PREROLL_MS` = 发布前 10 秒），其余时刻立即开跑；检测窗口 `GRAB_WINDOW_MS = 10`
-  分钟 + `GRAB_MAX_CHECKS = 300` 次安全阀（`grabShouldStop`）。
-- **命中 = `grabFirstMatch`**：在**整份快照**里找第一条「`matchesKeyword` 匹配 +
-  `applyBlockReason` 为空」的活动——**不是只扫探测那一页**（2026-10-11 点验报「有招募中且
+- **短超时（两档，2026-10-16）**：常规探测走 `probeApi`（6 秒）、发布窗口内走 `burstApi`
+  （`GRAB_BURST_TIMEOUT_S = 3` 秒）；共享那份 30 秒**不动**（登录 / 详情 / 写操作靠它）。
+  `prewarmSession` 在开蹲时先把 token 换新，可能的登录请求不挤进 12:00 的第一轮。
+- **串行 + 退避（2026-10-16 改）**：上一轮不回来不发下一轮；成功间隔
+  `GRAB_POLL_INTERVAL_MS = 3` 秒，连续失败**窗口外**按 `grabNextDelayMs` 逐档退避到
+  `GRAB_BACKOFF_MAX_MS = 12` 秒封顶 + **±20% 抖动**（`jitteredDelayMs`，防节奏指纹），
+  成功恢复。**窗口内失败也走 1 秒快重试**——原先失败照退避 6/9/12 秒，而 12:00 的拥堵
+  恰好表现为超时，于是最该续命的时候反而最沉默。**发布窗口** =
+  `[publishAt - GRAB_BURST_BEFORE_MS(20 秒), publishAt + GRAB_BURST_AFTER_MS(15 秒)]`
+  （前缘 2026-10-16 由 5 秒放宽到 20 秒——平台写接口会**提前约 10 秒放行**），成功与失败
+  都加密到 `GRAB_POLL_INTERVAL_FAST_MS = 1` 秒。`publishAt` 由 `grabPublishAt`（周日 12:00，
+  非周日回 0）给；**串行设计**保证高峰时自然退化成服务器响应速度，加密不会雪崩。
+- **窗口（2026-10-16 重做）**：点「开始蹲点」**立即检测，不再待机到 11:59:50**（旧
+  `grabDetectStartAt` 已删）；检测窗口 `GRAB_WINDOW_MS = 10` 分钟、开始早于发布时锚到
+  「发布 + 10 分钟」（`grabWindowEndAt` 取两口径较晚者）+ `GRAB_MAX_CHECKS = 900` 次
+  安全阀（`grabShouldStop`）。**离发布超过 5 分钟**走 10 秒慢档
+  （`GRAB_POLL_INTERVAL_RELAXED_MS`）。
+- **命中 = `grabFirstMatch`**：在**整份快照**里找第一条「（`matchesKeyword` 匹配 **或** 是盯着的
+  那条）+ `applyBlockReason` 为空」的活动——**不是只扫探测那一页**（2026-10-11 点验报「有招募中且
   匹配的活动却不弹」，根因是多数招募活动不在最新 30 条里）。会话内 `shownHitIds` 去重：
   同一条只弹一次，**弹过检测继续**（先弹到旧一批、12:00 新品出现还会再弹）；
   报名成功 / 手动停止 / 窗口到点才收工。
-- **不自动提交**：命中只弹 `WenquGrabHitDialog`（确认报名 / 先看看 / 关闭），报名仍走
-  `writeOnce` 单发写路径。目标名 `wenqu_grab_keyword` 落盘预填，输入框随时可改
-  （检测中每轮读最新值）；「过滤已满」复用 `wenqu_hide_full`；
-  探测回 `isBlack` → 立即停 + 平台原话。
-- 页面侧：命中直接震动 + 弹窗开着暂停探测 + 蹲点期间屏幕常亮；**离开页面即停止**，
-  **不做后台 / 息屏轮询**（Android 限制 + MIUI 冻结且弹窗弹不出来，一期明确不做）。
+- **盯指定活动**（2026-10-15；2026-10-16 改并发 + 短超时，`wenqu_grab_pinned_id`）：盯了就在
+  每轮**额外**拉那一条的详情（`refreshIndexItem`，绕过详情缓存）并替换快照里同 id 那条——
+  快照深层条目的名额会冻住（`mergeNewest` 只刷新最新一页），**已满的老活动空出名额只有这一路
+  看得见**。命中判定里它**优先于名字匹配**且不看名字：已满 → 一直不命中，`balance_num` 转正
+  才弹。**与列表探测并发发**（`coroutineScope + async`）——原先串行在后、还挂 30 秒超时。
+- **盯着的活动名额空出 → 后台通知**（2026-10-15）：搭第五路共享周期任务
+  （`WenquActivityAlertReminder.checkPinnedSlot`，**不新开 WorkManager 任务**）——每轮多拉一次
+  盯着那条的详情，空出就发通知 + 入箱，同一条只报一次。**不挂开关**（盯 = 显式选择）、
+  **不过免扰时段**（名额空出是当下要动的事）。**粒度 = 共享任务间隔**（盯了活动压到
+  `GRAB_PIN_CHECK_INTERVAL_HOURS = 1`），所以只救冷活动；秒级热活动得靠前台蹲点。
+  通知 id 1016 / requestCode 3015 / 渠道复用 `wenqu_activity`。
+- **蹲点不自动提交**：命中只弹 `WenquGrabHitDialog`（确认报名 / 先看看 / 关闭），报名仍走
+  `writeOnce` 单发写路径；自动提交只发生在用户单独开启的「预报名」（见下节）。目标名
+  `wenqu_grab_keyword` 落盘预填，输入框随时可改（检测中每轮读最新值）；「过滤已满」复用
+  `wenqu_hide_full`；探测回 `isBlack` → 立即停 + 平台原话。
+- 页面侧：命中**震动 + 提示音**（`ReminderVibration` + `ReminderChime`，2026-10-15 加音，
+  用户可能没盯着屏幕）+ 弹窗开着暂停探测 + 蹲点期间屏幕常亮 + 状态行给「上轮耗时 / 连败」
+  诊断（2026-10-16）；**离开页面即停止**，蹲点**不做后台 / 息屏轮询**（Android 限制 + MIUI
+  冻结且弹窗弹不出来）——无人值守场景走下面的「预报名」。
+
+**预报名（准点自动抢，2026-10-16；用户拍板）**：用户口径——平台**写接口会提前约 10 秒
+放行**（活动写着 12:00 开始报名，11:59:50 就能抢），手点抢不过；要「选好活动、到点全自动」。
+**全 App 唯一允许自动提交的路径**，只对用户点名的单条活动生效。分层：
+`ui/wenqu/WenquPreregReminder.kt`（落盘 + 精确闹钟 4008 + 兜底 Work + 通知 1017 / 落点 3016）+
+`WenquPreregRunner.kt`（执行器：T−60s 预热与并发校对 → T−15s 起串行试发，每发失败先只读核对；
+≤20 发 / ≤150 秒 / 开始后 ≤90 秒三闸收工；平台话术分类 `WenquRules.classifyPreregReject`）+
+`WenquPreregService.kt`（`shortService` 短时前台服务——精确闹钟触发属官方豁免，同骑行那条链）+
+`data/wenqu/WenquServerClock.kt`（`Date` 头时钟偏移，试发窗口按服务器钟折算）。
+入口在详情弹层（`applyBlockReason == APPLY_NOT_STARTED` 才给按钮 + `WenquPreregConfirmDialog`
+二次确认；已排上显示「已预报名」状态行可取消）。**写请求不自动重发**：网络类失败只读核对后
+再决定。细则见 `.agents/rules/wenqu.md`「预报名」节。
 
 **本地凭证**：独立文件 `secure_wenqu`（`EncryptedSharedPreferences`，**含密码**，与一卡通查询密码
 同级），自愈三段照抄 `QzxySessionStore`；**两份备份排除 xml 都要登记**（正式件 + `.fallback`）。
 存 token 的 `expiresAt`（从 JWT 解）+ 工时影子（`hours` / `hoursFetchedAt`，30 分钟 TTL）。
 
-**红线**：① **写操作只有用户显式触发的四处**——发码 / 设密码 / **报名** / **取消报名**，
-一律只发一次、失败不自动重试（`WenquRepository.writeOnce`）；**签到（`volunteer/checkin`）与
-提交材料类（`*_submit`）仍不碰**——它们有到点 / 定位语义，不是「一次点击」能安全覆盖的。
-报名 / 取消都先过二次确认，失败原因留在弹层里（页面级 Snackbar 会被弹层盖住）；
+**红线**：① **写操作只有用户显式触发的路径**——发码 / 设密码 / **报名** / **取消报名**，
+一律只发一次、失败不自动重试（`WenquRepository.writeOnce`）；报名失败是网络类错误时补一次
+**只读核对**（「其实报上了」不当失败报，2026-10-16）。**唯一例外 = 预报名**（见上节，
+2026-10-16 用户拍板：只对点名的单条活动、有限窗口与次数内自动试发）；**签到
+（`volunteer/checkin`）与提交材料类（`*_submit`）仍不碰**——它们有到点 / 定位语义，不是
+「一次点击」能安全覆盖的。报名 / 取消都先过二次确认，失败原因留在弹层里（页面级 Snackbar
+会被弹层盖住）；
 ② **无日志拦截器**，手机号 / 密码 / token / 负责人姓名电话不进 Logcat；③ 响应里的他人信息**分两档**
 （2026-10-08 起）：`leader_name` / `leader_phone`（活动负责人）**已声明进模型**、在详情弹层展示
 （电话可长按复制），但**只展示**——不进日志、不进持久化、不进夹具与文档（仓库是公开的，
@@ -1046,13 +1084,14 @@ UI 规格见 §3.28。
 `username` / `student_no` **都不声明**，`ignoreUnknownKeys` 下连内存都不进
 （`WenquModelsTest` 有兜底用例：toString 里出现即红）。
 
-**测试**：`WenquRulesTest` 61 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
+**测试**：`WenquRulesTest` 71 例（续期时机 / 5 分钟冷却 / 手机号正则与脱敏 / JWT 取 exp /
 星级与工时文案 / 状态文案 / 时间戳与时间段 / 名额文案 / 「满了没」/ 本地筛选两维叠加 /
 展示排序权重 / 报名限制文案 / 筛选哨兵 / 新增活动判据 / 活动提醒间隔档位与兜底 /
 **报名闸门六例**——可报回空串 / 被限制与已报名先说 / 状态各档 / 时间窗口 / 名额已满排最后 /
-活动视角取消入口只给已报名且招募中 / **蹲点八例**——周日待机时刻 / 10 分钟窗口 /
-退避序列与封顶 / 收工判据 / 命中筛选四例（匹配即命中 / 不能报名的跳过 / 空关键词不猜 /
-被限制不弹））
+活动视角取消入口只给已报名且招募中 / **蹲点八例（2026-10-16 改）**——窗口锚定（早于发布
+锚到发布后十分钟）/ 轮询四档（窗口内 1 秒 / 近发布 3 秒 / 远发布 10 秒 / 窗口内失败也快试）/
+退避序列与封顶 / 抖动边界 / 收工判据（900 次）/ 命中筛选四例 / **预报名六例**——闹钟与试发
+时刻（服务器钟）/ 三闸收工 / 时刻文案 / 平台话术分类 / 判据常量 / `Date` 头解析与偏移）
 + `WenquModelsTest` 21 例（信封判定 / 发码双 200 只看 msg / 数字与字符串两种工时 /
 记录带地点与报名时间 / 记录→活动映射与 `status` 钉 -1 / 自主类 id 收 0 / 负责人进模型而考勤人不进 /
 记录转活动带负责人 / 报名限制标记 / 活动列表与详情解析 / 忽略未知字段 / `data:null` 容错 /
