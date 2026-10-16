@@ -492,22 +492,17 @@ private fun BoardHouseRow(row: UjingBoardRow, onRemove: () -> Unit) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(row.house.name, style = MaterialTheme.typography.bodyLarge)
-            val subtitle = when {
-                row.failed -> "获取失败，点「刷新」重试"
-                row.line == null -> "该店暂无洗衣机数据"
-                else -> listOfNotNull(row.line.primaryText, row.line.secondaryText)
-                    .joinToString(" · ")
+            if (row.failed) {
+                BoardSubtitle("获取失败，点「刷新」重试", highlight = false)
+            } else {
+                row.line?.let { BoardSubtitle(boardLineText(it), highlight = it.free > 0) }
+                row.dryerLine?.let {
+                    BoardSubtitle("烘干机 ${boardLineText(it)}", highlight = it.free > 0)
+                }
+                if (row.line == null && row.dryerLine == null) {
+                    BoardSubtitle("该店暂无设备数据", highlight = false)
+                }
             }
-            val highlight = !row.failed && (row.line?.free ?: 0) > 0
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (highlight) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                },
-            )
         }
         IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
             Icon(
@@ -518,6 +513,24 @@ private fun BoardHouseRow(row: UjingBoardRow, onRemove: () -> Unit) {
             )
         }
     }
+}
+
+/** 看板一行文案：主 + 可选副（如「空闲 2/4」「暂无空闲 · 约等 15 分钟」）。 */
+private fun boardLineText(line: UjingState.BoardLine): String =
+    listOfNotNull(line.primaryText, line.secondaryText).joinToString(" · ")
+
+/** 看板行的一行小字（洗衣机 / 烘干机 / 失败 / 空态共用）：[highlight] 时空闲数走主色。 */
+@Composable
+private fun BoardSubtitle(text: String, highlight: Boolean) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (highlight) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+        },
+    )
 }
 
 // ── 扫码识别 ──
@@ -653,7 +666,7 @@ private fun OrderSection(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    order.statusRemarkFallback,
+                    UjingState.statusLabel(order.status, order.statusRemark),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -741,9 +754,41 @@ private fun OrderSection(
     }
 }
 
-/** 订单状态文案：服务端 statusRemark 优先，本地表兜底。 */
-private val UjingOrderSnapshot.statusRemarkFallback: String
-    get() = UjingState.statusText(status)
+/**
+ * 在案订单的紧凑状态行（生活页 U净 弹窗复用）：设备名 + 状态文案 + 洗涤中剩余时间。
+ * 剩余时间以快照时刻本地换算（不请求）；是否显示由调用方定（如仅非终结订单）。
+ */
+@Composable
+internal fun UjingOrderStatusLine(order: UjingOrderSnapshot, modifier: Modifier = Modifier) {
+    val running = order.status == "40"
+    val now by produceState(
+        initialValue = System.currentTimeMillis(),
+        key1 = order.snapshotAt,
+        key2 = running,
+    ) {
+        while (running) {
+            value = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val remain = UjingState.liveRemainSeconds(order.status, order.remainSeconds, order.snapshotAt, now)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            order.deviceName.ifBlank { "洗衣机" },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            buildString {
+                append(UjingState.statusLabel(order.status, order.statusRemark))
+                if (running && order.remainSeconds > 0) {
+                    append(" · 剩余 ").append(UjingState.remainText(remain))
+                }
+            },
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
 
 // ── 附近洗衣房弹层 ──
 

@@ -1,7 +1,9 @@
 package edu.jxslu.schedule.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** U净 纯逻辑：金额 / 扫码徽标 / 看板聚合（DESIGN §4.37）。 */
@@ -93,6 +95,21 @@ class UjingStateTest {
         assertEquals(9, UjingState.dryTimeFor(90))
     }
 
+    // ---- 烘干机判定 ----
+
+    @Test
+    fun isDryerByTypeOrFallback() {
+        // type==2 为准（协议事实）
+        assertTrue(UjingState.isDryer(type = 2, deviceTypeId = 2, deviceTypeName = "滚筒洗衣机"))
+        // type 没给对时靠 deviceTypeId==3 兜底
+        assertTrue(UjingState.isDryer(type = 1, deviceTypeId = 3, deviceTypeName = ""))
+        // 再靠机型名兜底（与看板同一「烘干 / 干衣」判据）
+        assertTrue(UjingState.isDryer(type = 1, deviceTypeId = 1, deviceTypeName = "烘干机"))
+        assertTrue(UjingState.isDryer(type = 1, deviceTypeId = 1, deviceTypeName = "干衣机"))
+        // 洗衣机不误判
+        assertFalse(UjingState.isDryer(type = 1, deviceTypeId = 1, deviceTypeName = "滚筒洗衣机"))
+    }
+
     // ---- 投放加购 ----
 
     @Test
@@ -105,17 +122,17 @@ class UjingStateTest {
     @Test
     fun addonDefaultsFollowForcedDeclarationForWashers() {
         // 洗衣机业务：机型声明强制投放的默认勾上，用户可在结果卡里改
-        assertEquals(true to true, UjingState.addonDefaults(1, true, true))
-        assertEquals(true to false, UjingState.addonDefaults(1, true, false))
-        assertEquals(false to true, UjingState.addonDefaults(1, false, true))
-        assertEquals(false to false, UjingState.addonDefaults(1, false, false))
+        assertEquals(true to true, UjingState.addonDefaults(false, true, true))
+        assertEquals(true to false, UjingState.addonDefaults(false, true, false))
+        assertEquals(false to true, UjingState.addonDefaults(false, false, true))
+        assertEquals(false to false, UjingState.addonDefaults(false, false, false))
     }
 
     @Test
     fun addonDefaultsAlwaysOffForDryers() {
         // 烘干机没有投放概念（下单 body 也不发档位字段）——即使声明了强制也恒 false
-        assertEquals(false to false, UjingState.addonDefaults(2, true, true))
-        assertEquals(false to false, UjingState.addonDefaults(2, false, false))
+        assertEquals(false to false, UjingState.addonDefaults(true, true, true))
+        assertEquals(false to false, UjingState.addonDefaults(true, false, false))
     }
 
     // ---- 看板聚合 ----
@@ -155,5 +172,35 @@ class UjingStateTest {
         val line = UjingState.boardLine(listOf(UjingState.BoardGroup("洗衣机", 0, 3, 0)))!!
         assertEquals("暂无空闲", line.primaryText)
         assertNull(line.secondaryText)
+    }
+
+    @Test
+    fun dryerLineSumsDryersOnly() {
+        val line = UjingState.dryerLine(
+            listOf(
+                UjingState.BoardGroup("滚筒洗衣机", 2, 4, 0),
+                UjingState.BoardGroup("烘干机", 1, 2, 0),
+            ),
+        )!!
+        assertEquals("空闲 1/2", line.primaryText)
+        assertNull(line.secondaryText)
+    }
+
+    @Test
+    fun dryerLineWaitWhenAllBusy() {
+        val line = UjingState.dryerLine(
+            listOf(
+                UjingState.BoardGroup("烘干机", 0, 3, 25),
+                UjingState.BoardGroup("干衣机", 0, 1, 10),
+            ),
+        )!!
+        assertEquals("暂无空闲", line.primaryText)
+        assertEquals("约等 10 分钟", line.secondaryText)
+    }
+
+    @Test
+    fun dryerLineNullWithoutDryers() {
+        assertNull(UjingState.dryerLine(listOf(UjingState.BoardGroup("滚筒洗衣机", 2, 4, 0))))
+        assertNull(UjingState.dryerLine(emptyList()))
     }
 }

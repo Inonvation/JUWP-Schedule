@@ -127,6 +127,21 @@ class UjingRepository(
     }
 
     /**
+     * debug 专用：把 `devices/reserve` 的原始响应整包落盘，一店一份。补的样本用途：
+     * 看板只映射了 `device{deviceTypeName,free,total,waitTime}`——`total` 含不含离线设备、
+     * 有没有 online / offline 之类的字段，只有原始响应能答（「烘干机在线状态」要靠它定）。
+     * 响应体不含凭证（token 在请求头），落盘失败静默；release 恒不落盘。
+     */
+    private fun dumpDevicesReserve(storeId: String, envelope: UjingEnvelope) {
+        val dir = debugDumpDir ?: return
+        runCatching {
+            dir.mkdirs()
+            val safe = storeId.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+            File(dir, "devices_reserve_$safe.json").writeText(QiekjJson.json.encodeToString(envelope))
+        }
+    }
+
+    /**
      * debug 专用：把 `devices/scanWasherCode` 的**二维码原文与响应**整包落盘，一个码型一份。
      *
      * 补的样本有两处用处：
@@ -170,21 +185,27 @@ class UjingRepository(
         withContext(Dispatchers.IO) {
             val envelope = api.devicesReserve(requireSession().token, storeId)
             envelope.requireSuccess()
+            dumpDevicesReserve(storeId, envelope)
             envelope.decodeData<UjingReserveData>()?.devices.orEmpty().mapNotNull { it.device }
         }
 
     /** 设备统计 → 看板行（domain 纯逻辑）；没有洗衣机类型时返回 null。 */
     fun boardLine(groups: List<UjingDeviceGroup>): UjingState.BoardLine? =
-        UjingState.boardLine(
-            groups.map {
-                UjingState.BoardGroup(
-                    typeName = it.deviceTypeName,
-                    free = it.free,
-                    total = it.total,
-                    waitMinutes = it.waitTime,
-                )
-            },
-        )
+        UjingState.boardLine(boardGroups(groups))
+
+    /** 设备统计 → 烘干机看板行；没有烘干机类型时返回 null。 */
+    fun dryerLine(groups: List<UjingDeviceGroup>): UjingState.BoardLine? =
+        UjingState.dryerLine(boardGroups(groups))
+
+    private fun boardGroups(groups: List<UjingDeviceGroup>): List<UjingState.BoardGroup> =
+        groups.map {
+            UjingState.BoardGroup(
+                typeName = it.deviceTypeName,
+                free = it.free,
+                total = it.total,
+                waitMinutes = it.waitTime,
+            )
+        }
 
     // ── 订单链（P2） ──
 
@@ -287,6 +308,8 @@ class UjingRepository(
                 ?: data.payPrice?.toDoubleOrNull()?.let { Math.round(it * 100).toInt() }
                 ?: 0,
             status = data.status.orEmpty(),
+            // 服务端文案优先（非空才覆盖，本次没给就沿用旧值，别把已有文案清掉）
+            statusRemark = data.statusRemark.orEmpty().ifBlank { current?.statusRemark.orEmpty() },
             remainSeconds = data.remainTime,
             snapshotAt = System.currentTimeMillis(),
             paid = data.payFlag == 1,

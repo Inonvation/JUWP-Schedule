@@ -104,6 +104,39 @@
   `adb shell run-as edu.jxslu.schedule.debug cat files/ujing_debug/program_info_<id>.json`。
   响应体不含凭证，落盘失败静默；release 恒不落盘。
 
+## 订单守卫与看板（2026-10-16 优化，改前重读）
+
+- **终结态订单不挡新单**：`UjingViewModel.confirmPreparedOrder` 只在快照**未终结**时才可能拦。
+  完成 / 取消 / 超时 / 失败的快照要留到用户点「知道了」（卡片要展示结果），但业务上它已不在案
+  ——拿它拦新单就是「洗完再扫烘干机、先报上一单没完成」的 bug。快照还可能停在旧值「洗涤中」
+  （轮询只在 U净 页可见时跑），所以有非终结快照时**先 `repo.refreshOrder` 对一次**：服务端说
+  结束了就放行，仍进行中才拦；**刷新失败保守拦住**（写操作零自动重试），会话过期的提示由
+  `handleFailure` 发、别再叠一条。
+- **看板每行两条**：`UjingBoardRow` 的 `line`（洗衣机）与 `dryerLine`（烘干机），同由
+  `UjingState.boardLine` / `dryerLine` 聚合（共用 `lineFor`）；UI 出「烘干机 空闲 N/M」。
+- **生活页 U净 卡弹窗显示洗涤状态**：弹窗只读 `Graph.ujing().orderState`；**订单对表在打开弹窗
+  那一下做**（`LifeScreen` 的点击处，10 秒节流，见 `UJING_ORDER_REFRESH_TTL_MILLIS`——快照只在
+  U净 页轮询，不这样拿到的是下单时的旧状态）。非终结订单顶部出
+  `ui/ujing/UjingScreen.UjingOrderStatusLine`（设备名 + 状态 + 洗涤中剩余时间，本地每秒换算）。
+- **状态文案服务端优先**：`refreshOrder` 把 `detail.statusRemark` 存进快照
+  （`UjingOrderSnapshot.statusRemark`，旧快照读成空串），展示统一走
+  `UjingState.statusLabel(status, remark)`——服务端文案非空优先、本地表兜底。**别再直接
+  `statusText(status)`**（订单卡与生活页弹窗两处都改了）。
+- **进页对表走静默**：`loggedIn` 收集器里那次 `refreshOrder` 用 `silent = true`（进页补数据不该
+  把订单卡按钮闪成加载圈）。
+- **协议样本采集**：除 `program/info` 外，`devices/reserve` 也整包落盘
+  （`filesDir/ujing_debug/devices_reserve_<storeId>.json`，debug 专用、一店一份）——「烘干机在线
+  状态」到底能显示什么，只能靠它答（看板只映射了 `deviceTypeName/free/total/waitTime`）。
+
+## 烘干机（2026-10-16，改前重读）
+
+- **判定 `UjingState.isDryer(type, deviceTypeId, deviceTypeName)`**：`program.type == 2` 为准
+  （协议事实），`deviceTypeId == 3` 与机型名含「烘干 / 干衣」兜底（与看板同一判据）。
+  **请求体仍按服务端 `type` 字段发**（无样本不臆测协议），这里只管 UI 展示判定。
+- 下单页：烘干机档位区标题「烘干时长」、`ModelCard` 标题以时长为主（`烘干 N 分钟`，副行只留价格）；
+  **水温 / 投放选项整块不出**（都是洗衣概念），`addonDefaults(isDryer, …)` 恒不勾。
+- 烘干时长沿用服务端下发的 `deviceWashModel`（每档即一个时长，`dryTime = 时长 / 10`），不另造档位。
+
 ## 命名与文案
 
 - 页面显示名「U净」（用户 2026-10-01 拍板，不用「洗衣房」）；模块与包名用 `ujing`。

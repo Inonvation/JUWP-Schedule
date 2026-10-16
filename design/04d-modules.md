@@ -324,7 +324,9 @@ JS + 实测样本建，**第一次真实提交才能完全校准**——联调�
 ```
 domain/UjingState.kt             纯逻辑：fen2yuan / scanBadge（空闲·使用中·故障·离线）/
                                  moduleTypeLabel（P3 通道判据）/ 状态映射 · 启停取消窗口 ·
-                                 受理判定（0 / 1703+0）/ 倒计时文案 / boardLine——JVM 直测
+                                 受理判定（0 / 1703+0）/ 倒计时文案 / boardLine · dryerLine
+                                 （看板聚合，共用 lineFor）/ isDryer（烘干机判定）/
+                                 liveRemainSeconds（本地倒计时换算）——JVM 直测
 data/ujing/UjingApiConfig.kt     网关与两组指纹（版本号全在这里）
 data/ujing/UjingApi.kt           裸 OkHttp：send 剥壳、两组头按调用点显式切换；无日志拦截器
 data/ujing/UjingModels.kt        壳 / DTO / 宽容数值与布尔 / 会话失效判定（401·-99·文案兜底）
@@ -333,8 +335,9 @@ data/ujing/UjingHouseStore.kt    收藏洗衣房（普通 prefs：storeId|名称
 data/ujing/UjingOrderStore.kt    在案订单快照（普通 prefs + StateFlow 双写，QzxyWateringStore
                                  模式；**订单号必须跨进程存活**——重启丢 orderId 服务端就
                                  无从签发指令，社区实测教训。快照另带 createdAt（下单时刻，
-                                 支付窗口倒计时基准）与 durationSeconds（模式总时长，
-                                 洗涤进度条分母），两者只在下单时写、刷新原样保留）
+                                 支付窗口倒计时基准）、durationSeconds（模式总时长，
+                                 洗涤进度条分母）与 statusRemark（服务端状态文案，展示优先；
+                                 旧快照无此字段读成空串），三者只在下单/刷新时写）
 data/ujing/UjingAlipay.kt        官方支付宝 SDK 薄封装：PayTask.payV2 → 四态（9000/8000/6001/其余，
                                  8000 确认中必须对表后定文案）；
                                  orderInfo 服务端签发，App 不经手资金
@@ -347,8 +350,11 @@ data/ujing/UjingHistoryStore.kt  历史账单（prefs JSON ≤50 笔 + StateFlow
 ui/ujing/UjingScreen|ViewModel   主页与状态：看板并发限 4（Semaphore）、60s 冷却双保险、
                                  使用须知窗口（3 秒锁 + 一周静默）、订单卡（本地秒级倒计时 +
                                  页面可见 15s 轮询）、扫码成功开草稿发导航事件；
-                                 **下单 / 支付的执行点在这里**（下单页交回选择后走同一条链）；
-                                 loggedIn 收集器统一接「登录成功补数据」（订单对表 + 看板重拉）
+                                 **下单 / 支付的执行点在这里**（下单页交回选择后走同一条链；
+                                 confirmPreparedOrder 只在快照**未终结**时才拦，先对服务端再决定，
+                                 2026-10-16）；看板每行洗衣机 + 烘干机两条；UjingOrderStatusLine
+                                 （状态 + 洗涤剩余，生活页弹窗复用）；loggedIn 收集器统一接
+                                 「登录成功补数据」（订单对表 + 看板重拉）
 ui/ujing/UjingOrderScreen        下单页：档位单选（AppCard 高亮即选中）· 水温 / 投放 chips ·
                                  贴底动作条（摘要 + 下单）· 确认弹层；确认 = submit + 关窗；
                                  草稿丢失（进程回收后重进）给一句话引导返回
@@ -379,8 +385,9 @@ ui/reminder/UjingDoneReminder    洗衣完成提醒：setAlarmClock 单点 + Wor
 **红线**（与 `.agents/rules/ujing.md` 同口）：不绕过支付、只操作本人有使用权的设备；写操作
 零自动重试 + 二次确认；登录节制（高频登录会被服务端限制数十分钟，社区实测）；不后台轮询
 （订单轮询限"页面可见 + 15s"）；token 只进 `secure_ujing`、绝不进日志；**启动前必须先查订单
-状态**（服务端对已运行订单返回 `{}` 静默拒绝，status ∈ {40,50} 直接禁启动按钮）；已有在案
-订单不允许叠单；不复制 GPL/AGPL 参考项目的代码。
+状态**（服务端对已运行订单返回 `{}` 静默拒绝，status ∈ {40,50} 直接禁启动按钮）；**未终结**的
+在案订单不允许叠单（终结态快照不挡新单：确认前先对一次服务端，2026-10-16）；不复制
+GPL/AGPL 参考项目的代码。
 
 **已验证（2026-10-01，P1+P2）**：`UjingStateTest` 13 例 + `UjingApiParseTest` 10 例 +
 `UjingOrderStateTest` 6 例 + `UjingOrderParseTest` 8 例；全量 **1262 例 0 失败**；
@@ -390,6 +397,17 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 体验补——开放水温的机器出温度 chips、洗涤中进度条、洗好通知（可锁屏等它到点）。
 遗留待实测：② JWT 有效期（登录后 base64 解 `exp`）；③ 学校机型 `moduleType`
 （1/5 = 纯蓝牙 → P3 走 BLE；0/2/3/4/7 → 云端启动已通）。
+
+**2026-10-16 优化**（四项 + 同日收口）：① **终结态订单不挡新单**——`confirmPreparedOrder` 只在快照
+未终结时才拦，有非终结快照先 `refreshOrder` 对一次（服务端说结束了就放行，刷新失败保守拦住）；
+② 看板每行在洗衣机之外再出**烘干机空闲行**（`UjingState.dryerLine`）；③ 生活页「U净 · 洗衣房」卡的
+底部弹窗顶部显示**在案订单状态 + 洗涤剩余**（`UjingOrderStatusLine`；订单对表挪到打开弹窗那一下、
+10 秒节流）；④ **烘干机**：`UjingState.isDryer`（type==2 为准，deviceTypeId / 机型名兜底）判定，
+下单页标题「烘干时长」、档位以时长为主，**水温 / 投放整块不出**。收口：⑤ `detail.statusRemark`
+存进快照、展示走 `UjingState.statusLabel`（服务端文案优先、本地表兜底）；⑥ 进页对表改静默；
+⑦ `devices/reserve` 也整包落盘（`ujing_debug/devices_reserve_<storeId>.json`，debug 专用）。
+单测：`UjingStateTest` 20 例 + `UjingOrderStateTest` 8 例，在 HEAD（2.9.0）干净副本上
+`testDebugUnitTest` + `assembleDebug` 通过（全量 1918 例 0 失败）。
 
 ---
 

@@ -37,11 +37,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** 看板一行。[line] 为 null 且 [failed] 为 false 时表示该店没有洗衣机统计。 */
+/**
+ * 看板一行：[line] 是洗衣机聚合，[dryerLine] 是烘干机聚合（各自为 null = 该店没有这类
+ * 设备）；[failed] = 该店拉取失败。
+ */
 data class UjingBoardRow(
     val house: UjingHouse,
     val line: UjingState.BoardLine?,
     val failed: Boolean,
+    val dryerLine: UjingState.BoardLine? = null,
 )
 
 /**
@@ -153,8 +157,9 @@ class UjingViewModel(
                     )
                 }
                 if (loggedIn) {
+                    // 进页补数据走静默：别让订单卡按钮在进页瞬间闪一下加载圈
                     repo.currentOrder()?.takeIf { order -> !order.isTerminal }
-                        ?.let { order -> refreshOrder(order.orderId) }
+                        ?.let { order -> refreshOrder(order.orderId, silent = true) }
                     refreshBoard()
                     // 扫到机身码时还没登录：登录成功后接着把那次识别跑完，用户不用重扫
                     pendingScan?.let { (raw, at) ->
@@ -290,7 +295,12 @@ class UjingViewModel(
                         runCatching { limiter.withPermit { repo.devicesReserve(house.storeId) } }
                             .fold(
                                 onSuccess = { groups ->
-                                    UjingBoardRow(house, repo.boardLine(groups), failed = false)
+                                    UjingBoardRow(
+                                        house = house,
+                                        line = repo.boardLine(groups),
+                                        failed = false,
+                                        dryerLine = repo.dryerLine(groups),
+                                    )
                                 },
                                 onFailure = { error ->
                                     handleFailure(error)
@@ -398,20 +408,50 @@ class UjingViewModel(
 
     /**
      * 下单页交回选择后的执行入口（二次确认弹层在下单页里，用户点「去支付」才走到这）。
-     * 守卫与旧主页弹层路径一致：在案订单不允许叠单（写操作红线）、忙态拒发。
+     * 守卫：在案订单不允许叠单（写操作红线）、忙态拒发。
+     *
+     * **终结态订单不挡新单**：完成 / 取消 / 超时 / 失败的快照要留到用户点「知道了」，
+     * 但业务上它已不在案——洗完后一直拦新单就是 bug。快照还可能停在旧值「洗涤中」
+     * （轮询只在 U净 页可见时跑），所以有非终结快照时先向服务端对一次：服务端说结束了
+     * 就放行，仍是进行中才拦；刷新失败保守拦住，不冒险重发。
      */
     fun confirmPreparedOrder(selection: UjingDraftStore.OrderSelection) {
         if (orderChainBusy) return
-        if (_uiState.value.order != null) {
-            notify("已有进行中的订单，请先完成或取消")
+        val current = _uiState.value.order
+        if (current == null || current.isTerminal) {
+            createAndPay(
+                model = selection.model,
+                washTemperatureId = selection.temperatureId,
+                addDetergent = selection.addDetergent,
+                addDisinfectant = selection.addDisinfectant,
+            )
             return
         }
-        createAndPay(
-            model = selection.model,
-            washTemperatureId = selection.temperatureId,
-            addDetergent = selection.addDetergent,
-            addDisinfectant = selection.addDisinfectant,
-        )
+        _uiState.update { it.copy(orderBusy = true) }
+        viewModelScope.launch {
+            runCatching { repo.refreshOrder(current.orderId) }
+                .onSuccess { snapshot ->
+                    _uiState.update { it.copy(orderBusy = false) }
+                    if (snapshot.isTerminal) {
+                        createAndPay(
+                            model = selection.model,
+                            washTemperatureId = selection.temperatureId,
+                            addDetergent = selection.addDetergent,
+                            addDisinfectant = selection.addDisinfectant,
+                        )
+                    } else {
+                        notify("已有进行中的订单，请先完成或取消")
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(orderBusy = false) }
+                    handleFailure(error)
+                    // 会话过期的提示已由 handleFailure 发过，别叠第二条
+                    if (error !is UjingSessionExpiredException) {
+                        notify(error.message ?: "订单状态获取失败，请稍后重试")
+                    }
+                }
+        }
     }
 
     /** orders/create → 立即请求支付参数并拉起支付宝。 */

@@ -60,6 +60,20 @@ object UjingState {
         else -> "未知"
     }
 
+    // ── 设备类型 ──
+
+    /** 机型名是否烘干机（看板与下单页共用的「烘干 / 干衣」判据）。 */
+    private fun isDryerName(name: String): Boolean =
+        name.contains("烘干") || name.contains("干衣")
+
+    /**
+     * 是否烘干机业务（下单页据此隐藏水温 / 投放，[addonDefaults] 也用它）。
+     * **`program.type == 2` 为准**（协议事实），`deviceTypeId == 3` 与机型名兜底——
+     * 机型名与看板同一判据。请求体仍按服务端的 `type` 字段发，这里只管展示判定。
+     */
+    fun isDryer(type: Int, deviceTypeId: Int, deviceTypeName: String): Boolean =
+        type == 2 || deviceTypeId == 3 || isDryerName(deviceTypeName)
+
     // ── 订单 ──
 
     /**
@@ -85,6 +99,13 @@ object UjingState {
         else -> "状态 $status"
     }
 
+    /**
+     * 订单卡/状态行展示的状态文案：服务端 `statusRemark` 非空优先，本地表 [statusText]
+     * 兜底（服务端文案更细，本地表管未知状态不编）。
+     */
+    fun statusLabel(status: String, statusRemark: String?): String =
+        statusRemark?.takeIf { it.isNotBlank() } ?: statusText(status)
+
     /** 「启动」按钮可点窗口：待启动 20 / 自洁启动中 22 / 自洁完成 35（社区实测口径）。 */
     fun canStart(status: String): Boolean = status in setOf("20", "22", "35")
 
@@ -104,6 +125,21 @@ object UjingState {
         val m = total / 60
         val s = total % 60
         return if (m > 0) "$m 分 $s 秒" else "$s 秒"
+    }
+
+    /**
+     * 洗涤中订单的本地剩余秒数：以快照时刻 [snapshotAt] 换算（不每秒请求）。非洗涤中
+     * （或旧快照无剩余）原样返回服务端值——订单卡与生活页 U净 弹窗同一口径。
+     */
+    fun liveRemainSeconds(
+        status: String,
+        remainSeconds: Int,
+        snapshotAt: Long,
+        nowMillis: Long,
+    ): Int = if (status == "40" && remainSeconds > 0) {
+        remainSeconds - ((nowMillis - snapshotAt) / 1000L).toInt()
+    } else {
+        remainSeconds
     }
 
     // ── 下单参数 ──
@@ -135,15 +171,15 @@ object UjingState {
     const val DISINFECTANT_STANDARD_GEAR = 4
 
     /**
-     * 扫码后的投放加购默认勾选：仅洗衣机业务（type != 2，与下单 body 的发送
-     * 条件同口径）有投放概念，机型声明强制投放的默认勾上，用户仍可在结果卡里改。
+     * 扫码后的投放加购默认勾选：仅洗衣机业务有投放概念（烘干机恒不勾，[isDryer] 判定），
+     * 机型声明强制投放的默认勾上，用户仍可在结果卡里改。
      */
     fun addonDefaults(
-        type: Int,
+        isDryer: Boolean,
         forceDetergent: Boolean,
         forceDisinfectant: Boolean,
     ): Pair<Boolean, Boolean> =
-        if (type == 2) false to false else forceDetergent to forceDisinfectant
+        if (isDryer) false to false else forceDetergent to forceDisinfectant
 
     /** 未支付订单的机器独占期（秒）：下单后 2 分钟内要完成支付，超时自动取消。 */
     const val PAY_WINDOW_SECONDS = 120L
@@ -189,12 +225,22 @@ object UjingState {
      * 排除法口径），全满时取最短等待。没有任何洗衣机类型时返回 null——该行显示什么
      * 由调用方定，这里不编数据。
      */
-    fun boardLine(groups: List<BoardGroup>): BoardLine? {
-        val washers = groups.filterNot { it.typeName.contains("烘干") || it.typeName.contains("干衣") }
-        if (washers.isEmpty()) return null
-        val free = washers.sumOf { it.free }
-        val total = washers.sumOf { it.total }
-        val wait = washers.filter { it.free <= 0 }
+    fun boardLine(groups: List<BoardGroup>): BoardLine? =
+        lineFor(groups.filterNot { isDryerName(it.typeName) })
+
+    /**
+     * 同一家洗衣房的**烘干机**行：口径与 [boardLine] 完全一致，只是筛的是「烘干 / 干衣」
+     * 类型；没有烘干机类型时返回 null。
+     */
+    fun dryerLine(groups: List<BoardGroup>): BoardLine? =
+        lineFor(groups.filter { isDryerName(it.typeName) })
+
+    /** 一组同类型设备聚合：求和 + 全满取最短等待；空集返回 null。 */
+    private fun lineFor(groups: List<BoardGroup>): BoardLine? {
+        if (groups.isEmpty()) return null
+        val free = groups.sumOf { it.free }
+        val total = groups.sumOf { it.total }
+        val wait = groups.filter { it.free <= 0 }
             .map { it.waitMinutes }
             .filter { it > 0 }
             .minOrNull() ?: 0

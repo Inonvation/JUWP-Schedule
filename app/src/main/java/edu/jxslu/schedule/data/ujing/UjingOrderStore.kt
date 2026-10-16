@@ -54,6 +54,7 @@ class UjingOrderStore(context: Context) {
         put("modelName", s.modelName)
         put("priceFen", s.priceFen)
         put("status", s.status)
+        put("statusRemark", s.statusRemark)
         put("remainSeconds", s.remainSeconds)
         put("snapshotAt", s.snapshotAt)
         put("paid", s.paid)
@@ -72,6 +73,7 @@ class UjingOrderStore(context: Context) {
             modelName = obj.optString("modelName"),
             priceFen = obj.optInt("priceFen"),
             status = obj.optString("status"),
+            statusRemark = obj.optString("statusRemark"),
             remainSeconds = obj.optInt("remainSeconds"),
             snapshotAt = obj.optLong("snapshotAt"),
             paid = obj.optBoolean("paid"),
@@ -101,6 +103,8 @@ data class UjingOrderSnapshot(
     /** 应付金额（分）。 */
     val priceFen: Int = 0,
     val status: String = "",
+    /** 服务端状态文案（`detail.statusRemark`，非空时优先展示）；旧快照无此字段 → 空串。 */
+    val statusRemark: String = "",
     /** 服务端报告的剩余秒数；未开始的订单为 0。 */
     val remainSeconds: Int = 0,
     /** 快照落定时刻（毫秒），本地倒计时基准。 */

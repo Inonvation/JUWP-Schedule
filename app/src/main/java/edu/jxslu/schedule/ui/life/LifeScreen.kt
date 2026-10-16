@@ -122,6 +122,7 @@ import edu.jxslu.schedule.ui.common.ShortcutIcon
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
+import edu.jxslu.schedule.ui.ujing.UjingOrderStatusLine
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.Analytics01
 import me.rerere.hugeicons.stroke.ChevronRight
@@ -134,6 +135,9 @@ import me.rerere.hugeicons.stroke.WashingMachine
 
 /** 充值入口的种类（免责声明放行后决定打开哪个弹层）。 */
 private enum class RechargeKind { Campus, Power }
+
+/** U净 弹窗打开时对订单的节流窗口：10 秒内不重复请求（弹窗开关频繁时不必每次都打）。 */
+private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
 
 /**
  * 生活页（DESIGN 3.13）：钱包卡（一卡通余额主视觉 + 充值 / 付款码 / 账单）→ 校园服务
@@ -223,6 +227,20 @@ fun LifeScreen(
     var showShortcutSheet by remember { mutableStateOf(false) }
     // U净：整行卡 → 底部弹窗（扫码按钮 + 进页副行）
     var showUjingSheet by remember { mutableStateOf(false) }
+    // U净 在案订单：弹窗打开时对一次服务端（快照只在 U净 页可见时轮询，不然是下单时的旧状态）；
+    // 节流窗口内不重复，避免频繁开关弹窗反复打请求
+    val ujingRepo = remember(context) { Graph.ujing(context) }
+    var ujingOrderRefreshedAt by remember { mutableStateOf(0L) }
+    val refreshUjingOrderIfStale: () -> Unit = {
+        val id = ujingRepo.currentOrder()?.orderId
+        val now = System.currentTimeMillis()
+        if (id != null && ujingRepo.loggedIn.value &&
+            now - ujingOrderRefreshedAt > UJING_ORDER_REFRESH_TTL_MILLIS
+        ) {
+            ujingOrderRefreshedAt = now
+            scope.launch { runCatching { ujingRepo.refreshOrder(id) } }
+        }
+    }
     // 快捷方式（预设 + 自定义）：直接订阅仓库那一份，与「取快递」弹窗的分组口径同源
     val shortcutSettings by remember(context) { Graph.repository(context).shortcutSettings }
         .collectAsStateWithLifecycle(initialValue = ShortcutSettings())
@@ -460,6 +478,7 @@ fun LifeScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         onClick = {
                             haptics.tap()
+                            refreshUjingOrderIfStale()
                             showUjingSheet = true
                         },
                     )
@@ -1302,7 +1321,8 @@ private fun AddShortcutTile(modifier: Modifier = Modifier, onClick: () -> Unit) 
 
 /**
  * U净 弹窗（从下弹出）：与胖乖 / 趣智校园那种入口面板同形态。
- * 主按钮「扫码识别洗衣机」，副行进 U净 页。
+ * 有在案洗涤订单时，顶部先显示它的状态与剩余时间（[UjingOrderStatusLine]，订单对表在
+ * 打开弹窗那一下做，见调用点）；主按钮「扫码识别洗衣机」，副行进 U净 页。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1311,6 +1331,9 @@ private fun UjingEntrySheet(
     onScan: () -> Unit,
     onOpenPage: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val repo = remember(context) { Graph.ujing(context) }
+    val order by repo.orderState.collectAsStateWithLifecycle()
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -1320,6 +1343,7 @@ private fun UjingEntrySheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("U净 · 洗衣房", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            order?.takeIf { !it.isTerminal }?.let { UjingOrderStatusLine(it) }
             Text(
                 text = "扫洗衣机机身上的二维码即可下单",
                 style = MaterialTheme.typography.bodySmall,

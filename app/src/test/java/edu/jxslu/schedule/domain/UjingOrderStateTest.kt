@@ -24,6 +24,18 @@ class UjingOrderStateTest {
         assertEquals("状态 99", UjingState.statusText("99"))
     }
 
+    @Test
+    fun statusLabelPrefersServerRemark() {
+        // 服务端 statusRemark 非空优先
+        assertEquals("运行中", UjingState.statusLabel("40", "运行中"))
+        // 缺失 / 空串 / 纯空白都退回本地表
+        assertEquals("洗涤中", UjingState.statusLabel("40", null))
+        assertEquals("洗涤中", UjingState.statusLabel("40", ""))
+        assertEquals("洗涤中", UjingState.statusLabel("40", "   "))
+        // 未知状态 + 无文案 → 本地兜底格式
+        assertEquals("状态 99", UjingState.statusLabel("99", null))
+    }
+
     // ---- 窗口 ----
 
     @Test
@@ -81,5 +93,15 @@ class UjingOrderStateTest {
         assertEquals("42 秒", UjingState.remainText(42))
         // 负数（本地时钟追上服务端）夹到 0
         assertEquals("0 秒", UjingState.remainText(-5))
+    }
+
+    @Test
+    fun liveRemainCountsDownFromSnapshot() {
+        // 洗涤中：按快照时刻本地换算（不每秒请求）
+        assertEquals(1800, UjingState.liveRemainSeconds("40", 2100, 1_000L, 301_000L))
+        // 非洗涤中：原样返回服务端值
+        assertEquals(2100, UjingState.liveRemainSeconds("20", 2100, 1_000L, 301_000L))
+        // 旧快照无剩余（0）：不动
+        assertEquals(0, UjingState.liveRemainSeconds("40", 0, 1_000L, 301_000L))
     }
 }

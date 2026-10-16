@@ -58,8 +58,9 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 /**
  * U净 下单页（DESIGN §3.23，2026-10-02 起）：扫码成功后的独立窗口。
  *
- * 设备信息 → **洗衣档位单选**（AppCard 高亮态即选中态）→ 水温 / 投放加购 chips →
- * 贴底动作条（所选摘要 + 「下单」）→ 确认弹层（写操作二次确认）→ 交回选择并关窗：
+ * 设备信息 → **档位单选**（AppCard 高亮态即选中态；烘干机为「烘干时长」，不出水温 / 投放）→
+ * 水温 / 投放加购 chips → 贴底动作条（所选摘要 + 「下单」）→ 确认弹层（写操作二次确认）→
+ * 交回选择并关窗：
  * 真正的下单与支付宝拉起仍由下层主页的 [UjingViewModel] 执行（写操作单点发起，
  * 窗口切换不换执行者），交接通道是 [UjingDraftStore]。
  *
@@ -122,6 +123,8 @@ private fun OrderReadyContent(
 ) {
     val scan = draft.scan
     val program = draft.program
+    // 烘干机判定：type==2 为准，兜底 deviceTypeId / 机型名（UjingState.isDryer 单一来源）
+    val dryer = UjingState.isDryer(program.type, program.deviceTypeId, program.deviceTypeName)
     // 可选档位：服务端动态下发（价格单位分、时长单位分钟），hide 的不展示
     val models = remember(program) { program.deviceWashModel.filterNot { it.hide } }
     val orderable = UjingState.scanBadge(scan.createOrderEnabled, scan.status, scan.reason) ==
@@ -132,12 +135,12 @@ private fun OrderReadyContent(
     // 水温默认常温（机型开放水温且非烘干机才给选项）；-1 = 本机无水温选项
     var temperatureId by rememberSaveable {
         mutableIntStateOf(
-            if (program.isWashTemperatureEnable && program.type != 2) TEMPERATURE_DEFAULT_ID else -1,
+            if (program.isWashTemperatureEnable && !dryer) TEMPERATURE_DEFAULT_ID else -1,
         )
     }
-    // 投放加购默认按机型强制投放声明（UjingState.addonDefaults 单一来源），可改
+    // 投放加购默认按机型强制投放声明（UjingState.addonDefaults 单一来源），可改；烘干机恒不勾
     val addonDefaults = remember(program) {
-        UjingState.addonDefaults(program.type, program.isForceDetergent, program.isForceDisinfectant)
+        UjingState.addonDefaults(dryer, program.isForceDetergent, program.isForceDisinfectant)
     }
     var addDetergent by rememberSaveable { mutableStateOf(addonDefaults.first) }
     var addDisinfectant by rememberSaveable { mutableStateOf(addonDefaults.second) }
@@ -156,8 +159,12 @@ private fun OrderReadyContent(
         ) {
             DeviceCard(scan, program)
             SettingsSection(
-                title = "洗衣档位",
-                subtitle = if (orderable) "点一下选中，选好再下单" else "设备使用中 / 不可下单，仅展示模式与价格",
+                title = if (dryer) "烘干时长" else "洗衣档位",
+                subtitle = when {
+                    !orderable -> "设备使用中 / 不可下单，仅展示模式与价格"
+                    dryer -> "选择烘干时长，选好再下单"
+                    else -> "点一下选中，选好再下单"
+                },
             ) {
                 if (models.isEmpty()) {
                     Text(
@@ -172,6 +179,7 @@ private fun OrderReadyContent(
                                 model = model,
                                 selected = model.workModelId == selectedModelId,
                                 onSelect = { selectedModelId = model.workModelId },
+                                dryer = dryer,
                             )
                         }
                     }
@@ -179,6 +187,7 @@ private fun OrderReadyContent(
             }
             PreferenceSection(
                 program = program,
+                dryer = dryer,
                 temperatureId = temperatureId,
                 onTemperature = { temperatureId = it },
                 addDetergent = addDetergent,
@@ -194,6 +203,7 @@ private fun OrderReadyContent(
         }
         OrderActionBar(
             selected = selected,
+            dryer = dryer,
             temperatureId = temperatureId,
             addDetergent = addDetergent,
             addDisinfectant = addDisinfectant,
@@ -262,12 +272,19 @@ private fun DeviceCard(scan: UjingScanResult, program: UjingProgramData) {
     }
 }
 
-/** 一档洗衣模式：AppCard 高亮态 = 选中态（描边、底色、触感都由 AppCard 统一给）。 */
+/** 档位展示名：烘干机以时长为主（对齐官方「选烘干时间」），其余用服务端模式名。 */
+private fun modelLabel(model: UjingWashModel, dryer: Boolean): String =
+    if (dryer && model.time > 0) "烘干 ${model.time} 分钟"
+    else model.workModelName.ifBlank { "模式 ${model.workModelId}" }
+
+/** 一档洗衣模式 / 烘干时长：AppCard 高亮态 = 选中态（描边、底色、触感都由 AppCard 统一给）。 */
 @Composable
 private fun ModelCard(
     model: UjingWashModel,
     selected: Boolean,
     onSelect: () -> Unit,
+    /** 烘干机：标题以时长为主（对齐官方「选烘干时间」的呈现），副行只留价格。 */
+    dryer: Boolean = false,
 ) {
     AppCard(
         onClick = onSelect,
@@ -277,7 +294,7 @@ private fun ModelCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    model.workModelName.ifBlank { "模式 ${model.workModelId}" },
+                    modelLabel(model, dryer),
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (selected) {
                         MaterialTheme.colorScheme.primary
@@ -288,7 +305,8 @@ private fun ModelCard(
                 Text(
                     buildString {
                         append("¥").append(UjingState.fen2yuan(model.basePrice))
-                        if (model.time > 0) append(" · ").append(model.time).append(" 分钟")
+                        // 烘干机的时长已在标题里，副行不再重复
+                        if (model.time > 0 && !dryer) append(" · ").append(model.time).append(" 分钟")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
@@ -311,10 +329,11 @@ private fun ModelCard(
     }
 }
 
-/** 水温 / 投放加购（仅按机型能力出现；烘干机没有投放概念）。 */
+/** 水温 / 投放加购（仅按机型能力出现；烘干机整块不出——投放与水温都是洗衣概念）。 */
 @Composable
 private fun PreferenceSection(
     program: UjingProgramData,
+    dryer: Boolean,
     temperatureId: Int,
     onTemperature: (Int) -> Unit,
     addDetergent: Boolean,
@@ -322,8 +341,8 @@ private fun PreferenceSection(
     addDisinfectant: Boolean,
     onDisinfectant: () -> Unit,
 ) {
-    val showTemperature = program.isWashTemperatureEnable && program.type != 2
-    val showAddons = program.type != 2
+    val showTemperature = program.isWashTemperatureEnable && !dryer
+    val showAddons = !dryer
     if (!showTemperature && !showAddons) return
     SettingsSection(title = "选项", subtitle = null) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -381,6 +400,7 @@ private fun ChipRow(label: String, content: @Composable RowScope.() -> Unit) {
 @Composable
 private fun OrderActionBar(
     selected: UjingWashModel?,
+    dryer: Boolean,
     temperatureId: Int,
     addDetergent: Boolean,
     addDisinfectant: Boolean,
@@ -398,14 +418,18 @@ private fun OrderActionBar(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    selected?.workModelName?.ifBlank { "洗衣模式" } ?: "未选择洗衣档位",
+                    selected?.let { modelLabel(it, dryer) }
+                        ?: if (dryer) "未选择烘干时长" else "未选择洗衣档位",
                     style = MaterialTheme.typography.titleSmall,
                 )
                 if (selected != null) {
                     Text(
                         buildString {
                             append("¥").append(UjingState.fen2yuan(selected.basePrice))
-                            if (selected.time > 0) append(" · ").append(selected.time).append(" 分钟")
+                            // 烘干机的时长已在标题里，副行不再重复
+                            if (selected.time > 0 && !dryer) {
+                                append(" · ").append(selected.time).append(" 分钟")
+                            }
                             if (temperatureId > 0) {
                                 append(" · ").append(UjingState.temperatureLabel(temperatureId))
                             }
