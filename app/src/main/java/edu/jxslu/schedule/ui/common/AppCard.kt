@@ -1,5 +1,8 @@
 package edu.jxslu.schedule.ui.common
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +47,12 @@ object AppCardDefaults {
      * 只加粗到 1.5dp：再加就成"选中框"了，卡片是列表里的一行，不是被选中的单选项。
      */
     val HighlightedBorderWidth = 1.5.dp
+
+    /** 常态描边宽度（[HighlightedBorderWidth] 的起点，也是高亮过渡的另一端）。 */
+    val NormalBorderWidth = 1.dp
+
+    /** 高亮态的过渡时长（与全 App 其它状态过渡同档）。 */
+    const val HighlightTransitionMillis = 180
 }
 
 /**
@@ -52,8 +62,10 @@ object AppCardDefaults {
  * 非 null 时由本组件统一触发触感反馈（开关口径见 [rememberAppHaptics]），
  * 调用方不要再自己调 `haptics.tap()`。
  *
- * [highlighted] 用于「从别处定位到这张卡」的场景（比如点地图上的标记，列表滚过去并把它点亮）：
+ * [highlighted] 用于「从别处定位到这张卡」的场景（比如点地图上的标记，列表滚过去并把它点亮），
+ * 也用于「卡片即单选项」的场景（如 U净 下单页的档位卡）：
  * 换主色描边 + 抬一档底色。默认 false，不影响既有调用点。
+ * 三处颜色（底 / 描边色 / 描边宽）都走 180ms 过渡——几何不变，选中与取消选中不再突变。
  */
 @Composable
 fun AppCard(
@@ -71,28 +83,41 @@ fun AppCard(
 ) {
     // 触感实例在这里取（与列表行同口径：每行一份 AppHaptics，内部按开关短路）
     val haptics = rememberAppHaptics()
+    val containerColor by animateColorAsState(
+        targetValue = if (highlighted) {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        animationSpec = tween(durationMillis = AppCardDefaults.HighlightTransitionMillis),
+        label = "appCardContainer",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (highlighted) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        },
+        animationSpec = tween(durationMillis = AppCardDefaults.HighlightTransitionMillis),
+        label = "appCardBorder",
+    )
+    val borderWidth by animateDpAsState(
+        targetValue = if (highlighted) {
+            AppCardDefaults.HighlightedBorderWidth
+        } else {
+            AppCardDefaults.NormalBorderWidth
+        },
+        animationSpec = tween(durationMillis = AppCardDefaults.HighlightTransitionMillis),
+        label = "appCardBorderWidth",
+    )
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(AppCardDefaults.Shape)
-            .background(
-                if (highlighted) {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                } else {
-                    MaterialTheme.colorScheme.surface
-                },
-            )
+            .background(containerColor)
             .border(
-                width = if (highlighted) {
-                    AppCardDefaults.HighlightedBorderWidth
-                } else {
-                    1.dp
-                },
-                color = if (highlighted) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.outlineVariant
-                },
+                width = borderWidth,
+                color = borderColor,
                 shape = AppCardDefaults.Shape,
             )
             .then(
