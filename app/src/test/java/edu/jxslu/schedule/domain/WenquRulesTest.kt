@@ -989,4 +989,41 @@ class WenquRulesTest {
         val sent = 1_000_000L
         assertEquals(123L, WenquRules.clockOffsetMs(sent + 623L, sent, sent + 1_000L))
     }
+
+    @Test
+    fun `盯这条_只在还会再放名额的状态出现`() {
+        // 等开放 / 等空位 → 值得盯
+        assertTrue(WenquRules.canPin(WenquRules.APPLY_NOT_STARTED))
+        assertTrue(WenquRules.canPin(WenquRules.APPLY_FULL))
+        // 与闸门函数实测同一份判据（满员 / 还没开始 → 给；其余 → 不给）
+        assertTrue(WenquRules.canPin(blockReason(peopleNum = 20, balanceNum = 0)))
+        assertTrue(WenquRules.canPin(blockReason(applyStart = "26-10-12 00:00")))
+        assertFalse(WenquRules.canPin(blockReason()))
+        assertFalse(WenquRules.canPin(blockReason(applied = true)))
+        assertFalse(WenquRules.canPin(blockReason(blacklisted = true)))
+        assertFalse(WenquRules.canPin(blockReason(status = 3)))
+        assertFalse(WenquRules.canPin(blockReason(status = 2)))
+        assertFalse(WenquRules.canPin(blockReason(status = 0)))
+        assertFalse(WenquRules.canPin(blockReason(applyEnd = "26-10-10 23:59")))
+        // 「名额已满」的常量与闸门输出同源
+        assertEquals("名额已满", WenquRules.APPLY_FULL)
+    }
+
+    @Test
+    fun `盯的活动永远等不到就判为无效`() {
+        val now = at(2026, 10, 11, 12, 0)
+        // 已报名 / 已取消 / 进行中 / 已结束 → 无效
+        assertTrue(WenquRules.pinFutile(1, applied = true, applyEndTime = "", now = now))
+        assertTrue(WenquRules.pinFutile(0, applied = false, applyEndTime = "", now = now))
+        assertTrue(WenquRules.pinFutile(2, applied = false, applyEndTime = "", now = now))
+        assertTrue(WenquRules.pinFutile(3, applied = false, applyEndTime = "", now = now))
+        // 招募中但报名截止已过 → 无效
+        assertTrue(WenquRules.pinFutile(1, applied = false, applyEndTime = "26-10-10 12:00", now = now))
+        // 招募中、截止未到 / 没填截止 / 认不出 → 不判定，继续等
+        assertFalse(WenquRules.pinFutile(1, applied = false, applyEndTime = "26-10-12 12:00", now = now))
+        assertFalse(WenquRules.pinFutile(1, applied = false, applyEndTime = "", now = now))
+        assertFalse(WenquRules.pinFutile(1, applied = false, applyEndTime = "待定", now = now))
+        // 认不出的状态：不猜，保守留着
+        assertFalse(WenquRules.pinFutile(9, applied = false, applyEndTime = "", now = now))
+    }
 }

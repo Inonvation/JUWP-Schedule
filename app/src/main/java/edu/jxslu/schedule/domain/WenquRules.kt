@@ -168,6 +168,9 @@ object WenquRules {
      */
     const val APPLY_NOT_STARTED = "报名尚未开始"
 
+    /** [applyBlockReason] 的一句专用文案：「名额已满」——「盯这条」入口的另一条判据。 */
+    const val APPLY_FULL = "名额已满"
+
     /**
      * **报名闸门**：能报名回空串，不能报名回**原因**（详情弹层拿它禁用按钮并写一行说明）。
      *
@@ -201,12 +204,45 @@ object WenquRules {
         if (end != null && end < now) return "报名已截止"
         val start = stampMillis(applyStartTime, zone)
         if (start != null && start > now) return APPLY_NOT_STARTED
-        if (isFull(status, peopleNum, balanceNum)) return "名额已满"
+        if (isFull(status, peopleNum, balanceNum)) return APPLY_FULL
         return ""
     }
 
     /** [applyBlockReason] 回空串 = 能报名。 */
     fun canApply(reason: String): Boolean = reason.isEmpty()
+
+    /**
+     * 「盯这条」的展示判据（2026-10-16）：只有**还会再放名额**的状态才值得盯——
+     * 「报名尚未开始」（等开放）或「名额已满」（等空位）。其余（可报名 / 已报名 / 被限制 /
+     * 报名已截止 / 已取消 / 进行中 / 已结束）盯了也不会再有动静，不给入口。
+     */
+    fun canPin(applyBlockReason: String): Boolean =
+        applyBlockReason == APPLY_NOT_STARTED || applyBlockReason == APPLY_FULL
+
+    /**
+     * 盯的活动是不是**永远等不到了**（前台蹲点 / 后台检查据此自动取消盯，2026-10-16）：
+     * 已报名 / 已取消 / 进行中 / 已结束 / 报名截止已过——这些状态 [applyBlockReason] 不会再回空，
+     * 继续每轮拉详情只是白费请求。
+     *
+     * **只对「确定」的终态回 true**：认不出的状态、时间认不出、截止空着都不判定（同
+     * [applyBlockReason] 的不猜纪律）；账号被限制**不算**（限制可能解除，还值得等）。
+     */
+    fun pinFutile(
+        status: Int,
+        applied: Boolean,
+        applyEndTime: String,
+        now: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): Boolean {
+        if (applied) return true
+        when (status) {
+            STATUS_RECRUITING -> Unit
+            0, 2, 3 -> return true
+            else -> return false
+        }
+        val end = stampMillis(applyEndTime, zone)
+        return end != null && end < now
+    }
 
     /**
      * **活动视角**要不要给「取消报名」入口：已报名 + 还在招募中。

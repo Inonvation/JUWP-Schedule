@@ -105,8 +105,8 @@ object WenquActivityAlertReminder {
             val repo = Graph.wenqu(context)
             if (!repo.loggedIn.value) return
 
-            // 「盯着的活动名额空出」（2026-10-15）：不挂「新增活动提醒」开关——盯它本身就是
-            // 用户的显式选择。也不进免扰时段：名额空出是**当下要动**的事，压到时段结束就没用了。
+            // 「盯的活动可以报名了」（2026-10-15）：不挂「新增活动提醒」开关——盯它本身就是
+            // 用户的显式选择。也不进免扰时段：可以报名是**当下要动**的事，压到时段结束就没用了。
             checkPinnedSlot(context, prefs, repo)
 
             // 新增活动提醒：走它自己的开关与间隔
@@ -165,12 +165,14 @@ object WenquActivityAlertReminder {
     }
 
     /**
-     * **盯着的活动名额是否空出来了**（2026-10-15，DESIGN §4.45「盯指定活动」的后台一路）。
+     * **盯着的活动现在可以报名了吗**（2026-10-15，DESIGN §4.45「盯指定活动」的后台一路）。
      *
      * 拉的是**详情**（`refreshIndexItem`，实时名额）而不是列表——快照里深层条目的名额会冻住。
-     * 空出（`applyBlockReason` 回空）→ 发通知 + 入箱；同一条只报一次（`wenqu_grab_pinned_alerted_id`，
-     * 重新盯 / 取消盯时清 0）。**不挂开关**（盯 = 用户显式选择）、**不过免扰时段**
-     * （名额空出是当下要动的事，压到时段结束就没意义了）。
+     * 可以报名了（`applyBlockReason` 回空，名额空出 / 报名开放两种情形都算）→ 发通知 + 入箱；
+     * 同一条只报一次（`wenqu_grab_pinned_alerted_id`，重新盯 / 取消盯时清 0）。
+     * **盯的活动转为永远等不到的状态（结束 / 取消 / 报名截止 / 已报名）时静默取消盯**
+     * （2026-10-16，`WenquRules.pinFutile`）——别让它永远挂着白拉详情。
+     * **不挂开关**（盯 = 用户显式选择）、**不过免扰时段**（当下要动的事，压到时段结束就没意义了）。
      */
     private suspend fun checkPinnedSlot(
         context: Context,
@@ -181,6 +183,21 @@ object WenquActivityAlertReminder {
         if (pinnedId <= 0L) return
         if (prefs.wenquGrabPinnedAlertedId() == pinnedId) return // 这条已经报过，别重复
         val activity = runCatching { repo.refreshIndexItem(pinnedId) }.getOrNull() ?: return
+        // 已经等不到了（结束 / 取消 / 报名截止 / 已报名）：静默取消盯，别永远挂着
+        // （2026-10-16；前台蹲点发现同一状态时也会清）。清完重排一次周期任务——
+        // 盯是「五路全关也保留任务」的例外，例外没了就该回到全关即撤。
+        if (WenquRules.pinFutile(
+                status = activity.status,
+                applied = activity.applied,
+                applyEndTime = activity.applyEndTime,
+                now = System.currentTimeMillis(),
+            )
+        ) {
+            prefs.setWenquGrabPinnedId(0L)
+            prefs.setWenquGrabPinnedAlertedId(0L)
+            ScoreAlertReminder.ensurePeriodicWork(context)
+            return
+        }
         val blocked = WenquRules.applyBlockReason(
             status = activity.status,
             applied = activity.applied,
@@ -195,8 +212,8 @@ object WenquActivityAlertReminder {
         prefs.setWenquGrabPinnedAlertedId(pinnedId)
 
         val name = activity.title.ifBlank { "你盯的志愿活动" }
-        val title = "名额空出：$name"
-        val text = "你盯的活动现在有名额了。去问渠报名（报名仍要你自己点一下）。"
+        val title = "可以报名了：$name"
+        val text = "你盯的活动现在可以报名了。去问渠报名（报名仍要你自己点一下）。"
 
         Graph.inboxRepository(context).post(
             kind = InboxKind.WENQU_ACTIVITY,
@@ -211,7 +228,7 @@ object WenquActivityAlertReminder {
     }
 
     /**
-     * 名额空出的通知（时间敏感）。渠道与新活动共用 `wenqu_activity`，但 id / 落点独立。
+     * 「可以报名了」的通知（时间敏感）。渠道与新活动共用 `wenqu_activity`，但 id / 落点独立。
      * **直接震动**（同每周日那条的理由：HyperOS 上第三方通知的振动默认关，不震等于静默）。
      */
     private fun postSlotNotification(context: Context, title: String, text: String) {

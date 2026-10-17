@@ -279,6 +279,7 @@ class WenquGrabViewModel(
                 val speed = if (inBurst) WenquGrabSpeed.Burst else WenquGrabSpeed.Fast
                 val pinnedId = _state.value.pinnedId
                 val roundStartedAt = System.currentTimeMillis()
+                var pinnedFresh: WenquActivity? = null
                 val probe = coroutineScope {
                     // 盯的那条与列表探测**并发**（2026-10-16）：原先它串行在后、还挂
                     // 30 秒超时，高峰期一个人就能把一轮拖到 30 秒以上。失败静默
@@ -304,8 +305,29 @@ class WenquGrabViewModel(
                         failures++
                         null
                     }
-                    pinnedJob?.await()
+                    pinnedFresh = pinnedJob?.await()
                     result
+                }
+                // 盯的活动已经等不到了（结束 / 取消 / 报名截止 / 已报名）：自动收摊，
+                // 别每轮再白拉它的详情（2026-10-16；与「盯这条」入口用同一份判据）。
+                val freshPinned = pinnedFresh
+                if (freshPinned != null && WenquRules.pinFutile(
+                        status = freshPinned.status,
+                        applied = freshPinned.applied,
+                        applyEndTime = freshPinned.applyEndTime,
+                        now = System.currentTimeMillis(),
+                    )
+                ) {
+                    unpin()
+                    _state.update {
+                        it.copy(
+                            message = if (freshPinned.applied) {
+                                "已报上名，自动取消盯着"
+                            } else {
+                                "盯的活动不能再报名了，自动取消盯着"
+                            },
+                        )
+                    }
                 }
                 val checkedAt = System.currentTimeMillis()
                 if (probe != null) {

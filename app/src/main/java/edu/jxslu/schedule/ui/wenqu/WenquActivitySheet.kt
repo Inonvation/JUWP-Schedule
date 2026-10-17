@@ -88,7 +88,9 @@ fun WenquActivitySheet(
     onApply: (() -> Unit)? = null,
     onCancel: (() -> Unit)? = null,
     /**
-     * **盯这条**（2026-10-15，DESIGN §4.45「盯指定活动」）：非 null 才显示按钮。
+     * **盯这条**（2026-10-15，DESIGN §4.45「盯指定活动」）：非 null 才显示按钮；
+     * 且只在「还会再放名额」的状态出现（[WenquRules.canPin]：报名尚未开始 / 名额已满）——
+     * 已结束 / 进行中 / 已报名等状态盯了也不会再有动静（2026-10-16 修，用户报）。
      * 记录视角（`WenquRecordsScreen`）不传——盯一条「我参加过的」没有意义。
      */
     onPin: (() -> Unit)? = null,
@@ -580,16 +582,26 @@ private fun WenquActivityDetailContent(
                 ) { Text("预报名 · 准点自动抢") }
             }
 
-            // 「盯这条」（2026-10-15）：给已满 / 还没开抢的活动一个「等名额」的出口。
+            // 「盯这条」（2026-10-15；2026-10-16 修口径）：只有**还会再放名额**的状态才给——
+            // 报名还没开始（等开放）或名额已满（等空位）。已结束 / 进行中 / 已报名 / 被限制
+            // 等状态盯了也不会再有动静，不给入口（此前无条件显示，2026-10-16 用户报）。
             // 放在主动作行**上方**——它不是主路径（主路径仍是报名），但比复制更靠近主路径。
-            if (onPin != null) {
+            if (onPin != null && WenquRules.canPin(applyBlockReason)) {
                 OutlinedButton(
                     onClick = onPin,
                     enabled = !busy,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 14.dp),
-                ) { Text("盯这条 · 名额空出时提醒我") }
+                ) {
+                    Text(
+                        if (applyBlockReason == WenquRules.APPLY_NOT_STARTED) {
+                            "盯这条 · 开始报名时提醒我"
+                        } else {
+                            "盯这条 · 名额空出时提醒我"
+                        },
+                    )
+                }
             }
             WenquActivityActions(
                 activity = activity,

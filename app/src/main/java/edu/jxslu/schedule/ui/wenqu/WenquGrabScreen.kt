@@ -338,7 +338,7 @@ fun WenquGrabScreen(onBack: () -> Unit) {
                 vm.closeDetail()
                 scope.launch {
                     WenquActivityAlertReminder.onPinChanged(context)
-                    snackbar.showNotice("已盯上「${activity.title.ifBlank { "这条活动" }}」，名额空出会提醒")
+                    snackbar.showNotice("已盯上「${activity.title.ifBlank { "这条活动" }}」，可以报名时会提醒")
                 }
             },
         )
