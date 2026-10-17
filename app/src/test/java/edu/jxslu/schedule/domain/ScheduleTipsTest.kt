@@ -150,7 +150,7 @@ class ScheduleTipsTest {
     }
 
     @Test
-    fun `上下午都跨楼给两句合并`() {
+    fun `上下午都跨楼合并成一句`() {
         val result = dayTip(
             tuesday,
             tuesdayMorning("教学南大楼(南B206)", "教学北大楼(北B306)") +
@@ -161,12 +161,77 @@ class ScheduleTipsTest {
         )
         assertNotNull(result)
         val text = result!!.text
-        assertTrue("实际=$text", text.contains("上午"))
-        assertTrue("实际=$text", text.contains("下午"))
+        assertTrue("实际=$text", text.contains("上午") && text.contains("下午"))
+        // 上下午都要往返跑 → 合并一句，别各说一遍
         assertTrue(
-            "下午段应是往返跑：$text",
-            text.contains("下午要南北楼") || text.contains("下午得在南楼北楼"),
+            "上下午都往返跑应合并：$text",
+            text.contains("上午、下午都要南北楼往返跑咯") ||
+                text.contains("上午、下午都得在南楼北楼之间来回跑咯"),
         )
+    }
+
+    @Test
+    fun `上下午都在南楼合并成一句`() {
+        val result = dayTip(
+            tuesday,
+            tuesdayMorning("教学南大楼(南B206)", "教学南大楼(南C303)") +
+                listOf(
+                    courseOf(3, 2, 5, 6, "教学南大楼(南B402)"),
+                    courseOf(4, 2, 7, 8, "教学南大楼(南B102)"),
+                ),
+        )
+        assertNotNull(result)
+        assertEquals("🧭 ", result!!.prefix)
+        assertTrue("实际=${result.text}", result.text.contains("一天的课都在南楼"))
+        // 不该再拆成「上午…，下午…」两截
+        assertTrue("实际=${result.text}", !result.text.contains("上午"))
+        assertTrue("实际=${result.text}", !result.text.contains("下午"))
+    }
+
+    @Test
+    fun `上下午都在北楼合并成一句`() {
+        val result = dayTip(
+            tuesday,
+            tuesdayMorning("教学北大楼(北B206)", "教学北大楼(北C303)") +
+                listOf(
+                    courseOf(3, 2, 5, 6, "教学北大楼(北B402)"),
+                    courseOf(4, 2, 7, 8, "教学北大楼(北B102)"),
+                ),
+        )
+        assertNotNull(result)
+        assertTrue("实际=${result!!.text}", result.text.contains("一天的课都在北楼"))
+    }
+
+    @Test
+    fun `上午两节南下午一节南也说一天都在南楼`() {
+        // 上下午都有课、且全在同一栋楼 → 整句（不因下午只有一节就退回半天口径）
+        val result = dayTip(
+            tuesday,
+            tuesdayMorning("教学南大楼(南B206)", "教学南大楼(南C303)") +
+                courseOf(3, 2, 7, 8, "教学南大楼(南B102)"),
+        )
+        assertNotNull(result)
+        assertTrue("实际=${result!!.text}", result.text.contains("一天的课都在南楼"))
+    }
+
+    @Test
+    fun `上下午不同栋楼并列一句且不重复日期`() {
+        // 上下午不同栋楼 → 两句并列成一句：日期前缀只挂第一句，「都在 X 楼」用朴素说法
+        val result = dayTip(
+            tuesday,
+            tuesdayMorning("教学南大楼(南B206)", "教学南大楼(南C303)") +
+                listOf(
+                    courseOf(3, 2, 5, 6, "教学北大楼(北B402)"),
+                    courseOf(4, 2, 7, 8, "教学北大楼(北B102)"),
+                ),
+        )
+        assertNotNull(result)
+        val text = result!!.text
+        assertTrue("实际=$text", text.contains("上午都在南楼") || text.contains("上午的课都在南楼"))
+        assertTrue("实际=$text", text.contains("下午都在北楼") || text.contains("下午的课都在北楼"))
+        // 第二个半天不再重复日期前缀，也不叠「哦」
+        assertTrue("实际=$text", !text.contains("明天下午") && !text.contains("今天下午"))
+        assertTrue("实际=$text", !text.contains("哦"))
     }
 
     @Test

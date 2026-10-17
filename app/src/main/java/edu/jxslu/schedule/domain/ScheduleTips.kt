@@ -10,6 +10,11 @@ import java.time.LocalDateTime
  * 1. **南北楼往返跑 / 都在一栋楼**：上午（第 1–4 节）或下午（第 5–8 节）**≥2 节课**时，
  *    该半天落脚的楼全解析得出 → 两栋都出现给「往返跑」，同一栋给「都在 X 楼」；
  *    只有一节课不判（用户 2026-10-12：单节课不提示）。
+ *    **上下午都有课、且全在同一栋楼** → 合并成一句「一天的课都在 X 楼」；
+ *    **上下午都要往返跑** → 合并成「上午、下午都要南北楼往返跑咯」。
+ *    （2026-10-14：早先不合并会拆成「上午…，下午…」两截，重复「都在南楼」+ 多余的「不用挪窝」。）
+ *    其余两句并列时，日期前缀只挂第一句、「都在 X 楼」用朴素说法：
+ *    「明天上午都在南楼，下午都在北楼」（不重复「明天」，不带「哦」「不用挪窝」）。
  * 2. **有实验课**：该半边有 [CourseKind.Lab]（实验课表导入即标 Lab，
  *    **不看地点**——实验课不一定在工程训练中心）。有实验课的天**只出实验课句**，
  *    南北楼句不再出（用户 2026-10-12 拍板）。
@@ -45,6 +50,9 @@ object ScheduleTips {
 
     /** 快下课判定里向下课的宽限（分钟）：下课时刻已过这么多分钟（含）就不再算「快下课」。 */
     private const val DISMISSAL_GRACE_MINUTES = 1
+
+    /** 一个半天的南北楼判定：全在南楼 / 全在北楼 / 南北楼都有。 */
+    private enum class Verdict { South, North, RoundTrip }
 
     /** 提示的种类。 */
     enum class Style {
@@ -117,7 +125,8 @@ object ScheduleTips {
 
     /**
      * 参考日整天的课表句。优先级按用户口径：
-     * **有实验课 → 只出实验课句**；否则出南北楼句；两边都说了才拼接。
+     * **有实验课 → 只出实验课句**；否则出南北楼句——
+     * 上下午都在同一栋楼 / 都要往返跑时各合并成一句，其余情况按半天拼接。
      */
     private fun dayTip(
         label: String,
@@ -143,12 +152,50 @@ object ScheduleTips {
         }
         if (labs != null) return Tip(Style.Normal, "🔬 ", labs)
 
-        val segments = buildList {
-            buildingSegment(label, "上午", morning, date, salt = 0)?.let { add(it) }
-            buildingSegment(label, "下午", afternoon, date, salt = 1)?.let { add(it) }
+        // 上下午都有课、且全在同一栋楼 → 一句说清「一天的课都在 X 楼」。
+        // 别拆成「上午…，下午…」两截：两截会各说一遍「都在 X 楼」，还带一句多余的「不用挪窝」（2026-10-14）
+        val morningBuilding = sameBuildingOf(morning)
+        val afternoonBuilding = sameBuildingOf(afternoon)
+        if (morningBuilding != null && morningBuilding == afternoonBuilding) {
+            return Tip(
+                Style.Normal,
+                "🧭 ",
+                variant(
+                    date,
+                    salt = 0,
+                    "${label}一天的课都在${morningBuilding}哦",
+                    "${label}一天的课都在${morningBuilding}，不用挪窝",
+                ),
+            )
         }
+
+        val morningVerdict = verdictOf(morning)
+        val afternoonVerdict = verdictOf(afternoon)
+
+        // 上下午都要往返跑 → 也合并成一句（同一类重复，2026-10-14）
+        if (morningVerdict == Verdict.RoundTrip && afternoonVerdict == Verdict.RoundTrip) {
+            return Tip(
+                Style.Normal,
+                "🧭 ",
+                variant(
+                    date,
+                    salt = 0,
+                    "${label}上午、下午都要南北楼往返跑咯",
+                    "${label}上午、下午都得在南楼北楼之间来回跑咯",
+                ),
+            )
+        }
+
+        // 两个半天都有话说 → 并列成一句：日期前缀只挂第一句，「都在 X 楼」用朴素说法
+        val joined = morningVerdict != null && afternoonVerdict != null
+
+        val segments = listOfNotNull(
+            buildingSegment("上午", morningVerdict, date, salt = 0, joined = joined),
+            buildingSegment("下午", afternoonVerdict, date, salt = 1, joined = joined),
+        )
         if (segments.isEmpty()) return null
-        return Tip(Style.Normal, "🧭 ", segments.joinToString("，") { it.text })
+        // 日期前缀只挂第一句：两句并列时「明天上午都在南楼，下午都在北楼」，不重复「明天」
+        return Tip(Style.Normal, "🧭 ", label + segments.joinToString("，") { it.text })
     }
 
     /**
@@ -156,47 +203,70 @@ object ScheduleTips {
      *
      * 兜底（缺一出 null）：课不足 2 节、有课的位置解析不出楼、不在两栋楼范围内 → 不说。
      */
-    private fun buildingSegment(
-        label: String,
-        half: String,
-        halfCourses: List<Course>,
-        date: LocalDate,
-        salt: Int,
-    ): Segment? {
+    private fun verdictOf(halfCourses: List<Course>): Verdict? {
         if (halfCourses.size < 2) return null
         val buildings = halfCourses.map { buildingOf(it.position) ?: return null }
         val south = buildings.any { it == SOUTH_LABEL }
         val north = buildings.any { it == NORTH_LABEL }
         return when {
-            south && north -> Segment(
-                variant(
-                    date,
-                    salt,
-                    "${label}${half}要南北楼往返跑咯",
-                    "${label}${half}得在南楼北楼之间来回跑咯",
-                ),
-            )
-
-            buildings.all { it == SOUTH_LABEL } -> Segment(
-                variant(
-                    date,
-                    salt,
-                    "${label}${half}都在南楼哦",
-                    "${label}${half}的课都在南楼，不用挪窝",
-                ),
-            )
-
-            buildings.all { it == NORTH_LABEL } -> Segment(
-                variant(
-                    date,
-                    salt,
-                    "${label}${half}都在北楼哦",
-                    "${label}${half}的课都在北楼，不用挪窝",
-                ),
-            )
-
-            else -> null
+            south && north -> Verdict.RoundTrip
+            south -> Verdict.South
+            else -> Verdict.North
         }
+    }
+
+    /**
+     * 该半天是否「全在同一栋楼」，是则给出楼名（[SOUTH_LABEL] / [NORTH_LABEL]）。
+     * 空、混合、有课解析不出楼 → null。**不看课数**——全天整句用的是这个口径
+     * （上下午各只有一节、但在同一栋楼，也算「一天的课都在 X 楼」）。
+     */
+    private fun sameBuildingOf(courses: List<Course>): String? {
+        if (courses.isEmpty()) return null
+        val buildings = courses.map { buildingOf(it.position) ?: return null }
+        val first = buildings.first()
+        return if (buildings.all { it == first }) first else null
+    }
+
+    /**
+     * 一个半天的南北楼句（**不含日期前缀**——前缀由调用方只在第一句挂一次）。
+     * [verdict] 为 null（不足 2 节 / 解析不出）时不说话。
+     *
+     * [joined] = 与另一个半天并列成一句：此时「都在 X 楼」用朴素说法，不带「哦」「不用挪窝」
+     * （用户 2026-10-14：并列时说「明天上午都在南楼，下午都在北楼」，不重复日期、不叠语气词）。
+     */
+    private fun buildingSegment(
+        half: String,
+        verdict: Verdict?,
+        date: LocalDate,
+        salt: Int,
+        joined: Boolean,
+    ): Segment? = when (verdict) {
+        null -> null
+
+        Verdict.RoundTrip -> Segment(
+            variant(
+                date,
+                salt,
+                "${half}要南北楼往返跑咯",
+                "${half}得在南楼北楼之间来回跑咯",
+            ),
+        )
+
+        Verdict.South -> Segment(
+            if (joined) {
+                variant(date, salt, "${half}都在南楼", "${half}的课都在南楼")
+            } else {
+                variant(date, salt, "${half}都在南楼哦", "${half}的课都在南楼，不用挪窝")
+            },
+        )
+
+        Verdict.North -> Segment(
+            if (joined) {
+                variant(date, salt, "${half}都在北楼", "${half}的课都在北楼")
+            } else {
+                variant(date, salt, "${half}都在北楼哦", "${half}的课都在北楼，不用挪窝")
+            },
+        )
     }
 
     // ---- 快下课有雨 ----
