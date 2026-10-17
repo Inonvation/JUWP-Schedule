@@ -1,11 +1,15 @@
 package edu.jxslu.schedule.ui.ujing
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -17,15 +21,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +48,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
@@ -53,6 +62,8 @@ import edu.jxslu.schedule.data.ujing.UjingScanResult
 import edu.jxslu.schedule.data.ujing.UjingWashModel
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingsSection
 
 /**
@@ -161,7 +172,7 @@ private fun OrderReadyContent(
             SettingsSection(
                 title = if (dryer) "烘干时长" else "洗衣档位",
                 subtitle = when {
-                    !orderable -> "设备使用中 / 不可下单，仅展示模式与价格"
+                    !orderable -> "设备使用中 · 仅可查看模式与价格"
                     dryer -> "选择烘干时长，选好再下单"
                     else -> "点一下选中，选好再下单"
                 },
@@ -179,6 +190,7 @@ private fun OrderReadyContent(
                                 model = model,
                                 selected = model.workModelId == selectedModelId,
                                 onSelect = { selectedModelId = model.workModelId },
+                                enabled = orderable,
                                 dryer = dryer,
                             )
                         }
@@ -263,12 +275,9 @@ private fun DeviceCard(scan: UjingScanResult, program: UjingProgramData) {
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
-            Text(
-                "通信模块：${UjingState.moduleTypeLabel(scan.moduleType)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
         }
+        // 通信模块是给点验看的（判蓝牙机型要不要做 BLE），对下单没有意义——降为分区注记
+        SettingsNote("通信模块：${UjingState.moduleTypeLabel(scan.moduleType)}")
     }
 }
 
@@ -277,55 +286,98 @@ private fun modelLabel(model: UjingWashModel, dryer: Boolean): String =
     if (dryer && model.time > 0) "烘干 ${model.time} 分钟"
     else model.workModelName.ifBlank { "模式 ${model.workModelId}" }
 
-/** 一档洗衣模式 / 烘干时长：AppCard 高亮态 = 选中态（描边、底色、触感都由 AppCard 统一给）。 */
+/**
+ * 一档洗衣模式 / 烘干时长：`AppCard` 高亮态 = 选中态（描边、底色、触感都由 AppCard 统一给，
+ * 且三处颜色走 180ms 过渡）。
+ *
+ * 行内结构（2026-10-16 重排）：**单选点 → 模式名 / 时长 → 价格**。价格从副行里提出来、
+ * 右对齐成独立一列——选档时用户要横向比价，藏在副行小字里比不出来。
+ */
 @Composable
 private fun ModelCard(
     model: UjingWashModel,
     selected: Boolean,
     onSelect: () -> Unit,
+    /** 设备不可下单（使用中 / 故障）时整档置灰不可点——别让人选了却下不了单。 */
+    enabled: Boolean = true,
     /** 烘干机：标题以时长为主（对齐官方「选烘干时间」的呈现），副行只留价格。 */
     dryer: Boolean = false,
 ) {
     AppCard(
         onClick = onSelect,
         onClickLabel = "选择${model.workModelName.ifBlank { "该模式" }}",
+        enabled = enabled,
         highlighted = selected,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            RadioDot(selected = selected, enabled = enabled)
             Column(Modifier.weight(1f)) {
                 Text(
                     modelLabel(model, dryer),
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
+                    color = when {
+                        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        selected -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurface
                     },
                 )
-                Text(
-                    buildString {
-                        append("¥").append(UjingState.fen2yuan(model.basePrice))
-                        // 烘干机的时长已在标题里，副行不再重复
-                        if (model.time > 0 && !dryer) append(" · ").append(model.time).append(" 分钟")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
+                // 烘干机的时长已在标题里，副行不再重复
+                if (model.time > 0 && !dryer) {
+                    Text(
+                        "${model.time} 分钟",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                }
             }
-            // 勾选标记随选中态淡入淡出 + 原位缩放，选中哪档一眼可辨
-            AnimatedVisibility(
-                visible = selected,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = "已选中",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            Text(
+                "¥${UjingState.fen2yuan(model.basePrice)}",
+                style = MaterialTheme.typography.titleSmall,
+                color = when {
+                    !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    selected -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+            )
         }
+    }
+}
+
+/** 档位卡左端的单选点：选中 = 主色实心，未选中 = 一圈描边；两态之间走过渡。 */
+@Composable
+private fun RadioDot(selected: Boolean, enabled: Boolean) {
+    val accent = if (enabled) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+    }
+    val ring by animateColorAsState(
+        targetValue = if (selected) accent else MaterialTheme.colorScheme.outline,
+        animationSpec = tween(180),
+        label = "radioRing",
+    )
+    val fill by animateColorAsState(
+        targetValue = if (selected) accent else Color.Transparent,
+        animationSpec = tween(180),
+        label = "radioFill",
+    )
+    Box(
+        modifier = Modifier
+            .size(18.dp)
+            .clip(CircleShape)
+            .border(width = 1.5.dp, color = ring, shape = CircleShape)
+            .semantics { contentDescription = if (selected) "已选中" else "未选中" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(fill),
+        )
     }
 }
 
@@ -396,7 +448,12 @@ private fun ChipRow(label: String, content: @Composable RowScope.() -> Unit) {
     }
 }
 
-/** 贴底动作条：所选档位摘要 + 「下单」主按钮（不可下单 / 未选档时置灰并说明原因）。 */
+/**
+ * 贴底动作条：所选档位摘要 + 「下单」主按钮（不可下单 / 未选档时置灰并说明原因）。
+ *
+ * 顶部一条分割线把动作条与滚动内容分开（此前两段同底、滚动时看不出边界）；
+ * 摘要换档时 crossfade——档位切换不是高频事件，不会一直闪。
+ */
 @Composable
 private fun OrderActionBar(
     selected: UjingWashModel?,
@@ -407,46 +464,76 @@ private fun OrderActionBar(
     orderable: Boolean,
     onOrder: () -> Unit,
 ) {
+    val summary = OrderSummary(
+        title = selected?.let { modelLabel(it, dryer) }
+            ?: if (dryer) "未选择烘干时长" else "未选择洗衣档位",
+        detail = selected?.let {
+            buildString {
+                append("¥").append(UjingState.fen2yuan(it.basePrice))
+                // 烘干机的时长已在标题里，副行不再重复
+                if (it.time > 0 && !dryer) {
+                    append(" · ").append(it.time).append(" 分钟")
+                }
+                if (temperatureId > 0) {
+                    append(" · ").append(UjingState.temperatureLabel(temperatureId))
+                }
+                if (addDetergent) append(" · 洗衣液")
+                if (addDisinfectant) append(" · 消毒液")
+            }
+        },
+    )
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .navigationBarsPadding(),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    selected?.let { modelLabel(it, dryer) }
-                        ?: if (dryer) "未选择烘干时长" else "未选择洗衣档位",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                if (selected != null) {
-                    Text(
-                        buildString {
-                            append("¥").append(UjingState.fen2yuan(selected.basePrice))
-                            // 烘干机的时长已在标题里，副行不再重复
-                            if (selected.time > 0 && !dryer) {
-                                append(" · ").append(selected.time).append(" 分钟")
-                            }
-                            if (temperatureId > 0) {
-                                append(" · ").append(UjingState.temperatureLabel(temperatureId))
-                            }
-                            if (addDetergent) append(" · 洗衣液")
-                            if (addDisinfectant) append(" · 消毒液")
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    AnimatedContent(
+                        targetState = summary,
+                        transitionSpec = {
+                            fadeIn(tween(180)) togetherWith fadeOut(tween(180))
                         },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
+                        label = "ujingOrderSummary",
+                    ) { current ->
+                        Column {
+                            Text(current.title, style = MaterialTheme.typography.titleSmall)
+                            current.detail?.let { detail ->
+                                Text(
+                                    detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                )
+                            }
+                        }
+                    }
+                }
+                Button(onClick = onOrder, enabled = orderable && selected != null) {
+                    Text("下单")
                 }
             }
-            Button(onClick = onOrder, enabled = orderable && selected != null) {
-                Text("下单")
+            if (!orderable) {
+                Text(
+                    "该设备正在使用或暂不可下单，暂时下不了单。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                )
             }
         }
     }
 }
+
+/** 动作条摘要（[AnimatedContent] 的比对键：值变了才播 crossfade）。 */
+private data class OrderSummary(val title: String, val detail: String?)
 
 /** 扫码状态徽标（Free / InUse / Fault / Offline）。 */
 @Composable
@@ -481,6 +568,8 @@ private fun OrderConfirmDialog(
         onDismissRequest = onDismiss,
         title = { Text("确认下单") },
         text = {
+            // 弹窗进出场动画必须挂在本弹窗窗口上：调用点落在内容槽第一行
+            DialogWindowFadeEffect()
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     buildString {

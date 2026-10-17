@@ -2,6 +2,13 @@ package edu.jxslu.schedule.ui.life
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.Button
@@ -1352,7 +1359,21 @@ private fun UjingEntrySheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("U净 · 洗衣房", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            order?.takeIf { !it.isTerminal }?.let { UjingOrderStatusLine(it) }
+            // 在案订单的状态行：出现 / 收摊都走高度伸缩，弹窗不会凭空多一块再跳回去
+            // （首帧就有时不播入场——AnimatedVisibility 的初值即目标态）
+            val liveOrder = order?.takeIf { !it.isTerminal }
+            AnimatedVisibility(
+                visible = liveOrder != null,
+                enter = fadeIn(tween(220)) +
+                    expandVertically(
+                        tween(220, easing = FastOutSlowInEasing),
+                        expandFrom = Alignment.Top,
+                    ),
+                exit = fadeOut(tween(160)) +
+                    shrinkVertically(tween(160), shrinkTowards = Alignment.Top),
+            ) {
+                liveOrder?.let { UjingOrderStatusLine(it) }
+            }
             Text(
                 text = "扫洗衣机机身上的二维码即可下单",
                 style = MaterialTheme.typography.bodySmall,

@@ -215,7 +215,15 @@ object UjingState {
      * UI 直接取用、不再拼接。
      */
     data class BoardLine(val free: Int, val total: Int, val waitMinutes: Int) {
-        val primaryText: String get() = if (free > 0) "空闲 $free/$total" else "暂无空闲"
+        /**
+         * 空闲数（`"2/4"`），全满时 null——**看板行强调位（放大 + 主色）的取数口**。
+         * [primaryText] 由它拼出，所以「空闲 N/M」这层语义只有一处，UI 不另拼。
+         */
+        val freeCountText: String? get() = if (free > 0) "$free/$total" else null
+
+        /** 一行看板的主文案（带「空闲」二字，供不需要单独强调数字的场合直接取用）。 */
+        val primaryText: String get() = freeCountText?.let { "空闲 $it" } ?: "暂无空闲"
+
         val secondaryText: String?
             get() = if (free <= 0 && waitMinutes > 0) "约等 $waitMinutes 分钟" else null
     }

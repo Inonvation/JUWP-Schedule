@@ -203,4 +203,17 @@ class UjingStateTest {
         assertNull(UjingState.dryerLine(listOf(UjingState.BoardGroup("滚筒洗衣机", 2, 4, 0))))
         assertNull(UjingState.dryerLine(emptyList()))
     }
+
+    @Test
+    fun freeCountTextIsTheOnlySourceOfFreeNumbers() {
+        // 看板行把空闲数放大、走主色时取 freeCountText；primaryText 由它拼出，
+        // 两者必须始终一致（否则 UI 强调位与文案会各说各话）
+        val free = UjingState.BoardLine(free = 2, total = 4, waitMinutes = 0)
+        assertEquals("2/4", free.freeCountText)
+        assertEquals("空闲 2/4", free.primaryText)
+
+        val busy = UjingState.BoardLine(free = 0, total = 4, waitMinutes = 15)
+        assertNull(busy.freeCountText)
+        assertEquals("暂无空闲", busy.primaryText)
+    }
 }
