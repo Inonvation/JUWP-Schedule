@@ -65,6 +65,12 @@ sealed interface BikeMapEvent {
 
     /** 开锁成功：页面补一次成功触感（与出码页同口径）。 */
     data object Unlocked : BikeMapEvent
+
+    /**
+     * 扫码识别出的车已**确认可用**（见 `autoUnlockCar`）：页面据此走开锁的同一套闸
+     * （二次确认 / 定位前置）。不可用 / 查不到不发这条——那种情况只展示车辆卡与原因。
+     */
+    data class AutoUnlockReady(val carNum: String) : BikeMapEvent
 }
 
 /**
@@ -353,6 +359,17 @@ class BikeMapViewModel(
     private var pendingFocusCar: String? = null
 
     /**
+     * 扫码识别出车号后「确认可用就自动开锁」的目标车号（见 [focusCar] / [setPendingFocusCar]
+     * 的 `autoUnlock` 参数）。
+     *
+     * 只在**确认可用**时发一次 [BikeMapEvent.AutoUnlockReady]：附近列表里命中且
+     * [NearbyBike.available]，或按车号点名查（`queryOneCar`）返回 [CarDetailResult.Ok] 且可用。
+     * 其余一律只清掉目标、不发事件——已出租 / 维修 / 离线 / 查不到 / 网络失败都**不自动开锁**
+     * （宁可不自动开锁，也不误开；车辆卡照常展示状态与服务端原因，用户可手动点开锁）。
+     */
+    private var autoUnlockCar: String? = null
+
+    /**
      * 是否已经拿到过定位。
      *
      * 用来解决一个真实的时序竞争：读 DataStore 里的上次视野是异步的，而定位用系统缓存
@@ -550,14 +567,24 @@ class BikeMapViewModel(
         pushCamera(lat, lng, zoom = null, animated = true)
     }
 
-    /** 找一辆车（按完整车号）并展开所在簇、把镜头移过去；列表里没有就向快趣点名查一次。 */
-    fun focusCar(carNum: String) {
+    /**
+     * 找一辆车（按完整车号）并展开所在簇、把镜头移过去；列表里没有就向快趣点名查一次。
+     *
+     * [autoUnlock] = 扫码那条路（内置相机「扫车身码」）：确认这辆车可用后发一次
+     * [BikeMapEvent.AutoUnlockReady]，页面据此走开锁的同一套闸（见 `autoUnlockCar`）。
+     * 其余调用（车辆卡定位 / 地图选车）传默认 false。
+     */
+    fun focusCar(carNum: String, autoUnlock: Boolean = false) {
         if (!carNum.isNotBlank()) return
+        // 目标只在"这次就是扫它"或"还是同一辆车"时保留；换了车就作废——免得一个没结论的
+        // 旧目标被后来的定位动作意外触发（自动开锁只认最近一次扫码）
+        autoUnlockCar = if (autoUnlock) carNum else autoUnlockCar?.takeIf { it == carNum }
         // 这辆车就是在骑的这辆：不再按旧结果的坐标画高亮、也不把镜头拽向过期位置——
         // 车随人走，「我的车」标记已经表达它在哪（与 init 里骑行吞高亮同一条判据）。
         // 还车之后 ride 已归 null，从这里带车号进来仍照常定位（车又停回某个点位了）。
         if (kvcx.state.value.ride?.carNum == carNum) {
             clearHighlight()
+            clearAutoUnlock(carNum) // 正在骑这辆：不自动开锁
             return
         }
         _uiState.update {
@@ -582,6 +609,22 @@ class BikeMapViewModel(
             )
         }
         pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
+        maybeAutoUnlock(carNum, cluster.bikes.firstOrNull { it.carNum == carNum })
+    }
+
+    /**
+     * 确认到目标车可用：清目标并发一次 [BikeMapEvent.AutoUnlockReady]。
+     * [bike] 为 null 或不可用时只清目标、不发事件（见 `autoUnlockCar`）。
+     */
+    private fun maybeAutoUnlock(carNum: String, bike: NearbyBike?) {
+        if (autoUnlockCar != carNum) return
+        autoUnlockCar = null
+        if (bike?.available == true) _events.trySend(BikeMapEvent.AutoUnlockReady(carNum))
+    }
+
+    /** 目标车没有结论（不可用 / 查不到 / 查不动）：清掉，不自动开锁。 */
+    private fun clearAutoUnlock(carNum: String) {
+        if (autoUnlockCar == carNum) autoUnlockCar = null
     }
 
     /**
@@ -616,12 +659,18 @@ class BikeMapViewModel(
 
     private fun fetchCarDetail(carNum: String) {
         val session = kqcx ?: run {
+            clearAutoUnlock(carNum)
             _events.trySend(
                 BikeMapEvent.Notice("附近列表里暂时没有这辆车；移动地图或点刷新后再试", NoticeTone.Info),
             )
             return
         }
-        if (carDetailJob?.isActive == true) return
+        if (carDetailJob?.isActive == true) {
+            // 已有一次点名查询在飞：这一次不发也不等，自动开锁目标随之作废（保守：
+            // 宁可少自动开一次，也不留一个没结论的目标被后面的动作意外触发）
+            clearAutoUnlock(carNum)
+            return
+        }
         // 同步置位（不放进 launch 里）：车辆卡要**当场**翻成「正在查询这辆车…」，
         // 晚一帧就会先闪一下"不在附近这批结果里"——那句正是要替掉的误导文案。
         _uiState.update { it.copy(carDetailQuerying = carNum) }
@@ -648,11 +697,14 @@ class BikeMapViewModel(
                             NoticeTone.Info,
                         ),
                     )
+                    // 扫码自动开锁：点名查到的这份详情就是"确认可用"的判据
+                    maybeAutoUnlock(carNum, detail)
                 }
 
                 // 服务端明确说这辆车不可用（已出租 / 维修 / 不存在）：把原文摆到车辆卡上，
                 // 顺手提示一句。这不是"没查到"，用户该当场知道原因。
                 is CarDetailResult.Unavailable -> {
+                    clearAutoUnlock(carNum)
                     _uiState.update {
                         it.copy(
                             carDetailIssue = CarDetailIssue(carNum, result.message),
@@ -663,6 +715,7 @@ class BikeMapViewModel(
                 }
 
                 else -> {
+                    clearAutoUnlock(carNum)
                     _uiState.update { it.copy(carDetailQuerying = null) }
                     _events.trySend(
                         BikeMapEvent.Notice(
@@ -676,12 +729,15 @@ class BikeMapViewModel(
     }
 
     /**
-     * 导航带入的待定位车号（今日页「扫一扫」扫到车身码 / 出码页识别条经 focusItemId 传进来）：
+     * 导航带入的待定位车号（今日页「+ → 扫一扫」/ 悬浮球扫到车身码经 focusItemId 传进来）：
      * 第一笔查询结果里找到就自动定位（[focusCar]）；查过一轮还是没有（车被骑走 / 不在这一带
      * / **正被别人骑着**）就退到按车号点名查一次（[fetchCarDetail]），服务端说不可用就把原因
      * 摆到车辆卡上——与「扫车身码」那条路同一条兜底（2026-10-11）。
+     *
+     * [autoUnlock] 同 [focusCar]：确认可用后发一次 [BikeMapEvent.AutoUnlockReady]。
      */
-    fun setPendingFocusCar(carNum: String) {
+    fun setPendingFocusCar(carNum: String, autoUnlock: Boolean = false) {
+        if (autoUnlock) autoUnlockCar = carNum
         pendingFocusCar = carNum
         tryResolvePendingFocusCar()
     }
@@ -1185,6 +1241,10 @@ class BikeMapViewModel(
     private fun failQuery(lat: Double, lng: Double, failure: BikeFailure) {
         lastAttemptLat = lat
         lastAttemptLng = lng
+        // 带车号进页那条路若还卡在「等首查」上，这一轮没查成就等于没结论——自动开锁目标
+        // 随之作废（别留一个悬空目标被后面某次成功刷新意外触发；见 `autoUnlockCar`）。
+        // `pendingFocusCar` 本身保留：下次查询成功仍照旧定位 / 高亮（那是只读动作）
+        if (pendingFocusCar != null) autoUnlockCar = null
         // 中心结果都没拿到：撒点也不会发，把"补全中"一并收掉（否则副标题会挂着）
         _uiState.update { it.copy(loading = false, queried = true, failure = failure, completing = false) }
     }

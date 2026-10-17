@@ -50,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -140,7 +141,8 @@ internal enum class RidePhase { Finding, Riding, Settled }
 fun RideScreen(
     onBack: () -> Unit = {},
     /**
-     * 带车号进页（车号识别 / 深链 / 通知）：第一笔查询结果里找到就高亮并定位。
+     * 带车号进页（今日页「+ → 扫一扫」/ 悬浮球扫到车身码）：第一笔查询结果里找到就高亮并定位，
+     * 并**在确认这辆车可用后自动走开锁的同一套闸**（见 `autoUnlockRequest`）。
      * 不轮询——找不到就等用户下一次动作。
      */
     initialFocusCarNum: String? = null,
@@ -212,6 +214,23 @@ fun RideScreen(
      * 就会让开关弹窗重组整页——见 [KvcxConfirmHost] 的注释。
      */
     val pendingAction = remember { mutableStateOf<Pair<KvcxAction, String?>?>(null) }
+    /**
+     * 扫码识别出的车**确认可用**后的自动开锁请求（车号）：事件流写入、下面那条 keyed effect 执行。
+     *
+     * 走这一步而不是在事件收集里直接发：事件收集跑在 `LaunchedEffect(Unit)` 里，闭包是
+     * **首次组合**那一份（`prefs.unlockConfirm` 停在 DataStore 默认值），用户关掉的
+     * 「开锁前确认」会被忽略；keyed effect 每次重新起协程，拿的是最新闭包。
+     */
+    var autoUnlockRequest by remember { mutableStateOf<String?>(null) }
+    /**
+     * 本次进页是否已经为「带车号进页」发起过自动开锁（`rememberSaveable`：跨转屏 / 重建保留）。
+     *
+     * `LaunchedEffect(initialFocusCarNum)` 在 Activity 重建（转屏 / 改字号 / 深色切换 /
+     * 进程恢复）时会**重跑**；不设这道闸，它会再解析一次可用性、再发一次 `AutoUnlockReady`
+     * ——那等于对同一次扫码**重发一次开锁**（写操作零自动重试的红线）。骑行页自己那枚
+     * 「扫车身码」不经过这个 effect（ActivityResult 回调不会因重建重放），无需这道闸。
+     */
+    var autoUnlockArmed by rememberSaveable { mutableStateOf(false) }
 
     val phase = when {
         summary != null -> RidePhase.Settled
@@ -274,7 +293,8 @@ fun RideScreen(
     }
     val withNotificationPermission = rememberNotificationPermissionGate()
 
-    // 内置相机扫车身码（账号方式）：识别后**回填车号 + 换成车辆卡**，不自动开锁——写操作仍走确认闸
+    // 内置相机扫车身码（账号方式）：识别后**回填车号 + 换成车辆卡**，并让地图侧在**确认这辆车
+    // 可用**后发一次 AutoUnlockReady——开锁仍走同一套闸（二次确认 / 定位前置，见 autoUnlockRequest）
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val raw = result.contents
         val carNum = raw?.let(EbikeQr::parseScannedCarNum)
@@ -289,7 +309,7 @@ fun RideScreen(
                 haptics.tap()
                 ebikeViewModel.onCarInput(carNum)
                 pickedCar = carNum
-                viewModel.focusCar(carNum)
+                viewModel.focusCar(carNum, autoUnlock = true)
             }
         }
     }
@@ -355,8 +375,17 @@ fun RideScreen(
                 // 事件成串来时新的提示才能当场顶掉旧的（见 AppNotice.kt）
                 is BikeMapEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
                 BikeMapEvent.Unlocked -> haptics.success()
+                // 扫码确认可用：交给下面那条 keyed effect 走开锁的同一套闸（见 autoUnlockRequest）
+                is BikeMapEvent.AutoUnlockReady -> autoUnlockRequest = event.carNum
             }
         }
+    }
+    // 扫码自动开锁：确认可用后才到这一步；只有账号方式 + 已登录 + 无在案订单才发
+    // （与「开锁」按钮同一判据 caps.directUnlock——今日页扫一扫在两档下都可能进本页）
+    LaunchedEffect(autoUnlockRequest) {
+        val carNum = autoUnlockRequest ?: return@LaunchedEffect
+        autoUnlockRequest = null
+        if (caps.directUnlock) requestKvcxAction(KvcxAction.UNLOCK, carNum)
     }
     LaunchedEffect(Unit) {
         ebikeViewModel.events.collect { event ->
@@ -371,10 +400,16 @@ fun RideScreen(
         viewModel.queryRideQuietly()
     }
     LaunchedEffect(initialFocusCarNum) {
-        if (!initialFocusCarNum.isNullOrBlank()) {
-            pickedCar = initialFocusCarNum
-            viewModel.setPendingFocusCar(initialFocusCarNum)
-        }
+        val carNum = initialFocusCarNum ?: return@LaunchedEffect
+        if (carNum.isBlank()) return@LaunchedEffect
+        pickedCar = carNum
+        // 今日页「+ → 扫一扫」/ 悬浮球扫到车身码进来：与骑行页「扫车身码」同一条路——
+        // 确认这辆车可用后自动走开锁的同一套闸（见 autoUnlockRequest）。
+        // 定位 / 高亮每次重建都照跑（一次性动作，重来无害）；**自动开锁只发一次**
+        // （见 autoUnlockArmed——重建重跑时不再发，免得对同一次扫码重发一次开锁）
+        val armAutoUnlock = !autoUnlockArmed
+        autoUnlockArmed = true
+        viewModel.setPendingFocusCar(carNum, autoUnlock = armAutoUnlock)
     }
     // 骑行状态在别处（微信 / 桌面）变了：回到本页时不能还是旧值；焚码兜底同口径
     val lifecycleOwner = LocalLifecycleOwner.current
