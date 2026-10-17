@@ -9,11 +9,16 @@
 **实测定论（2026-10-01）**：匿名 `scanWasherCode` 三种头组合均回 `401 "JWT token is missing"`
 ——只读也必须登录，**无免登路径**。
 
-## 页面结构与交接（2026-10-02 改版，动 U净 页面前重读）
+## 页面结构与交接（2026-10-16 重排，动 U净 页面前重读）
 
-- 主页（UJING）排版：在案订单 > 扫码 > 看板 > **历史账单** > 账号。扫码区只管
-  「扫没扫成」（识别中 / 失败 / 「继续上次识别」/ 空态引导），**不再内联展示设备卡
-  与档位**——那是下单页的事。
+- 主页（UJING）排版：**在案订单（唯一一张状态英雄卡）> 扫码 > 看板 > 账号与记录**，
+  层级靠视觉而不是顺序表达（卡规格见 `.agents/rules/ui-common.md`，动效口径同文件）。
+  历史账单与账号合并成一张卡（`RecordsSection`），页尾带 `FooterDisclaimer`。
+  扫码区只管「扫没扫成」（按钮内识别中 / 失败行 / 「继续上次识别」/ 空态引导），
+  **不再内联展示设备卡与档位**——那是下单页的事。
+- 看板行的空闲数放大走主色，取数口是 `UjingState.BoardLine.freeCountText`
+  （`primaryText` 由它拼出，**别在 UI 里再拼一份「N/M」**）；首拉骨架的判据是
+  `boardRefreshing && board.isEmpty() && houses.isNotEmpty()`，不新增 ViewModel 状态。
 - 扫码成功 → `UjingDraftStore.open`（Graph 单例，**进程内**）→ `openOrder` 事件 →
   `SubpageActivity.start(UJING_ORDER)`。下单页读草稿渲染：档位单选（AppCard 高亮即
   选中）+ 水温 / 投放 chips + 贴底动作条 + 确认弹层；「去支付」= `submit` 交回选择 +

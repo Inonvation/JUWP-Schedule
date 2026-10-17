@@ -383,6 +383,32 @@
   骑行页自己那枚入口的三档判定（取消不提示 / 不是车号才报错）**不受影响**，
   别把两条并成一条。
 
+- **扫到车号后「确认可用就自动开锁」**（2026-10-15 用户要求；**确认闸保留**）：
+  两条扫码入口——骑行页「扫车身码」（`focusCar(carNum, autoUnlock = true)`）与今日页
+  「+ → 扫一扫」/ 悬浮球带车号进页（`setPendingFocusCar(carNum, autoUnlock = true)`）——
+  识别出车号后照旧回填 + 车辆卡，并在**确认这辆车可用**后发一次
+  `BikeMapEvent.AutoUnlockReady`；页面收到后走**开锁的同一套闸**（`requestKvcxAction`：
+  定位前置 + 二次确认），即「识别 → 确认 → 本机开锁」，不再要用户再点一次开锁。
+  - **可用判据**：附近列表命中且 `NearbyBike.available`，或按车号点名查（`queryOneCar`）
+    返回 `CarDetailResult.Ok` 且 available。**其余一律不自动开锁**——已出租 / 维修 / 离线 /
+    查不到 / 网络失败 / **正在骑这辆**都只清目标、不发事件（车辆卡照常展示状态与服务端原因，
+    用户可手动点开锁）。**宁可不自动开锁，也不误开**。
+  - `autoUnlockCar` 只认**最近一次扫码**：`focusCar` 换了车就把旧目标作废（免得一个没结论的
+    旧目标被后来的「定位」动作意外触发）；目标没有结论的几条路（session 不可用 / 已有查询
+    在飞 / Malformed / 撞在骑车辆 / **带车号进页那条路首查失败**）都**显式清掉**，
+    别留悬空目标。
+  - **三条硬口径**：① 自动开锁走的是与「开锁」按钮**同一个** `requestKvcxAction`——不是另开
+    一条免确认的路（用户关掉「开锁前确认」才直发）；② **能力判据仍是 `caps.directUnlock`**
+    （账号方式 + 已登录 + 无在案订单）——今日页扫一扫在小程序方式下也会进本页，但**不触发**；
+    ③ 页面侧的执行走一条 **keyed `LaunchedEffect`**（`autoUnlockRequest`）：事件收集跑在
+    `LaunchedEffect(Unit)` 里、闭包停在首次组合（`prefs.unlockConfirm` 是 DataStore 默认值），
+    **别把执行并回事件收集**，否则用户关掉的免确认设置会被忽略。
+  - **带车号进页那条 effect 在 Activity 重建时会重跑**（转屏 / 改字号 / 深色切换 / 进程恢复），
+    不设闸就会对同一次扫码再发一次 `AutoUnlockReady` = **重发一次开锁**（违反零自动重试）。
+    所以 `LaunchedEffect(initialFocusCarNum)` 用 `rememberSaveable` 的 `autoUnlockArmed`
+    只**首次**带 `autoUnlock = true`（重跑那次仍 `setPendingFocusCar` 定位 / 高亮，但不发开锁）。
+    骑行页「扫车身码」不经这条 effect（ActivityResult 回调不重放），无需这道闸。
+
 ## 扫完即焚（2026-09-27 改口径）
 
 - **出码页两个开关的「行为判定」读原始流，不读页面快照**（2026-09-27 修「开了自动保存

@@ -48,14 +48,40 @@
 - **Snackbar 会压住贴底的主操作**：页面底部若有常驻动作条（如骑行页），把它实测的高度垫进
   `AppSnackbarHost` 的 `Modifier.padding(bottom = …)`，否则提示一来就看不见主按钮。
 
-## 卡片观感只有一处定义
+## 卡片观感只有两处定义（描边卡 / 状态英雄卡）
 
-- 卡片观感**只有一处定义**：`ui/common/AppCard.kt` 的 `AppCard` / `AppCardRow`
-  （14dp 圆角 + 1dp `outlineVariant` 描边 + surface 底）。新卡片一律走它，
-  **不要**再私写 `RoundedCornerShape` + `border`（2026-09-22 之前 12dp/14dp 两套并存）；
-  点击涟漪与触感由 `AppCard` 统一给，调用方不要在外面再包一层 `clickable`。
-  区块标题同理走 `ui/common/SectionHeader.kt`（「今天还有 N 节」「明天 · 周二」
+- 卡片观感**只有两处定义**，按「这张卡在页面里是什么角色」选，别自己另写一套：
+  - **描边卡** `ui/common/AppCard.kt` 的 `AppCard` / `AppCardRow`
+    （14dp 圆角 + 1dp `outlineVariant` 描边 + surface 底）：**列表里的一行**，
+    克制、可并列。新卡片默认走它；**不要**再私写 `RoundedCornerShape` + `border`
+    （2026-09-22 之前 12dp/14dp 两套并存）；点击涟漪与触感由 `AppCard` 统一给，
+    调用方不要在外面再包一层 `clickable`。
+    `highlighted` 的三处颜色（底 / 描边色 / 描边宽）**走 180ms 过渡**（2026-10-16）：
+    选中 / 取消选中不再突变。改动影响全部 `highlighted` 调用点（今日页开水卡、
+    笔记·作业多选行、快趣附近车辆卡、U净 档位卡），改它要冒烟这几处。
+  - **状态英雄卡** `ui/common/StatusHeroCard.kt`（`StatusHeroCard` + `HeroTone` +
+    `heroToneAccent`，16dp 圆角 + 实心 tonal 底 + **无描边**）：**页面此刻正在发生的事**
+    （U净 在案订单，2026-10-16 起）。**一屏只该有一张**——出现两张就等于没有英雄卡。
+    语气底色的映射只有 `heroToneContainer` 一处，强调色只有 `heroToneAccent` 一处；
+    内容排版归调用方。语气变化走底色过渡（220ms），不硬切。
+- 区块标题同理走 `ui/common/SectionHeader.kt`（「今天还有 N 节」「明天 · 周二」
   与笔记/作业库的「最近更新」「按课程」共用一套规格）。
+
+## 动效口径（2026-10-16 起，U净 页收口）
+
+- **区块进入 / 退出**：`fadeIn + expandVertically(expandFrom = Top)`，220ms
+  `FastOutSlowInEasing`；退出 160ms `shrinkVertically`。写死在页内常量，**不建全局
+  motion token 文件**（与项目现状一致）。
+- **高频数值（每秒变）不做 crossfade**：倒计时、计时文案每秒都在变，动画会一直闪
+  （今日页流程简报同款结论）。变化感交给**进度条**：进度值 `animateFloatAsState` 400ms，
+  每秒更新接续平滑，观感是连续推进。
+- **非高频状态文案**才 crossfade（180ms），如贴底动作条的所选档位摘要。
+- **列表增删**：`LazyColumn` 用 `Modifier.animateItem()`；普通 `Column` 里用
+  `Modifier.animateContentSize()` 收平高度（逐项退场动画要 LazyColumn 才撑得住，
+  别为此把整页改成 lazy）。
+- **进页错峰入场**用 `ui/common/StaggeredReveal.kt`（每块 +60ms、6dp、220ms，
+  **只在首次组合播一次**）：只包「一直存在的主区块」，别包由 `AnimatedVisibility`
+  管出现/消失的块——两套动画叠加会打架。
 - **卡片里放列表用平铺行，不许再套卡**（2026-10-09，用户反馈笔记/作业库「气泡套气泡」）：
   组卡展开区的条目走 `NoteRow(embedded = true)` / `HomeworkRow(embedded = true)` 这类
   平铺行——无卡底、无描边、整行涟漪，行间与头行下用 `AppCardDivider` 分隔
