@@ -121,6 +121,18 @@ data class BikeMapUiState(
      */
     val userAccuracyMeters: Float = 0f,
     /**
+     * 镜头是否跟着用户走（2026-10-19 用户要求）。
+     *
+     * 开着时连续定位的每条有效读数都会把镜头平移过去（位移 ≥
+     * [FOLLOW_RECENTER_METERS] 才动，站定的小抖动不推镜头）；**只挪镜头，不重查接口**
+     * ——「刷新只由用户动作驱动」的红线不变。
+     *
+     * 进页自动定位、点「定位」按钮、开始骑行都会打开它；用户单指拖动地图、点「回到校区」、
+     * 点某个停车点 / 车辆定位时会关掉——那些动作表达的是"我现在要看别处"，再跟着人走
+     * 只会把用户刚挪到的视野抢回去。
+     */
+    val followUser: Boolean = true,
+    /**
      * 只看可用的车（离线、电量低于运营方阈值的都不显示）。
      * 默认开（2026-09-24 用户拍板）：找车就是要找能骑的；开关态进 DataStore，下次进页保持。
      */
@@ -366,6 +378,16 @@ class BikeMapViewModel(
     private var lastAttemptLng: Double? = null
     private var cameraNonce = 0L
 
+    /**
+     * 上一次跟随镜头落到的用户坐标（2026-10-19）。
+     *
+     * 只在跟随态记账：新读数与它相差不足 [FOLLOW_RECENTER_METERS] 时不推镜头，否则
+     * 站定时的几米抖动（精度提升那一路也会发读数）会让地图一直轻微滑动。
+     * 退出跟随时清空——重新打开跟随要无条件把镜头拉回人身上。
+     */
+    private var followCameraLat: Double? = null
+    private var followCameraLng: Double? = null
+
     /** 导航带入、还没在查询结果里找到的待定位车号（见 [setPendingFocusCar]）。 */
     private var pendingFocusCar: String? = null
 
@@ -564,6 +586,8 @@ class BikeMapViewModel(
             )
         }
         if (expanding && cluster != null) {
+            // 用户明确要看这个停车点：退出自动跟随，否则下一条定位读数会把镜头抢回去
+            stopFollowing()
             pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
         }
     }
@@ -575,6 +599,8 @@ class BikeMapViewModel(
      */
     fun onFocusPoint(lat: Double, lng: Double) {
         if (!lat.isFinite() || !lng.isFinite()) return
+        // 用户点名看某个点：跟随让位（点「定位」或开始骑行会重新打开）
+        stopFollowing()
         pushCamera(lat, lng, zoom = null, animated = true)
     }
 
@@ -598,6 +624,8 @@ class BikeMapViewModel(
             clearAutoUnlock(carNum) // 正在骑这辆：不自动开锁
             return
         }
+        // 找车 / 点名定位是"我要看这辆车"：跟随让位（点「定位」或开始骑行会重新打开）
+        stopFollowing()
         _uiState.update {
             it.copy(highlightCarNum = carNum, carDetailIssue = null, carDetailQuerying = null)
         }
@@ -680,6 +708,8 @@ class BikeMapViewModel(
     }
 
     private fun fetchCarDetail(carNum: String) {
+        // 「按车号找车」优先于自动跟随：查到会移镜头，别让下一条定位读数把它拽回去
+        stopFollowing()
         val session = kqcx ?: run {
             clearAutoUnlock(carNum)
             _events.trySend(
@@ -783,6 +813,8 @@ class BikeMapViewModel(
 
     /** 「回到校区」：拉回默认中心并重查。 */
     fun onResetToCampus() {
+        // 用户选择"看校区"：退出自动跟随（点「定位」或开始骑行会重新打开）
+        stopFollowing()
         pushCamera(
             lat = BikeNearby.DEFAULT_CENTER_LAT,
             lng = BikeNearby.DEFAULT_CENTER_LNG,
@@ -799,6 +831,8 @@ class BikeMapViewModel(
      * 定位成功（坐标已是 GCJ-02）。记下蓝点位置（含精度），把镜头移过去并立即重查。
      *
      * 同时**换参照点**重算距离：距离从此以"你"为准，拖动地图不会让这些数字变形。
+     * 也**重新打开跟随**（2026-10-19）：用户点「定位」就是"我要看着自己"，进页自动定位
+     * 同理；之后连续定位的读数会把镜头一路带过去（[onUserLocationChanged]）。
      *
      * [animated] 为 false 用于进页面那一次：直接落位。进页面又没有起点可看，
      * 从校园中心滑过去纯属多此一举；用户主动点「定位」才需要一个缓动告诉他镜头动了。
@@ -806,11 +840,14 @@ class BikeMapViewModel(
     fun onLocated(lat: Double, lng: Double, accuracyMeters: Float = 0f, animated: Boolean = true) {
         if (!lat.isFinite() || !lng.isFinite()) return
         locatedOnce = true
+        followCameraLat = lat
+        followCameraLng = lng
         _uiState.update {
             it.copy(
                 userLat = lat,
                 userLng = lng,
                 userAccuracyMeters = sanitizeAccuracy(accuracyMeters),
+                followUser = true,
             )
         }
         rebuildClusters()
@@ -822,7 +859,12 @@ class BikeMapViewModel(
 
     /**
      * 连续定位的最新读数（坐标已是 GCJ-02，DESIGN §3.9「蓝点实时更新」）：
-     * **只挪蓝点（含精度圈）**。
+     * 挪蓝点（含精度圈）；**跟随态下也把镜头平移过去**（2026-10-19 用户要求：
+     * 骑车换了地方，地图不能还停在开锁那一刻的位置）。
+     *
+     * 跟随**只移动镜头、不重查接口**：程序性移动会被 `CameraSuppressor` 吃掉，走不到
+     * 「拖动停手」那条查询；车辆列表仍由用户动作驱动（禁止轮询第三方接口）。
+     * 用户单指拖动地图即退出跟随（[onUserPanned]），点「定位」/ 开始骑行再打开。
      *
      * **不重设列表的参照点**（2026-09-30）：蓝点每动一下就把整张列表按新位置重排，
      * 用户站着不动也会看到顺序在变。参照点只在查询落地时定一次（见 [BikeMapUiState.anchorLat]）。
@@ -830,11 +872,6 @@ class BikeMapViewModel(
      * **也不重算簇**（2026-10-13）：簇的距离用的是那个定死的参照点，与蓝点实时位置无关，
      * 重算结果逐字段相同——纯浪费（还在主线程，走动时每 2 秒一次）。停车点距离读的是
      * `state.userLat`，不经过簇，照常跟着蓝点走。
-     *
-     * 与 [onLocated] 的分工：镜头与重查仍归一次性定位（进页 / 点「定位」按钮）管。
-     * 这里不移镜头——用户刚拖好的视野不能被走动的自己抢回去；也不重查接口——
-     * 车辆列表是用户动作驱动（DESIGN §3.9 禁止轮询第三方接口），下次拖动 / 点刷新
-     * 自然用上最新的参照点。
      */
     fun onUserLocationChanged(lat: Double, lng: Double, accuracyMeters: Float = 0f) {
         if (!lat.isFinite() || !lng.isFinite()) return
@@ -846,6 +883,61 @@ class BikeMapViewModel(
                 userAccuracyMeters = sanitizeAccuracy(accuracyMeters),
             )
         }
+        if (_uiState.value.followUser) followCameraIfMoved(lat, lng)
+    }
+
+    /**
+     * 打开自动跟随（2026-10-19）：镜头立刻回到用户身上（已有位置时），之后由
+     * [onUserLocationChanged] 接管。骑行开始时页面调它（见 `RideScreen` 的 phase effect）。
+     */
+    fun startFollowing() {
+        val current = _uiState.value
+        val lat = current.userLat
+        val lng = current.userLng
+        val wasFollowing = current.followUser
+        if (!wasFollowing) {
+            _uiState.update { it.copy(followUser = true) }
+        }
+        followCameraLat = lat
+        followCameraLng = lng
+        // 已经在跟随时镜头就在人身上，不重复推（连点定位 / 骑行态每轮 phase 都会调到这里）
+        if (!wasFollowing && lat != null && lng != null) {
+            pushCamera(lat, lng, zoom = null, animated = true)
+        }
+    }
+
+    /** 退出自动跟随（用户拖图 / 点名看别处）；点「定位」或开始骑行会重新打开。 */
+    fun stopFollowing() {
+        if (_uiState.value.followUser) _uiState.update { it.copy(followUser = false) }
+        followCameraLat = null
+        followCameraLng = null
+    }
+
+    /** 用户单指拖动了地图（View 层识别）：从这一刻起不再自动跟随。 */
+    fun onUserPanned() {
+        stopFollowing()
+        // 用户接管地图：把**还没执行**的镜头请求一起丢掉。否则定位 / 跟随刚好推来的
+        // 一次 `camera` 会在手指下面再补一段动画（异步一拍，stopAnimation 拦不到）。
+        _uiState.update { current ->
+            if (current.camera == null) current else current.copy(camera = null)
+        }
+    }
+
+    /**
+     * 跟随态下把镜头带向最新读数：只有离上次落点够远才推——站定时的几米抖动、
+     * 以及"原地精度提升"那一路读数都不该让镜头一直轻滑。
+     */
+    private fun followCameraIfMoved(lat: Double, lng: Double) {
+        val lastLat = followCameraLat
+        val lastLng = followCameraLng
+        if (lastLat != null && lastLng != null &&
+            BikeNearby.distanceMeters(lastLat, lastLng, lat, lng) < FOLLOW_RECENTER_METERS
+        ) {
+            return
+        }
+        followCameraLat = lat
+        followCameraLng = lng
+        pushCamera(lat, lng, zoom = null, animated = true)
     }
 
     /** 精度读数的清洗：非有限 / 非正一律当"系统没给"（0）。 */
@@ -1337,6 +1429,15 @@ class BikeMapViewModel(
 
         /** 低于这个缩放才撒 8 个方位点；否则 4 个（见 [ringSampleCount]）。 */
         private const val RING_SAMPLE_ZOOM = 16.5
+
+        /**
+         * 跟随态下每次重定心的最小位移（米，2026-10-19）。
+         *
+         * 骑行的定位流 2 秒一条、每条通常 10 米上下，这个值保证"骑出去了镜头就跟上"；
+         * 站定时的读数抖动与"原地精度提升"都小于它，不会把镜头推得一直轻滑。
+         * 别把它调到 `DOT_MOVE_MIN_METERS`（4 米）以下——那正是站定抖动量的量级。
+         */
+        private const val FOLLOW_RECENTER_METERS = 8.0
 
         /** 查询耗时日志的 tag（只在 debug 打）。 */
         private const val TAG = "BikeMapQuery"

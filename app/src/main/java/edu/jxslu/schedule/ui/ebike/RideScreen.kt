@@ -261,6 +261,10 @@ fun RideScreen(
             pickedCar = null
             showCarNumberSheet = false
         }
+        // 骑行开始 = 镜头重新跟随用户（2026-10-19 用户要求：从一个地方骑到另一个地方，
+        // 地图不能还停在开锁那一刻的位置）。骑行中用户仍可单指拖图退出跟随；phase 不变，
+        // 这条 effect 不会把用户刚拖到的视野反复拽回来。
+        if (phase == RidePhase.Riding) viewModel.startFollowing()
     }
 
     // ── 权限与动作 ──
@@ -508,10 +512,10 @@ fun RideScreen(
             unavailable = scheme.outline.toArgb(),
             label = scheme.onPrimary.toArgb(),
             selectedRing = scheme.onSurface.toArgb(),
-            userDot = scheme.primary.toArgb(),
-            userHalo = scheme.primary.copy(alpha = 0.22f).toArgb(),
-            centerMark = scheme.onSurface.toArgb(),
-            centerHalo = scheme.surface.toArgb(),
+            userDot = USER_DOT_GREEN.toArgb(),
+            userHalo = USER_HALO_GREEN.toArgb(),
+            centerMark = CENTER_PIN_BLACK.toArgb(),
+            centerGlyph = CENTER_PIN_DOT.toArgb(),
             fenceStroke = Color(0xFF3D8BEF).copy(alpha = 0.85f).toArgb(),
             fenceFill = Color(0xFF64B5F6).copy(alpha = 0.30f).toArgb(),
             rideMarker = scheme.primary.toArgb(),
@@ -660,6 +664,8 @@ fun RideScreen(
                             }
                         },
                         onCameraApplied = viewModel::onCameraApplied,
+                        // 用户单指拖图：退出自动跟随（点「定位」/ 开始骑行会重新打开）
+                        onUserPan = viewModel::onUserPanned,
                         // 面板高度与底部块高度一变，就把整幅地图按两者之和的一半向上平移
                         // （见上面那段的注释）：只动图层、不 resize 视图，地图内容不跳、瓦片不重绘。
                         modifier = Modifier
@@ -681,8 +687,14 @@ fun RideScreen(
                     ) {
                         MapCircleButton(
                             icon = HugeIcons.Crosshair,
-                            label = "定位到我的位置",
+                            label = if (state.followUser && state.userLat != null) {
+                                "跟随中，点此回到我的位置"
+                            } else {
+                                "定位到我的位置"
+                            },
                             busy = state.locating,
+                            // 跟随态给个状态色：用户一眼知道镜头正跟着自己走
+                            active = state.followUser && state.userLat != null,
                             onClick = {
                                 haptics.tap()
                                 if (BikeLocator.hasPermission(context)) {
@@ -1171,6 +1183,19 @@ private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里�
  * 只影响首帧的地图平移量与 Snackbar 垫高，估偏一点点也看不见。
  */
 private const val BLOCK_HEIGHT_FALLBACK_DP = 120f
+
+/**
+ * 定位点与中心浮标的官方小程序色板（2026-10-19 对齐，值从官方截图取样）：
+ * 绿色实心圆点 + 淡绿平铺光晕 + 黑色圆头浮标（针心薄荷绿）。
+ *
+ * **不跟主题走**：地图瓦片始终是浅色底图，官方这套绿/黑在浅底上对比稳定；
+ * 旧版跟着 `scheme.primary` 走，换主题时定位点会变色，和官方观感也对不上。
+ * 改色值前先看 DESIGN §3.9「定位」「地图中心针」两行。
+ */
+private val USER_DOT_GREEN = Color(0xFF55B837)
+private val USER_HALO_GREEN = Color(0xFF63C46B).copy(alpha = 0.30f)
+private val CENTER_PIN_BLACK = Color(0xFF1F1F1F)
+private val CENTER_PIN_DOT = Color(0xFF63D099)
 
 /**
  * 面板高度上限要从窗口高度里预留的空间（dp）：**固定常数**，不跟底部块实测高度走。

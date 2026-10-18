@@ -1367,30 +1367,46 @@ internal fun RideBikePanel(
                     filtered = !state.onlyAvailable || !state.onlyOurCampus,
                     onClick = onOpenFilter,
                 )
-                if (state.loading) {
-                    // 占位与右边那枚刷新按钮**同尺寸（40dp）**：旧版是 20dp 圈 + 12dp 横垫
-                    // （44dp），一加载头行的标题列就左右挪 4dp——刷新一次跳一下
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            // 刷新后按钮换成转圈，这块必须继续吃掉点击：否则第二次点会落到
-                            // 下面的地图上，被 osmdroid 当成双击放大。
-                            .pointerInput(Unit) { detectTapGestures(onTap = {}, onDoubleTap = {}) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
+                // 刷新按钮 ↔ 转圈交叉淡入（2026-10-19）：旧版是硬切，加载一次头行就闪一下。
+                // 外层固定 40dp，两种形态同尺寸；loading 那份继续吞触摸（见里面那层 pointerInput）
+                Box(modifier = Modifier.size(40.dp)) {
+                    AnimatedContent(
+                        targetState = state.loading,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(BAR_FADE_IN_MS)) togetherWith
+                                fadeOut(animationSpec = tween(BAR_FADE_OUT_MS))
+                        },
+                        label = "refreshSlot",
+                        modifier = Modifier.fillMaxSize(),
+                    ) { loading ->
+                        if (loading) {
+                            // 占位与右边那枚刷新按钮**同尺寸（40dp）**：旧版是 20dp 圈 + 12dp 横垫
+                            // （44dp），一加载头行的标题列就左右挪 4dp——刷新一次跳一下
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    // 刷新后按钮换成转圈，这块必须继续吃掉点击：否则第二次点会落到
+                                    // 下面的地图上，被 osmdroid 当成双击放大。
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(onTap = {}, onDoubleTap = {})
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        } else {
+                            IconButtonSmall(
+                                icon = HugeIcons.Refresh,
+                                label = "刷新附近车辆",
+                                tint = MaterialTheme.colorScheme.primary,
+                                onClick = onRefresh,
+                            )
+                        }
                     }
-                } else {
-                    IconButtonSmall(
-                        icon = HugeIcons.Refresh,
-                        label = "刷新附近车辆",
-                        tint = MaterialTheme.colorScheme.primary,
-                        onClick = onRefresh,
-                    )
                 }
             }
             // 失败提示留在列表上方：它要一直看得见，不被列表滚走。
@@ -1440,25 +1456,28 @@ internal fun RideBikePanel(
                     )
 
                     else -> {
-                        state.clusters.forEach { cluster ->
-                            // key 走簇键（2026-10-01）：撒点合并落地时列表会换一批，
-                            // 有 key 才能移动节点，没 key 就整列按位置重组一遍
-                            key(cluster.key) {
-                                RideClusterCard(
-                                    cluster = cluster,
-                                    expanded = cluster.key == state.expandedKey,
-                                    distanceFromUser = state.distanceFromUser,
-                                    caps = caps,
-                                    onClick = { onClusterTap(cluster.key) },
-                                    onPick = onPick,
-                                    onUnlock = onUnlock,
-                                    onGenerateForCar = onGenerateForCar,
-                                    modifier = Modifier.onGloballyPositioned { coords ->
-                                        clusterOffsets[cluster.key] =
-                                            coords.positionInParent().y.roundToInt()
-                                    },
-                                )
-                            }
+                        // 卡片按簇键做进出场淡入淡出（见 AnimatedCardList）：
+                        // 旧版换一批结果时整列硬切，卡片凭空出现/消失
+                        AnimatedCardList(
+                            items = state.clusters,
+                            itemKey = { it.key },
+                            spacing = 8.dp,
+                            label = "clusterCards",
+                        ) { cluster ->
+                            RideClusterCard(
+                                cluster = cluster,
+                                expanded = cluster.key == state.expandedKey,
+                                distanceFromUser = state.distanceFromUser,
+                                caps = caps,
+                                onClick = { onClusterTap(cluster.key) },
+                                onPick = onPick,
+                                onUnlock = onUnlock,
+                                onGenerateForCar = onGenerateForCar,
+                                modifier = Modifier.onGloballyPositioned { coords ->
+                                    clusterOffsets[cluster.key] =
+                                        coords.positionInParent().y.roundToInt()
+                                },
+                            )
                         }
                         // 封顶之外还有更远的停车点：说清一句，别让用户以为这一带就这么多
                         if (state.clusterOverflow > 0) {
@@ -1532,6 +1551,50 @@ private suspend fun awaitSettledOffset(key: String, offsets: Map<String, Int>): 
         }
     }
     return offsets[key]
+}
+
+/**
+ * 面板里卡片列表的进出场动画（2026-10-19 用户口径「卡片消失和出现要有动画，不要突然
+ * 出现消失」）。
+ *
+ * 触发判据是**卡片的身份集合**（[itemKey] 组成的列表），不是整份数据：拖动停稳后刷新
+ * 回来的还是同一批停车点、只是距离数字变了，这时内容原地更新、不播过渡；换了一片区域
+ * 或某处车没了/多出来才淡入淡出。
+ *
+ * 高度用 [SizeTransform] 收在同一节拍（[BAR_RISE_MS]，与动作区同一套缓动）——直接抽走
+ * 旧列表会让下方内容瞬移。新旧两份同时组合 200ms 左右，列表封顶 24 条，可以接受。
+ */
+@Composable
+private fun <T> AnimatedCardList(
+    items: List<T>,
+    itemKey: (T) -> Any,
+    spacing: Dp,
+    label: String,
+    content: @Composable (T) -> Unit,
+) {
+    AnimatedContent(
+        targetState = items,
+        contentKey = { list -> list.map(itemKey) },
+        transitionSpec = {
+            (fadeIn(animationSpec = tween(BAR_FADE_IN_MS)) togetherWith
+                fadeOut(animationSpec = tween(BAR_FALL_MS))).using(
+                SizeTransform(clip = false) { _, _ ->
+                    tween<IntSize>(BAR_RISE_MS, easing = FastOutSlowInEasing)
+                },
+            )
+        },
+        label = label,
+        modifier = Modifier.fillMaxWidth(),
+    ) { list ->
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(spacing),
+        ) {
+            list.forEach { item ->
+                key(itemKey(item)) { content(item) }
+            }
+        }
+    }
 }
 
 /**
@@ -2244,7 +2307,13 @@ private fun RideSpotsContent(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
         } else {
-            nearest.forEach { (spot, meters) ->
+            // 还车点批次变化也走同一套淡入淡出（身份 = 坐标 + 点位名，距离变了不算换卡）
+            AnimatedCardList(
+                items = nearest,
+                itemKey = { (spot, _) -> Triple(spot.lat, spot.lng, spot.name) },
+                spacing = 10.dp,
+                label = "spotCards",
+            ) { (spot, meters) ->
                 AppCardRow(
                     onClick = { onSpotTap(spot) },
                     onClickLabel = "把镜头对准${spot.displayName}",
@@ -2544,6 +2613,9 @@ private fun RideCountdown(
  *
  * [busy] 时把图标换成进度指示并停止响应点击：定位最长 8 秒，没有这个状态用户看不出来
  * 点没点上，只会接着点。
+ *
+ * [active] = 当前处于「跟随中」（定位按钮专用，2026-10-19）：底色 / 描边 / 图标走
+ * `animateColorAsState` 渐变到主色系，一眼可辨镜头正跟着人走，而不是硬切一个亮色。
  */
 @Composable
 internal fun MapCircleButton(
@@ -2551,13 +2623,38 @@ internal fun MapCircleButton(
     label: String,
     onClick: () -> Unit,
     busy: Boolean = false,
+    active: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val scheme = MaterialTheme.colorScheme
+    val background by animateColorAsState(
+        targetValue = if (active) scheme.primaryContainer else scheme.surfaceContainerHigh,
+        animationSpec = tween(BAR_FADE_IN_MS),
+        label = "mapCircleBg",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (active) {
+            scheme.primary.copy(alpha = 0.45f)
+        } else {
+            scheme.outlineVariant
+        },
+        animationSpec = tween(BAR_FADE_IN_MS),
+        label = "mapCircleBorder",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (active) {
+            scheme.primary
+        } else {
+            scheme.onSurface.copy(alpha = 0.75f)
+        },
+        animationSpec = tween(BAR_FADE_IN_MS),
+        label = "mapCircleTint",
+    )
     Surface(
         modifier = modifier,
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = background,
+        border = BorderStroke(1.dp, borderColor),
         enabled = !busy,
         onClick = onClick,
     ) {
@@ -2577,7 +2674,7 @@ internal fun MapCircleButton(
                 Icon(
                     icon,
                     contentDescription = label,
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    tint = iconTint,
                     modifier = Modifier.fillMaxSize(),
                 )
             }

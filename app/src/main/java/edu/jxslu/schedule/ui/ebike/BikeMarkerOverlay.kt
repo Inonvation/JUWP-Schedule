@@ -3,13 +3,10 @@ package edu.jxslu.schedule.ui.ebike
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Point
-import android.graphics.RadialGradient
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import edu.jxslu.schedule.domain.BikeCluster
@@ -36,14 +33,14 @@ internal data class BikeMarkerColors(
     val label: Int,
     /** 选中态的描边颜色。 */
     val selectedRing: Int,
-    /** 用户位置圆点的实心色。 */
+    /** 用户位置圆点的实心色（官方小程序绿，2026-10-19）。 */
     val userDot: Int,
-    /** 用户位置圆点的外晕（半透明），让点在深色瓦片上也看得清。 */
+    /** 用户位置圆点的淡绿光晕（半透明平铺圆，官方小程序同款）。 */
     val userHalo: Int,
-    /** 正中那枚「当前查的是这里」的针身颜色。 */
+    /** 正中那枚「当前查的是这里」的浮标：黑色针头 + 针杆。 */
     val centerMark: Int,
-    /** 针的描边色，压在地图内容上保证任何时候都看得见。 */
-    val centerHalo: Int,
+    /** 浮标针头中央的小圆点（薄荷绿，官方小程序同款）。 */
+    val centerGlyph: Int,
     /** 校区围栏描边色（半透明主色）。 */
     val fenceStroke: Int,
     /** 校区围栏填充色（更淡的主色）。 */
@@ -132,10 +129,10 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         unavailable = Color.DKGRAY,
         label = Color.WHITE,
         selectedRing = Color.BLACK,
-        userDot = Color.BLUE,
-        userHalo = Color.LTGRAY,
-        centerMark = Color.DKGRAY,
-        centerHalo = Color.WHITE,
+        userDot = Color.rgb(85, 184, 55),
+        userHalo = Color.argb(77, 99, 196, 107),
+        centerMark = Color.rgb(31, 31, 31),
+        centerGlyph = Color.rgb(99, 208, 153),
         fenceStroke = Color.GRAY,
         fenceFill = Color.LTGRAY,
         rideMarker = Color.DKGRAY,
@@ -178,10 +175,10 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         setShadowLayer(1.5f * density, 0f, 0f, 0x99000000.toInt())
     }
 
-    /** 指针的描边与针身。 */
+    /** 中心浮标的针杆（圆头细线）。 */
     private val pinStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
     }
 
     private val pinFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -194,8 +191,6 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         strokeCap = Paint.Cap.ROUND
     }
 
-    private val pinPath = Path()
-
     /** 围栏描边：虚线更有「边界」的感觉，实线像在画一块行政区。dash/空 7/4dp，偏密（2026-09-27 真机反馈调密）。 */
     private val fenceStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -205,6 +200,9 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
     /** 围栏路径，每帧按投影重算（缩放时屏幕坐标全变）。 */
     private val fencePath = Path()
+
+    /** 朝向扇形的环形扇区路径（只画光晕外圈那一小段），逐帧复用。 */
+    private val wedgePath = Path()
 
     /** 还车点 / 禁停区多边形共用的一条路径（逐个画完就 reset，不跨帧保留）。 */
     private val zonePath = Path()
@@ -217,14 +215,6 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
     /** 还车点图标的底色圆角方块。 */
     private val badgeFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-
-    /**
-     * 用户位置光晕的柔和径向渐变（主题色在中心、向边缘淡到全透明）。**按颜色缓存**：
-     * 渐变本身只跟颜色与半径走，逐帧只更新一次平移矩阵（[haloMatrix]），不每帧重建 Shader。
-     */
-    private val haloMatrix = Matrix()
-    private var haloShader: RadialGradient? = null
-    private var haloShaderColor = Int.MIN_VALUE
 
     /** 图标里的「P」：白字 + 一层暗影，压在任何底色上都读得出来。 */
     private val badgeGlyph = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -415,27 +405,15 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 
     /**
-     * 用户位置的光晕：柔和径向渐变（主题色在中心、向边缘淡到全透明），比一层平铺的实心圆
-     * 更像「位置光圈」。渐变按颜色缓存（见 [haloShader]），逐帧只把中心挪到蓝点上——
-     * 不每帧重建 Shader，也不给 [fill] 留下 shader（画完立刻清掉，它后面还要按 color 用）。
+     * 用户位置的光晕：官方小程序同款的**淡绿平铺圆**（2026-10-19）。
+     *
+     * 旧版是主题色径向渐变（中心实、边缘透明），颜色跟着主题走、看起来像一团光；
+     * 现在与官方对齐：固定淡绿、半透明平铺，和绿色圆点同一色系；半径见
+     * [USER_HALO_RADIUS_DP]。不要改回渐变——官方就是一块浅色圆底。
      */
     private fun drawUserHalo(canvas: Canvas, x: Float, y: Float) {
-        val radius = USER_HALO_RADIUS_DP * density
-        val color = colors.userHalo
-        val shader = haloShader?.takeIf { haloShaderColor == color } ?: RadialGradient(
-            0f, 0f, radius,
-            intArrayOf(color, color, color and 0x00FFFFFF),
-            floatArrayOf(0f, 0.45f, 1f),
-            Shader.TileMode.CLAMP,
-        ).also {
-            haloShader = it
-            haloShaderColor = color
-        }
-        haloMatrix.setTranslate(x, y)
-        shader.setLocalMatrix(haloMatrix)
-        fill.shader = shader
-        canvas.drawCircle(x, y, radius, fill)
-        fill.shader = null
+        fill.color = colors.userHalo
+        canvas.drawCircle(x, y, USER_HALO_RADIUS_DP * density, fill)
     }
 
     /**
@@ -480,30 +458,37 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 
     /**
-     * 蓝点的朝向扇形光晕（2026-10-08，DESIGN §3.9「蓝点朝向」）。
+     * 蓝点的朝向扇形光晕（2026-10-08；2026-10-19 改成光环外的「方向弧段」）。
      *
-     * 画在蓝点本体之前（垫底）：两层同心锥形——外层更大更淡、内层同色但更实
-     * （不透明度从外晕色推导），近似「光带根部渐实」的观感，不引入渐变 Shader
-     * （省一次 SweepGradient 的每帧重建）。角度以蓝点为轴心旋转：0° = 正北
-     * （屏幕正上方），顺时针，与 [BikeCompass] 的方位角同口径。
+     * 旧版是从圆心铺开的锥形（两层饼图），光晕改成官方那种平铺淡绿后，半透明叠加会在
+     * 圆底上染出一块明显更深的扇形，整个定位点就不再是官方那种干净的圆。
+     * 现在只画**光晕外圈的一小段环形扇区**（11→14dp、60°）：圆点本体保持对称，
+     * 方向提示只剩光环外沿的一小截绿弧。角度以蓝点为轴心，0° = 正北（屏幕正上方），
+     * 顺时针，与 [BikeCompass] 的方位角同口径。
      */
     private fun drawHeadingWedge(canvas: Canvas, x: Float, y: Float, heading: Float) {
         // Canvas.rotate 的角度基准是「3 点钟方向为 0、顺时针为正」，罗盘是「12 点为 0、
         // 顺时针为正」——先转 -90° 把基准挪到正上方，再叠加朝向角。
         canvas.save()
         canvas.rotate(heading - 90f, x, y)
-        // 外层：半径约 20dp、半开角 30°（60° 锥形），比外晕（13dp）探出去一圈
+        val outer = WEDGE_OUTER_RADIUS_DP * density
+        val inner = WEDGE_INNER_RADIUS_DP * density
+        val halfSweep = WEDGE_SWEEP_DEGREES / 2f
+        wedgePath.reset()
+        // 外弧：-30° → +30°（顺时针），再沿内弧反向收回，闭合成环形扇区
+        wedgePath.arcTo(
+            x - outer, y - outer, x + outer, y + outer,
+            -halfSweep, WEDGE_SWEEP_DEGREES, true,
+        )
+        wedgePath.arcTo(
+            x - inner, y - inner, x + inner, y + inner,
+            halfSweep, -WEDGE_SWEEP_DEGREES, false,
+        )
+        wedgePath.close()
         fill.color = colors.userHalo
-        canvas.drawArc(setArcRect(x, y, WEDGE_OUTER_RADIUS_DP * density), -30f, 60f, true, fill)
-        // 内层：同色更实（约 1.6 倍不透明度），给光带一点根部渐实的层次
-        fill.color = colors.userHalo.scaleAlpha(WEDGE_INNER_ALPHA_FACTOR)
-        canvas.drawArc(setArcRect(x, y, WEDGE_INNER_RADIUS_DP * density), -30f, 60f, true, fill)
+        canvas.drawPath(wedgePath, fill)
         canvas.restore()
     }
-
-    /** 把矩形按圆心/半径落位（drawArc 用，逐帧复用 [tmpRect]）。 */
-    private fun setArcRect(cx: Float, cy: Float, radius: Float): RectF =
-        tmpRect.set(cx - radius, cy - radius, cx + radius, cy + radius).let { tmpRect }
 
     /**
      * 还车点 / 禁停区图层（DESIGN §3.9）：先禁停区（深灰，底）再还车点（红框 + P 图标）。
@@ -653,68 +638,66 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 
     /**
-     * 正中那枚固定的针：水滴形（圆头收成尖），**尖端正好落在窗口中心**。
+     * 正中那枚固定的浮标：官方小程序样式（2026-10-19）——**黑色圆头 + 中央薄荷绿点 +
+     * 一根细黑杆**，杆的底端（浮标尖端）正好落在窗口中心。
      *
-     * 为什么是针不是准星：针的尖端天然表达"就是这个点"，与各家地图 App 的选点样式一致；
-     * 四根刻线的准星还要用户自己脑补交点在哪。针身立在中心上方，不与用户位置蓝点打架，
-     * 定位之后正好指着那个蓝点。
+     * 旧版是水滴形、先描 3.5dp 白边再填深色；官方是干净的 lollipop：针杆细、针头圆、
+     * 针心一点亮绿。它钉在屏幕上不随地图走，表示「现在查的是这里」。
      *
-     * 针身画在窗口坐标上（不是地图坐标）：地图内容在它下面滚动，它钉在屏幕上，
-     * 表示"现在查的是这里"。
-     *
-     * 先描一层宽白边再填深色针身：地图底色明暗不定，只画一层总有看不清的地方。
+     * 针头立在中心上方、杆从针头下沿垂直落到中心：与用户位置绿点错开；
+     * 蓝点离中心很近时整枚浮标直接不画（见 [CENTER_PIN_HIDE_RADIUS_DP]）。
      */
     private fun drawCenterPin(canvas: Canvas) {
         val cx = canvas.width / 2f
         val cy = canvas.height / 2f
-        val radius = 8f * density
-        val headY = cy - 27f * density
+        val headRadius = CENTER_PIN_HEAD_RADIUS_DP * density
+        val headY = cy - CENTER_PIN_STEM_LENGTH_DP * density - headRadius
 
-        pinPath.reset()
-        pinPath.moveTo(cx, cy)
-        pinPath.cubicTo(
-            cx - radius * 0.3f, cy - 13f * density,
-            cx - radius, headY + radius * 0.55f,
-            cx - radius, headY,
-        )
-        pinPath.addArc(
-            tmpRect.apply { set(cx - radius, headY - radius, cx + radius, headY + radius) },
-            180f,
-            180f,
-        )
-        pinPath.cubicTo(
-            cx + radius, headY + radius * 0.55f,
-            cx + radius * 0.3f, cy - 13f * density,
-            cx, cy,
-        )
-        pinPath.close()
+        // 针杆：从针头下沿一直落到视图中心（尖端）
+        pinStroke.strokeWidth = CENTER_PIN_STEM_WIDTH_DP * density
+        pinStroke.color = colors.centerMark
+        canvas.drawLine(cx, cy, cx, headY + headRadius, pinStroke)
 
-        pinStroke.strokeWidth = 3.5f * density
-        pinStroke.color = colors.centerHalo
-        canvas.drawPath(pinPath, pinStroke)
-
+        // 针头：黑色圆 + 薄荷绿针心
         pinFill.color = colors.centerMark
-        canvas.drawPath(pinPath, pinFill)
+        canvas.drawCircle(cx, headY, headRadius, pinFill)
+        pinFill.color = colors.centerGlyph
+        canvas.drawCircle(cx, headY, CENTER_PIN_DOT_RADIUS_DP * density, pinFill)
     }
 }
 
-/** 朝向扇形外层半径（dp）：比外晕（13dp）探出一圈，光带尖端离蓝点约一指宽。 */
-private const val WEDGE_OUTER_RADIUS_DP = 20f
+/** 朝向弧段外半径（dp）：比淡绿光晕（11dp）探出 3dp，方向提示只在光环外沿。 */
+private const val WEDGE_OUTER_RADIUS_DP = 14f
 
-/** 朝向扇形内层半径（dp）：更实的内层，做「根部渐实」的层次。 */
-private const val WEDGE_INNER_RADIUS_DP = 13f
+/** 朝向弧段内半径（dp）：与光晕同半径，圆点本体保持官方那种对称圆。 */
+private const val WEDGE_INNER_RADIUS_DP = 11f
 
-/** 朝向扇形内层的 alpha 系数（相对外晕色）：比外层实一点，做出根部渐实。 */
-private const val WEDGE_INNER_ALPHA_FACTOR = 1.6f
+/** 朝向弧段的张角（度）。 */
+private const val WEDGE_SWEEP_DEGREES = 60f
 
-/** 用户位置光晕半径（dp）：柔和渐变从主题色淡到全透明；与朝向扇形内层同半径，两者不打架。 */
-private const val USER_HALO_RADIUS_DP = 13f
+/**
+ * 用户位置光晕半径（dp）：官方小程序同款的淡绿平铺圆（2026-10-19）。
+ * 半径约是绿色圆点的 2.2 倍；与朝向扇形内层同半径，两者不打架。
+ */
+private const val USER_HALO_RADIUS_DP = 11f
 
-/** 用户位置圆点半径（dp）。 */
-private const val USER_DOT_RADIUS_DP = 8f
+/** 用户位置圆点半径（dp，官方约 4.5~5dp 的绿色实心点）。 */
+private const val USER_DOT_RADIUS_DP = 5f
 
-/** 用户位置圆点的白描边宽度（dp）。 */
-private const val USER_DOT_RING_DP = 2.5f
+/** 用户位置圆点的白描边宽度（dp，官方那圈很细，约 1dp）。 */
+private const val USER_DOT_RING_DP = 1f
+
+/** 中心浮标的黑色针头半径（dp，官方约 9dp）。 */
+private const val CENTER_PIN_HEAD_RADIUS_DP = 9f
+
+/** 中心浮标的针杆长度（dp）：从针头下沿到地图中心（尖端）。 */
+private const val CENTER_PIN_STEM_LENGTH_DP = 17f
+
+/** 中心浮标的针杆宽度（dp，官方约 0.7~0.8dp 的细线）。 */
+private const val CENTER_PIN_STEM_WIDTH_DP = 0.8f
+
+/** 中心浮标针心里的薄荷绿点半径（dp）。 */
+private const val CENTER_PIN_DOT_RADIUS_DP = 3f
 
 /** 精度圈填充的 alpha 系数（相对外晕色）：压淡一档，别盖住底图。 */
 private const val ACCURACY_FILL_ALPHA_FACTOR = 0.45f

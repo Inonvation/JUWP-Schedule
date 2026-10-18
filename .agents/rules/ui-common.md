@@ -78,7 +78,10 @@
 - **非高频状态文案**才 crossfade（180ms），如贴底动作条的所选档位摘要。
 - **列表增删**：`LazyColumn` 用 `Modifier.animateItem()`；普通 `Column` 里用
   `Modifier.animateContentSize()` 收平高度（逐项退场动画要 LazyColumn 才撑得住，
-  别为此把整页改成 lazy）。
+  别为此把整页改成 lazy）。整批换内容的卡片列表（骑行页附近车辆 / 还车点，
+  `RidePanels.AnimatedCardList`，2026-10-19）可以走一层 `AnimatedContent` 整块
+  淡入淡出 + `SizeTransform`：按**卡片身份集合**判是否播，只变距离数字不播；
+  它不是逐项退场，别拿它替代 LazyColumn 的 `animateItem()`。
 - **进页错峰入场**用 `ui/common/StaggeredReveal.kt`（每块 +60ms、6dp、220ms，
   **只在首次组合播一次**）：只包「一直存在的主区块」，别包由 `AnimatedVisibility`
   管出现/消失的块——两套动画叠加会打架。

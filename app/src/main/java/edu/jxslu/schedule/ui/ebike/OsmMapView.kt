@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -225,6 +226,14 @@ internal fun OsmMapView(
     onClusterTap: (String) -> Unit,
     onRideTap: () -> Unit,
     onCameraApplied: (Long) -> Unit,
+    /**
+     * 用户**单指拖动**了地图（2026-10-19）：调用方据此退出「镜头跟着用户走」。
+     *
+     * 只在真正拖动时发一次（超过系统 touch slop、且不是双指缩放）；点地图 / 双指缩放手势
+     * 不算——缩放时用户仍看着自己，跟随不该断。View 层先 `stopAnimation` 再回调：
+     * 用户接管地图时，程序性跟随的缓动不能继续和手指抢。
+     */
+    onUserPan: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -235,13 +244,19 @@ internal fun OsmMapView(
     val tapCallback by rememberUpdatedState(onClusterTap)
     val rideTapCallback by rememberUpdatedState(onRideTap)
     val appliedCallback by rememberUpdatedState(onCameraApplied)
+    val panCallback by rememberUpdatedState(onUserPan)
 
     // 程序性移动期间吃掉地图中心回调，见 CameraSuppressor。监听器只建一次，
     // 所以要用一个可变持有者，不能靠重组时新建的闭包
     val suppressor = remember { CameraSuppressor() }
 
     // 「停手」判定（见 SettleWatcher 的注释）：手指状态 + 轮询地图中心，滑行途中不发查询
-    val touchTracker = remember { TouchTracker() }
+    val touchTracker = remember {
+        TouchTracker(
+            touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat(),
+            onPan = { panCallback() },
+        )
+    }
     val settleScope = rememberCoroutineScope()
     val settleWatcher = remember { SettleWatcher(settleScope) { touchTracker.down } }
 
@@ -514,15 +529,50 @@ private class SettleWatcher(
  *
  * 只读不拦（[onTouchEvent] 返回 false），地图照常处理手势；存在的唯一理由是
  * [SettleWatcher] 需要知道「用户是不是还在拖」，而 osmdroid 的滚动事件给不出这个信息。
+ *
+ * 2026-10-19 起顺带识别**单指拖动**（超过系统 touch slop）：一旦用户自己接管地图，
+ * 先停掉程序性镜头动画、再回调 [onPan] 让 ViewModel 退出自动跟随。双指缩放不算拖动
+ * ——缩放时用户仍以自己为中心，跟随不该断（`ACTION_POINTER_DOWN` 之后整段手势都不判拖动）。
  */
-private class TouchTracker : Overlay() {
+private class TouchTracker(
+    private val touchSlop: Float,
+    private val onPan: () -> Unit,
+) : Overlay() {
 
     var down = false
         private set
 
+    private var downX = 0f
+    private var downY = 0f
+    private var panned = false
+
     override fun onTouchEvent(event: MotionEvent, mapView: MapView): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> down = true
+            MotionEvent.ACTION_DOWN -> {
+                down = true
+                panned = false
+                downX = event.x
+                downY = event.y
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // 双指缩放 / 双指拖动不退出跟随（也不是单指拖动）
+                panned = true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (!panned && event.pointerCount == 1) {
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    if (dx * dx + dy * dy > touchSlop * touchSlop) {
+                        panned = true
+                        // 用户接管：别让自动跟随的缓动继续和手指抢（tap 不算接管，不会到这里）
+                        mapView.controller.stopAnimation(true)
+                        onPan()
+                    }
+                }
+            }
+
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> down = false
         }
         return false
