@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -370,20 +371,25 @@ class ScheduleTipsTest {
 
     @Test
     fun `参考日措辞跟着日期关系走`() {
-        // 用「今天」的星期排课，任何运行日期下都取得到课
+        // 用「今天 / 明天」的星期与所在周排课（此前沿用 courseOf 的默认第 6 周，
+        // 非第 6 周运行必失败——2026-10-19 修正）。学期外 `dayTipFor` 本来就返回 null，
+        // 这条用例断言不了任何东西，直接跳过而不是误报失败。
         val today = LocalDate.now()
+        val tomorrow = today.plusDays(1)
+        val todayWeek = ScheduleCalculator.weekNumberOf(semester, today)
+        val tomorrowWeek = ScheduleCalculator.weekNumberOf(semester, tomorrow)
+        assumeTrue("今天不在学期内，跳过措辞用例", todayWeek in 1..semester.totalWeeks)
+        assumeTrue("明天不在学期内，跳过措辞用例", tomorrowWeek in 1..semester.totalWeeks)
         val courses = listOf(
-            courseOf(1, today.dayOfWeek.value, 1, 2, "教学南大楼(南B206)"),
-            courseOf(2, today.dayOfWeek.value, 3, 4, "教学南大楼(南C303)"),
+            courseOf(1, today.dayOfWeek.value, 1, 2, "教学南大楼(南B206)", weeks = setOf(todayWeek)),
+            courseOf(2, today.dayOfWeek.value, 3, 4, "教学南大楼(南C303)", weeks = setOf(todayWeek)),
         )
         val todayText = dayTip(today, courses)?.text.orEmpty()
         assertTrue("实际=$todayText", todayText.startsWith("今天"))
         // 参考日 = 明天（同一学期周内，明天星期几就排星期几的课），措辞换成「明天」
-        val tomorrow = today.plusDays(1)
-        val week = ScheduleCalculator.weekNumberOf(semester, tomorrow)
         val tomorrowCourses = listOf(
-            courseOf(1, tomorrow.dayOfWeek.value, 1, 2, "教学南大楼(南B206)", weeks = setOf(week)),
-            courseOf(2, tomorrow.dayOfWeek.value, 3, 4, "教学南大楼(南C303)", weeks = setOf(week)),
+            courseOf(1, tomorrow.dayOfWeek.value, 1, 2, "教学南大楼(南B206)", weeks = setOf(tomorrowWeek)),
+            courseOf(2, tomorrow.dayOfWeek.value, 3, 4, "教学南大楼(南C303)", weeks = setOf(tomorrowWeek)),
         )
         val tomorrowText = dayTip(tomorrow, tomorrowCourses)?.text.orEmpty()
         assertTrue("实际=$tomorrowText", tomorrowText.startsWith("明天"))

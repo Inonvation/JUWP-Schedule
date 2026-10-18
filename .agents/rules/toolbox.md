@@ -130,9 +130,10 @@
 
 ## 菜鸟批量查（非图片工具，2026-10-12；入口 2026-10-13 移出百宝箱）
 
-- **入口在生活页「取快递」弹窗**（「取快递」段末尾的整宽行），不在百宝箱首页（2026-10-13 移出）；
+- **入口在「取快递」弹窗**（「取快递」段末尾的整宽行；2026-10-19 起该弹窗从今日页
+  「江水生活」的「取快递」图标进入），不在百宝箱首页（2026-10-13 移出）；
   页面与 `SubpageScreen.TOOLBOX_CAINIAO` 路由不变，改入口别动这两处。规则见
-  `.agents/rules/life-power.md`。
+  `.agents/rules/today-ui.md`。
 - 链接模板只在 `domain/CainiaoQuery` 一处：
   `cainiao://startapp/search_alert?querySourceId=68719476739&prePath=Pasteboard&content=<单号逗号分隔>`。
   它走菜鸟导出的三方路由（`OpenGuoGuoUrlActivity`）转内部路由，**改任何一段前先在

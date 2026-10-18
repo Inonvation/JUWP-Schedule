@@ -67,6 +67,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
+import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.domain.FloatingBall
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -76,6 +77,7 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberQuickScan
 import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
+import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.me.hub.UpdateAvailableDialogHost
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
@@ -1081,6 +1083,20 @@ internal fun JuwApp(
                                 UjingScanHandoff.arm(raw)
                                 SubpageActivity.start(context, SubpageScreen.UJING)
                             },
+                            // 江水生活图标入口（2026-10-19 自生活页迁入）：
+                            // U净 弹窗副行进洗衣房页；取快递弹窗的新增/编辑进快捷方式设置
+                            onOpenUjing = {
+                                SubpageActivity.start(context, SubpageScreen.UJING)
+                            },
+                            onOpenShortcuts = { focusItemId ->
+                                SubpageActivity.start(context, SubpageScreen.SHORTCUTS, focusItemId)
+                            },
+                            onOpenCainiao = {
+                                SubpageActivity.start(context, SubpageScreen.TOOLBOX_CAINIAO)
+                            },
+                            onOpenAcRemote = {
+                                SubpageActivity.start(context, SubpageScreen.AC_REMOTE)
+                            },
                             // 付款码（DESIGN §3.10）：校园卡付款码展示页，独立窗口
                             onOpenPayCode = {
                                 SubpageActivity.start(context, SubpageScreen.PAY_CODE)
@@ -1158,32 +1174,42 @@ internal fun JuwApp(
                             onOpenCampusSettings = {
                                 SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
                             },
-                            // 校园服务四格（2026-10-13 三格；2026-10-16 加空调遥控）：
-                            // 问渠 / 空调遥控 / 成绩查询；取快递在页内弹窗
+                            // 校园服务（2026-10-19）：考试安排 / 成绩查询两格直达；
+                            // 教务服务 / 学业数据两格各自弹入口弹窗
                             onOpenWenqu = {
                                 SubpageActivity.start(context, SubpageScreen.WENQU)
-                            },
-                            onOpenAcRemote = {
-                                SubpageActivity.start(context, SubpageScreen.AC_REMOTE)
                             },
                             onOpenScores = {
                                 SubpageActivity.start(context, SubpageScreen.SCORES)
                             },
-                            // U净 整行卡：弹窗的「查看洗衣房空闲情况」进页；扫码走一次性令牌
-                            onOpenUjing = {
-                                SubpageActivity.start(context, SubpageScreen.UJING)
+                            onOpenExam = {
+                                SubpageActivity.start(context, SubpageScreen.EXAMS)
                             },
-                            onUjingScan = { raw ->
-                                UjingScanHandoff.arm(raw)
-                                SubpageActivity.start(context, SubpageScreen.UJING)
+                            // 教务服务弹窗：学生评教 / 宿舍报修 / 请假 / 校历
+                            onOpenTeachingEval = {
+                                JwImportActivity.start(context, JwImportMode.TeachingEval)
                             },
-                            // 取快递弹窗里的「新增」/ 长按编辑 → 快捷方式设置页
-                            onOpenShortcuts = { focusItemId ->
-                                SubpageActivity.start(context, SubpageScreen.SHORTCUTS, focusItemId)
+                            onOpenDormRepair = {
+                                XgFormActivity.start(context, XgUrls.REPAIR)
                             },
-                            // 取快递弹窗里的「菜鸟批量查」（2026-10-13 从百宝箱移入）
-                            onOpenCainiao = {
-                                SubpageActivity.start(context, SubpageScreen.TOOLBOX_CAINIAO)
+                            onOpenLeave = {
+                                XgFormActivity.start(context, XgUrls.LEAVE)
+                            },
+                            onOpenCalendar = {
+                                SubpageActivity.start(context, SubpageScreen.CAMPUS_CALENDAR)
+                            },
+                            // 学业数据弹窗：我的 → 学习「学业数据」全部入口 + 实习基地查看
+                            onOpenScholar = {
+                                SubpageActivity.start(context, SubpageScreen.SCHOLAR)
+                            },
+                            onOpenCurriculum = {
+                                SubpageActivity.start(context, SubpageScreen.CURRICULUM)
+                            },
+                            onOpenSelection = {
+                                SubpageActivity.start(context, SubpageScreen.SELECTIONS)
+                            },
+                            onOpenInternshipBases = {
+                                SubpageActivity.start(context, SubpageScreen.INTERNSHIP_BASES)
                             },
                         )
                     }

@@ -29,7 +29,7 @@
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 / 自动还车 | `.agents/rules/ebike.md` |
 | 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
-| 宿舍空调遥控（生活页 · 校园服务，红外） | `.agents/rules/ac-remote.md` |
+| 宿舍空调遥控（今日页 · 江水生活，红外） | `.agents/rules/ac-remote.md` |
 | 天气（今日页顶栏提示 · 天气页） | `.agents/rules/weather.md` |
 | 百宝箱（图片水印 / 拼接 / 菜鸟批量查） | `.agents/rules/toolbox.md` |
 | U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
@@ -246,7 +246,7 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                JwImportActivity 的 TeachingEval 模式（§4.44）；百宝箱 TOOLBOX +
               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
               菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
-               受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（生活页「校园服务」入口，
+               受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（今日页「江水生活」图标入口，
                寝室美的空调红外，§3.31 / §4.48））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
@@ -371,7 +371,7 @@ data/weather/    天气（DESIGN §3.29 / §4.46；**Open-Meteo 免 Key 免注�
                  WeatherApi（裸 OkHttp，无日志拦截器；查询点 = 校区坐标，WGS84 口径）
                  + WeatherRepository（30 分钟 TTL · 同刻只放一个请求 · 刷新失败回退旧快照）
                  规则见 .agents/rules/weather.md
-data/ir/         空调红外发射（生活页「校园服务」入口，DESIGN §4.48）：
+data/ir/         空调红外发射（今日页「江水生活」图标入口，DESIGN §4.48）：
                  AcIrBlaster（ConsumerIrManager 薄封装；TRANSMIT_IR 普通权限，无发射器机型
                  进页只给提示）；协议纯逻辑见 domain/MideaR05d（默认）/ MideaAc（A1），
                  状态见 AcRemotePrefsStore

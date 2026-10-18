@@ -1,6 +1,8 @@
 # U净（美的校园洗衣） · 规则
 
-入口：我的 → 校园服务 → 「U净」（`SubpageScreen.UJING`）。DESIGN §3.23（UI）/ §4.37（技术）。
+入口（三处）：① 今日页「江水生活」的「U净」图标（2026-10-19 自生活页迁入；弹窗含扫码与进页）、
+② 今日页顶栏「+ → 扫一扫」（扫到机身码）、③ 我的 → 校园服务 → 「U净」。
+页面路由 `SubpageScreen.UJING`。DESIGN §3.23（UI）/ §4.37（技术）。
 **P1+P2 已交付（2026-10-01），同日体验补**：登录 / 空闲看板 / 扫码识别 / 套餐 / **下单 →
 支付宝 SDK 支付 → 订单卡（倒计时 · 取消 · 云端启动）**；下单可选参数（水温 / 强制投放档 /
 烘干 `dryTime`）、洗衣完成提醒（`ui/reminder/UjingDoneReminder`）、页面排版收口
@@ -119,14 +121,15 @@
   `handleFailure` 发、别再叠一条。
 - **看板每行两条**：`UjingBoardRow` 的 `line`（洗衣机）与 `dryerLine`（烘干机），同由
   `UjingState.boardLine` / `dryerLine` 聚合（共用 `lineFor`）；UI 出「烘干机 空闲 N/M」。
-- **生活页 U净 卡弹窗显示洗涤状态**：弹窗只读 `Graph.ujing().orderState`；**订单对表在打开弹窗
-  那一下做**（`LifeScreen` 的点击处，10 秒节流，见 `UJING_ORDER_REFRESH_TTL_MILLIS`——快照只在
-  U净 页轮询，不这样拿到的是下单时的旧状态）。非终结订单顶部出
-  `ui/ujing/UjingScreen.UjingOrderStatusLine`（设备名 + 状态 + 洗涤中剩余时间，本地每秒换算）。
+- **今日页 U净 弹窗显示洗涤状态**（2026-10-19 自生活页迁入，`ui/ujing/UjingEntrySheet`）：
+  弹窗只读 `Graph.ujing().orderState`；**订单对表在打开弹窗那一下做**（`TodayScreen` 的点击处，
+  10 秒节流，见 `UJING_ORDER_REFRESH_TTL_MILLIS`——快照只在 U净 页轮询，不这样拿到的是下单时的
+  旧状态）。非终结订单顶部出 `ui/ujing/UjingScreen.UjingOrderStatusLine`（设备名 + 状态 +
+  洗涤中剩余时间，本地每秒换算）。
 - **状态文案服务端优先**：`refreshOrder` 把 `detail.statusRemark` 存进快照
   （`UjingOrderSnapshot.statusRemark`，旧快照读成空串），展示统一走
   `UjingState.statusLabel(status, remark)`——服务端文案非空优先、本地表兜底。**别再直接
-  `statusText(status)`**（订单卡与生活页弹窗两处都改了）。
+  `statusText(status)`**（订单卡与今日页弹窗两处都改了）。
 - **进页对表走静默**：`loggedIn` 收集器里那次 `refreshOrder` 用 `silent = true`（进页补数据不该
   把订单卡按钮闪成加载圈）。
 - **协议样本采集**：除 `program/info` 外，`devices/reserve` 也整包落盘

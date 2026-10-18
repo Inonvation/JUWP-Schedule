@@ -2,24 +2,9 @@ package edu.jxslu.schedule.ui.life
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.text.style.TextAlign
-import me.rerere.hugeicons.stroke.Edit02
-import me.rerere.hugeicons.stroke.Link01
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
@@ -101,6 +86,8 @@ import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.common.QuickEntryCard
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.SectionHeader
+import edu.jxslu.schedule.ui.common.SheetActionRow
+import edu.jxslu.schedule.ui.common.rememberSheetDismisser
 import edu.jxslu.schedule.ui.common.SkeletonBox
 import edu.jxslu.schedule.ui.common.lineHeightDp
 import edu.jxslu.schedule.ui.common.postNotice
@@ -114,42 +101,44 @@ import me.rerere.hugeicons.stroke.Bolt
 import me.rerere.hugeicons.stroke.CreditCard
 import me.rerere.hugeicons.stroke.Receipt
 import me.rerere.hugeicons.stroke.Settings01
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.graphics.Brush
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.client.android.Intents
-import edu.jxslu.schedule.domain.QuickScanTarget
-import edu.jxslu.schedule.domain.ShortcutItem
-import edu.jxslu.schedule.domain.ShortcutSettings
-import edu.jxslu.schedule.domain.quickScanTargetOf
 import edu.jxslu.schedule.ui.theme.PrimaryLight
-import edu.jxslu.schedule.ui.common.ShortcutIcon
-import edu.jxslu.schedule.ui.common.ShortcutLauncher
-import edu.jxslu.schedule.ui.common.ShortcutPinner
-import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
-import edu.jxslu.schedule.ui.ujing.UjingOrderStatusLine
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.Analytics01
-import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.HeartHandshake
+import me.rerere.hugeicons.stroke.Building03
+import me.rerere.hugeicons.stroke.Calendar01
+import me.rerere.hugeicons.stroke.Calendar03
+import me.rerere.hugeicons.stroke.CheckList
+import me.rerere.hugeicons.stroke.ClipboardPen
+import me.rerere.hugeicons.stroke.GraduationScroll
+import me.rerere.hugeicons.stroke.ListTree
+import me.rerere.hugeicons.stroke.Repair
+import me.rerere.hugeicons.stroke.School01
+import me.rerere.hugeicons.stroke.Target01
+import me.rerere.hugeicons.stroke.Teacher
 import me.rerere.hugeicons.stroke.InformationCircle
-import me.rerere.hugeicons.stroke.Package01
-import me.rerere.hugeicons.stroke.PackageSearch01
 import me.rerere.hugeicons.stroke.QrCodeScan
-import me.rerere.hugeicons.stroke.RemoteControl
-import me.rerere.hugeicons.stroke.WashingMachine
 
 /** 充值入口的种类（免责声明放行后决定打开哪个弹层）。 */
 private enum class RechargeKind { Campus, Power }
 
-/** U净 弹窗打开时对订单的节流窗口：10 秒内不重复请求（弹窗开关频繁时不必每次都打）。 */
-private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
+/** 校园服务里两个入口弹窗的种类（2026-10-19）。 */
+private enum class LifeServiceSheet { Teaching, Academics }
+
+/** 入口弹窗里的一行：教务服务 / 学业数据共用。 */
+private class LifeServiceEntry(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit,
+)
 
 /**
- * 生活页（DESIGN 3.13）：钱包卡（一卡通余额主视觉 + 充值 / 付款码 / 账单）→ 校园服务
- * （取快递 / 问渠志愿 / 空调遥控 / 成绩查询）→ U净 整行卡 → 最近流水与账单入口。
+ * 生活页（DESIGN §3.13）：钱包卡（一卡通余额主视觉 + 充值 / 付款码 / 账单）→ 校园服务
+ * （考试安排 / 成绩查询 / 教务服务 / 学业数据）→ 问渠志愿整行卡 → 最近流水与账单入口。
  *
  * 三条口径：
  * 1. **码不预取**：付款码只在钱包卡上留一枚按钮，点进去才是 PayCodeScreen，取码发生在
@@ -157,7 +146,9 @@ private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
  * 2. **失败不编数**：电费读失败时保留上次读数并标注「读取失败，显示上次读数」，不报零。
  * 3. **一处凭证**：电费与一卡通共用 YktCredentialStore，关掉一卡通时两栏一起回空态。
  *
- * 充值 / 取快递 / U净 三个入口都是**从下弹出的底部弹窗**（2026-10-13）。
+ * 2026-10-19：取快递 / U净 / 空调遥控三枚入口移到今日页「江水生活」（图标行），
+ * 校园服务改教务向四格；问渠志愿升级为整行入口卡（与 U净 原卡同款）；
+ * 教务服务 / 学业数据为从下弹出的入口弹窗。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -170,20 +161,28 @@ fun LifeScreen(
     onOpenPayCode: () -> Unit = {},
     /** 一卡通设置页（凭证未开启时的「去开启」） */
     onOpenCampusSettings: () -> Unit = {},
-    /** 校园服务：问渠 · 志愿服务页 */
+    /** 问渠 · 志愿服务页（整行入口卡） */
     onOpenWenqu: () -> Unit = {},
-    /** 校园服务：空调遥控页（寝室美的空调 · 红外发射） */
-    onOpenAcRemote: () -> Unit = {},
     /** 校园服务：成绩查询页 */
     onOpenScores: () -> Unit = {},
-    /** U净 · 洗衣房页（U净 弹窗的副行落点） */
-    onOpenUjing: () -> Unit = {},
-    /** U净 扫码：扫到的机身码原文交给 U净 页识别（走一次性令牌） */
-    onUjingScan: (String) -> Unit = {},
-    /** 快捷方式设置页（取快递弹窗「新增」/ 长按编辑的落点；null=不定位） */
-    onOpenShortcuts: (String?) -> Unit = {},
-    /** 取快递弹窗里的「菜鸟批量查」（2026-10-13 从百宝箱移入）：多单号一次导入取件码 */
-    onOpenCainiao: () -> Unit = {},
+    /** 校园服务：考试安排页 */
+    onOpenExam: () -> Unit = {},
+    /** 教务服务弹窗：学生评教 */
+    onOpenTeachingEval: () -> Unit = {},
+    /** 教务服务弹窗：宿舍报修 */
+    onOpenDormRepair: () -> Unit = {},
+    /** 教务服务弹窗：请假 */
+    onOpenLeave: () -> Unit = {},
+    /** 教务服务弹窗：校历 */
+    onOpenCalendar: () -> Unit = {},
+    /** 学业数据弹窗：学业完成情况 */
+    onOpenScholar: () -> Unit = {},
+    /** 学业数据弹窗：培养方案 */
+    onOpenCurriculum: () -> Unit = {},
+    /** 学业数据弹窗：选课（beta） */
+    onOpenSelection: () -> Unit = {},
+    /** 学业数据弹窗：实习基地查看 */
+    onOpenInternshipBases: () -> Unit = {},
     viewModel: LifeViewModel = viewModel(factory = LifeViewModel.Factory(LocalContext.current)),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -230,30 +229,11 @@ fun LifeScreen(
         .collectAsStateWithLifecycle(initialValue = 0L)
     var disclaimerFor by remember { mutableStateOf<RechargeKind?>(null) }
 
-    // ── 底部弹窗与校园服务（2026-10-13）──
+    // ── 底部弹窗与校园服务（2026-10-13；2026-10-19 改教务向四格）──
     // 充值选择：钱包卡「充值」→ 底部弹窗（一卡通 / 电费 二选一），选完再进各自的充值流程
     var showRechargeChoice by remember { mutableStateOf(false) }
-    // 取快递：生活页「取快递」→ 底部弹窗（「取快递」预设 + 「其他」自定义，分割线区分）
-    var showShortcutSheet by remember { mutableStateOf(false) }
-    // U净：整行卡 → 底部弹窗（扫码按钮 + 进页副行）
-    var showUjingSheet by remember { mutableStateOf(false) }
-    // U净 在案订单：弹窗打开时对一次服务端（快照只在 U净 页可见时轮询，不然是下单时的旧状态）；
-    // 节流窗口内不重复，避免频繁开关弹窗反复打请求
-    val ujingRepo = remember(context) { Graph.ujing(context) }
-    var ujingOrderRefreshedAt by remember { mutableStateOf(0L) }
-    val refreshUjingOrderIfStale: () -> Unit = {
-        val id = ujingRepo.currentOrder()?.orderId
-        val now = System.currentTimeMillis()
-        if (id != null && ujingRepo.loggedIn.value &&
-            now - ujingOrderRefreshedAt > UJING_ORDER_REFRESH_TTL_MILLIS
-        ) {
-            ujingOrderRefreshedAt = now
-            scope.launch { runCatching { ujingRepo.refreshOrder(id) } }
-        }
-    }
-    // 快捷方式（预设 + 自定义）：直接订阅仓库那一份，与「取快递」弹窗的分组口径同源
-    val shortcutSettings by remember(context) { Graph.repository(context).shortcutSettings }
-        .collectAsStateWithLifecycle(initialValue = ShortcutSettings())
+    // 教务服务 / 学业数据：四格中的后两格 → 从下弹出的入口弹窗
+    var serviceSheet by remember { mutableStateOf<LifeServiceSheet?>(null) }
 
     fun reallyOpenRecharge(kind: RechargeKind) {
         when (kind) {
@@ -343,39 +323,6 @@ fun LifeScreen(
 
     val showNotice: (String, NoticeTone) -> Unit = { message, tone ->
         scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
-    }
-
-    // U净 弹窗的扫码按钮：取景走原文模式（与今日页「+ → 扫一扫」同一套判据），
-    // 洗衣机机身码原文交给 U净 页识别；车身码 / 别家码就地提示，不跳页。
-    val ujingScanLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode != android.app.Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val raw = result.data?.getStringExtra(Intents.Scan.RESULT)
-        when (val target = quickScanTargetOf(raw)) {
-            null -> Unit
-            is QuickScanTarget.Washer -> {
-                showUjingSheet = false
-                onUjingScan(target.raw)
-            }
-            is QuickScanTarget.Ebike -> showNotice("这是快趣车身码，不是洗衣机机身码", NoticeTone.Warning)
-            is QuickScanTarget.Foreign -> showNotice(
-                "这是${target.label}的码，不是洗衣机机身码",
-                NoticeTone.Warning,
-            )
-        }
-    }
-    val startUjingScan: () -> Unit = {
-        haptics.tap()
-        ujingScanLauncher.launch(
-            Intent(context, EbikeScanActivity::class.java).apply {
-                putExtra(Intents.Scan.PROMPT_MESSAGE, "对准洗衣机机身上的二维码")
-                putExtra(EbikeScanActivity.EXTRA_RESULT_MODE, EbikeScanActivity.MODE_RAW)
-                // 机身码是二维码：限定格式，别让商品一维码也当码送出去。
-                // 键走 Intents.Scan.FORMATS 的**逗号分隔字符串**（DecodeFormatManager 只读 StringExtra）
-                putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)
-            },
-        )
     }
 
     Scaffold(
@@ -470,30 +417,29 @@ fun LifeScreen(
                     // 区块标题与卡片都收一档间距（2026-10-13 用户反馈「各部分之间太宽松」）
                     SectionHeader(title = "校园服务", topPadding = 12.dp, bottomPadding = 6.dp)
                     CampusServicesCard(
-                        onPackagePickup = {
+                        onExam = {
                             haptics.tap()
-                            showShortcutSheet = true
-                        },
-                        onWenqu = {
-                            haptics.tap()
-                            onOpenWenqu()
-                        },
-                        onAcRemote = {
-                            haptics.tap()
-                            onOpenAcRemote()
+                            onOpenExam()
                         },
                         onScores = {
                             haptics.tap()
                             onOpenScores()
                         },
+                        onTeachingServices = {
+                            haptics.tap()
+                            serviceSheet = LifeServiceSheet.Teaching
+                        },
+                        onAcademics = {
+                            haptics.tap()
+                            serviceSheet = LifeServiceSheet.Academics
+                        },
                     )
 
-                    UjingEntryCard(
+                    WenquEntryCard(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         onClick = {
                             haptics.tap()
-                            refreshUjingOrderIfStale()
-                            showUjingSheet = true
+                            onOpenWenqu()
                         },
                     )
 
@@ -599,46 +545,72 @@ fun LifeScreen(
         )
     }
 
-    // 取快递弹窗：预设归「取快递」段、自定义归「其他」段，分割线区分；末尾「新增」进设置页
-    if (showShortcutSheet) {
-        ShortcutSheet(
-            settings = shortcutSettings,
-            onDismiss = { showShortcutSheet = false },
-            onLaunchItem = { item ->
-                showShortcutSheet = false
-                ShortcutLauncher.launch(context, item)?.let { message ->
-                    showNotice(message, NoticeTone.Warning)
-                }
+    // 教务服务 / 学业数据（2026-10-19）：四格后两格 → 从下弹出的入口弹窗，条目按口径固定
+    serviceSheet?.let { sheet ->
+        ServiceEntriesSheet(
+            title = when (sheet) {
+                LifeServiceSheet.Teaching -> "教务服务"
+                LifeServiceSheet.Academics -> "学业数据"
             },
-            onPinItem = { item ->
-                ShortcutPinner.pin(context, item)?.let { message ->
-                    showNotice(message, NoticeTone.Warning)
-                }
+            subtitle = when (sheet) {
+                LifeServiceSheet.Teaching -> "直达教务 / 学工 · 不留档"
+                LifeServiceSheet.Academics -> "教务数据 · 本机留档与实时查看"
             },
-            onEdit = { itemId ->
-                showShortcutSheet = false
-                onOpenShortcuts(itemId)
+            entries = when (sheet) {
+                LifeServiceSheet.Teaching -> listOf(
+                    LifeServiceEntry(
+                        title = "学生评教",
+                        subtitle = "直达教务评教平台 · 评完解锁成绩",
+                        icon = HugeIcons.Teacher,
+                        onClick = onOpenTeachingEval,
+                    ),
+                    LifeServiceEntry(
+                        title = "宿舍报修",
+                        subtitle = "宿管服务 · 填表 / 上传附件 / 提交 / 查进度",
+                        icon = HugeIcons.Repair,
+                        onClick = onOpenDormRepair,
+                    ),
+                    LifeServiceEntry(
+                        title = "请假",
+                        subtitle = "填表 / 上传附件 / 提交 / 查进度",
+                        icon = HugeIcons.Calendar01,
+                        onClick = onOpenLeave,
+                    ),
+                    LifeServiceEntry(
+                        title = "校历",
+                        subtitle = "学年校历大图 · 每学年自动更新",
+                        icon = HugeIcons.Calendar03,
+                        onClick = onOpenCalendar,
+                    ),
+                )
+                LifeServiceSheet.Academics -> listOf(
+                    LifeServiceEntry(
+                        title = "学业完成情况",
+                        subtitle = "培养方案达成度",
+                        icon = HugeIcons.Target01,
+                        onClick = onOpenScholar,
+                    ),
+                    LifeServiceEntry(
+                        title = "培养方案",
+                        subtitle = "课程设置总表",
+                        icon = HugeIcons.ListTree,
+                        onClick = onOpenCurriculum,
+                    ),
+                    LifeServiceEntry(
+                        title = "选课（beta）",
+                        subtitle = "选课记录与轮次",
+                        icon = HugeIcons.CheckList,
+                        onClick = onOpenSelection,
+                    ),
+                    LifeServiceEntry(
+                        title = "实习基地查看",
+                        subtitle = "校内外实习基地 · 从教务查询",
+                        icon = HugeIcons.Building03,
+                        onClick = onOpenInternshipBases,
+                    ),
+                )
             },
-            onAdd = {
-                showShortcutSheet = false
-                onOpenShortcuts(null)
-            },
-            onOpenCainiao = {
-                showShortcutSheet = false
-                onOpenCainiao()
-            },
-        )
-    }
-
-    // U净 弹窗：扫码按钮 + 进页副行
-    if (showUjingSheet) {
-        UjingEntrySheet(
-            onDismiss = { showUjingSheet = false },
-            onScan = startUjingScan,
-            onOpenPage = {
-                showUjingSheet = false
-                onOpenUjing()
-            },
+            onDismiss = { serviceSheet = null },
         )
     }
 
@@ -911,15 +883,17 @@ private fun HeroPillButton(
 }
 
 /**
- * 校园服务卡：四格入口（取快递 / 问渠志愿 / 空调遥控 / 成绩查询）。
- * U净 不在这格里——它单独占一整行（[UjingEntryCard]）。
+ * 校园服务卡（2026-10-19）：四格入口——考试安排 / 成绩查询 / 教务服务 / 学业数据。
+ *
+ * 取快递 / U净 / 空调遥控已移到今日页「江水生活」；后两格不是跳页，而是从下弹出的
+ * 入口弹窗（[ServiceEntriesSheet]），条目按用户口径固定。
  */
 @Composable
 private fun CampusServicesCard(
-    onPackagePickup: () -> Unit,
-    onWenqu: () -> Unit,
-    onAcRemote: () -> Unit,
+    onExam: () -> Unit,
     onScores: () -> Unit,
+    onTeachingServices: () -> Unit,
+    onAcademics: () -> Unit,
 ) {
     AppCard(
         modifier = Modifier.padding(horizontal = 16.dp),
@@ -930,10 +904,10 @@ private fun CampusServicesCard(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ServiceTile("取快递", HugeIcons.Package01, onPackagePickup)
-            ServiceTile("问渠志愿", HugeIcons.HeartHandshake, onWenqu)
-            ServiceTile("空调遥控", HugeIcons.RemoteControl, onAcRemote)
-            ServiceTile("成绩查询", HugeIcons.Analytics01, onScores)
+            ServiceTile("考试安排", HugeIcons.ClipboardPen, onExam)
+            ServiceTile("成绩查询", HugeIcons.GraduationScroll, onScores)
+            ServiceTile("教务服务", HugeIcons.School01, onTeachingServices)
+            ServiceTile("学业数据", HugeIcons.Analytics01, onAcademics)
         }
     }
 }
@@ -969,21 +943,61 @@ private fun ServiceTile(label: String, icon: ImageVector, onClick: () -> Unit) {
 }
 
 /**
- * U净 · 洗衣房 整行卡（2026-10-13）：点击弹底部弹窗（扫码按钮 + 进页副行）。
- *
- * 复用 `ui/common/QuickEntryCard`——与今日页「快趣出行」同一张入口卡（2026-10-13 统一：
- * 此前这里是自带图标底座的另一套样式，和今日页那张对不上）。
+ * 问渠 · 志愿服务 整行卡（2026-10-19）：与 U净 原卡同款 [QuickEntryCard]
+ * （今日页「快趣出行」也是这一张）。整卡点进问渠页。
  */
 @Composable
-private fun UjingEntryCard(modifier: Modifier, onClick: () -> Unit) {
+private fun WenquEntryCard(modifier: Modifier, onClick: () -> Unit) {
     QuickEntryCard(
-        icon = HugeIcons.WashingMachine,
-        title = "U净 · 洗衣房",
-        subtitle = "空闲看板 · 扫码下单",
-        onClickLabel = "U净 · 洗衣房",
+        icon = HugeIcons.HeartHandshake,
+        title = "问渠 · 志愿服务",
+        subtitle = "志愿工时 · 活动报名 · 劳动教育",
+        onClickLabel = "问渠 · 志愿服务",
         onClick = onClick,
         modifier = modifier,
     )
+}
+
+/**
+ * 教务服务 / 学业数据的入口弹窗（2026-10-19）：标题 + 一句来源说明 + 一组整宽入口行。
+ * 点一行先播退场动画，再执行落点（避免弹层从组合里瞬间抽掉）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServiceEntriesSheet(
+    title: String,
+    subtitle: String,
+    entries: List<LifeServiceEntry>,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val dismiss = rememberSheetDismisser(sheetState, onDismiss)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+            Spacer(Modifier.height(2.dp))
+            entries.forEach { entry ->
+                SheetActionRow(
+                    icon = entry.icon,
+                    title = entry.title,
+                    subtitle = entry.subtitle,
+                    onClick = { dismiss { entry.onClick() } },
+                )
+            }
+        }
+    }
 }
 
 /** 主色文字 + 右向箭头，作为「会跳走」的出口标记（同 SettingsRow 的箭头口径）。 */
@@ -1074,340 +1088,6 @@ private fun SheetBigTile(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-/**
- * 取快递弹窗（从下弹出）：预设归「取快递」段、自定义归「其他」段，中间一条分割线；
- * 条目并列铺开。长按条目弹菜单（添加到桌面 / 编辑），末尾虚线「新增」进设置页。
- *
- * 「取快递」段末尾另有一条「菜鸟批量查」整宽行（2026-10-13 从百宝箱移入）——
- * 它是 App 内页面（粘贴多个单号一次导入菜鸟），与「点一下拉起外部 App」的图标块不同，
- * 故单独一行、放在预设块之下。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ShortcutSheet(
-    settings: ShortcutSettings,
-    onDismiss: () -> Unit,
-    onLaunchItem: (ShortcutItem) -> Unit,
-    onPinItem: (ShortcutItem) -> Unit,
-    onEdit: (String) -> Unit,
-    onAdd: () -> Unit,
-    onOpenCainiao: () -> Unit,
-) {
-    val presets = settings.items.filter { it.presetIndex >= 0 }
-    val customs = settings.items.filter { it.presetIndex < 0 }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-        ) {
-            Text("快捷方式", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                text = "点一下直接跳转，长按可编辑",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
-            )
-            if (presets.isNotEmpty()) {
-                ShortcutCategoryLabel("取快递", presets.size)
-                ShortcutTileGrid(
-                    items = presets,
-                    onLaunch = onLaunchItem,
-                    onPin = onPinItem,
-                    onEdit = onEdit,
-                    onAdd = null,
-                )
-                Spacer(Modifier.height(12.dp))
-                SheetActionRow(
-                    icon = HugeIcons.PackageSearch01,
-                    title = "菜鸟批量查",
-                    subtitle = "多单号一次导入取件码",
-                    onClick = onOpenCainiao,
-                )
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-            }
-            ShortcutCategoryLabel("其他", customs.size)
-            ShortcutTileGrid(
-                items = customs,
-                onLaunch = onLaunchItem,
-                onPin = onPinItem,
-                onEdit = onEdit,
-                onAdd = onAdd,
-            )
-        }
-    }
-}
-
-/** 弹窗里的分类标题：「取快递 · 3 项」。没有条目（count = 0）时不带计数后缀，只留分类名。 */
-@Composable
-private fun ShortcutCategoryLabel(title: String, count: Int) {
-    Row(Modifier.padding(bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-        )
-        if (count > 0) {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "· $count 项",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-            )
-        }
-    }
-}
-
-/** 弹窗里的一条整宽动作行（图标 + 标题 + 副标题 + 右箭头）：如「菜鸟批量查」。 */
-@Composable
-private fun SheetActionRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-) {
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .clickable(onClickLabel = title) { onClick() }
-            .padding(horizontal = 12.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = primary, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(11.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = onSurface.copy(alpha = 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            HugeIcons.ChevronRight,
-            contentDescription = null,
-            tint = onSurface.copy(alpha = 0.35f),
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-/** 三列图标块网格；[onAdd] 非空时末尾补一枚虚线「新增」格子。 */
-@Composable
-private fun ShortcutTileGrid(
-    items: List<ShortcutItem>,
-    onLaunch: (ShortcutItem) -> Unit,
-    onPin: (ShortcutItem) -> Unit,
-    onEdit: (String) -> Unit,
-    onAdd: (() -> Unit)?,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        val cells: List<Pair<ShortcutItem?, Boolean>> =
-            items.map { it to false } + listOfNotNull(onAdd?.let { null to true })
-        cells.chunked(3).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { (item, isAdd) ->
-                    if (isAdd) {
-                        AddShortcutTile(Modifier.weight(1f)) { onAdd?.invoke() }
-                    } else {
-                        ShortcutSheetTile(
-                            item = item!!,
-                            modifier = Modifier.weight(1f),
-                            onLaunch = { onLaunch(item) },
-                            onPin = { onPin(item) },
-                            onEdit = { onEdit(item.id) },
-                        )
-                    }
-                }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
-    }
-}
-
-/** 弹窗里的一枚快捷方式：图标块 + 名称；长按弹「添加到桌面 / 编辑」。 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ShortcutSheetTile(
-    item: ShortcutItem,
-    modifier: Modifier = Modifier,
-    onLaunch: () -> Unit,
-    onPin: () -> Unit,
-    onEdit: () -> Unit,
-) {
-    val haptics = rememberAppHaptics()
-    var menuOpen by remember { mutableStateOf(false) }
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .combinedClickable(
-                        onClick = {
-                            haptics.tap()
-                            onLaunch()
-                        },
-                        onLongClick = {
-                            haptics.tap()
-                            menuOpen = true
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                ShortcutIcon(item, Modifier.size(30.dp))
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("添加到桌面") },
-                    leadingIcon = { Icon(HugeIcons.Link01, null, modifier = Modifier.size(18.dp)) },
-                    onClick = {
-                        menuOpen = false
-                        haptics.tap()
-                        onPin()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("编辑") },
-                    leadingIcon = { Icon(HugeIcons.Edit02, null, modifier = Modifier.size(18.dp)) },
-                    onClick = {
-                        menuOpen = false
-                        onEdit()
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = item.name,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-/** 虚线「新增」格子。 */
-@Composable
-private fun AddShortcutTile(modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(72.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(onSurface.copy(alpha = 0.03f))
-                .clickable(onClickLabel = "新增快捷方式") { onClick() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                HugeIcons.Add01,
-                contentDescription = null,
-                tint = onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.size(26.dp),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "新增",
-            style = MaterialTheme.typography.labelMedium,
-            color = onSurface.copy(alpha = 0.6f),
-            maxLines = 1,
-        )
-    }
-}
-
-/**
- * U净 弹窗（从下弹出）：与胖乖 / 趣智校园那种入口面板同形态。
- * 有在案洗涤订单时，顶部先显示它的状态与剩余时间（[UjingOrderStatusLine]，订单对表在
- * 打开弹窗那一下做，见调用点）；主按钮「扫码识别洗衣机」，副行进 U净 页。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun UjingEntrySheet(
-    onDismiss: () -> Unit,
-    onScan: () -> Unit,
-    onOpenPage: () -> Unit,
-) {
-    val context = LocalContext.current
-    val repo = remember(context) { Graph.ujing(context) }
-    val order by repo.orderState.collectAsStateWithLifecycle()
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("U净 · 洗衣房", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            // 在案订单的状态行：出现 / 收摊都走高度伸缩，弹窗不会凭空多一块再跳回去
-            // （首帧就有时不播入场——AnimatedVisibility 的初值即目标态）
-            val liveOrder = order?.takeIf { !it.isTerminal }
-            AnimatedVisibility(
-                visible = liveOrder != null,
-                enter = fadeIn(tween(220)) +
-                    expandVertically(
-                        tween(220, easing = FastOutSlowInEasing),
-                        expandFrom = Alignment.Top,
-                    ),
-                exit = fadeOut(tween(160)) +
-                    shrinkVertically(tween(160), shrinkTowards = Alignment.Top),
-            ) {
-                liveOrder?.let { UjingOrderStatusLine(it) }
-            }
-            Text(
-                text = "扫洗衣机机身上的二维码即可下单",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            )
-            Button(
-                onClick = onScan,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Icon(HugeIcons.QrCodeScan, contentDescription = null, modifier = Modifier.size(21.dp))
-                Spacer(Modifier.width(9.dp))
-                Text("扫码识别洗衣机", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClickLabel = "查看洗衣房空闲情况") { onOpenPage() }
-                    .padding(vertical = 11.dp, horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("查看洗衣房空闲情况", style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.weight(1f))
-                Icon(
-                    HugeIcons.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
     }
 }
 

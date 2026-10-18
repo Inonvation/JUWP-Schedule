@@ -75,6 +75,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -96,13 +97,18 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.QuickScanTarget
+import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
 import edu.jxslu.schedule.domain.quickScanTargetOf
 import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.common.ShortcutLauncher
+import edu.jxslu.schedule.ui.common.ShortcutPinner
+import edu.jxslu.schedule.ui.common.ShortcutSheet
 import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
 import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
+import edu.jxslu.schedule.ui.ujing.UjingEntrySheet
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
 import edu.jxslu.schedule.ui.qzxy.QzxyUiState
 import edu.jxslu.schedule.ui.qzxy.WateringReconcileEffect
@@ -152,6 +158,9 @@ import me.rerere.hugeicons.stroke.ChevronUp
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Inbox
+import me.rerere.hugeicons.stroke.Package01
+import me.rerere.hugeicons.stroke.RemoteControl
+import me.rerere.hugeicons.stroke.WashingMachine
 import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.Toolbox
@@ -159,6 +168,9 @@ import me.rerere.hugeicons.stroke.Wallet01
 import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
+
+/** U净 弹窗打开时对订单的节流窗口：10 秒内不重复请求（同原生活页口径）。 */
+private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
 
 /**
  * 今日课表。
@@ -174,8 +186,9 @@ import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
  * - 点课程（焦点卡/课程行）弹**只读详情**（[CourseDetailSheet]，与课表页同口径），
  *   编辑/删除是详情里的二级动作——直跳编辑器易误触。
  *
- * 底部固定区（DESIGN §3.3）：快捷方式三列图标网格（§3.8）在上、快趣出行码整行卡居中、
- * 生活卡片带（胖乖 + 趣智校园，§3.18）在最底，用 [TodayBottomDock]**钉在滚动区下方**——此前它们是 LazyColumn 的
+ * 底部固定区（DESIGN §3.3）：江水生活的三枚图标入口（取快递 / U净 / 空调遥控，2026-10-19）
+ * 在上、快趣出行码整行卡居中、生活卡片带（胖乖 + 趣智校园，§3.18）在最底，
+ * 用 [TodayBottomDock]**钉在滚动区下方**——此前它们是 LazyColumn 的
  * 最后两项，课少时悬在屏幕中段、课多时要滑到底才看得见，同一个「固定区」在空态（贴底）
  * 与有课态（跟滚）之间还是两种表现。三态共用同一个 dock，位置不随状态漂移。
  * 开水卡默认常显（未登录给未登录态，显示设置可关）。
@@ -198,6 +211,14 @@ fun TodayScreen(
     onOpenRideCar: (String) -> Unit = {},
     /** 顶栏「+ → 扫一扫」扫到洗衣机机身码：原文交给 U净 页识别（DESIGN §3.23） */
     onOpenUjingScan: (String) -> Unit = {},
+    /** 江水生活 U净 弹窗的「查看洗衣房空闲情况」：U净 · 洗衣房页 */
+    onOpenUjing: () -> Unit = {},
+    /** 江水生活「取快递」弹窗：「新增」/ 长按编辑 → 快捷方式设置页（null = 不定位） */
+    onOpenShortcuts: (String?) -> Unit = {},
+    /** 江水生活「取快递」弹窗里的「菜鸟批量查」：多单号一次导入取件码 */
+    onOpenCainiao: () -> Unit = {},
+    /** 江水生活「空调遥控」图标：寝室美的空调红外页（DESIGN §3.31） */
+    onOpenAcRemote: () -> Unit = {},
     /** 顶栏「+ → 付款码」：校园卡付款码展示页（DESIGN §3.10） */
     onOpenPayCode: () -> Unit = {},
     /** 顶栏「+ → 收件箱」：应用内重要事实的留痕页（DESIGN §3.24） */
@@ -285,6 +306,25 @@ fun TodayScreen(
 
     val scope = rememberCoroutineScope()
 
+    // 江水生活图标入口（2026-10-19 自生活页迁入）：取快递 / U净 各有弹层。
+    // U净 在案订单：打开弹窗时对一次服务端（同生活页原口径，节流窗口内不重复请求）
+    var showShortcutSheet by remember { mutableStateOf(false) }
+    var showUjingSheet by remember { mutableStateOf(false) }
+    val shortcutSettings by remember(context) { Graph.repository(context).shortcutSettings }
+        .collectAsStateWithLifecycle(initialValue = ShortcutSettings())
+    val ujingRepo = remember(context) { Graph.ujing(context) }
+    var ujingOrderRefreshedAt by remember { mutableStateOf(0L) }
+    val refreshUjingOrderIfStale: () -> Unit = {
+        val id = ujingRepo.currentOrder()?.orderId
+        val now = System.currentTimeMillis()
+        if (id != null && ujingRepo.loggedIn.value &&
+            now - ujingOrderRefreshedAt > UJING_ORDER_REFRESH_TTL_MILLIS
+        ) {
+            ujingOrderRefreshedAt = now
+            scope.launch { runCatching { ujingRepo.refreshOrder(id) } }
+        }
+    }
+
     // 教务导入成功的气泡（DESIGN §3.3）：今日页空态的「从教务导入」也是入口，落点就是这一页
     JwImportOutcomeEffect(snackbar)
 
@@ -354,6 +394,39 @@ fun TodayScreen(
         )
     }
 
+    // 江水生活 U净 弹窗的扫码按钮：与上方「+ → 扫一扫」同一套判据，
+    // 洗衣机机身码原文交给 U净 页识别；车身码 / 别家码就地提示，不跳页。
+    val ujingScanLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val raw = result.data?.getStringExtra(Intents.Scan.RESULT)
+        when (val target = quickScanTargetOf(raw)) {
+            null -> Unit
+            is QuickScanTarget.Washer -> {
+                showUjingSheet = false
+                quickHaptics.tap()
+                onOpenUjingScan(target.raw)
+            }
+            is QuickScanTarget.Ebike -> showNotice("这是快趣车身码，不是洗衣机机身码", NoticeTone.Warning)
+            is QuickScanTarget.Foreign -> showNotice(
+                "这是${target.label}的码，不是洗衣机机身码",
+                NoticeTone.Warning,
+            )
+        }
+    }
+    val startUjingScan: () -> Unit = {
+        quickHaptics.tap()
+        ujingScanLauncher.launch(
+            Intent(context, EbikeScanActivity::class.java).apply {
+                putExtra(Intents.Scan.PROMPT_MESSAGE, "对准洗衣机机身上的二维码")
+                putExtra(EbikeScanActivity.EXTRA_RESULT_MODE, EbikeScanActivity.MODE_RAW)
+                // 机身码是二维码：限定格式，别让商品一维码也当码送出去（同上方扫一扫）
+                putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)
+            },
+        )
+    }
+
     // 趣智校园开阀要连蓝牙，权限在今日页也要能就地补——缺权限时面板里点开始用水
     // 直接拉起系统授权，授完接着开阀，不把用户赶回趣智校园页
     val qzxyPermissionLauncher = rememberLauncherForActivityResult(
@@ -385,12 +458,22 @@ fun TodayScreen(
     }
 
     // 底部固定区（DESIGN §3.3）三态共用：同一份组合函数喂给加载中/空态/有课态，
-    // 「快趣出行卡在上、开水卡最底」的顺序与贴底位置只有一处定义。
-    // 快捷方式网格已于 2026-10-13 移出今日页（并入生活页「取快递」弹窗）。
+    // 「图标入口在上、快趣出行卡居中、开水卡最底」的顺序与贴底位置只有一处定义。
+    // 2026-10-19：取快递 / U净 / 空调遥控三枚图标入口落在这里（自生活页迁入）。
     val bottomDock: @Composable () -> Unit = {
         TodayBottomDock(
             dockExpanded = dockExpanded,
             onToggleDock = { viewModel.setTodayDockExpanded(dockExpanded != true) },
+            entryRow = {
+                DockQuickEntries(
+                    onPackagePickup = { showShortcutSheet = true },
+                    onUjing = {
+                        refreshUjingOrderIfStale()
+                        showUjingSheet = true
+                    },
+                    onAcRemote = onOpenAcRemote,
+                )
+            },
             // 快趣出行 · 骑行卡（DESIGN §3.9，开关关 = 整卡不占位）：整卡点进「骑行」页。
             // 2026-09-29 结构重构后不再有右侧「附近单车 ›」二级入口——地图就是那个页面的主体
             ebikeCard = if (ebikeCardEnabled) {
@@ -800,13 +883,44 @@ fun TodayScreen(
             onDismiss = { showQzxyEntrySheet = false },
         )
     }
+
+    // 江水生活「取快递」弹窗（2026-10-19 自生活页迁入）：预设归「取快递」段、
+    // 自定义归「其他」段；条目动作由弹窗自己播完退场再交给这里执行
+    if (showShortcutSheet) {
+        ShortcutSheet(
+            settings = shortcutSettings,
+            onDismiss = { showShortcutSheet = false },
+            onLaunchItem = { item ->
+                ShortcutLauncher.launch(context, item)?.let { message ->
+                    showNotice(message, NoticeTone.Warning)
+                }
+            },
+            onPinItem = { item ->
+                ShortcutPinner.pin(context, item)?.let { message ->
+                    showNotice(message, NoticeTone.Warning)
+                }
+            },
+            onEdit = { itemId -> onOpenShortcuts(itemId) },
+            onAdd = { onOpenShortcuts(null) },
+            onOpenCainiao = onOpenCainiao,
+        )
+    }
+
+    // 江水生活 U净 弹窗（2026-10-19 自生活页迁入）：在案订单状态 + 扫码 + 进页副行
+    if (showUjingSheet) {
+        UjingEntrySheet(
+            onDismiss = { showUjingSheet = false },
+            onScan = startUjingScan,
+            onOpenPage = onOpenUjing,
+        )
+    }
 }
 
 /**
  * 底部固定区（DESIGN §3.3）：**钉在滚动区下方**，不随课表滚动。
  *
- * 结构（2026-09-24 起）：快捷方式三列图标网格（§3.8）在上 → **快趣出行码整行卡**
- * （§3.9，右侧「附近单车 ›」直达地图）→ 生活卡片带恒在最底。三态（加载中/空态/有课态）
+ * 结构（2026-10-19 起）：**三枚图标入口**（取快递 / U净 / 空调遥控，等宽对称）在上 →
+ * **快趣出行码整行卡**（§3.9）→ 生活卡片带恒在最底。三态（加载中/空态/有课态）
  * 共用本组件，位置不随状态漂移；全部关掉时只剩一个空 Column，高度为 0。
  *
  * **服务格并排的取消**（2026-09-24）：此前快趣出行与水宝宝一卡通并成一行两列；
@@ -814,7 +928,7 @@ fun TodayScreen(
  * 反而是唯一形态——顺带把出行卡也改成与开水卡同款的整行卡（副行放得下流程文案，
  * 右侧放「附近单车 ›」的二级入口）。
  *
- * **高度上限**：屏高 45%。8 条快捷方式（3 行）+ 开水卡在大字体小屏上足以吃掉半屏，
+ * **高度上限**：屏高 45%。图标行 + 快趣卡 + 开水卡在大字体小屏上足以吃掉半屏，
  * 超过上限时 dock 内部可滚——保住课表的可视区，也保证每个入口都还能够到
  * （不设上限的话，超出的部分会被挤出屏幕且无法访问）。
  *
@@ -833,13 +947,15 @@ private fun TodayBottomDock(
      */
     dockExpanded: Boolean?,
     onToggleDock: () -> Unit,
-    /** 快趣出行码整行卡（DESIGN §3.9）；恒为 dock 第一项 */
+    /** 图标入口行（2026-10-19：取快递 / U净 / 空调遥控）；恒在快趣卡上方 */
+    entryRow: (@Composable () -> Unit)? = null,
+    /** 快趣出行码整行卡（DESIGN §3.9） */
     ebikeCard: (@Composable () -> Unit)? = null,
     /** 生活卡片带：胖乖生活 + 趣智校园（§3.18），各自可关；恒为 dock 最后一项 */
     waterCard: (@Composable () -> Unit)? = null,
 ) {
     val expanded = dockExpanded ?: return
-    if (ebikeCard == null && waterCard == null) return
+    if (entryRow == null && ebikeCard == null && waterCard == null) return
 
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
     val bottomClearance = LocalBottomBarClearance.current
@@ -879,13 +995,22 @@ private fun TodayBottomDock(
                 // 底部留白挂在**被折叠的内容**里，不是挂在滚动容器上：
                 // 挂容器上时收起态也留着这 16dp，卡片比把手高一截，文字看着偏上。
                 Column(Modifier.padding(bottom = 16.dp)) {
+                    // 图标入口行（横内缩由 DockQuickEntries 自带）
+                    if (entryRow != null) {
+                        entryRow()
+                    }
                     // 快趣出行码整行卡（横内缩在 EbikeCard 自带）
                     if (ebikeCard != null) {
+                        if (entryRow != null) Spacer(Modifier.height(10.dp))
                         ebikeCard()
                     }
                     if (waterCard != null) {
                         // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
-                        Box(Modifier.padding(top = if (ebikeCard != null) 16.dp else 0.dp)) { waterCard() }
+                        Box(
+                            Modifier.padding(
+                                top = if (ebikeCard != null || entryRow != null) 16.dp else 0.dp,
+                            ),
+                        ) { waterCard() }
                     }
                 }
             }
@@ -1464,6 +1589,68 @@ private val HalfRowLifeCardSpacing = LifeCardSpacing(
  */
 private val HalfCardBalanceMaxWidth = 57.dp
 
+/**
+ * 江水生活的三枚图标入口（2026-10-19 自生活页迁入）：取快递 / U净 / 空调遥控。
+ *
+ * 等宽三列、各自居中——三枚一起构成一行对称的图标入口，落在快趣出行卡上方。
+ * 分别对应：取快递弹窗（`ShortcutSheet`）、U净 弹窗（`UjingEntrySheet`）、空调遥控页。
+ */
+@Composable
+private fun DockQuickEntries(
+    onPackagePickup: () -> Unit,
+    onUjing: () -> Unit,
+    onAcRemote: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        DockQuickEntry("取快递", HugeIcons.Package01, Modifier.weight(1f), onPackagePickup)
+        DockQuickEntry("U净", HugeIcons.WashingMachine, Modifier.weight(1f), onUjing)
+        DockQuickEntry("空调遥控", HugeIcons.RemoteControl, Modifier.weight(1f), onAcRemote)
+    }
+}
+
+/** 江水生活的一枚图标入口：圆角图标底座 + 单行名称。 */
+@Composable
+private fun DockQuickEntry(
+    label: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val haptics = rememberAppHaptics()
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClickLabel = label) {
+                haptics.tap()
+                onClick()
+            }
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(primary.copy(alpha = 0.09f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = primary, modifier = Modifier.size(23.dp))
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
 
 /**
  * 快趣出行整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
@@ -1484,7 +1671,8 @@ private fun EbikeCard(
     /** 使用方式（DESIGN §3.9 / §4.32）：只改副行常态文案——两档的开车方式不一样。 */
     useMode: EbikeUseMode = EbikeUseMode.Default,
 ) {
-    // 与生活页「U净 · 洗衣房」同一张入口卡（ui/common/QuickEntryCard，2026-10-13 统一）
+    // 与生活页「问渠 · 志愿服务」同一张入口卡（ui/common/QuickEntryCard，2026-10-13 统一；
+    // 2026-10-19 生活页的 U净 卡换成问渠卡）
     QuickEntryCard(
         icon = HugeIcons.ScooterElectric,
         title = "快趣出行",
