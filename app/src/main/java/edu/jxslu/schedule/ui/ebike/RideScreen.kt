@@ -279,14 +279,19 @@ fun RideScreen(
             showNotice(scope, snackbar, "本机用车需要定位权限（快趣按位置校验）", NoticeTone.Warning)
         } else if (action == KvcxAction.LOCK) {
             // 临时锁车免二次确认：订单与计费继续、随时可再解锁
+            viewModel.cancelQueriesForRideAction()
             viewModel.kvcx.tempLock()
         } else if (action == KvcxAction.RESUME) {
+            viewModel.cancelQueriesForRideAction()
             viewModel.kvcx.resumeRide()
         } else if (action == KvcxAction.UNLOCK && !prefs.unlockConfirm) {
             // 用户在开锁弹窗勾过「不再提醒」（或关了设置里的开关）：直接发指令。
             // 这是四道闸里唯一允许用户自己关的一道，定位前置照旧在前面挡着；
             // 免确认的后果（按一下就开始计费）在勾选那一刻已经写明。
-            carNum?.let(viewModel.kvcx::unlock)
+            carNum?.let {
+                viewModel.cancelQueriesForRideAction()
+                viewModel.kvcx.unlock(it)
+            }
         } else {
             pendingAction.value = action to carNum
         }
@@ -308,7 +313,9 @@ fun RideScreen(
             else -> {
                 haptics.tap()
                 ebikeViewModel.onCarInput(carNum)
-                pickedCar = carNum
+                // 先不要弹车辆卡：等 focusCar 确认这辆车可用（AutoUnlockReady）再摆卡片。
+                // 扫到已出租/维修的车时保持当前页，用户可以直接再点扫一扫，不用先关卡片。
+                pickedCar = null
                 viewModel.focusCar(carNum, autoUnlock = true)
             }
         }
@@ -376,7 +383,11 @@ fun RideScreen(
                 is BikeMapEvent.Notice -> scope.postNotice(snackbar, event.text, event.tone)
                 BikeMapEvent.Unlocked -> haptics.success()
                 // 扫码确认可用：交给下面那条 keyed effect 走开锁的同一套闸（见 autoUnlockRequest）
-                is BikeMapEvent.AutoUnlockReady -> autoUnlockRequest = event.carNum
+                is BikeMapEvent.AutoUnlockReady -> {
+                    // 只有确认可用的车才露车辆卡；不可用车不会走到这里。
+                    pickedCar = event.carNum
+                    autoUnlockRequest = event.carNum
+                }
             }
         }
     }
@@ -402,7 +413,8 @@ fun RideScreen(
     LaunchedEffect(initialFocusCarNum) {
         val carNum = initialFocusCarNum ?: return@LaunchedEffect
         if (carNum.isBlank()) return@LaunchedEffect
-        pickedCar = carNum
+        // 与内置扫车身码同一口径：确认可用后才露车辆卡。
+        pickedCar = null
         // 今日页「+ → 扫一扫」/ 悬浮球扫到车身码进来：与骑行页「扫车身码」同一条路——
         // 确认这辆车可用后自动走开锁的同一套闸（见 autoUnlockRequest）。
         // 定位 / 高亮每次重建都照跑（一次性动作，重来无害）；**自动开锁只发一次**
@@ -979,6 +991,7 @@ fun RideScreen(
         pending = pendingAction,
         ride = ride,
         kvcx = viewModel.kvcx,
+        onActionStart = viewModel::cancelQueriesForRideAction,
         scope = scope,
         snackbar = snackbar,
         haptics = haptics,
@@ -1000,6 +1013,7 @@ private fun KvcxConfirmHost(
     pending: MutableState<Pair<KvcxAction, String?>?>,
     ride: KqcxAuth.Ride?,
     kvcx: KvcxRideController,
+    onActionStart: () -> Unit,
     scope: CoroutineScope,
     snackbar: SnackbarHostState,
     haptics: AppHaptics,
@@ -1025,6 +1039,7 @@ private fun KvcxConfirmHost(
         onConfirm = {
             pending.value = null
             haptics.tap()
+            onActionStart()
             if (dialog.allowSkip && skipNextTime) {
                 scope.launch {
                     Graph.displayPrefs(context).setEbikeUnlockConfirm(false)

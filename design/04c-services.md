@@ -98,8 +98,9 @@
 
 - `ui/ebike/BikeLocator.kt`：两条路。**一次性取坐标**（点「定位」）只用平台
   `LocationManager`，不引 Google Play Services 的融合定位（国内机型上本来就不可用）。
-  先看两分钟内的缓存定位（瞬时返回），没有再同时挂网络与 GPS 两条更新，谁先给结果用谁，
-  总超时 8 秒。网络定位先到也无所谓：把地图中心落到用户那一片，粗略坐标就够。
+先看五分钟内的缓存定位（瞬时返回），没有再同时挂网络与 GPS 两条更新，谁先给结果用谁；
+地图页总超时 8 秒，写动作收紧到 5 秒。网络定位先到也无所谓：把地图中心落到用户那一片，
+粗略坐标就够。
   **连续定位流**（`updates`，页面可见期间收集）让蓝点跟着人走：先发缓存定位，再按 2 秒
   节奏挂同样的两条更新，经 `shouldMoveDot`（位移 ≥ 4 米或精度显著提升才挪，纯 JVM 可测
   `BikeLocatorLiveDotTest`）滤掉双源交替与站定抖动后逐条转 GCJ-02；**只挪蓝点与「距你」
@@ -1713,7 +1714,8 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 + Keystore 损坏自愈，文件 `secure_kqcx.xml`，**已排除云备份与设备迁移**）——存密码而非 token
 是因为 token 短命、密码登录无签名可随时静默重登。token 失效策略「按需重登」：查询遇
 `looksLikeTokenError`（保守启发式，宁漏判不误判）清 token 重登一次再试一次；重登互斥
-（AtomicBoolean + 自旋等待）。TTL 未知是已知边界，真机确认后如有必要再补主动续期。
+（`AtomicReference<CompletableDeferred<Boolean>>` 单飞，并发调用共享同一次结果）。
+TTL 未知是已知边界，真机确认后如有必要再补主动续期。
 
 **查询**：`queryUnderwayOrder`（POST 空 body）→ `KqcxAuth.Ride`。无骑行订单两种形态：
 `result` 为 null/空串/空对象（宽容），或 **errorCode == 12003**（「订单已结束」）。字段名与
@@ -1728,15 +1730,18 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 |------|----------------------|
 | 开锁 | `createOrder {carNum, lat, lng, clientType:1, clientVersion:V6.0.0, locationSource}` → 官方 `helmet==1&&helmetConfig==1`（或开锁返 16015）走 `helmetUnLock {}`，否则 `greenCarUnlock {lng, lat, locationSource}` |
 | 临时锁车 | `greenCarLock {lng, lat, locationSource}`（官方骑行面板「锁车」，订单与计费继续）；响应过 `parseSuccess`（2026-10-08 起解析信封——旧版把响应整个丢弃，服务端明确拒绝被吞成笼统"未确认"） |
-| 还车 | 未锁先 `muteCarLock`（静默锁，尽力而为）→ `endTheOrder {lat, lng, locationValid:1, locationSource, locationTime(秒), bdStatus:0, bdPileStatus:0, bluetoothName:"", dispatchFlag:2}` |
-| 落地确认 | 每动作后**有界**查询 `queryUnderwayOrder`（1.5 秒间隔，官方同款节奏），非常驻轮询。**开锁/还车 4 次**（官方同款）；**临时锁车 8 次 ≈ 12 秒**（2026-10-08 放宽，见下） |
-| 还车后 | `queryUnPayOrder {}`：`12004`=已结清；有欠费把 `unPayMoney` 显示出来 + 给「去微信结清」（把我们能做的做到头，**支付本身不做**） |
-| 定位 | 官方 `wx.getLocation type:"gcj02"` → App 用 `BikeLocator.currentLocation`（已是 GCJ-02），`locationSource:"realtime"` |
+| 还车 | 未锁先 `muteCarLock`（静默锁，尽力而为）→ `endTheOrder {lat, lng, locationValid, locationSource, locationTime(秒), bdStatus:0, bdPileStatus:0, bluetoothName:"", dispatchFlag:2}`；`locationValid` 按坐标是否有效传 1/0 |
+| 写后确认 | 开锁/还车写接口成功即返回（2026-10-18 提速，不再阻塞查 `queryUnderwayOrder`）；只有临时锁车保留 8 次 ≈ 12 秒的有界确认 |
+| 还车后 | 手动还车结果卡先出「结算中」，`queryUnPayOrder {}` 在后台补查（≤3 次）；有欠费把 `unPayMoney` 显示出来 + 给「去微信结清」（自动还车仍等结果记账；**支付本身不做**） |
+| 定位 | 官方 `wx.getLocation type:"gcj02"` → App 用 `BikeLocator.currentLocation`（已是 GCJ-02）；新定位 `realtime`，五分钟缓存 `session`；还车/重试开锁/临时锁车可退到车辆锚点 `vehicle`；只有还车在锚点无效时传 `none` + `locationValid:0`，开锁类动作中止 |
 
 **四道闸（写死的责任边界）**：① **零自动重试**——`createOrder`/`endTheOrder` 超时绝不重发
 （防重复订单/重复结算），超时后只读刷新判状态；「重试开锁」是安全特例（订单已在案，只重发
-`greenCarUnlock`，官方同款）且由用户手动点；② **动作前先查在案订单**（有骑行禁止再开锁、
-无骑行禁止还车；服务端 12022 兜底）；③ **写操作二次确认**（开锁示完整车号+计费、还车示核对车辆物品+调度费风险；
+`greenCarUnlock`，官方同款）且由用户手动点；② **写操作不先查在案订单**（2026-10-18 提速：
+开锁/还车直接发写请求，在途订单由服务端 12022 / 12003 兜底；调用方用当前骑行快照判断
+是否在骑；重试开锁的车号也从当前卡片带入，不再预查；`createOrder` 成功后
+`greenCarUnlock` 遇 `IOException` 返回 `Unconfirmed + 最小订单`，先把卡片和重试出口给用户）；
+③ **写操作二次确认**（开锁示完整车号+计费、还车示核对车辆物品+调度费风险；
 **临时锁车与「解锁继续骑」免确认**——2026-09-28 用户拍板：两者都发生在既有订单内、
 没有新增的计费后果，误触代价低（「计费继续」由动作成功后的提示交代），`kvcxConfirmDialog`
 对它们返回 null。2026-10-01 打磨：正文改成**编号要点**（`KvcxConfirm.points`，计费 / 核对车号 /
@@ -1751,9 +1756,10 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 第二次点就能成功」）：车把"已锁"上报服务端是**异步**的（落锁后 IoT 上报常见 3~15 秒，
 开锁后紧接着锁车——没骑就走——上报还排在解锁上报之后），旧版确认窗只有 4×1.5s ≈ 6 秒，
 几乎必然等不到，被抛成 Error 红字；用户再点的那次其实状态已同步、命中客户端幂等早退
-（已锁直接返回）假性"成功"（该早退同日已删，见段末）。修后三件——**确认窗按动作分流**（锁车 8 次 ≈ 12 秒
-`LOCK_CONFIRM_ATTEMPTS`，开锁/还车保持官方同款 4 次——锁车免确认、无新增计费后果，
-多等几秒换确定性）；**超窗不抛错**，返回 `LockOutcome.Unconfirmed`（形态镜像
+（已锁直接返回）假性"成功"（该早退同日已删，见段末）。修后三件——**确认窗只留给锁车**
+（8 次 ≈ 12 秒 `LOCK_CONFIRM_ATTEMPTS`；开锁/还车 2026-10-18 起写成功即返回，不再等 4 次
+`queryUnderwayOrder`——锁车免确认、无新增计费后果，多等几秒换确定性）；**超窗不抛错**，
+返回 `LockOutcome.Unconfirmed`（形态镜像
 `UnlockOutcome`，含 `lastKnown` 快照），控制器置 `lockPending` + **Warning** 提示
 「车辆回报稍慢；可点刷新核实，车没锁上就再点一次锁车」，状态胶囊显「锁车确认中…」；
 **悬置裁决与快照落库收成一份**（`KvcxRideState.withRideSnapshot`，`query()` 与
@@ -1763,30 +1769,31 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 原 `temporaryLock` 里的「已锁为幂等 no-op」删掉——用户再点一次锁车真重发 `greenCarLock`
 （手动单次、零自动重试不变；车若确实已锁，重发无害、确认窗首查即过）；`resumeRide`
 成功文案按调用前锁状态分流（已锁→「已解锁，继续骑行」/未锁重发→「已确认开锁」），
-成功即清 `lockPending`。**别把"确认不到"当"失败"报**——同类异步确认（开锁 `Unconfirmed`、
-还车结算轮询）都是同一语义家族。
+成功即清 `lockPending`。**别把"确认不到"当"失败"报**——锁车确认、还车后台结算都是
+同一语义家族（开锁 2026-10-18 起不再阻塞等确认）。
 **骑行状态的时序纪律**（2026-10-09，修用户报的「开车后要冷却才能锁车还车 / 骑行中显示
 锁状态未知 / 同车还车后立即再开、骑行时长有概率丢失」）：五件收口——① **开锁冷却 3 秒**
 （`UNLOCK_COOLDOWN_MS`）：开锁类动作（`unlock` / `retryUnlock` / `resumeRide`）**成功**才落
 `unlockCooldownUntil`（未确认不落，用户仍可锁车兜底），页面把锁车 / 还车置灰并在按钮上
 逐秒显示倒计时（「锁车 3s」，`unlockCooldownSecondsLeft` 向上取整；2026-10-10），开锁位
-不冷却（车侧「已解锁」上报异步，紧接着发物理写指令容易两头落空）；② **确认快照采纳**：
-`UnlockOutcome.Unlocked` 带上确认那一刻的订单快照（仓库层三处返回都带），`unlock` 直接摆上
-卡片（`adoptConfirmedUnlock`：没报「已锁」就按「已解锁」落位，与「无信息不保持悬置」同口径）；
-③ **有界补全**（`syncAfterUnlock`，替换 `unlock` 成功路径的单次 `refreshInternal`——那份在
-服务端回空时会把刚确认的订单抹掉）：最多 `UNLOCK_SYNC_ATTEMPTS` 拍、快照带上 `totalDate`
-即收工（常见路径 0 次查询）、单拍为空不写状态、报回「已锁」照实采纳并停；④ **缺锁字段沿用**
-（`carryLocked`）：同车新快照 `locked == null` 时沿用上一份的已知值，但悬置待核实期间
-（`unlockPending` / `lockPending`）不沿用——那一刻未知比旧值诚实，悬置裁决仍按快照原文判；
-⑤ **查询时序闸**（`snapshotSeq`）：写动作 / 锁状态现查开始时 +1，`query()` 落地序号不一致即
-丢弃、busy 期间直接跳过——晚到的旧包（回页查询撞上动作）不许覆盖动作后的新状态。另：还车
-时长按**订单结束时刻**（`endedAt`）算，不按动作后刷新时刻（扣款确认轮询最多 ~7.5 秒会把
-时长与本机记录多算一截）。
+不冷却（车侧「已解锁」上报异步，紧接着发物理写指令容易两头落空）；② **最小快照先行**：
+`UnlockOutcome.Unlocked` 带最小订单（车号 + 未锁，createOrder 响应里已有的时长 / 费用 /
+电量一并带上；仓库层三处返回都带），`unlock` 直接摆上卡片（`adoptConfirmedUnlock`：
+没报「已锁」就按「已解锁」落位），缺的字段由后台补；
+③ **后台补全**（`syncAfterUnlock`）：仓库层写成功即返回；补全最多 `UNLOCK_SYNC_ATTEMPTS` 拍、
+快照同时带上 `totalDate` 与 `currentPercent` 才收工（常见路径 0 次查询）、单拍为空不写状态、
+报回「已锁」照实采纳并停；它跑在 `scope.launch`，**别改回阻塞 unlock**；④ **缺字段沿用**
+（`carryKnownRideFields`）：同车新快照缺 `totalDate` / `payMoney` / `currentPercent` 时
+沿用上一份，锁状态只在没有悬置待核实时沿用（悬置期间未知比旧值诚实，裁决按快照原文判）；
+⑤ **查询时序闸**：写动作 / 锁状态现查开始时 `snapshotSeq +1`；每次读（`query` /
+`refreshInternal` / `queryLockState` / `syncAfterUnlock`）开始时 `readSeq +1`，落地序号
+不一致即丢弃、busy 期间直接跳过——先发后到的旧包不许覆盖较新的时长 / 电量。另：还车
+时长按**订单结束时刻**（`endedAt`）算，不按后台结算回包时刻（否则会把时长与本机记录多算一截）。
 **开锁成功先落界面再做善后**（2026-10-10 追加，修用户报的「响应完后停滞一会才弹骑行卡」）：
-`unlock` 的 Unlocked 分支先 `_state.update`（确认快照 + 冷却 + 离开结算态）并立即发成功触感，
+`unlock` 的 Unlocked 分支先 `_state.update`（最小快照 + 冷却 + 离开结算态）并立即发成功触感，
 然后才做 `ensureReminderEnabled` / `startRideTimer` 与 Snackbar，最后 `syncAfterUnlock`——
 善后是一串 DataStore 读写与系统调用（排闹钟 / 起通知服务），旧顺序会把骑行卡挡在后面；
-但善后**不许**挪到 `syncAfterUnlock` 之后（补全最多 4.5 秒，通知栏倒计时会迟到）。
+但善后**不许**挪到 `syncAfterUnlock` 之后（补全在后台，通知栏倒计时不能等它）。
 车辆卡的「开锁」按钮同时给等待态（「开锁中…（已等 Ns）」+ 禁用，见 §3.9）。
 **弹窗开关带过渡，不瞬间抽动**（2026-10-03，用户口径「不要有突变跳动」）：material3 1.3.0 的
 `AlertDialog` 没有 compose 侧动画、compose 的 Dialog 窗口也没配 `windowAnimationStyle`，
@@ -1826,7 +1833,7 @@ API，第三方 App 无法代调**（支付分 App SDK 需商户侧把应用登�
 | 锁状态查询 | 复用 `queryUnderwayOrder` | 权威来源是在案订单的 `lockStatus`——解包确认小程序 V6 里 `carLockFlag` **只有定义没有调用**（死导出，参数与响应无参考），**不走它**。交互 = 骑行卡上的状态胶囊**可点**（2026-10-08 由锁徽标升级），点了现查一次并把答案说出来（「已锁；订单还在，计费继续」/「未锁，正在计费」） |
 | 单车详情 | `POST /v2.0.0/queryOneCar {carNum, lat, lng}` | 官方扫码后 `loadOneCar` 同款，`result` 直接是车辆对象。用途：附近列表里没有目标车（被筛掉/还没查到那一片）时，「按车号定位」**向快趣点名查一次**，拿到真实坐标就高亮 + 移镜头（`BikeNearby.parseSingle`；在线/启用字段缺失按在线可用算——用户是拿完整车号点名查这辆车，缺数据不该标成失联）。token 允许空（与 queryZoneList 同口径的免凭证读接口），小程序方式也能用 |
 | 账户资产 | `POST /v2.0.0/getUserInfo {}` + `POST /v2.0.0/queryUserCoupon {}` + `POST /v1.0.0/queryUserMemberCoupon {page:1,rows:20}` | 快趣账号页「快趣资产」区，**只读**：余额（`rechargeBalance`/`giftBalance`，**分**）+ 持有卡券（`remainFrequency` 剩余次数、`>1e5` = 官方「无限次数卡」口径；`freeTime` **秒**→分钟；`endTime`；`deviceType` 1=电单车/2=单车）+ 会员卡（`discount×10` = 「X 折」）。三个接口**并行拉**，单个失败不影响其它块；进页/登录成功/手动刷新各一次，失败保留已有内容只给「刷新」出路。**充值、退押、买卡仍不做**（微信收银台，App 不碰支付） |
-| 结清复查 | 复用 `queryUnPayOrder` | **本机「未结清」只是还车那一刻没确认到**（7.5 秒窗口），用户随后在微信里付清 App 并不知道——记录会永远挂着（2026-09-30 用户实测 0.8 元）。快趣账号页进页 / 登录成功各核一次：本机有未结清记录才查一次 `queryUnPayOrder`，快趣已无欠费 → 本机全部翻「已结清」并提示（`RideRecordStore.markUnsettledSettled`；判据成立是因为快趣同时至多一笔待支付订单）。查询失败静默。**为什么 App 内付不了**：快趣支付协议只有小程序 JSAPI 通道（`appletOrderPay {jsCode}` → `wx.requestPayment`），jsCode 只能 `wx.login` 产出、JSAPI 参数绑定小程序 appid+openid 且只能在微信内消费——与一卡通充值能拉起微信收银台的区别在于那边是**H5 支付渠道（checkmweb → `weixin://wap/pay`，不绑调用方）+ 平台把服务端下单暴露成了公开签名可复现的 HTTP 接口**（DESIGN §4.19）。结清引导两条路（解包确认）：小程序主页「待支付」横幅（60 秒节流、关过冷却 5 分钟）、历史订单里的待支付记录 |
+| 结清复查 | 复用 `queryUnPayOrder` | **本机「未结清」只是还车那一刻的扣款确认没赶上**，用户随后在微信里付清 App 并不知道——记录会永远挂着（2026-09-30 用户实测 0.8 元）。快趣账号页进页 / 登录成功各核一次：本机有未结清记录才查一次 `queryUnPayOrder`，快趣已无欠费 → 本机全部翻「已结清」并提示（`RideRecordStore.markUnsettledSettled`；判据成立是因为快趣同时至多一笔待支付订单）。查询失败静默。**为什么 App 内付不了**：快趣支付协议只有小程序 JSAPI 通道（`appletOrderPay {jsCode}` → `wx.requestPayment`），jsCode 只能 `wx.login` 产出、JSAPI 参数绑定小程序 appid+openid 且只能在微信内消费——与一卡通充值能拉起微信收银台的区别在于那边是**H5 支付渠道（checkmweb → `weixin://wap/pay`，不绑调用方）+ 平台把服务端下单暴露成了公开签名可复现的 HTTP 接口**（DESIGN §4.19）。结清引导两条路（解包确认）：小程序主页「待支付」横幅（60 秒节流、关过冷却 5 分钟）、历史订单里的待支付记录 |
 
 **计时联动**：开锁成功 → `EbikeFreeRideReminder.startRide(now)`（免费时长起点钉在真正开锁
 时刻），并**顺手打开免费时长提醒开关**

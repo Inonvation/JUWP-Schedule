@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.time.Instant
 import java.time.ZoneId
@@ -58,10 +59,11 @@ internal fun unlockCooldownSecondsLeft(until: Long, now: Long): Int {
  * 开锁成功后的**对账 / 补全**次数与间隔（见 [KvcxRideController.syncAfterUnlock]）。
  *
  * 第一拍立即发（就是原来的"动作后刷新"），之后每 [UNLOCK_SYNC_INTERVAL_MS] 一拍；
- * 快照带上了已骑时长就提前收工。间隔取官方同款 1.5 秒节奏（与仓库层确认窗同源），
- * **不是常驻轮询**：只在开锁动作后跑、有界。单测注入 0 让 Unconfined 同步跑完。
+ * 快照同时带回已骑时长与电量就提前收工。间隔取官方同款 1.5 秒节奏（与临时锁车确认窗同源），
+ * **不是常驻轮询**：只在开锁动作后跑、有界，且在后台不占动作按钮。单测注入 0 让
+ * Unconfined 同步跑完。
  */
-internal const val UNLOCK_SYNC_ATTEMPTS = 3
+internal const val UNLOCK_SYNC_ATTEMPTS = 5
 internal const val UNLOCK_SYNC_INTERVAL_MS = 1_500L
 
 /** 快趣用车动作（DESIGN §4.32，B/C 档）：同一时刻只允许一个在跑。 */
@@ -145,6 +147,8 @@ data class KvcxReturnSummary(
     val settled: Boolean?,
     /** 未结清时的欠费金额（分）；null = 不知道（查询失败或官方没给）。 */
     val owedCents: Long? = null,
+    /** true = 还车已成功，扣款结果还在后台查；此时不显示「去微信结清」。 */
+    val settling: Boolean = false,
 ) {
     /** 时长文案用人话（「13 分钟」），与历史列表同一口径（`RideRecord.durationText`）。 */
     val durationText: String? get() = durationSeconds?.let(RideRecord::durationText)
@@ -152,8 +156,8 @@ data class KvcxReturnSummary(
     val feeText: String? get() = feeCents?.let { "¥%.2f".format(it / 100.0) }
 
     /**
-     * 结算状态一句话（单测锁定）。**别把"没确认到"说成"欠费"**：扣款可能比我们那 7.5 秒
-     * 的轮询窗口慢，所以金额未知时只说"结算中或未结清"。
+     * 结算状态一句话（单测锁定）。**别把"没确认到"说成"欠费"**：手动还车的结果卡先出，
+     * 扣款在后台查；金额未知时只说"结算中或未结清"。
      *
      * 欠费那行把**能直达付款页的两条路**写出来：
      * 主页的待支付横幅（关过一次会冷却 5 分钟）、历史订单里的待支付记录——
@@ -161,6 +165,7 @@ data class KvcxReturnSummary(
      */
     val settleText: String
         get() = when {
+            settling -> "费用结算中，稍后自动更新"
             needPay == null -> "订单已在其他端结束"
             !needPay -> "本次无需支付"
             settled == true -> "费用已自动结清"
@@ -171,10 +176,10 @@ data class KvcxReturnSummary(
         }
 
     /** 结算那行要不要用警告色（欠费才用）。 */
-    val settleWarning: Boolean get() = needPay == true && settled != true
+    val settleWarning: Boolean get() = !settling && needPay == true && settled != true
 
     /** 需不需要给「去微信结清」的出路（订单欠费时才给）。 */
-    val needsSettle: Boolean get() = needPay == true && settled != true
+    val needsSettle: Boolean get() = !settling && needPay == true && settled != true
 }
 
 /**
@@ -268,7 +273,10 @@ class KvcxRideController internal constructor(
      */
     private val onUnlocked: () -> Unit = {},
     /** 定位前置（写操作硬闸）。默认走真实定位；单测里换成假坐标。 */
-    private val locate: suspend () -> LocateResult = { BikeLocator.currentLocation(Graph.appContext) },
+    private val locate: suspend () -> LocateResult = {
+        // 写动作不能像地图页那样等 8 秒；5 秒拿不到就走车辆锚点 / 明确提示。
+        BikeLocator.currentLocation(Graph.appContext, timeoutMs = 5_000L)
+    },
     private val effects: KvcxSideEffects = AppKvcxSideEffects,
     /**
      * 开锁后补全重拉的间隔（毫秒，见 [syncAfterUnlock]）。单测注入 0 让 Unconfined
@@ -294,6 +302,13 @@ class KvcxRideController internal constructor(
     private var snapshotSeq = 0L
 
     /**
+     * 查询先后序号：每次**读**（[query] / [refreshInternal] / [queryLockState] /
+     * [syncAfterUnlock]）开始即 +1。只改快照不写动作，用来防止两条并发查询里**先发后到**
+     * 的旧包覆盖新包——那会让已骑时长回退、电量跳回旧值。
+     */
+    private var readSeq = 0L
+
+    /**
      * 查一次骑行状态。[quiet] = 失败完全静默（进页 / 回页那条路：页面主职责不是它，
      * 查询出问题不该打扰用户）；手动刷新传 false，失败给提示。
      *
@@ -310,18 +325,23 @@ class KvcxRideController internal constructor(
         if (_state.value.busy != null) return
         // 发起前记序号，落地时对账（见 [snapshotSeq] 的说明）
         val seq = snapshotSeq
+        val read = ++readSeq
         scope.launch {
             runCatching { session.queryUnderway() }
                 .onSuccess { ride ->
-                    if (seq != snapshotSeq) return@onSuccess
+                    if (seq != snapshotSeq || read != readSeq) return@onSuccess
                     _state.update { it.withRideSnapshot(ride) }
                 }
-                .onFailure { if (!quiet) onNotice(kvcxErrorText(it), NoticeTone.Error) }
+                .onFailure {
+                    if (seq == snapshotSeq && read == readSeq && !quiet) {
+                        onNotice(kvcxErrorText(it), NoticeTone.Error)
+                    }
+                }
         }
     }
 
     /**
-     * 直接开锁：`createOrder` + 开锁（仓库层含在案订单闸与落地确认）。
+     * 直接开锁：`createOrder` + 开锁。仓库层写接口成功即返回，不再等状态落地。
      * 成功后：免费时长起点钉在**真正开锁的时刻**、顺手打开提醒开关（[KvcxSideEffects]）、
      * 并通过 [onUnlocked] 发一次一次性信号（页面补成功触感）。
      * 未确认时置 [KvcxRideState.unlockPending]，UI 给「重试开锁」出口。
@@ -331,7 +351,7 @@ class KvcxRideController internal constructor(
     fun unlock(carNum: String) = run(KvcxAction.UNLOCK) { session ->
         val point = locateOrNotice() ?: return@run
         val outcome = try {
-            session.unlockBike(carNum, point.first, point.second)
+            session.unlockBike(carNum, point.lat, point.lng, point.source)
         } catch (error: KvcBusinessError) {
             // 11035 = 微信支付分下单授权：只能在微信里完成（App 无法代调 wxpayScoreUse）。
             // 记会话标记，让 UI 给说明与出路，别让用户反复白点
@@ -345,13 +365,18 @@ class KvcxRideController internal constructor(
                 // **界面先行**：确认快照先落 UI——响应回来的第一帧就切骑行卡，不等下面那串善后
                 // （开关读写 / 计时落盘 / 排闹钟 / 起通知服务，几百毫秒起，低端机更久）。
                 val confirmedAt = System.currentTimeMillis()
+                val confirmedRide = (outcome.ride ?: KqcxAuth.Ride(
+                    carNum = outcome.carNum,
+                    bluetoothName = null,
+                    locked = false,
+                )).adoptConfirmedUnlock()
                 _state.update {
                     it.copy(
                         // 确认那一刻的快照直接采纳：新订单在服务端异步落账，确认快照可能
                         // 缺字段、后续那次刷新还可能整份落空——先把车号与已有的字段摆上，
                         // 卡片不必空等（缺的部分由 [syncAfterUnlock] 补）。
-                        ride = outcome.ride?.adoptConfirmedUnlock() ?: it.ride,
-                        fetchedAt = if (outcome.ride != null) confirmedAt else it.fetchedAt,
+                        ride = confirmedRide,
+                        fetchedAt = confirmedAt,
                         unlockPending = false,
                         lockPending = false,
                         scoreAuthRequired = false,
@@ -368,7 +393,7 @@ class KvcxRideController internal constructor(
                 // 开始（比"点扫一扫"这个准备动作强得多），提醒开关关着就顺手打开——
                 // 倒计时通知因此跟着开锁一起来。开关在「快趣出行设置」里可见、可随时关掉。
                 // **顺序纪律**：这段善后在界面更新之后跑，但**不许**挪到 [syncAfterUnlock]
-                // 后面——补全最多 3 拍 × 1.5 秒，挪过去会让通知栏倒计时迟到好几秒。
+                // 后面——补全在后台跑，挪过去会让通知栏倒计时白等。
                 val reminderOpened = effects.ensureReminderEnabled()
                 val (timerText, timerTone) = effects.startRideTimer()
                 // 自动还车与计时同刻排（触发点 = 计时起点 + 15 分钟 − 提前量；见
@@ -380,24 +405,45 @@ class KvcxRideController internal constructor(
                         if (reminderOpened) "（已打开免费时长提醒）" else "",
                     timerTone,
                 )
-                // 对账 + 补全。**不走**共享的 refreshInternal（见 [syncAfterUnlock]）：
+                // 对账 + 补全放到后台：动作的 busy 在这一拍就结束，不让最多 5 次查询
+                // 继续占住按钮。**不走**共享的 refreshInternal（见 [syncAfterUnlock]）：
                 // 那份在服务端抽风回空时会把刚确认的订单整个抹掉。
-                syncAfterUnlock()
+                val syncSeq = snapshotSeq
+                scope.launch { syncAfterUnlock(outcome.carNum, syncSeq) }
             }
             is UnlockOutcome.Unconfirmed -> {
                 // 订单已创建（只是没确认到锁）：同样离开结算态——「已还车」的卡片
-                // 不能与在案订单并存
-                _state.update { it.copy(unlockPending = true, returnSummary = null) }
+                // 不能与在案订单并存。建单成功但开锁请求断网时，先把最小订单摆出来，
+                // 用户才有「重试开锁」的对象；后台补全再确认锁状态。
+                val pendingRide = outcome.ride ?: KqcxAuth.Ride(
+                    carNum = outcome.carNum,
+                    bluetoothName = null,
+                    locked = null,
+                )
+                _state.update {
+                    it.copy(
+                        ride = pendingRide,
+                        fetchedAt = System.currentTimeMillis(),
+                        unlockPending = true,
+                        returnSummary = null,
+                    )
+                }
                 onNotice("订单已创建但未确认开锁；可点「重试开锁」，或到快趣小程序核对", NoticeTone.Warning)
-                refreshInternal()
+                val syncSeq = snapshotSeq
+                scope.launch { syncAfterUnlock(outcome.carNum, syncSeq) }
             }
         }
     }
 
     /** 重试开锁（订单已在案、车锁未确认打开时；只重发开锁指令，不重建订单）。 */
     fun retryUnlock() = run(KvcxAction.RETRY_UNLOCK) { session ->
-        val point = locateOrNotice() ?: return@run
-        when (session.retryUnlock(point.first, point.second)) {
+        val ride = _state.value.ride
+        if (ride == null) {
+            onNotice("没有在案订单，请重新开锁", NoticeTone.Warning)
+            return@run
+        }
+        val point = locateOrNotice(ride) ?: return@run
+        when (session.retryUnlock(ride.carNum, point.lat, point.lng, point.source)) {
             is UnlockOutcome.Unlocked -> {
                 _state.update {
                     // 乐观采纳确认结果（本地翻「未锁」），卡片不必等下一次刷新才翻面
@@ -433,9 +479,14 @@ class KvcxRideController internal constructor(
      * （不等下一次刷新才翻面）。
      */
     fun resumeRide() = run(KvcxAction.RESUME) { session ->
-        val point = locateOrNotice() ?: return@run
-        val wasLocked = _state.value.ride?.locked == true
-        when (session.retryUnlock(point.first, point.second)) {
+        val ride = _state.value.ride
+        if (ride == null) {
+            onNotice("没有在案订单，请重新开锁", NoticeTone.Warning)
+            return@run
+        }
+        val point = locateOrNotice(ride) ?: return@run
+        val wasLocked = ride.locked == true
+        when (session.retryUnlock(ride.carNum, point.lat, point.lng, point.source)) {
             is UnlockOutcome.Unlocked -> {
                 _state.update {
                     it.copy(
@@ -468,8 +519,8 @@ class KvcxRideController internal constructor(
      * （对在案订单重发指令，仓库层不再早退）。
      */
     fun tempLock() = run(KvcxAction.LOCK) { session ->
-        val point = locateOrNotice() ?: return@run
-        when (val outcome = session.temporaryLock(point.first, point.second)) {
+        val point = locateOrNotice(_state.value.ride) ?: return@run
+        when (val outcome = session.temporaryLock(point.lat, point.lng, point.source)) {
             is LockOutcome.Locked -> {
                 // 车已锁，开锁未确认的悬置状态自然消解；顺手采纳确认快照——
                 // 卡片不必等下一次刷新才翻成「已锁」
@@ -506,25 +557,69 @@ class KvcxRideController internal constructor(
      * 还车：静默锁 + 结束订单；成功后收计时、焚码、记一条本机骑行记录，并弹**结果卡**
      * （[KvcxRideState.returnSummary]）——还车是花钱那一刻，信息量不能只有一句话。
      *
-     * 结算口径（本地走时在订单结束那一刻截停、扣款确认轮询、结果卡字段）统一在
-     * [performReturnBike] 里，与自动还车共用——**别在这里另写一份**。
+     * 结算口径（本地走时在订单结束那一刻截停、结果卡字段）统一在 [performReturnBike] 里，
+     * 与自动还车共用——**别在这里另写一份**。手动还车不在关键路径上等扣款结果：结果卡
+     * 先显示「结算中」，后台查询回来再改写同一张卡。
      */
     fun returnBike() = run(KvcxAction.RETURN) { session ->
-        val point = locateOrNotice() ?: return@run
         val before = _state.value.ride
+        if (before == null) {
+            onNotice("没有进行中的骑行", NoticeTone.Warning)
+            return@run
+        }
+        val point = locateOrNotice(before, allowInvalidFallback = true)
+        if (point == null) return@run
         val summary = performReturnBike(
             session = session,
             before = before,
             fetchedAt = _state.value.fetchedAt,
-            gcjLat = point.first,
-            gcjLng = point.second,
+            gcjLat = point.lat,
+            gcjLng = point.lng,
+            locationSource = point.source,
+            locationValid = point.source != "none",
+            pollSettlement = false,
         ) {
             effects.endRideAndBurn()
         }
-        _state.update { it.copy(unlockPending = false, lockPending = false) }
+        // 结束订单成功即落结果卡：订单状态已经在本地结束，不再等 queryUnderwayOrder
+        // 的“订单消失”回包，也不让扣款轮询占住主动作。
+        _state.update {
+            it.copy(
+                ride = null,
+                unlockPending = false,
+                lockPending = false,
+                returnSummary = summary,
+            )
+        }
         effects.recordRide(summary)
-        _state.update { it.copy(returnSummary = summary) }
-        refreshInternal()
+        if (summary.settling) {
+            // 欠费/自动扣款结果在后台补；结果卡先显示“结算中”。只回写同一张结果卡，
+            // 用户已经关掉卡或开始下一单时不复活旧内容。
+            scope.launch {
+                val payState = try {
+                    session.confirmUnpaidSettled()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    null
+                }
+                _state.update { state ->
+                    val shown = state.returnSummary
+                    if (shown !== summary) return@update state
+                    state.copy(
+                        returnSummary = shown.copy(
+                            settling = false,
+                            settled = when (payState) {
+                                is KqcxAuth.UnpayState.Settled -> true
+                                is KqcxAuth.UnpayState.Owed -> false
+                                null -> null
+                            },
+                            owedCents = (payState as? KqcxAuth.UnpayState.Owed)?.amountCents,
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     /** 关掉还车结果卡（用户点「知道了」）。 */
@@ -562,20 +657,23 @@ class KvcxRideController internal constructor(
         val session = session ?: return
         if (_state.value.busy != null) return
         // 这次现查的答案是最新的：把在飞的旧查询一并作废（落地时序号对不上即丢弃）
-        snapshotSeq += 1
+        val seq = ++snapshotSeq
+        val read = ++readSeq
         scope.launch {
             _state.update { it.copy(busy = KvcxAction.QUERY_LOCK) }
             try {
                 val ride = session.queryUnderway()
-                _state.update { it.withRideSnapshot(ride) }
-                onNotice(
-                    when {
-                        ride == null -> "没有进行中的订单"
-                        ride.locked == true -> "车辆已锁上；订单还在，计费继续"
-                        else -> "车辆未锁，正在计费"
-                    },
-                    NoticeTone.Info,
-                )
+                if (seq == snapshotSeq && read == readSeq) {
+                    _state.update { it.withRideSnapshot(ride) }
+                    onNotice(
+                        when {
+                            ride == null -> "没有进行中的订单"
+                            ride.locked == true -> "车辆已锁上；订单还在，计费继续"
+                            else -> "车辆未锁，正在计费"
+                        },
+                        NoticeTone.Info,
+                    )
+                }
             } catch (error: CancellationException) {
                 throw error // 取消穿透：不能把页面/作用域撤销报成「操作异常」
             } catch (error: Throwable) {
@@ -598,8 +696,9 @@ class KvcxRideController internal constructor(
             // 双重检查：外面那次读的是调用当刻，调度器不是 Main.immediate
             // 时两次调用可能都通过外闸——这里在置 busy 前再确认一次，两枚动作不会并发
             if (_state.value.busy != null) return@launch
-            // 动作开始即推进序号：在飞的旧查询落地时会被丢弃（见 [snapshotSeq]）
+            // 动作开始即推进序号：在飞的旧查询落地时会被丢弃（见 [snapshotSeq] / [readSeq]）
             snapshotSeq += 1
+            readSeq += 1
             _state.update { it.copy(busy = action, busyAt = System.currentTimeMillis()) }
             try {
                 block(session)
@@ -613,15 +712,41 @@ class KvcxRideController internal constructor(
         }
     }
 
-    /** 定位前置（写操作硬闸）：失败时提示并返回 null，调用方直接放弃本次动作。 */
-    private suspend fun locateOrNotice(): Pair<Double, Double>? =
-        when (val result = locate()) {
-            is LocateResult.Ok -> result.lat to result.lng
-            is LocateResult.Failed -> {
-                onNotice(result.message, NoticeTone.Warning)
-                null
-            }
+    /**
+     * 定位前置（写操作硬闸）：实时定位失败时，[fallback] 是当前车辆锚点（还车 / 重试开锁 /
+     * 临时锁车）就用车辆坐标继续；没有锚点才提示并放弃。开锁首次动作没有订单锚点，只能靠
+     * 五分钟内的缓存定位，拿不到就明确失败。只有还车允许 [allowInvalidFallback]（官方
+     * 允许 locationValid=0 结束订单）；开锁类动作锚点无效仍中止。
+     */
+    private suspend fun locateOrNotice(
+        fallback: KqcxAuth.Ride? = null,
+        allowInvalidFallback: Boolean = false,
+    ): LocateResult.Ok? {
+        val result = locate()
+        if (result is LocateResult.Ok) return result
+
+        val lat = fallback?.lat
+        val lng = fallback?.lng
+        if (lat != null && lng != null && isValidActionCoord(lat, lng)) {
+            onNotice("定位不到你，使用车辆位置继续", NoticeTone.Info)
+            return LocateResult.Ok(lat, lng, source = "vehicle")
         }
+        if (lat != null && lng != null) {
+            if (allowInvalidFallback) {
+                onNotice("车辆没有有效位置，按无定位还车", NoticeTone.Warning)
+                return LocateResult.Ok(0.0, 0.0, source = "none")
+            }
+            onNotice("车辆没有有效位置，暂时无法操作", NoticeTone.Warning)
+            return null
+        }
+        onNotice((result as LocateResult.Failed).message, NoticeTone.Warning)
+        return null
+    }
+
+    private fun isValidActionCoord(lat: Double, lng: Double): Boolean =
+        lat.isFinite() && lng.isFinite() &&
+            lat in -90.0..90.0 && lng in -180.0..180.0 &&
+            !(lat == 0.0 && lng == 0.0)
 
     /**
      * 骑行状态快照落库 + 悬置态裁决（[query] / [refreshInternal] / [queryLockState] 共用，
@@ -631,11 +756,15 @@ class KvcxRideController internal constructor(
      * - 锁车确认中：刷新到「已锁」即确认成功（锁状态缺失 / 订单消失同样按消解处理）。
      */
     private fun KvcxRideState.withRideSnapshot(ride: KqcxAuth.Ride?): KvcxRideState = copy(
-        // 缺锁字段的同车快照沿用上一份的锁状态（见 [carryLocked]）——但**悬置待核实期间
-        // 不沿用**：那正是"还没对上账"的时刻，未知比旧值诚实（锁车确认中 / 开锁未确认
-        // 的裁决仍按这一份快照的原文判，别用沿用后的值改口径）
+        // 同车快照缺字段时沿用上一份：时长 / 费用 / 电量一律保留；锁状态只在没有悬置
+        // 待核实时沿用（见 [carryKnownRideFields]）——悬置期间未知比旧值诚实，裁决仍按
+        // 这一份快照的原文判。
         ride = ride?.let { fresh ->
-            if (unlockPending || lockPending) fresh else carryLocked(previous = this.ride, fresh = fresh)
+            carryKnownRideFields(
+                previous = this.ride,
+                fresh = fresh,
+                carryLock = !unlockPending && !lockPending,
+            )
         },
         fetchedAt = System.currentTimeMillis(),
         unlockPending = unlockPending && ride?.locked == true,
@@ -645,7 +774,10 @@ class KvcxRideController internal constructor(
     /** 动作成功后的状态刷新：失败不动旧值（动作本身已成功，刷新失败不打扰）。 */
     private suspend fun refreshInternal() {
         val session = session ?: return
+        val seq = snapshotSeq
+        val read = ++readSeq
         runCatching { session.queryUnderway() }.onSuccess { ride ->
+            if (seq != snapshotSeq || read != readSeq) return@onSuccess
             _state.update { it.withRideSnapshot(ride) }
         }
     }
@@ -659,18 +791,32 @@ class KvcxRideController internal constructor(
      * 骑行卡上（「已骑 --」「锁状态未知」），直到用户手动刷新。
      *
      * 口径（不是常驻轮询）：
-     * - 只在开锁动作后跑，最多 [UNLOCK_SYNC_ATTEMPTS] 拍；快照带上已骑时长即提前收工
+     * - 只在开锁动作后跑，最多 [UNLOCK_SYNC_ATTEMPTS] 拍；时长和电量都到手才提前收工
      *   （常见路径 = 采纳的快照就完整 = 0 次查询）；
      * - 一拍为空**不写状态**（订单刚刚确认在案，这一拍的空是脏回包，写下去正是"信息丢失"），
      *   等下一拍；
      * - 报回「已锁」与刚确认的开锁打架：照实采纳（服务端的说法是权威），但停止补全。
      */
-    private suspend fun syncAfterUnlock() {
+    private suspend fun syncAfterUnlock(carNum: String, seq: Long) {
         val session = session ?: return
+        val read = ++readSeq
         repeat(UNLOCK_SYNC_ATTEMPTS) { index ->
-            if (_state.value.ride?.totalDateSeconds != null) return
+            // 动作/读序号变了（用户又点了锁车/还车/查询）或骑行卡已经换车：这轮补全作废，
+            // 别拿旧订单的慢回包覆盖新状态。
+            if (seq != snapshotSeq || read != readSeq) return
+            if (_state.value.ride?.carNum != carNum) return
+            if (_state.value.ride?.hasRideMetrics() == true) return
             if (index > 0) delay(unlockSyncIntervalMs)
-            val fresh = runCatching { session.queryUnderway() }.getOrNull() ?: return@repeat
+            val fresh = try {
+                session.queryUnderway()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            } ?: return@repeat
+            // 查询期间用户可能已经还车 / 换了动作：慢回包不能把旧骑行卡写回来。
+            if (seq != snapshotSeq || read != readSeq) return
+            if (_state.value.ride?.carNum != carNum) return
             _state.update { it.withRideSnapshot(fresh) }
             if (fresh.locked == true) return
         }
@@ -746,27 +892,40 @@ internal fun kvcxErrorText(error: Throwable): String = when (error) {
     is KvcBusinessError -> error.message ?: "操作失败"
     is KvcProtocolException -> "响应异常：${error.message ?: "格式不符"}"
     is SocketTimeoutException -> "网络超时，请稍后重试"
+    is InterruptedIOException -> "请求超时，请稍后重试"
     is IOException -> "网络不可用，请检查网络后重试"
     else -> "操作异常：${error.message ?: error.javaClass.simpleName}"
 }
 
 /**
- * 快照缺锁字段时的**沿用规则**（修「解锁状态骑行中却显示锁状态未知」）：
- * 新快照 `locked == null` 且仍是同一辆车（carNum 相同）、上一份有值时，沿用上一份。
+ * 同车快照缺字段时的**沿用规则**：快趣后端的字段类型不稳定 + 新订单异步落账，
+ * 同一辆车的后续快照经常只带车号，`totalDate` / `payMoney` / `currentPercent` /
+ * `lockStatus` 说没就没。拿不到新事实，不该把已经知道的事实降级成 `null`。
  *
- * 为什么：快趣后端的字段类型不稳定（见 `KqcxAuth` 文件头）+ 新订单异步落账，**缺
- * `lockStatus` 的快照是常态**——拿不到新事实不该把已经知道的事实降级成"未知"，
- * 那正是"骑在车上、卡片却写锁状态未知"的来路。「锁状态未知」只留给真正没得到过
- * 信息的场景（冷启动首查 / 换了车）。换车、上一份也没值 → 照旧 null。
+ * - 时长 / 费用 / 电量：`fresh` 缺就沿用 `previous`；
+ * - 锁状态：只在 [carryLock] 为 true 时沿用；悬置待核实期间（开锁未确认 / 锁车确认中）
+ *   保持 `fresh` 原文，未知比旧值诚实；
+ * - 换了车（carNum 不同）或没有上一份：原样返回 `fresh`。
+ *
+ * 还车成功时控制器会把 `ride` 清空，所以这里不会把上一单的时长带到下一单。
  */
-internal fun carryLocked(previous: KqcxAuth.Ride?, fresh: KqcxAuth.Ride): KqcxAuth.Ride =
-    if (fresh.locked == null && previous != null &&
-        previous.carNum == fresh.carNum && previous.locked != null
-    ) {
-        fresh.copy(locked = previous.locked)
-    } else {
-        fresh
-    }
+internal fun carryKnownRideFields(
+    previous: KqcxAuth.Ride?,
+    fresh: KqcxAuth.Ride,
+    carryLock: Boolean,
+): KqcxAuth.Ride {
+    if (previous == null || previous.carNum != fresh.carNum) return fresh
+    return fresh.copy(
+        totalDateSeconds = fresh.totalDateSeconds ?: previous.totalDateSeconds,
+        payMoneyCents = fresh.payMoneyCents ?: previous.payMoneyCents,
+        batteryPercent = fresh.batteryPercent ?: previous.batteryPercent,
+        locked = if (carryLock) fresh.locked ?: previous.locked else fresh.locked,
+    )
+}
+
+/** 骑行卡的核心指标是否到齐：时长 + 电量。后台补全据此决定是否还要再查。 */
+internal fun KqcxAuth.Ride.hasRideMetrics(): Boolean =
+    totalDateSeconds != null && batteryPercent != null
 
 /**
  * 确认开锁的那一份快照按「已解锁」落位：命令已发且服务端没报「已锁」，

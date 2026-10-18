@@ -56,6 +56,9 @@ class KvcxRideControllerTest {
         /** 一次性查询闸门：挂住某次查询、稍后放行（测「旧包晚到」与「动作期不发查询」）。 */
         var queryGate: CompletableDeferred<Unit>? = null
 
+        /** 多条查询各自的闸门（按发起顺序取），测并发查询的落地顺序。 */
+        var queryGates: ArrayDeque<CompletableDeferred<Unit>>? = null
+
         var queryCalls = 0
 
         var unlockResult: suspend () -> UnlockOutcome = {
@@ -74,6 +77,14 @@ class KvcxRideControllerTest {
         var retryCalls = 0
         var lockCalls = 0
         var returnCalls = 0
+        var unlockLocationSource: String? = null
+        var retryLocationSource: String? = null
+        var lockLocationSource: String? = null
+        var returnLocationSource: String? = null
+        var returnLocationValid: Boolean? = null
+        var returnLat: Double? = null
+        var returnLng: Double? = null
+        var returnWasLocked: Boolean? = null
         var ringCalls = 0
 
         /** 置非空则查询直接抛错（模拟断网）：动作后刷新的「失败不裁决」路径用。 */
@@ -85,6 +96,9 @@ class KvcxRideControllerTest {
                 queryGate = null
                 gate.await()
             }
+            queryGates?.let { gates ->
+                if (gates.isNotEmpty()) gates.removeFirst().await()
+            }
             queryError?.let { throw it }
             queryScript?.let { script -> if (script.isNotEmpty()) return script.removeFirst() }
             return underway
@@ -94,26 +108,47 @@ class KvcxRideControllerTest {
             carNum: String,
             gcjLat: Double,
             gcjLng: Double,
+            locationSource: String,
         ): UnlockOutcome {
             unlockCalls++
+            unlockLocationSource = locationSource
             return unlockResult()
         }
 
-        override suspend fun retryUnlock(gcjLat: Double, gcjLng: Double): UnlockOutcome {
+        override suspend fun retryUnlock(
+            carNum: String,
+            gcjLat: Double,
+            gcjLng: Double,
+            locationSource: String,
+        ): UnlockOutcome {
             retryCalls++
+            retryLocationSource = locationSource
             return unlockResult()
         }
 
-        override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome {
+        override suspend fun temporaryLock(
+            gcjLat: Double,
+            gcjLng: Double,
+            locationSource: String,
+        ): LockOutcome {
             lockCalls++
+            lockLocationSource = locationSource
             return lockResult
         }
 
         override suspend fun returnBike(
             gcjLat: Double,
             gcjLng: Double,
+            locationSource: String,
+            locationValid: Boolean,
+            wasLocked: Boolean?,
         ): KqcxAuth.EndOutcome.Ended {
             returnCalls++
+            returnLocationSource = locationSource
+            returnLocationValid = locationValid
+            returnLat = gcjLat
+            returnLng = gcjLng
+            returnWasLocked = wasLocked
             return returnResult
         }
 
@@ -328,6 +363,55 @@ class KvcxRideControllerTest {
     }
 
     @Test
+    fun `开锁补全要等到电量也回来`() {
+        // 第一拍只回时长、电量仍缺：不能因为 totalDate 已到手就收工，否则电量会一直空着。
+        val session = FakeSession()
+        session.unlockResult = {
+            UnlockOutcome.Unlocked(
+                "100000669",
+                helmetFlow = false,
+                ride = ride(totalDateSeconds = 5, batteryPercent = null, locked = false),
+            )
+        }
+        session.queryScript = ArrayDeque(
+            listOf(
+                ride(totalDateSeconds = 6, batteryPercent = null, locked = false),
+                ride(totalDateSeconds = 7, batteryPercent = 80, locked = false),
+            ),
+        )
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+
+        assertEquals(7L, kvcx.state.value.ride?.totalDateSeconds)
+        assertEquals(80, kvcx.state.value.ride?.batteryPercent)
+        assertEquals(2, session.queryCalls)
+    }
+
+    @Test
+    fun `开锁成功后补全查询不占住动作按钮`() {
+        // 写接口已经成功：补全只是后台美化，最多 3 拍的查询不能继续把 busy 挂着。
+        val session = FakeSession()
+        session.unlockResult = {
+            UnlockOutcome.Unlocked(
+                "100000669",
+                helmetFlow = false,
+                ride = ride(totalDateSeconds = null, locked = false),
+            )
+        }
+        val gate = CompletableDeferred<Unit>()
+        session.queryGate = gate
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+
+        assertNull(kvcx.state.value.busy)
+        assertEquals(1, session.queryCalls)
+        assertNotNull(kvcx.state.value.ride)
+        gate.complete(Unit)
+    }
+
+    @Test
     fun `开锁后刷新落空不清掉刚确认的订单`() {
         // 同一辆车刚还完就再开：服务端要先后走完结束与新建两条账，那几拍里查询可能落空——
         // 空回包不许写状态（写下去正是「骑行时长等信息丢失」），恢复后照常落位
@@ -409,6 +493,87 @@ class KvcxRideControllerTest {
     }
 
     @Test
+    fun `同车快照缺时长费用电量也沿用上一份`() {
+        val session = FakeSession()
+        val kvcx = controller(session)
+        session.underway = ride(totalDateSeconds = 60, payMoneyCents = 150, batteryPercent = 85)
+        kvcx.query(quiet = true)
+
+        // 服务端异步落账时可能只带车号：不能把已经显示的时长 / 费用 / 电量抹成 --。
+        session.underway = ride(
+            totalDateSeconds = null,
+            payMoneyCents = null,
+            locked = null,
+            batteryPercent = null,
+        )
+        kvcx.query(quiet = true)
+
+        val merged = kvcx.state.value.ride!!
+        assertEquals(60L, merged.totalDateSeconds)
+        assertEquals(150L, merged.payMoneyCents)
+        assertEquals(85, merged.batteryPercent)
+        assertEquals(false, merged.locked)
+
+        // 新事实照旧覆盖
+        session.underway = ride(
+            totalDateSeconds = 75,
+            payMoneyCents = 160,
+            locked = true,
+            batteryPercent = 80,
+        )
+        kvcx.query(quiet = true)
+        val fresh = kvcx.state.value.ride!!
+        assertEquals(75L, fresh.totalDateSeconds)
+        assertEquals(160L, fresh.payMoneyCents)
+        assertEquals(80, fresh.batteryPercent)
+        assertEquals(true, fresh.locked)
+
+        // 换了车：没有沿用依据
+        session.underway = ride(
+            carNum = "100000999",
+            totalDateSeconds = null,
+            payMoneyCents = null,
+            locked = null,
+            batteryPercent = null,
+        )
+        kvcx.query(quiet = true)
+        val other = kvcx.state.value.ride!!
+        assertNull(other.totalDateSeconds)
+        assertNull(other.payMoneyCents)
+        assertNull(other.batteryPercent)
+        assertNull(other.locked)
+    }
+
+    @Test
+    fun `较旧查询晚到不覆盖较新的时长与电量`() {
+        val session = FakeSession()
+        val kvcx = controller(session)
+        session.underway = ride(totalDateSeconds = 60, batteryPercent = 85)
+        kvcx.query(quiet = true)
+
+        val older = CompletableDeferred<Unit>()
+        val newer = CompletableDeferred<Unit>()
+        session.queryGates = ArrayDeque(listOf(older, newer))
+        session.queryScript = ArrayDeque(
+            listOf(
+                ride(totalDateSeconds = 70, batteryPercent = 80),
+                ride(totalDateSeconds = 59, batteryPercent = 70),
+            ),
+        )
+
+        kvcx.query(quiet = true) // 先发、挂在旧闸门上
+        kvcx.query(quiet = true) // 后发、先回
+        newer.complete(Unit)
+        assertEquals(70L, kvcx.state.value.ride?.totalDateSeconds)
+        assertEquals(80, kvcx.state.value.ride?.batteryPercent)
+
+        older.complete(Unit)
+        // 先发后到的旧包必须丢弃，不能把 70/80 改回 59/70
+        assertEquals(70L, kvcx.state.value.ride?.totalDateSeconds)
+        assertEquals(80, kvcx.state.value.ride?.batteryPercent)
+    }
+
+    @Test
     fun `锁车确认中缺锁字段不沿用`() {
         // 悬置待核实期间正是"还没对上账"的时刻：未知比旧值诚实，别拿旧快照充数
         val session = FakeSession()
@@ -429,15 +594,14 @@ class KvcxRideControllerTest {
     fun `动作前发出的查询晚到不覆盖动作后的状态`() {
         val session = FakeSession()
         val kvcx = controller(session)
-        // 一条查询先发出、挂在闸门上；它拿到的会是一条「还车之前」的旧订单快照
+        // 先让骑行卡落位（还车动作不再自己查在途订单）
+        kvcx.query(quiet = true)
+        // 再发一条查询、挂在闸门上；它拿到的会是一条「还车之前」的旧订单快照
         val gate = CompletableDeferred<Unit>()
         session.queryGate = gate
         kvcx.query(quiet = true)
 
-        // 动作先完成：还车（脚本首项 = 订单结束，供还车自己的对账消费）
-        session.queryScript = ArrayDeque(
-            listOf(null, ride(carNum = "100000669", locked = true)),
-        )
+        // 动作先完成：还车
         kvcx.returnBike()
         assertNull(kvcx.state.value.ride)
         assertNotNull(kvcx.state.value.returnSummary)
@@ -761,7 +925,96 @@ class KvcxRideControllerTest {
         assertFalse(summary.settleWarning)
         assertEquals(1, effects.endedRide)
         assertEquals(listOf(summary), effects.recorded)
+        assertEquals(false, session.returnWasLocked)
         assertNull(kvcx.state.value.ride)
+    }
+
+    @Test
+    fun `实时定位失败时还车用车辆锚点继续`() {
+        val session = FakeSession()
+        val kvcx = controller(
+            session,
+            located = LocateResult.Failed("暂时取不到位置，可手动拖动地图找车"),
+        )
+        session.underway = ride(lat = 28.68, lng = 115.85)
+        kvcx.query(quiet = true)
+        session.underway = null
+
+        kvcx.returnBike()
+
+        assertEquals(1, session.returnCalls)
+        assertEquals("vehicle", session.returnLocationSource)
+        assertEquals(true, session.returnLocationValid)
+        assertEquals(28.68, session.returnLat!!, 1e-9)
+        assertEquals(115.85, session.returnLng!!, 1e-9)
+        assertTrue(notices.any { it.first.contains("使用车辆位置继续") })
+    }
+
+    @Test
+    fun `没有锚点时定位失败仍中止动作`() {
+        val session = FakeSession()
+        // 有在途订单，但车辆快照没有坐标：这才是“定位失败且无锚点”的分支
+        session.underway = ride(lat = null, lng = null)
+        val kvcx = controller(
+            session,
+            located = LocateResult.Failed("暂时取不到位置，可手动拖动地图找车"),
+        )
+        kvcx.query(quiet = true)
+
+        kvcx.returnBike()
+
+        assertEquals(0, session.returnCalls)
+        assertTrue(notices.any { it.first.contains("暂时取不到位置") })
+    }
+
+    @Test
+    fun `还车坐标异常时发 locationValid 0`() {
+        val session = FakeSession()
+        session.underway = ride(lat = 0.0, lng = 0.0)
+        val kvcx = controller(session, located = LocateResult.Failed("定位失败"))
+        kvcx.query(quiet = true)
+        kvcx.returnBike()
+
+        assertEquals(false, session.returnLocationValid)
+        assertEquals("none", session.returnLocationSource)
+    }
+
+    @Test
+    fun `建单成功但开锁断网时给出重试出口`() {
+        val session = FakeSession()
+        // 仓库层在 createOrder 成功后遇到 IOException 会返回 Unconfirmed + 最小订单；
+        // 控制器拿到的是这个契约，不再直接看到 IOException。
+        session.underway = ride(locked = true)
+        session.unlockResult = {
+            UnlockOutcome.Unconfirmed(
+                "100000669",
+                ride = ride(totalDateSeconds = null, batteryPercent = null, locked = null),
+            )
+        }
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+
+        assertEquals("100000669", kvcx.state.value.ride?.carNum)
+        assertTrue(kvcx.state.value.unlockPending)
+        assertEquals(NoticeTone.Warning, notices.single().second)
+        assertTrue(notices.single().first.contains("重试开锁"))
+    }
+
+    @Test
+    fun `重试开锁直接用车号不再前置查询`() {
+        val session = FakeSession()
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+        val queriesBeforeRetry = session.queryCalls
+        session.underway = ride(locked = true)
+
+        kvcx.retryUnlock()
+
+        assertEquals("100000669", session.underway?.carNum)
+        assertEquals(1, session.retryCalls)
+        // 只允许重试后的收尾刷新，不应该有重试前的预查询
+        assertEquals(queriesBeforeRetry + 1, session.queryCalls)
     }
 
     @Test
@@ -797,6 +1050,38 @@ class KvcxRideControllerTest {
         kvcx.dismissReturnSummary()
 
         assertNull(kvcx.state.value.returnSummary)
+    }
+
+    @Test
+    fun `还车结果卡先出且不补查订单消失`() {
+        val session = FakeSession()
+        session.returnResult = KqcxAuth.EndOutcome.Ended(needPay = true, wechatScore = null)
+        val settlement = CompletableDeferred<KqcxAuth.UnpayState?>()
+        session.settled = { settlement.await() }
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+        val queriesBeforeReturn = session.queryCalls
+
+        kvcx.returnBike()
+
+        val initial = kvcx.state.value.returnSummary
+        assertNotNull(initial)
+        assertTrue(initial!!.settling)
+        assertEquals("费用结算中，稍后自动更新", initial.settleText)
+        assertFalse(initial.settleWarning)
+        assertFalse(initial.needsSettle)
+        assertNull(kvcx.state.value.ride)
+        assertNull(kvcx.state.value.busy)
+        // 结束订单成功后不再补查“订单消失”；扣款结果也在后台等。
+        assertEquals(queriesBeforeReturn, session.queryCalls)
+
+        settlement.complete(KqcxAuth.UnpayState.Owed(350))
+
+        val updated = kvcx.state.value.returnSummary!!
+        assertFalse(updated.settling)
+        assertEquals(false, updated.settled)
+        assertEquals(350L, updated.owedCents)
+        assertTrue(updated.needsSettle)
     }
 
     @Test
@@ -861,6 +1146,11 @@ class KvcxRideControllerTest {
         assertEquals("订单已在其他端结束", summary(needPay = null).settleText)
         assertEquals("本次无需支付", summary(needPay = false).settleText)
         assertEquals("费用已自动结清", summary(needPay = true, settled = true).settleText)
+        assertEquals(
+            "费用结算中，稍后自动更新",
+            summary(needPay = true, settling = true).settleText,
+        )
+        assertFalse(summary(needPay = true, settling = true).needsSettle)
         // 金额未知（轮询没确认到 / 查询失败）：不说成"欠费"，只说结算中或未结清
         assertEquals("费用结算中或未结清，可在快趣小程序核对", summary(needPay = true, settled = null).settleText)
         assertTrue(summary(needPay = true, settled = null).settleWarning)
@@ -974,23 +1264,31 @@ private fun ride(
     carNum: String = "100000669",
     totalDateSeconds: Long? = 60L,
     payMoneyCents: Long? = 150L,
+    lat: Double? = 28.68,
+    lng: Double? = 115.85,
     locked: Boolean? = false,
+    batteryPercent: Int? = 85,
 ): KqcxAuth.Ride = KqcxAuth.Ride(
     carNum = carNum,
     bluetoothName = "BT-669",
     totalDateSeconds = totalDateSeconds,
     payMoneyCents = payMoneyCents,
-    lat = 28.68,
-    lng = 115.85,
+    lat = lat,
+    lng = lng,
     locked = locked,
-    batteryPercent = 85,
+    batteryPercent = batteryPercent,
 )
 
-private fun summary(needPay: Boolean?, settled: Boolean? = null): KvcxReturnSummary =
+private fun summary(
+    needPay: Boolean?,
+    settled: Boolean? = null,
+    settling: Boolean = false,
+): KvcxReturnSummary =
     KvcxReturnSummary(
         carNum = "100000669",
         durationSeconds = null,
         feeCents = null,
         needPay = needPay,
         settled = settled,
+        settling = settling,
     )

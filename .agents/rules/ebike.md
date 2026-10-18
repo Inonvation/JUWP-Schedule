@@ -274,6 +274,12 @@
   （单例会被任何一个还活着的出码页实例抢走，用户眼前那页空手而归）。
   面板高度存在 `BikeMapUiState.panelHeightDp`（VM 状态，不是页面局部 `remember`），拖动回调传增量。
   这两条的理由都写在 DESIGN §3.9 的表里。
+  **刷新按钮的 loading 占位必须继续吃触摸**（2026-10-18 修「连点刷新会双击放大地图」）：
+  `RideBikePanel` 头行在 `state.loading` 时把按钮换成转圈，那个 40dp 槽位要挂
+  `pointerInput { detectTapGestures(...) }` 吞掉单/双击；否则第二下会穿到下面的 osmdroid
+  地图，被当成双击缩放。`IconButtonSmall(enabled=false)` 同理也要吞触摸。
+  **写动作开始先取消地图查询**（`BikeMapViewModel.cancelQueriesForRideAction`）：开锁 / 锁车 /
+  还车共用连接池，高峰期不要让还在飞的附近车辆/图层请求排在写请求前面。
   蓝点实时更新（2026-09-26）：页面可见期间（`repeatOnLifecycle(STARTED)`）挂 `BikeLocator.updates`
   连续定位流，只走 `onUserLocationChanged`——**只挪蓝点与「距你」距离，不移镜头、不重查车辆接口**
   （镜头归一次性定位、接口禁止轮询，见 DESIGN §3.9）。挪点口径 `shouldMoveDot`（**明显更粗的
@@ -386,13 +392,14 @@
 - **扫到车号后「确认可用就自动开锁」**（2026-10-15 用户要求；**确认闸保留**）：
   两条扫码入口——骑行页「扫车身码」（`focusCar(carNum, autoUnlock = true)`）与今日页
   「+ → 扫一扫」/ 悬浮球带车号进页（`setPendingFocusCar(carNum, autoUnlock = true)`）——
-  识别出车号后照旧回填 + 车辆卡，并在**确认这辆车可用**后发一次
-  `BikeMapEvent.AutoUnlockReady`；页面收到后走**开锁的同一套闸**（`requestKvcxAction`：
+  识别出车号后先回填车号，**确认这辆车可用后**才发一次 `BikeMapEvent.AutoUnlockReady`，
+  页面收到事件才摆车辆卡并走**开锁的同一套闸**（`requestKvcxAction`：
   定位前置 + 二次确认），即「识别 → 确认 → 本机开锁」，不再要用户再点一次开锁。
   - **可用判据**：附近列表命中且 `NearbyBike.available`，或按车号点名查（`queryOneCar`）
     返回 `CarDetailResult.Ok` 且 available。**其余一律不自动开锁**——已出租 / 维修 / 离线 /
-    查不到 / 网络失败 / **正在骑这辆**都只清目标、不发事件（车辆卡照常展示状态与服务端原因，
-    用户可手动点开锁）。**宁可不自动开锁，也不误开**。
+    查不到 / 网络失败 / **正在骑这辆**都只清目标、不发事件。**扫到已出租/不可用的车时
+    不摆车辆卡**，页面留在原地给一句原因，用户可以直接再点扫一扫；不要逼人先关卡片。
+    **宁可不自动开锁，也不误开**。
   - `autoUnlockCar` 只认**最近一次扫码**：`focusCar` 换了车就把旧目标作废（免得一个没结论的
     旧目标被后来的「定位」动作意外触发）；目标没有结论的几条路（session 不可用 / 已有查询
     在飞 / Malformed / 撞在骑车辆 / **带车号进页那条路首查失败**）都**显式清掉**，
@@ -620,7 +627,9 @@
 - **token 仅内存**（`KqcxSessionRepository` 的 @Volatile），落盘只落账号密码
   （`KqxCredentialStore` → `secure_kqcx.xml`，已排除备份）。TTL 未知，靠「按需重登」兜：
   查询遇 `looksLikeTokenError` 才重登一次——这个启发式**宁漏判不误判**，别放宽（误判会把
-  「车辆不存在」这类业务错误变成反复重登）。重登有 AtomicBoolean 互斥，别删。
+  「车辆不存在」这类业务错误变成反复重登）。重登是**单飞**：
+  `AtomicReference<CompletableDeferred<Boolean>>` 让并发调用共享同一次登录结果；
+  **别退回“等锁释放后再执行一遍 relogin”**——那样会连续登录两次。
 - 出码页的骑行状态（置顶「当前骑行」卡）只在**登录时进页查一次**、失败完全静默
   （`queryKvcxRideQuietly`）；手动刷新与动作后刷新另有出口。**不要**改成轮询——骑行卡的秒表是
   **本地走时**（`kvcxRideFetchedAt` + `totalDate` 每秒重算，不联网）。
@@ -633,14 +642,23 @@
 - **用车动作（B/C 档）的官方调用链**：开锁 = `createOrder` →（`helmet==1&&helmetConfig==1`
   或开锁返 16015 → `helmetUnLock`）否则 `greenCarUnlock`；临时锁车 = `greenCarLock`；
   还车 = 未锁先 `muteCarLock` → `endTheOrder`（`dispatchFlag:2`；官方在用户确认调度费时才发 1）。
-  定位一律 GCJ-02（官方 `wx.getLocation type:"gcj02"`），App 用 `BikeLocator.currentLocation`，
-  `locationSource:"realtime"`。
+  定位一律 GCJ-02（官方 `wx.getLocation type:"gcj02"`），App 用 `BikeLocator.currentLocation`；
+  新定位 `locationSource:"realtime"`，五分钟内缓存 `"session"`。**写动作定位超时 5 秒**，
+  还车 / 重试开锁 / 临时锁车实时定位失败时用当前 `Ride.lat/lng` 车辆锚点继续（`"vehicle"`）；
+  锚点坐标为 0,0 等无效值时，**只有还车**允许 `locationSource:"none"` + `locationValid:0`；
+  开锁类动作直接中止并提示，不要拿 0,0 硬开。首次开锁没有订单锚点，只能用缓存定位，
+  拿不到就明确失败。
 - **写操作红线**（2026-09-28 用户拍板，别松）：
   1. **零自动重试**——`createOrder`/`endTheOrder` 超时绝不重发（防重复订单/重复结算）；
      超时后只读刷新判状态。唯一的安全重试是「重试开锁」（订单已在案、只重发 `greenCarUnlock`，
-     官方同款），且必须由用户手动点。
-  2. **动作前先查在案订单**（`unlockBike` 闸在案骑行、`returnBike` 闸无骑行）——本地先挡，
-     服务端 12022 只是兜底；别为「省一次查询」删掉。
+     官方同款），且必须由用户手动点。重试开锁的车号由控制器从当前骑行卡带入，
+     **不要再为它先查 `queryUnderwayOrder`**。
+     `createOrder` 成功但 `greenCarUnlock` 遇到 `IOException` 时，仓库返回
+     `Unconfirmed(车号, 最小订单)`；控制器先把骑行卡和「重试开锁」摆出来，别让一次断网
+     把用户卡在“订单已建、界面什么都没有”的中间态。
+  2. **写操作不先查在案订单**（2026-10-18 提速）：`unlockBike` / `returnBike` 直接发写请求，
+     在途订单由服务端 12022 / 12003 兜底；调用方用当前骑行快照判断是否在骑。开锁不再为了
+     「有骑行禁止再开锁」多花一个高峰往返。
   3. **写操作二次确认**（`kvcxConfirmDialog`）：开锁示完整车号 + 计费、还车示核对车辆物品 +
      调度费风险；**临时锁车与「解锁继续骑」免确认**（2026-09-28 用户拍板——两者都发生在既有
      订单内、没有新增的计费后果，误触代价低于多一次确认的打扰；「计费继续」由 `tempLock`
@@ -672,9 +690,9 @@
      紧接着锁车更慢），旧版 4×1.5s 确认窗几乎必然等不到、抛 Error，而再点那次的
      "成功"只是客户端幂等早退的假象（已锁直接返回；该早退同日已删，见下）。现在：
      `temporaryLock` 返回 **`LockOutcome`**（`Locked` / `Unconfirmed(lastKnown)`，形态
-     镜像 `UnlockOutcome`），**确认窗按动作分流**——锁车 8 次 ≈ 12 秒
-     （`LOCK_CONFIRM_ATTEMPTS`），开锁/还车保持官方同款 4 次，**别把三个动作的
-     attempts 并回一个常量**（锁车免确认、无计费后果，多等换确定性是划算的）；
+     镜像 `UnlockOutcome`），**确认窗只留给锁车**——8 次 ≈ 12 秒
+     （`LOCK_CONFIRM_ATTEMPTS`）；开锁/还车写接口成功即返回，不再阻塞查
+     `queryUnderwayOrder`（2026-10-18 提速，**别把 4 次确认加回去**）；
      指令响应过 `parseSuccess`（服务端明确拒绝给具体文案，别退回丢弃响应）；
      超窗**不抛错**，控制器置 `lockPending` + Warning「车辆回报稍慢；可点刷新核实，
      车没锁上就再点一次锁车」，胶囊显「锁车确认中…」。
@@ -682,8 +700,8 @@
      `refreshInternal()` / 胶囊现查 `queryLockState()` 三条路径共用）——刷新到已锁消解、
      刷新到未锁**保持悬置**（"未锁快照"不代表失败，出口是再点一次锁车——已锁也照发、
      真重发指令，见下）、订单消失也解除。
-     **别在页面里另写一份裁决**，也别把"确认不到"当失败报——开锁 `Unconfirmed`、
-     还车结算轮询、锁车确认中是同一个语义家族。
+     **别在页面里另写一份裁决**，也别把"确认不到"当失败报——锁车确认中、还车后台结算
+     是同一个语义家族（开锁 2026-10-18 起不再阻塞等确认）。
      - **锁车按钮全态可点、已锁也照发**（2026-10-08 用户口径「锁车失败被系统误判成功
        时也要能再锁」）：`temporaryLock` 里的「已锁为幂等 no-op」**已删**——`lockStatus=1`
        可能是误判（车没锁上），用户再点一次锁车必须真能重发 `greenCarLock`（手动单次，
@@ -692,15 +710,17 @@
      - `resumeRide`（左位「解锁」/「开锁」）成功文案按调用前锁状态分流（已锁→
        「已解锁，继续骑行」；未锁重发→「已确认开锁」），成功即清 `lockPending`
        （解锁意图覆盖「锁车确认中」悬置）。
-  6. **支付/免押授权不做**（微信内流程）：`needPay` 只提示 + `confirmUnpaidSettled` 短轮询
-     确认结果（≤3 次、2.5 秒间隔）；**11035 不是缺项**——那是微信支付分 `wxpayScoreUse`
+  6. **支付/免押授权不做**（微信内流程）：`needPay` 只提示 + `confirmUnpaidSettled`
+     在手动还车的后台短轮询（结果卡先显示「结算中」；自动还车仍等结果记账）；
+     **11035 不是缺项**——那是微信支付分 `wxpayScoreUse`
      下单授权（微信客户端专属 API，代调不了），走支付分免押的账号每笔订单都会命中；
      处理 = `kvcxScoreAuthRequired` 会话标记 + 「去微信扫一扫」出路，**别尝试任何绕过**
      （伪造 package / 换 clientType / 直调微信 SDK 全在禁区）。**排查顺序**（2026-09-28
      用户实测）：先找快趣客服开免授权（开通后本机开锁直接可用）→ 或缴诚信金（可退，¥99）
      → 或继续微信扫一扫。
-  7. 动作后有界确认（`awaitRide`，1.5 秒间隔）是官方同款节奏，**不是**常驻轮询；
-     次数按动作分流（开锁/还车 4 次，临时锁车 8 次，见第 5 条）。
+  7. 动作后只有临时锁车做有界确认（`awaitRide`，1.5 秒间隔，8 次，见第 5 条）；
+     开锁后的补全查询由 `syncAfterUnlock` 在后台跑（≤5 拍），还车结算也在后台跑，
+     **都不占动作的 busy**。
 - **骑行状态的时序纪律（2026-10-09，修用户报的「开车后要冷却才能锁车还车 / 骑行中显示
   锁状态未知 / 同车还车后立即再开，骑行时长有概率丢失」）**：五件收口，都别改回去——
   ① **开锁冷却 3 秒**（`UNLOCK_COOLDOWN_MS`）：开锁类动作（`unlock` / `retryUnlock` /
@@ -709,32 +729,33 @@
   （「锁车 3s」，2026-10-10；`rememberUnlockCooldownSeconds` + 纯函数
   `unlockCooldownSecondsLeft`，向上取整、到点即停），开锁位不冷却——车侧「已解锁」
   上报是异步的（见第 5 条），紧接着发物理写指令容易两头落空。
-  ② **确认快照采纳**：`UnlockOutcome.Unlocked` 带上确认那一刻的订单快照（`ride` 字段，
-  仓库层三处返回都带），`unlock` 直接把它摆上卡片（`adoptConfirmedUnlock`：服务端没报
-  「已锁」就按「已解锁」落位，与第 5 条「无信息不保持悬置」同口径）——否则「开锁成功 →
-  下一次刷新落地前」卡片没有车号 / 时长，刷新再落空就整段丢失。
-  ③ **有界补全**（`syncAfterUnlock`）：替换 `unlock` 成功路径原来的单次 `refreshInternal`
-  （那份在服务端抽风回空时会把刚确认的订单整个抹掉；**别在 Unlocked 分支把
-  `refreshInternal` 加回来**）——最多 `UNLOCK_SYNC_ATTEMPTS` 拍、快照带上 `totalDate`
-  即收工（常见路径 0 次查询）、单拍为空**不写状态**、报回「已锁」照实采纳并停。
-  间隔 `UNLOCK_SYNC_INTERVAL_MS` 单测注入 0 让 Unconfined 同步跑完。
-  ④ **缺锁字段沿用**（`carryLocked`，收在 `withRideSnapshot` 内）：同一辆车的新快照
-  `locked == null` 时沿用上一份的已知值（「锁状态未知」只留给真正没得到过信息的场景：
-  冷启动首查 / 换车）；**悬置待核实期间（unlockPending / lockPending）不沿用**——
-  那一刻未知比旧值诚实；悬置裁决仍按快照原文判，别拿沿用后的值改口径。
+  ② **最小快照先行**：`UnlockOutcome.Unlocked` 带最小订单（车号 + 未锁；仓库层三处返回
+  都带），`unlock` 直接摆上卡片（`adoptConfirmedUnlock`：服务端没报「已锁」就按「已解锁」
+  落位），时长 / 电量等字段由后台补全——否则「写接口成功 → 下一次刷新落地前」卡片没有
+  车号，刷新再落空就整段丢失。
+  ③ **后台补全**（`syncAfterUnlock`）：仓库层写成功即返回，补全最多
+  `UNLOCK_SYNC_ATTEMPTS` 拍、快照同时带上 `totalDate` 与 `currentPercent` 才收工
+  （常见路径 0 次查询）、单拍为空
+  **不写状态**、报回「已锁」照实采纳并停；它在 `scope.launch` 里跑，**别改回阻塞
+  `unlock`**（那会把 busy 拖住）。间隔 `UNLOCK_SYNC_INTERVAL_MS` 单测注入 0 让
+  Unconfined 同步跑完。
+  ④ **缺字段沿用**（`carryKnownRideFields`，收在 `withRideSnapshot` 内）：同一辆车的
+  新快照缺 `totalDate` / `payMoney` / `currentPercent` 时沿用上一份的已知值（不能让
+  时长 / 费用 / 电量被一个只带车号的脏回包抹成 `--`）；`locked` 仍只在没有悬置待核实时
+  沿用——**悬置期间（unlockPending / lockPending）未知比旧值诚实**，悬置裁决按快照原文判。
   ⑤ **查询时序闸**（`snapshotSeq`）：写动作与锁状态现查开始时 +1，`query()` 发起前
   记下序号、落地不一致即丢弃；且 **busy 期间 `query()` 直接跳过**——晚到的旧包
   （回页查询撞上动作中途）不许覆盖动作后的新状态，那正是「还车后再开锁，信息被旧快照
-  抹掉 / 显示成未知」的来路。另：还车时长按**订单结束时刻**（`endedAt`）算，不按动作后
-  刷新时刻（扣款确认轮询最多 ~7.5 秒，会把时长与本机记录多算一截）。
+  抹掉 / 显示成未知」的来路。另：还车时长按**订单结束时刻**（`endedAt`）算，不按后台
+  结算回包的时刻（否则会把时长与本机记录多算一截）。
 - **开锁的两段等待反馈（2026-10-10，修用户报的「响应完后停滞一会才弹骑行卡」）**：
   ① **界面先行**：`unlock` 的 Unlocked 分支**先** `_state.update`（确认快照 + 冷却 +
   离开结算态）并立即发成功触感，**然后**才是善后（`ensureReminderEnabled` +
   `startRideTimer`）与 Snackbar，最后 `syncAfterUnlock`。旧的"善后 → update"顺序把
   骑行卡挡在那串 DataStore 读写与系统调用后面（几百毫秒起，低端机更久），就是那段
   可见的停顿。**别把 update 挪回善后之后**（`KvcxRideControllerTest`「开锁成功先落
-  界面再做善后」钉住）；善后也**不许**挪到 `syncAfterUnlock` 后面（补全最多 4.5 秒，
-  通知栏倒计时会迟到）。② **车辆卡的「开锁」按钮写等待态**：`busy == UNLOCK` 时
+  界面再做善后」钉住）；善后也**不许**挪到 `syncAfterUnlock` 后面（补全在后台，
+  通知栏倒计时不能等它）。② **车辆卡的「开锁」按钮写等待态**：`busy == UNLOCK` 时
   「开锁中…（已等 Ns）」+ 禁用（复用骑行态的 `waitedText` 走秒与超时出路）——定位 +
   请求最长十几秒，旧版按钮纹丝不动，看着像卡死。
 - **骑行状态的刷新时机（2026-09-28 补）**：进页一次、**回页（ON_RESUME）一次**、动作后刷新、
@@ -745,7 +766,7 @@
   同口径（`endRide` + `burnPending(force=true)`）。这条别漏——否则用户本机开锁后计时起点仍
   停在「点扫一扫」的旧语义上。
 - **开锁要同步免费计时与通知**（2026-09-28 用户口径）：开锁成功时若提醒开关关着，
-  `ensureFreeReminderEnabled` **顺手把它打开**（本机开锁是服务端确认的骑行开始，比「点扫一扫」
+  `ensureFreeReminderEnabled` **顺手把它打开**（本机开锁是写接口接受的骑行开始，比「点扫一扫」
   这个准备动作强得多；开关在「骑行设置」里可见、随时可关；读偏好失败按"开着"处理，宁可不写
   不误开），提示文案带上计时结果。**「点扫一扫」那条路不碰开关**——那只是准备动作。
   另外：页面上的倒计时块只看「有没有在案计时」，**不再要求开关开着**（`timerActive` 里的
@@ -923,9 +944,9 @@
   找不到支付入口"）：① 主页的「待支付」横幅（onShow 查一次、60 秒节流、**关过一次冷却 5 分钟**）；
   ② 历史订单里那笔待支付记录（点进去就是支付页）。落点在 `KvcxReturnSummary.settleText` 与
   `openWechatForSettle` 的提示（单测钉住），别在页面里另写一份。
-  另外：**没确认到结清 ≠ 欠费**（轮询窗口 ~7.5 秒），文案是「费用结算中或未结清」。
+  另外：**没确认到结清 ≠ 欠费**（手动还车结果卡先出、后台补查），文案是「费用结算中或未结清」。
 - **本机「未结清」记录要复查**（2026-09-30，用户实测"小程序里付了 0.8 元，App 永远显示未结清"）：
-  `settled=false` 只是**还车那一刻**（7.5 秒窗口）没确认到，不是欠费事实。`KvcxViewModel.
+  `settled=false` 只是**还车那一刻**的扣款确认没赶上，不是欠费事实。`KvcxViewModel.
   recheckUnsettledRecords` 在进页 / 登录成功各核一次：本机有未结清记录 → 查一次
   `queryUnPayOrder`（`confirmUnpaidSettled(attempts=1)` 复用，不新增接口方法）→ 快趣已无欠费
   → `RideRecordStore.markUnsettledSettled()` 全部翻成「已结清」并提示。

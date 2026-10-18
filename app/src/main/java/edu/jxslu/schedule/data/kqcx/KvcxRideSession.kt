@@ -7,11 +7,11 @@ import kotlinx.coroutines.flow.StateFlow
 /** 开锁结果（车锁确认是异步的：指令发出 ≠ 车开了）。 */
 sealed interface UnlockOutcome {
     /**
-     * 已确认开锁。[helmetFlow] = 走的是头盔流程（UI 提示「取下车盔」）。
+     * 写接口已接受开锁。[helmetFlow] = 走的是头盔流程（UI 提示「取下车盔」）。
      *
-     * [ride] = 确认那一刻查到的订单快照（2026-10-09）。可能**数据不全**（刚创建的订单
-     * 在服务端异步落账：时长 / 锁状态缺字段）——`KvcxRideController.unlock` 采纳它把
-     * 骑行卡立刻摆全，随后再做有界对账（`syncAfterUnlock`）；`retryUnlock` / `resumeRide`
+     * [ride] 可能是**最小订单**（车号 + 未锁）：2026-10-18 起写成功就返回，不再等
+     * `queryUnderwayOrder` 落地；`KvcxRideController.unlock` 先采纳它把骑行卡摆上，
+     * 时长 / 电量等字段由后台 `syncAfterUnlock` 补全。`retryUnlock` / `resumeRide`
      * 走各自的乐观翻转口径，不消费它。
      */
     data class Unlocked(
@@ -20,8 +20,15 @@ sealed interface UnlockOutcome {
         val ride: KqcxAuth.Ride? = null,
     ) : UnlockOutcome
 
-    /** 订单已创建，但车锁未确认打开——调用方提示并提供「重试开锁」出口（官方同款）。 */
-    data class Unconfirmed(val carNum: String) : UnlockOutcome
+    /**
+     * 订单已创建，但车锁未确认打开——调用方提示并提供「重试开锁」出口（官方同款）。
+     * 网络超时/断网时会带 [ride] 最小订单，先把骑行卡摆出来，避免用户卡在“有订单但看不到”。
+     */
+    data class Unconfirmed(
+        val carNum: String,
+        /** 订单已创建时的最小快照；网络超时路径用它先把骑行卡摆出来。 */
+        val ride: KqcxAuth.Ride? = null,
+    ) : UnlockOutcome
 }
 
 /**
@@ -72,12 +79,26 @@ interface KvcxRideSession {
 
     /**
      * 开锁：`createOrder` → （头盔流程 | `greenCarUnlock`）。
-     * **零自动重试**由实现方保证（超时抛错，调用方刷新状态后决定）。
+     * 写接口成功即返回 [UnlockOutcome.Unlocked]；**零自动重试**由实现方保证
+     * （超时抛错，调用方刷新状态后决定）。
      */
-    suspend fun unlockBike(carNum: String, gcjLat: Double, gcjLng: Double): UnlockOutcome
+    suspend fun unlockBike(
+        carNum: String,
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String = "realtime",
+    ): UnlockOutcome
 
-    /** 对**在案订单**重发解锁指令（临时锁车后继续骑 / 开锁未确认时重试，同一调用两种文案）。 */
-    suspend fun retryUnlock(gcjLat: Double, gcjLng: Double): UnlockOutcome
+    /**
+     * 对**在案订单**重发解锁指令（临时锁车后继续骑 / 开锁未确认时重试，同一调用两种文案）。
+     * 车号由调用方从当前快照带入，不再先查在途订单；指令成功即返回，不再等锁状态落地。
+     */
+    suspend fun retryUnlock(
+        carNum: String,
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String = "realtime",
+    ): UnlockOutcome
 
     /**
      * 临时锁车（订单与计费继续，仅物理锁车）。**已锁也照发**（用户重按 = 重发指令，
@@ -85,10 +106,26 @@ interface KvcxRideSession {
      * 返回 [LockOutcome.Locked] = 已确认锁上；[LockOutcome.Unconfirmed] = 指令已发但
      * 窗口内未确认到（**不是失败**——上报慢是常态，见 [LockOutcome] 的说明）。
      */
-    suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome
+    suspend fun temporaryLock(
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String = "realtime",
+    ): LockOutcome
 
-    /** 还车：静默锁 + 结束订单。调度费/出围栏由实现方抛错降级官方渠道。 */
-    suspend fun returnBike(gcjLat: Double, gcjLng: Double): KqcxAuth.EndOutcome.Ended
+    /**
+     * 还车：静默锁 + 结束订单。调度费/出围栏由实现方抛错降级官方渠道。
+     *
+     * [wasLocked] 是调用方当前快照里的锁状态：`true` 可跳过静默锁；`null` 按未知处理，
+     * 仍发一次静默锁。`locationSource` 可为 `realtime` / `session` / `vehicle` / `none`，
+     * `locationValid` 只在有有效坐标时为 true。`endTheOrder` 成功即返回，不再等订单消失。
+     */
+    suspend fun returnBike(
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String = "realtime",
+        locationValid: Boolean = true,
+        wasLocked: Boolean? = null,
+    ): KqcxAuth.EndOutcome.Ended
 
     /**
      * 还车后的结算确认（先享后付自动扣，短轮询看是否结清）；**不做支付本身**。

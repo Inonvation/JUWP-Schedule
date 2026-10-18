@@ -214,10 +214,14 @@ class KqcxAuthTest {
     @Test
     fun `创建订单解析含头盔分支`() {
         val normal = """{"resultCode":1,"errorCode":0,"result":{
-            "carNum":"100000669","helmet":0,"helmetConfig":0,"subList":["t1"]}}"""
+            "carNum":"100000669","helmet":0,"helmetConfig":0,"subList":["t1"],
+            "totalDate":"12","payMoney":150,"currentPercent":85.0}}"""
         val created = KqcxAuth.parseCreatedOrder(normal)
         assertEquals("100000669", created.carNum)
         assertFalse(created.helmetFlowRequired)
+        assertEquals(12L, created.totalDateSeconds)
+        assertEquals(150L, created.payMoneyCents)
+        assertEquals(85, created.batteryPercent)
 
         val helmet = """{"resultCode":1,"errorCode":0,"result":{
             "carNum":"100000669","helmet":1,"helmetConfig":"1"}}"""

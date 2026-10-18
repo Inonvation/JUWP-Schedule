@@ -7,13 +7,14 @@ import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.domain.KvcProtocolException
 import edu.jxslu.schedule.domain.KvcxZones
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.IOException
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 快趣出行会话仓库（DESIGN §4.32，2026-09-28）：登录、骑行状态与**用车动作**
@@ -25,9 +26,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - **写操作零自动重试**：`createOrder` / `endTheOrder` 超时绝不重发（防重复订单、
  *   重复结算）；调用方超时后应**先刷新状态**再决定是否让用户重试——重试开锁
  *   （订单已在案、只重发 `greenCarUnlock`）是安全特例，官方也是这么做的；
- * - **动作前先查在案订单**：有骑行禁止再开锁、无骑行禁止还车（服务端另有 12022 兜底）；
- * - **确认节奏官方同款**：每个动作后有界查询 `queryUnderwayOrder`（≤4 次、1.5 秒一次）
- *   确认落地，不是常驻轮询；
+ * - **写操作不再先查在案订单**：开锁/还车直接发写请求，在途订单由服务端 12022 /
+ *   12003 兜底（2026-10-18 提速，省掉关键路径上的一个往返）；
+ * - **写接口成功即返回**（2026-10-18 提速）：开锁/还车不再阻塞等待 `queryUnderwayOrder`
+ *   落地，确认查询交给调用方在后台做；只有临时锁车仍保留有界确认（锁状态是它的结果）；
  * - **调度费不代确认**：`dispatchFlag` 固定发 2（普通还车）；服务端要调度费时抛
  *   [KvcBusinessError]（带 [KvcBusinessError.dispatchMoneyCents]），UI 降级到官方渠道。
  */
@@ -49,8 +51,8 @@ class KqcxSessionRepository(
     var currentMobile: String? = null
         private set
 
-    /** 重登互斥：并发请求同时发现 token 失效时只放一个进去重登。 */
-    private val relogging = AtomicBoolean(false)
+    /** 重登单飞：并发请求同时发现 token 失效时共享同一次重登结果，不再重复登录。 */
+    private val reloginJob = AtomicReference<CompletableDeferred<Boolean>?>(null)
 
     // ---------- 登录 / 会话 ----------
 
@@ -86,7 +88,7 @@ class KqcxSessionRepository(
             queryWithCurrentToken()
         } catch (error: Throwable) {
             if (!isTokenError(error)) throw error
-            if (withRelogin { reloginFromCredentials() } != true) throw error
+            if (!ensureRelogin()) throw error
             queryWithCurrentToken()
         }
     }
@@ -96,63 +98,88 @@ class KqcxSessionRepository(
     /**
      * 开锁：`createOrder` → （头盔流程 | `greenCarUnlock`）。
      *
-     * 闸：登录 + **无在案订单**（本地先挡；服务端 12022 兜底）。
+     * **不再先查在案订单**（2026-10-18）：官方也是直接 `createOrder`，有在途订单由服务端
+     * 回 12022。少一个往返，也避免查询超时把开锁整个挡住。
+     *
+     * **成功即返回**：`greenCarUnlock` / `helmetUnLock` 成功就返回 [UnlockOutcome.Unlocked]，
+     * 不再等 `queryUnderwayOrder` 确认。调用方先落骑行卡，再在后台做只读补全。
+     *
      * **零自动重试**：`createOrder` 超时抛错，调用方刷新状态后决定；回滚不必要——
      * 订单若真创建成功，刷新能看到，重试开锁走 [retryUnlock]。
      */
-    override suspend fun unlockBike(carNum: String, gcjLat: Double, gcjLng: Double): UnlockOutcome {
+    override suspend fun unlockBike(
+        carNum: String,
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String,
+    ): UnlockOutcome {
         ensureSession()
-        queryUnderway()?.let { existing ->
-            throw KvcBusinessError(null, "已有进行中的订单（车 ${existing.carNum}），请先还车")
-        }
         val token = requireToken()
         val created = server {
             KqcxAuth.parseCreatedOrder(
-                client.createOrderJson(token, carNum, gcjLat, gcjLng, LOCATION_SOURCE),
+                client.createOrderJson(token, carNum, gcjLat, gcjLng, locationSource),
             )
         }
         if (created.helmetFlowRequired) {
             // 官方头盔流程：此路开头盔锁，车锁随头盔流程放开
-            server { client.helmetUnlockJson(token) }
-            val confirmed = awaitRide { it != null }
-            return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true, ride = confirmed)
+            try {
+                server { client.helmetUnlockJson(token) }
+            } catch (error: IOException) {
+                return UnlockOutcome.Unconfirmed(created.carNum, provisionalRide(created))
+            }
+            return UnlockOutcome.Unlocked(
+                created.carNum,
+                helmetFlow = true,
+                ride = provisionalRide(created),
+            )
         }
         // 开锁指令：16015 = 服务端要求先取头盔（官方同款分支）。
-        // **catch 必须包住 awaitRide**（2026-10-08 修死代码）：`parseCreatedOrder` 只看
-        // `helmet/helmetConfig`，头盔标志不全的车型会在 unlock 这一步才回 16015——
-        // 旧版 catch 只包住 unlock 调用本身，awaitRide 抛的 16015 落不进分支、被当
-        // 普通失败抛走，头盔流程永远走不到。
         try {
-            server { client.unlockJson(token, gcjLat, gcjLng, LOCATION_SOURCE) }
-            // 确认那份快照一并带回（[UnlockOutcome.Unlocked.ride]）：刚创建的订单可能
-            // 还没落全字段，但车号 / 坐标 / 有了的字段先给卡片用，别白等下一次刷新
-            awaitRide { it != null && it.locked != true }?.let {
-                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = false, ride = it)
-            } ?: return UnlockOutcome.Unconfirmed(created.carNum)
+            server { client.unlockJson(token, gcjLat, gcjLng, locationSource) }
+            // 先给一张最小骑行卡（车号 + 未锁），时长 / 电量 / 费用由后台补全。
+            // 不再在这里等 queryUnderwayOrder 落地——高峰时那正是按钮长时间转圈的原因。
+            return UnlockOutcome.Unlocked(
+                created.carNum,
+                helmetFlow = false,
+                ride = provisionalRide(created),
+            )
         } catch (error: KvcBusinessError) {
             if (error.errorCode == CODE_HELMET_REQUIRED) {
                 server { client.helmetUnlockJson(token) }
-                val confirmed = awaitRide { it != null }
-                return UnlockOutcome.Unlocked(created.carNum, helmetFlow = true, ride = confirmed)
+                return UnlockOutcome.Unlocked(
+                    created.carNum,
+                    helmetFlow = true,
+                    ride = provisionalRide(created),
+                )
             }
             throw error
+        } catch (error: IOException) {
+            // 建单已经成功，开锁请求超时/断网：订单可能已在案。先把卡片和重试出口给用户，
+            // 不要让一次网络抖动把人卡在“没有订单、又开不了新车”的中间态。
+            return UnlockOutcome.Unconfirmed(created.carNum, provisionalRide(created))
         }
     }
 
     /**
      * 重试开锁（订单已在案、只是车锁没确认打开时用）：只重发 `greenCarUnlock`。
      * 与官方「开锁失败，请在面板点开锁重试」同一路径。
+     *
+     * 车号由控制器从当前骑行卡带入，不再先查在途订单；服务端没有订单会回 12003。
+     * 开锁成功后不再等状态落地，直接返回。
      */
-    override suspend fun retryUnlock(gcjLat: Double, gcjLng: Double): UnlockOutcome {
+    override suspend fun retryUnlock(
+        carNum: String,
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String,
+    ): UnlockOutcome {
         ensureSession()
-        val ride = queryUnderway()
-            ?: throw KvcBusinessError(null, "没有在案订单，请重新开锁")
-        server { client.unlockJson(requireToken(), gcjLat, gcjLng, LOCATION_SOURCE) }
-        return if (awaitRide { it != null && it.locked != true } != null) {
-            UnlockOutcome.Unlocked(ride.carNum, helmetFlow = false)
-        } else {
-            UnlockOutcome.Unconfirmed(ride.carNum)
-        }
+        server { client.unlockJson(requireToken(), gcjLat, gcjLng, locationSource) }
+        return UnlockOutcome.Unlocked(
+            carNum,
+            helmetFlow = false,
+            ride = null,
+        )
     }
 
     /**
@@ -163,8 +190,8 @@ class KqcxSessionRepository(
      * 真能重发指令（手动单次；零自动重试红线不变）。车若确实已锁，重发无害、
      * 确认窗第一次查询即通过。
      *
-     * **确认窗按动作分流（2026-10-08）**：锁车用 [LOCK_CONFIRM_ATTEMPTS]（8 次 ≈ 12 秒），
-     * 比默认的 4 次长一倍——车把"已锁"上报服务端是异步的（落锁后 IoT 上报常见 3~15 秒），
+     * **锁车是唯一保留确认窗的动作（2026-10-18）**：用 [LOCK_CONFIRM_ATTEMPTS]（8 次 ≈ 12 秒）——
+     * 车把"已锁"上报服务端是异步的（落锁后 IoT 上报常见 3~15 秒），
      * 尤其**开锁后紧接着锁车**（没骑就走）时，上报还排在解锁上报之后，默认窗口几乎必然
      * 等不到，之前被误报成"锁车失败"（当时再点一次会命中客户端幂等早退、假性"成功"）。
      * 锁车免确认、无新增计费后果，多等几秒换确定性是划算的。
@@ -173,10 +200,14 @@ class KqcxSessionRepository(
      * 给出具体文案，而不是把一切吞成笼统的"未确认"。
      * 超窗返回 [LockOutcome.Unconfirmed]（**不抛错**）——那是可自愈的中间态。
      */
-    override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double): LockOutcome {
+    override suspend fun temporaryLock(
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String,
+    ): LockOutcome {
         ensureSession()
         queryUnderway() ?: throw KvcBusinessError(null, "没有进行中的骑行")
-        server { KqcxAuth.parseSuccess(client.lockJson(requireToken(), gcjLat, gcjLng, LOCATION_SOURCE)) }
+        server { KqcxAuth.parseSuccess(client.lockJson(requireToken(), gcjLat, gcjLng, locationSource)) }
         val confirmed = awaitRide(attempts = LOCK_CONFIRM_ATTEMPTS) { it?.locked == true }
         return if (confirmed != null) {
             LockOutcome.Locked(confirmed)
@@ -192,25 +223,37 @@ class KqcxSessionRepository(
      * 还车：未锁先静默锁（`muteCarLock`，尽力而为）→ `endTheOrder`。
      * 成功返回 [KqcxAuth.EndOutcome.Ended]；被拒抛 [KvcBusinessError]（调度费场景带金额）。
      * `12003`（订单已结束）按成功处理——可能是官方渠道或其他端先结束了。
+     *
+     * **2026-10-18 提速**：不再先查在途订单，也不等锁状态或订单消失。`wasLocked` 由调用方
+     * 用当前骑行快照给出；未知时照发静默锁（多一条幂等指令，比多等 4.5 秒划算）。
+     * 静默锁失败也继续结束订单，与官方 `doHandleOnReturnBike` 同口径。
+     * `locationSource` / `locationValid` 由调用方按坐标来源传（实时、车辆锚点或 none）。
      */
-    override suspend fun returnBike(gcjLat: Double, gcjLng: Double): KqcxAuth.EndOutcome.Ended {
+    override suspend fun returnBike(
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String,
+        locationValid: Boolean,
+        wasLocked: Boolean?,
+    ): KqcxAuth.EndOutcome.Ended {
         ensureSession()
         val token = requireToken()
-        val ride = queryUnderway() ?: throw KvcBusinessError(null, "没有进行中的骑行")
-        if (ride.locked != true) {
+        if (wasLocked != true) {
             // 静默锁尽力而为：官方即便锁失败也继续走 endTheOrder（订单结束才是关键）
-            runCatching { server { client.muteLockJson(token, gcjLat, gcjLng, LOCATION_SOURCE) } }
-            awaitRide { it == null || it.locked == true }
+            try {
+                server { client.muteLockJson(token, gcjLat, gcjLng, locationSource) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // 锁失败不阻断还车；服务端以 endTheOrder 为准
+            }
         }
         val outcome = KqcxAuth.parseEndOrder(
-            client.endOrderJson(token, gcjLat, gcjLng, LOCATION_SOURCE, nowSeconds()),
+            client.endOrderJson(token, gcjLat, gcjLng, locationSource, locationValid, nowSeconds()),
         )
         return when (outcome) {
-            is KqcxAuth.EndOutcome.Ended -> {
-                // 确认订单真的结束（查询不到即结束）；查不到也别翻车——服务端已确认成功
-                awaitRide { it == null }
-                outcome
-            }
+            // 结束订单接口成功就是结束。不再补查“订单消失”，否则高峰期又要白等 4 次。
+            is KqcxAuth.EndOutcome.Ended -> outcome
             is KqcxAuth.EndOutcome.Rejected -> {
                 if (outcome.code == CODE_ORDER_ENDED) {
                     KqcxAuth.EndOutcome.Ended(needPay = null, wechatScore = null)
@@ -332,14 +375,14 @@ class KqcxSessionRepository(
     /** 有凭证就静默重登；无凭证（未登录）抛业务错误提示。 */
     private suspend fun ensureSession() {
         if (token != null) return
-        if (withRelogin { reloginFromCredentials() } != true) {
+        if (!ensureRelogin()) {
             throw KvcBusinessError(null, "快趣未登录")
         }
     }
 
     /**
      * 用本地凭证重登。返回 false = 无凭证或重登失败（登录态同步翻转）。
-     * 在 [withRelogin] 的互斥下执行。
+     * 在 [ensureRelogin] 的单飞保护下执行。
      */
     private suspend fun reloginFromCredentials(): Boolean {
         val (mobile, password) = credentials.readCredential()
@@ -347,35 +390,46 @@ class KqcxSessionRepository(
                 _loggedIn.value = false
                 return false
             }
-        return runCatching {
+        return try {
             login(mobile, password)
             true
-        }.getOrElse { error ->
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
             // 凭证失效（改密/注销）这类业务失败：退出登录态，让 UI 回登录表单
             if (error is KvcBusinessError) _loggedIn.value = false
             false
         }
     }
 
-    /** 互斥执行 [action]：同一时刻只有一个调用方进入，其余等待后按结果放行。 */
-    private suspend fun <T> withRelogin(action: suspend () -> T): T? {
-        if (!relogging.compareAndSet(false, true)) {
-            // 别人正在重登：自旋等它完成（重登是秒级请求，不值得为此挂起队列）
-            while (relogging.get()) {
-                delay(50)
+    /**
+     * 单飞重登：同一时刻只有一次登录请求，后来的调用方直接等这一次的结果。
+     * 旧写法让等待方在锁释放后再执行一遍 `reloginFromCredentials`，并发时会连续登录两次。
+     */
+    private suspend fun ensureRelogin(): Boolean {
+        while (true) {
+            reloginJob.get()?.let { return it.await() }
+            val job = CompletableDeferred<Boolean>()
+            if (!reloginJob.compareAndSet(null, job)) continue
+            return try {
+                val ok = reloginFromCredentials()
+                job.complete(ok)
+                ok
+            } catch (error: CancellationException) {
+                job.complete(false)
+                throw error
+            } catch (_: Throwable) {
+                job.complete(false)
+                false
+            } finally {
+                reloginJob.compareAndSet(job, null)
             }
-            return action()
-        }
-        return try {
-            action()
-        } finally {
-            relogging.set(false)
         }
     }
 
     /**
-     * 有界确认（官方同款节奏）：查询在案订单直到 [predicate] 成立（≤[attempts] 次、
-     * [CONFIRM_INTERVAL_MS] 间隔）。**只用于动作后的落地确认，不是常驻轮询**；
+     * 有界确认：查询在案订单直到 [predicate] 成立（≤[attempts] 次、
+     * [CONFIRM_INTERVAL_MS] 间隔）。**只用于临时锁车的落地确认，不是常驻轮询**；
      * 查询本身失败按「还没确认」继续等（最后一次仍不成立即返回 null）。
      */
     private suspend fun awaitRide(
@@ -417,6 +471,20 @@ class KqcxSessionRepository(
 
     private fun requireToken(): String = token ?: throw IllegalStateException("快趣会话不存在")
 
+    /**
+     * 开锁成功后立刻给卡片的“最小订单”：车号 + 未锁，加上 createOrder 响应里已有的
+     * 时长 / 费用 / 电量。缺的字段由后台刷新补全，已有字段不让它先空一截。
+     */
+    private fun provisionalRide(created: KqcxAuth.CreatedOrder): KqcxAuth.Ride =
+        KqcxAuth.Ride(
+            carNum = created.carNum,
+            bluetoothName = null,
+            totalDateSeconds = created.totalDateSeconds,
+            payMoneyCents = created.payMoneyCents,
+            locked = false,
+            batteryPercent = created.batteryPercent,
+        )
+
     /** 官方 `Math.ceil(ts/1e3)` 同口径的秒级时间戳。 */
     private fun nowSeconds(): Long = (System.currentTimeMillis() + 999) / 1000
 
@@ -428,22 +496,19 @@ class KqcxSessionRepository(
     }
 
     private companion object {
-        /** 官方 wx.getLocation `type:"gcj02"`，source 取实时定位的 `"realtime"`。 */
-        const val LOCATION_SOURCE = "realtime"
-
         /** 服务端「订单已结束」（官方 case 12003）。 */
         const val CODE_ORDER_ENDED = 12003
 
         /** 服务端「需先取头盔」（官方 16015 分支）。 */
         const val CODE_HELMET_REQUIRED = 16015
 
-        /** 动作后落地确认的查询间隔（官方 1 秒级节奏取整）。 */
+        /** 临时锁车确认的查询间隔（官方 1 秒级节奏取整）。 */
         const val CONFIRM_INTERVAL_MS = 1_500L
 
         /**
          * 临时锁车的确认次数（× [CONFIRM_INTERVAL_MS] ≈ 12 秒）：车把"已锁"上报服务端
-         * 是异步的（3~15 秒常态），默认 4 次窗口几乎必然等不到（2026-10-08 修
-         * 「开锁后临时锁车容易失败」）。只放宽锁车——开锁/还车保持官方同款 4 次。
+         * 是异步的（3~15 秒常态），短窗口几乎必然等不到（2026-10-08 修
+         * 「开锁后临时锁车容易失败」）。开锁/还车不再阻塞等待（2026-10-18）。
          */
         const val LOCK_CONFIRM_ATTEMPTS = 8
 

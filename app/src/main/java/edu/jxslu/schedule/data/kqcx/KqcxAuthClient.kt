@@ -97,6 +97,9 @@ class KqcxAuthClient private constructor(private val http: OkHttpClient) {
             AppHttp.base.newBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
+                // 官方 wx.request 的总超时就是 15 秒。base 的 120 秒只适合长页面下载，
+                // 放在开锁/还车链路上会让一个挂死的请求把按钮拖两分钟。
+                .callTimeout(15, TimeUnit.SECONDS)
                 .build(),
         )
     }
@@ -174,21 +177,22 @@ class KqcxAuthClient private constructor(private val http: OkHttpClient) {
     }
 
     /**
-     * 还车（结束订单）。载荷逐字对齐官方 `doHandleOnReturnBike`：
-     * `locationValid:1`、`bdStatus/bdPileStatus:0`、`bluetoothName:""`、
-     * `dispatchFlag:2`（普通还车；官方在用户已确认调度费时改发 1——App 不代确认）。
+     * 还车（结束订单）。载荷逐字对齐官方 `doHandleOnReturnBike`：`locationValid` 按实际坐标
+     * 是否有效传 1/0，`bdStatus/bdPileStatus:0`、`bluetoothName:""`、`dispatchFlag:2`
+     * （普通还车；官方在用户已确认调度费时改发 1——App 不代确认）。
      */
     suspend fun endOrderJson(
         token: String,
         lat: Double,
         lng: Double,
         locationSource: String,
+        locationValid: Boolean,
         locationTimeSeconds: Long,
     ): String = withContext(Dispatchers.IO) {
         val body = FormBody.Builder()
             .add("lat", lat.toString())
             .add("lng", lng.toString())
-            .add("locationValid", "1")
+            .add("locationValid", if (locationValid) "1" else "0")
             .add("locationSource", locationSource)
             .add("locationTime", locationTimeSeconds.toString())
             .add("bdStatus", "0")

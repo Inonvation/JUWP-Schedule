@@ -155,15 +155,31 @@ class EbikeAutoReturnTest {
             carNum: String,
             gcjLat: Double,
             gcjLng: Double,
+            locationSource: String,
         ) = throw UnsupportedOperationException("自动还车用不到")
 
-        override suspend fun retryUnlock(gcjLat: Double, gcjLng: Double) =
+        override suspend fun retryUnlock(
+            carNum: String,
+            gcjLat: Double,
+            gcjLng: Double,
+            locationSource: String,
+        ) =
             throw UnsupportedOperationException("自动还车用不到")
 
-        override suspend fun temporaryLock(gcjLat: Double, gcjLng: Double) =
+        override suspend fun temporaryLock(
+            gcjLat: Double,
+            gcjLng: Double,
+            locationSource: String,
+        ) =
             throw UnsupportedOperationException("自动还车用不到")
 
-        override suspend fun returnBike(gcjLat: Double, gcjLng: Double): KqcxAuth.EndOutcome.Ended {
+        override suspend fun returnBike(
+            gcjLat: Double,
+            gcjLng: Double,
+            locationSource: String,
+            locationValid: Boolean,
+            wasLocked: Boolean?,
+        ): KqcxAuth.EndOutcome.Ended {
             returnCalls++
             if (returnCalls <= failFirst) throw failWith
             return KqcxAuth.EndOutcome.Ended(needPay = false, wechatScore = null)

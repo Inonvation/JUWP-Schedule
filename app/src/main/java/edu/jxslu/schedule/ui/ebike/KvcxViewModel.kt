@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 
 /** 一次性提示事件（对齐 WaterViewModel 模式：缓冲 Channel，页面负责收集）。 */
@@ -255,7 +256,7 @@ class KvcxViewModel(
     /**
      * 核对快趣侧的结清状态，把本机过期的「未结清」记录翻成「已结清」。
      *
-     * 本机记录的「未结清」只是**还车那一刻**（约 7.5 秒的扣款确认窗口）没确认到，
+     * 本机记录的「未结清」只是**还车那一刻**的扣款确认没赶上（结果卡会后台补查），
      * 用户随后在微信里付清时 App 并不知道，记录就永远挂着「未结清」（2026-09-30
      * 用户实测：小程序里付了 0.8 元，本机记录仍显示未结清）。快趣同时至多一笔
      * 待支付订单（有欠费不让开新车，官方同款约束），所以「快趣现在无欠费」⇒
@@ -280,6 +281,7 @@ class KvcxViewModel(
     private fun loginErrorText(error: Throwable): String = when (error) {
         is KvcBusinessError -> error.message ?: "登录失败"
         is SocketTimeoutException -> "登录超时，请检查网络后重试"
+        is InterruptedIOException -> "登录超时，请检查网络后重试"
         is IOException -> "网络不可用，请检查网络后重试"
         else -> "登录异常：${error.message ?: error.javaClass.simpleName}"
     }
@@ -289,6 +291,7 @@ class KvcxViewModel(
             if (error.message?.contains("未登录") == true) "快趣登录已失效，请重新登录"
             else error.message ?: "查询失败"
         is SocketTimeoutException -> "查询超时，请稍后重试"
+        is InterruptedIOException -> "查询超时，请稍后重试"
         is IOException -> "网络不可用，请检查网络后重试"
         else -> "查询异常：${error.message ?: error.javaClass.simpleName}"
     }

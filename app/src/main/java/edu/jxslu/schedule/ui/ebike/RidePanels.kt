@@ -20,6 +20,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1370,7 +1371,11 @@ internal fun RideBikePanel(
                     // 占位与右边那枚刷新按钮**同尺寸（40dp）**：旧版是 20dp 圈 + 12dp 横垫
                     // （44dp），一加载头行的标题列就左右挪 4dp——刷新一次跳一下
                     Box(
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier
+                            .size(40.dp)
+                            // 刷新后按钮换成转圈，这块必须继续吃掉点击：否则第二次点会落到
+                            // 下面的地图上，被 osmdroid 当成双击放大。
+                            .pointerInput(Unit) { detectTapGestures(onTap = {}, onDoubleTap = {}) },
                         contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator(
@@ -2447,7 +2452,18 @@ private fun IconButtonSmall(
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(40.dp),
+        modifier = Modifier
+            .size(40.dp)
+            .then(
+                if (enabled) {
+                    Modifier
+                } else {
+                    // 禁用按钮默认不吃触摸：连点刷新/动作时第二下会穿到地图触发双击缩放。
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(onTap = {}, onDoubleTap = {})
+                    }
+                },
+            ),
     ) {
         Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(18.dp))
     }

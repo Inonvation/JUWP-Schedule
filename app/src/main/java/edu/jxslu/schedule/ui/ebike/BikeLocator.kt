@@ -30,6 +30,8 @@ internal sealed interface LocateResult {
         val lat: Double,
         val lng: Double,
         val accuracyMeters: Float = 0f,
+        /** 传给快趣 `locationSource`：新定位 = realtime，五分钟内的缓存 = session。 */
+        val source: String = "realtime",
     ) : LocateResult
 
     /** 失败，[message] 直接给 Snackbar 用。 */
@@ -60,8 +62,8 @@ internal object BikeLocator {
     /** 等一次有效定位的上限。超了就给失败提示，不要挂着转圈。 */
     private const val FIX_TIMEOUT_MS = 8_000L
 
-    /** 缓存定位可接受的新鲜度：两分钟内的上次定位直接拿来用，省一次等待。 */
-    private const val MAX_LAST_KNOWN_AGE_MS = 2 * 60_000L
+    /** 缓存定位可接受的新鲜度：五分钟内的上次定位直接拿来用，省一次等待。 */
+    private const val MAX_LAST_KNOWN_AGE_MS = 5 * 60_000L
 
     /** 连续定位流的请求节奏：2 秒一次对步行速度绰绰有余，再密只是费电。 */
     private const val STREAM_MIN_TIME_MS = 2_000L
@@ -80,10 +82,13 @@ internal object BikeLocator {
     /**
      * 取一次定位并转成 GCJ-02。
      *
-     * 顺序：先看两分钟内的缓存定位（瞬时返回），没有再同时挂网络与 GPS 两条更新，
+     * 顺序：先看五分钟内的缓存定位（瞬时返回），没有再同时挂网络与 GPS 两条更新，
      * 谁先给结果用谁。网络定位先到也无所谓——把地图中心落到用户那一片，粗略坐标就够。
      */
-    suspend fun currentLocation(context: Context): LocateResult {
+    suspend fun currentLocation(
+        context: Context,
+        timeoutMs: Long = FIX_TIMEOUT_MS,
+    ): LocateResult {
         if (!hasPermission(context)) {
             return LocateResult.Failed("没有定位权限，请在系统设置里允许后再试")
         }
@@ -93,12 +98,12 @@ internal object BikeLocator {
             return LocateResult.Failed("手机定位服务未开启，请打开后重试")
         }
 
-        freshLastKnown(manager)?.let { return toResult(it.toFix()) }
+        freshLastKnown(manager)?.let { return toResult(it.toFix(), "session") }
 
         val providers = enabledProviders(manager)
-        val fix = awaitFix(manager, providers)
+        val fix = awaitFix(manager, providers, timeoutMs)
             ?: return LocateResult.Failed("暂时取不到位置，可手动拖动地图找车")
-        return toResult(fix.toFix())
+        return toResult(fix.toFix(), "realtime")
     }
 
     /**
@@ -106,7 +111,7 @@ internal object BikeLocator {
      * 一次性定位管「把镜头带过去 + 重查」，这条流只管用户走动时蓝点不掉队——
      * 挪镜头、重查车辆接口都不是它的事（镜头会把用户拖好的视野抢回来；接口禁止轮询）。
      *
-     * 先发两分钟内的缓存定位（蓝点立刻出现，不等 GPS 慢慢找），再挂网络与 GPS 两条更新，
+     * 先发五分钟内的缓存定位（蓝点立刻出现，不等 GPS 慢慢找），再挂网络与 GPS 两条更新，
      * 经 [shouldMoveDot] 滤掉原地抖动后逐条发 GCJ-02 结果。权限缺失、定位服务关闭这类
      * 硬失败发一条 [LocateResult.Failed] 后结束：看得见的失败提示是「定位」按钮那条路的
      * 职责，这条流静默结束即可。取消（页面退后台 / 离开页面）由 `awaitClose` 注销监听。
@@ -128,7 +133,7 @@ internal object BikeLocator {
 
         val cached = freshLastKnown(manager)?.toFix()
         var shown: LocationFix? = cached
-        cached?.let { fix -> emit(toResult(fix)) }
+        cached?.let { fix -> emit(toResult(fix, "session")) }
 
         val providers = enabledProviders(manager)
         if (providers.isEmpty()) return@flow
@@ -137,12 +142,12 @@ internal object BikeLocator {
                 val next = location.toFix()
                 if (shouldMoveDot(shown, next)) {
                     shown = next
-                    emit(toResult(next))
+                    emit(toResult(next, "realtime"))
                 }
             }
     }
 
-    /** GPS 与网络定位都给上次结果，取最新的那条；只看两分钟以内的。 */
+    /** GPS 与网络定位都给上次结果，取最新的那条；只看五分钟以内的。 */
     private fun freshLastKnown(manager: LocationManager): Location? =
         ALL_PROVIDERS.mapNotNull { provider ->
             try {
@@ -167,8 +172,12 @@ internal object BikeLocator {
                 }
             }
 
-    private suspend fun awaitFix(manager: LocationManager, providers: List<String>): Location? =
-        withTimeoutOrNull(FIX_TIMEOUT_MS) {
+    private suspend fun awaitFix(
+        manager: LocationManager,
+        providers: List<String>,
+        timeoutMs: Long,
+    ): Location? =
+        withTimeoutOrNull(timeoutMs) {
             if (providers.isEmpty()) return@withTimeoutOrNull null
             locationUpdates(manager, providers, minTimeMs = 0L, minDistanceMeters = 0f).firstOrNull()
         }
@@ -233,9 +242,9 @@ internal object BikeLocator {
             }
         }
 
-    private fun toResult(fix: LocationFix): LocateResult {
+    private fun toResult(fix: LocationFix, source: String): LocateResult {
         val gcj = Gcj02.toGcj02(fix.lat, fix.lng)
-        return LocateResult.Ok(gcj.lat, gcj.lng, fix.accuracyMeters)
+        return LocateResult.Ok(gcj.lat, gcj.lng, fix.accuracyMeters, source)
     }
 
     private fun Location.toFix(): LocationFix =

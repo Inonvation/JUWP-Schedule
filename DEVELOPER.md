@@ -351,14 +351,15 @@ signature = md5( md5(字段按键名字典序拼接 + "&key=" + loginCode) + "&k
 | `v1.0.0/queryZoneList {lat,lng,carNum,page,rows}` | 实测可免 | 还车点 `givecarList[]` / 禁停区 `nogoZoneList[]`（`scopeArray` 多边形）；**按 carNum 所属校区出点，rows=15 封顶是「离查询点最近的 15 个」**——集合极其局部，缓存覆盖半径只能给 50 米 |
 | `v1.0.0/queryUnderwayOrder {}` | token | 骑行中订单：`totalDate` 已骑**秒**、`payMoney` 当前费用**分**、`lockStatus` 1=锁上（不等于订单结束）、`currentPercent` 电量 |
 | `v1.0.0/createOrder {carNum,lat,lng,...}` | token | 开锁第一跳（超时**绝不重发**，防重复订单） |
-| `v1.0.0/greenCarUnlock/lock`、`endTheOrder` | token | 开锁 / 临时锁车 / 还车；每动作后有界确认查询（≤4 次 × 1.5s，官方同款） |
+| `v1.0.0/greenCarUnlock/lock`、`endTheOrder` | token | 开锁 / 临时锁车 / 还车；开锁/还车写成功即返回（2026-10-18），只有临时锁车保留 8 次 × 1.5s 有界确认 |
 | `v1.0.0/queryUnPayOrder {}` | token | `12004`=已结清；有欠费给官方出路，**支付本身不做** |
 | `v2.0.0/queryOneCar {carNum,lat,lng}` | 可免 | 按车号点名查车（「按车号定位」） |
 | `v2.0.0/getUserInfo` / `queryUserCoupon` | token | 余额（分）/ 卡券，只读展示 |
 
 **写操作的责任闸**（开锁起计费、还车失败继续计费、有调度费——App 必须自己兜住责任）：
-① 零自动重试（超时只读刷新判状态，「重试开锁」是安全特例且由用户手动点）；② 动作前先查
-在案订单（有骑行禁开锁、无骑行禁还车）；③ 写操作二次确认（临时锁车/解锁继续骑免确认
+① 零自动重试（超时只读刷新判状态，「重试开锁」是安全特例且由用户手动点）；② 写操作不先查
+在案订单（服务端 12022 / 12003 兜底，调用方用当前快照判断在骑；重试开锁的车号也由控制器
+从当前卡片带入，不再预查）；③ 写操作二次确认（临时锁车/解锁继续骑免确认
 ——无新增计费后果）；④ 降级矩阵：调度费、出围栏、免押授权一律不代用户接受，提示到官方渠道。
 
 **11035 支付分授权是硬约束**：需要微信支付分授权的账号每单命中，`wx.openBusinessView`

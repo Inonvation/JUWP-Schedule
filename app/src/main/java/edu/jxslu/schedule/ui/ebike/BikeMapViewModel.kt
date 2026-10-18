@@ -341,6 +341,17 @@ class BikeMapViewModel(
     /** 在飞的图层请求：新的一发就把旧的取消（图层只跟最新中心点）。 */
     private var zoneJob: Job? = null
 
+    /**
+     * 用户点开锁 / 锁车 / 还车时让地图查询让路：这些请求和写动作共用连接池，
+     * 高峰期继续并发只会让开锁/还车排在后面。取消后把加载态收干净，动作完成再按需刷新。
+     */
+    fun cancelQueriesForRideAction() {
+        debounceJob?.cancel()
+        queryJob?.cancel()
+        zoneJob?.cancel()
+        _uiState.update { it.copy(loading = false, completing = false) }
+    }
+
     /** 还没有车当上下文时的待发图层请求（只有本次会话第一次会用到）。 */
     private data class ZonePending(val lat: Double, val lng: Double, val force: Boolean)
 
@@ -609,7 +620,18 @@ class BikeMapViewModel(
             )
         }
         pushCamera(cluster.lat, cluster.lng, zoom = null, animated = true)
-        maybeAutoUnlock(carNum, cluster.bikes.firstOrNull { it.carNum == carNum })
+        val bike = cluster.bikes.firstOrNull { it.carNum == carNum }
+        if (bike?.available == false) {
+            // 扫到列表里一辆离线/停用/低电量的车：不弹车辆卡，但给一句原因，
+            // 用户可以直接再扫下一辆。
+            _events.trySend(
+                BikeMapEvent.Notice(
+                    "车 $carNum ${bike.status.label}，换一辆试试",
+                    NoticeTone.Warning,
+                ),
+            )
+        }
+        maybeAutoUnlock(carNum, bike)
     }
 
     /**

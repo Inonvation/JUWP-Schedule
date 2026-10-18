@@ -199,18 +199,30 @@ object KqcxAuth {
             lat = obj.double("lat"),
             lng = obj.double("lng"),
             locked = obj.bool("lockStatus"),
-            batteryPercent = obj.int("currentPercent"),
+            batteryPercent = obj.int("currentPercent")?.takeIf { it in 1..100 },
         )
     }
 
     // ---------- 创建订单（开锁第一步） ----------
 
-    /** 创建订单的结果：车号 + 是否走头盔流程（官方 `1==helmet && 1==helmetConfig`）。 */
-    data class CreatedOrder(val carNum: String, val helmetFlowRequired: Boolean)
+    /**
+     * 创建订单的结果：车号 + 是否走头盔流程（官方 `1==helmet && 1==helmetConfig`）+ 能直接
+     * 用来落骑行卡的电量 / 当前费用 / 已骑时长。
+     *
+     * 官方 `afterOrderCreated` 就是拿 `currentPercent` / `payMoney` 先填面板的；App 先给最小
+     * 骑行卡时也照做，避免开锁后立刻出现“电量空一截、等到下一次刷新才补上”。
+     */
+    data class CreatedOrder(
+        val carNum: String,
+        val helmetFlowRequired: Boolean,
+        val totalDateSeconds: Long? = null,
+        val payMoneyCents: Long? = null,
+        val batteryPercent: Int? = null,
+    )
 
     /**
-     * 解析 `createOrder` 响应。车号与头盔标志是 App 需要的全部——
-     * 其余字段（蓝牙名/电量/订阅消息 subList 等）官方在骑行页刷新时会再查，不必在此消费。
+     * 解析 `createOrder` 响应。车号 / 头盔标志之外，顺手取 `totalDate` / `payMoney` /
+     * `currentPercent`：官方也是拿这几个字段先把骑行面板填上，App 的最小骑行卡同样受益。
      */
     fun parseCreatedOrder(jsonText: String): CreatedOrder {
         val env = parseEnvelope(jsonText)
@@ -219,6 +231,9 @@ object KqcxAuth {
         return CreatedOrder(
             carNum = carNum,
             helmetFlowRequired = obj.long("helmet") == 1L && obj.long("helmetConfig") == 1L,
+            totalDateSeconds = obj.long("totalDate"),
+            payMoneyCents = obj.long("payMoney"),
+            batteryPercent = obj.int("currentPercent")?.takeIf { it in 1..100 },
         )
     }
 

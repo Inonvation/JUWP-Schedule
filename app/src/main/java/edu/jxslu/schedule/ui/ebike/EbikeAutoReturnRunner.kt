@@ -82,14 +82,19 @@ internal suspend fun runAutoReturn(
         }
         if (ride == null) return AutoReturnResult.AlreadyEnded
         try {
+            val lat = ride.lat
+            val lng = ride.lng
+            val coordsValid = lat != null && lng != null && isValidReturnCoord(lat, lng)
             val summary = performReturnBike(
                 session = session,
                 before = ride,
                 fetchedAt = System.currentTimeMillis(),
                 // 还车判区只看车辆自己上传的位置；快照缺坐标时给 0（服务端以车辆位置为准，
                 // 这两个字段只是随请求带上的记录）——不因缺坐标拦下还车
-                gcjLat = ride.lat ?: 0.0,
-                gcjLng = ride.lng ?: 0.0,
+                gcjLat = lat ?: 0.0,
+                gcjLng = lng ?: 0.0,
+                locationSource = if (coordsValid) "vehicle" else "none",
+                locationValid = coordsValid,
                 onOrderEnded = onOrderEnded,
             )
             return AutoReturnResult.Returned(summary)
@@ -111,13 +116,19 @@ internal suspend fun runAutoReturn(
     )
 }
 
+private fun isValidReturnCoord(lat: Double, lng: Double): Boolean =
+    lat.isFinite() && lng.isFinite() &&
+        lat in -90.0..90.0 && lng in -180.0..180.0 &&
+        !(lat == 0.0 && lng == 0.0)
+
 /**
  * 还车 + 结算口径的**唯一实现**（手动还车 [KvcxRideController.returnBike] 与自动还车共用，
  * 结算卡字段与本地记录不能两处各算各的）。
  *
  * 顺序纪律：还车请求成功 → 立刻记 [onOrderEnded]（收计时 / 焚码；本地走时也在这一刻
- * 截停，见 `endedAt`）→ 扣款确认轮询（最多 ~7.5 秒，不能算进本次骑行时长）→ 组装
- * [KvcxReturnSummary]。**别把 `onOrderEnded` 挪到轮询之后**——那会把时长多算一截。
+ * 截停，见 `endedAt`）→ 扣款确认（自动还车等最多 3 次，不能算进本次骑行时长；手动还车
+ * 传 `pollSettlement=false`，结果卡先出）→ 组装 [KvcxReturnSummary]。
+ * **别把 `onOrderEnded` 挪到轮询之后**——那会把时长多算一截。
  */
 internal suspend fun performReturnBike(
     session: KvcxRideSession,
@@ -125,15 +136,33 @@ internal suspend fun performReturnBike(
     fetchedAt: Long,
     gcjLat: Double,
     gcjLng: Double,
+    locationSource: String = "realtime",
+    locationValid: Boolean = true,
+    /**
+     * true = 等待扣款确认再返回（自动还车要拿准确结果记账）；
+     * false = 结果卡先出，调用方在后台查（手动还车的提速路径）。
+     */
+    pollSettlement: Boolean = true,
     onOrderEnded: suspend () -> Unit,
 ): KvcxReturnSummary {
-    val outcome = session.returnBike(gcjLat, gcjLng)
+    val outcome = session.returnBike(
+        gcjLat = gcjLat,
+        gcjLng = gcjLng,
+        locationSource = locationSource,
+        locationValid = locationValid,
+        wasLocked = before?.locked,
+    )
     // 本地走时在订单结束那一刻截停（2026-10-09 口径，原样搬自 KvcxRideController.returnBike）
     val endedAt = System.currentTimeMillis()
     onOrderEnded()
     // 官方扣款确认节奏：先享后付自动扣，短轮询一次看是否结清（不做支付本身）。
     // 欠费金额一并带回来——结果卡上显示「¥3.50」比"有未结算费用"有用得多
-    val payState = if (outcome.needPay == true) session.confirmUnpaidSettled() else null
+    val payState = if (pollSettlement && outcome.needPay == true) {
+        session.confirmUnpaidSettled()
+    } else {
+        null
+    }
+    val settling = !pollSettlement && outcome.needPay == true
     return KvcxReturnSummary(
         carNum = before?.carNum,
         durationSeconds = before?.let {
@@ -148,6 +177,7 @@ internal suspend fun performReturnBike(
             else -> false // Owed 或查询失败：都按"未结清"提示，让用户去核对
         },
         owedCents = (payState as? KqcxAuth.UnpayState.Owed)?.amountCents,
+        settling = settling,
     )
 }
 
