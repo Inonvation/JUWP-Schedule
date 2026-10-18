@@ -1247,30 +1247,42 @@ RGBA_F16 / RGBA_1010102 这类非常规配置，不该漏给出图侧。
 今日页那行在 `TodayScreen` 直接订阅 `Graph.displayPrefs(context).toolboxEnabled`。
 `DisplayPrefsDefaultsTest` 钉住默认开。
 
-### 4.48 空调遥控：宿舍美的空调（2026-10-16；UI 见 §3.31）
+### 4.48 空调遥控：宿舍美的空调（2026-10-16；2026-10-18 补 R05D；UI 见 §3.31）
 
-寝室美的空调的 48 位红外协议：**状态 → 6 字节帧 → ConsumerIrManager 脉冲序列**，
+寝室美的空调的红外遥控：**状态 → 6 字节帧 → ConsumerIrManager 脉冲序列**，
 纯本机发射（`TRANSMIT_IR` 普通权限，安装即授予），不联网、不落账号。
 
-- **协议口径**（`domain/MideaAc`）：38kHz；帧 6 字节 = `0xA1` 头 / 电源·睡眠·风速·模式位 /
-  温度位（摄氏 = 17 + 位值，钳制 17–30）/ 关机定时字节 / 开机定时字节 / 校验和
-  （前 5 字节按位反序求和 → 取 256 的补 → 再按位反序）；定时 = 30 分钟一档、
-  `0x80 | ((N-1) shl 1) | 1`（0xFF 为不定时）；波形 = 头 4480/4480 → 正码 48 位
-  （位 mark 560，1 间隔 1680、0 间隔 560）→ 560/5600 → 头 → 按位取反 48 位 →
-  560/105600，默认连发 2 组。
-  **帧与波形逐位对齐 IRremoteESP8266 `ir_Midea` 的测试向量**（`MideaAcTest` 钉死：
-  校验和 5 组 + 完整波形 2 组 + 重复组边界 + 定时 7 小时 `A1A34DFF9B34` + 切换帧校验和）。
-- **切换类功能**（摆风 / 屏显 / 强力 / ECO，`MideaAc.Toggle`）：协议无状态位，特殊帧
-  （`0xA2` 头）与主帧连发；界面记忆 `MideaAc.Toggles` 跟快照一起持久化。
-- **发射**（`data/ir/AcIrBlaster`）：`ConsumerIrManager.transmit(FREQUENCY_HZ, pattern)`；
-  `supported = hasIrEmitter()`，无发射器时 `transmit` 直接 false、页面给提示。
+- **协议口径**（`domain/AcProtocol`，默认 `R05D`；协议卡可切 `A1`，切换只改本机、
+  不发红外，下一次按键才按新口径发完整状态）：
+  - **R05D**（`domain/MideaR05d`，国内美的挂机最常见）：6 字节 = 固定头 `B2 4D` +
+    功能字节 B + `~B` + 模式/温度字节 C + `~C`，整帧原样连发两遍，没有额外校验和；
+    关机 = 专用帧 `B2 4D 7B 84 E0 1F`；温度 / 模式 / 风速查码表（温度非二进制顺序，
+    送风取 0xEF 的「无定义」档）；波形 = 头 4400/4400 → 48 位 → 550/5220 → 头 →
+    48 位 → 550/8800，一组约 192ms。实测向量 `B2 4D BF 40 D0 2F`（自动风 26℃ 制冷）
+    / `B2 4D 7B 84 E0 1F`（关机）由 `MideaR05dTest` 钉死。**没有睡眠 / 定时 / 摆风 /
+    屏显 / 强力 / ECO 的公开编码，R05D 下隐藏这些卡。**
+  - **A1**（`domain/MideaAc`，IRremoteESP8266 `ir_Midea` 口径，Pioneer / Comfee /
+    Danby 等 OEM 与部分美的）：6 字节 = `0xA1` 头 / 电源·睡眠·风速·模式位 / 温度位
+    （**固定位 6 恒 1（0x40）**；摄氏 = 17 + 位值，钳制 17–30）/ 关机定时 / 开机定时 /
+    校验和（前 5 字节按位反序求和 → 取 256 的补 → 再按位反序）；定时 = 30 分钟一档、
+    `0x80 | ((N-1) shl 1) | 1`（0xFF 不定时）；波形 = 头 4480/4480 → 正码 48 位
+    （位 mark 560，1 间隔 1680、0 间隔 560）→ 560/5600 → 头 → 按位取反 48 位 →
+    560/105600。帧与波形逐位对齐 IRremoteESP8266 `ir_Midea` 的测试向量（`MideaAcTest`
+    钉死：校验和 + 完整波形 + 定时 7 小时 `A1A34DFF9B34` + 切换帧）。切换类功能
+    （摆风 / 屏显 / 强力 / ECO，`MideaAc.Toggle`）：协议无状态位，特殊帧（`0xA2` 头）
+    与主帧连发，**切换帧固定只发 1 次**（重复会翻转两次）；界面记忆
+    `MideaAc.Toggles` 跟快照一起持久化。
+- **发射**（`data/ir/AcIrBlaster`）：`ConsumerIrManager.transmit(MideaAc.FREQUENCY_HZ,
+  pattern)`；`supported = hasIrEmitter()`；失败（无发射器 / 系统拒绝 / 时长超预算）
+  返回带原因的结果，页面提示。**每次 `transmit` 只放一组**（R05D ≈192ms / A1 ≈291ms），
+  普通操作补发 2 次；小米 `ir-spi` HAL 会整条丢弃超长序列（主帧 + 切换帧拼一条会超）。
 - **状态**（`data/prefs/AcRemotePrefsStore`）：独立 DataStore `ac_remote_prefs`
-  （power / mode_bits / temp_c / fan_bits；模式与风速存协议位值，枚举顺序变了旧值照认）。
-  每次操作发完整状态帧 + 写回；`AcRemoteViewModel` 把发射放 `Dispatchers.Default`
-  并用 `Mutex` 串行化（一组波形约 260ms，`transmit` 在部分机型上同步等发完；
-  连点与温度长按连发都不允许并发、顺序要保）。
+  （protocol / power / mode_bits / temp_c / fan_bits / sleep / timers / 切换记忆；
+  模式与风速存协议位值，枚举顺序变了旧值照认）。每次操作发完整状态帧 + 写回；
+  `AcRemoteViewModel` 把发射放 `Dispatchers.Default` 并用 `Mutex` 串行化（`transmit`
+  在部分机型上同步等发完；连点与温度长按连发都不允许并发、顺序要保）。
 - **入口**：生活页「校园服务」卡、成绩查询前；路由 `SubpageScreen.AC_REMOTE`。
-- **后续**（未做）：自清洁（`A20DFFFFFF70`，仅制冷 / 除湿 / 自动档）、8℃ 加热
+- **后续**（未做）：A1 的自清洁（`A20DFFFFFF70`，仅制冷 / 除湿 / 自动档）、8℃ 加热
   （`A20FFFFFFF73`，仅制热档）、静音（`A212/13` 开关系）——都是现成的切换帧形态，
-  要加就在 `MideaAc.Toggle` 补一条 + UI 一个芯片；换机型协议变体时先在这条链上做实验，
-  不要在 UI 层分支。
+  要加就在 `MideaAc.Toggle` 补一条 + UI 一个芯片；R05D 的睡眠 / 定时编码公开资料
+  只有占位，未确认；Coolix 作为第三套口径，等 R05D / A1 都不认再上。

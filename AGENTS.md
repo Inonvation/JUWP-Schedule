@@ -285,8 +285,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  纯函数；默认开，只适合同页连续滚动的一批截图，§4.47）
  + CainiaoQuery（菜鸟批量查：三方路由链接拼装 · 多单号输入清洗拆分与丢弃计数 ·
  历史编解码，纯函数，§4.47）
- + MideaAc（美的空调红外：48 位帧 · 校验位 · ConsumerIrManager 脉冲序列生成，
- 纯函数，§3.31 / §4.48）
+ + MideaR05d·MideaAc·AcProtocol（美的空调红外：R05D 默认 / A1 可选 · 48 位帧 ·
+ ConsumerIrManager 脉冲序列生成，纯函数，§3.31 / §4.48）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
@@ -373,7 +373,8 @@ data/weather/    天气（DESIGN §3.29 / §4.46；**Open-Meteo 免 Key 免注�
                  规则见 .agents/rules/weather.md
 data/ir/         空调红外发射（生活页「校园服务」入口，DESIGN §4.48）：
                  AcIrBlaster（ConsumerIrManager 薄封装；TRANSMIT_IR 普通权限，无发射器机型
-                 进页只给提示）；协议纯逻辑见 domain/MideaAc，状态见 AcRemotePrefsStore
+                 进页只给提示）；协议纯逻辑见 domain/MideaR05d（默认）/ MideaAc（A1），
+                 状态见 AcRemotePrefsStore
                  规则见 .agents/rules/ac-remote.md
 ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|ai|toolbox
 Graph.kt         单例 Repository

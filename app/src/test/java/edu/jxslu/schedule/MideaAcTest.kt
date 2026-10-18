@@ -2,6 +2,7 @@ package edu.jxslu.schedule
 
 import edu.jxslu.schedule.domain.MideaAc
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -35,7 +36,8 @@ class MideaAcTest {
         val frame = MideaAc.frame(
             MideaAc.State(power = true, mode = MideaAc.Mode.Cool, tempC = 26, fan = MideaAc.Fan.Auto),
         )
-        assertEquals(listOf(0xA1, 0x80, 0x09, 0xFF, 0xFF, 0x37), frame.toList())
+        // 温度字节带固定位 6（0x40）：原装帧每一帧都有
+        assertEquals(listOf(0xA1, 0x80, 0x49, 0xFF, 0xFF, 0x57), frame.toList())
     }
 
     @Test
@@ -43,7 +45,34 @@ class MideaAcTest {
         val frame = MideaAc.frame(
             MideaAc.State(power = false, mode = MideaAc.Mode.Cool, tempC = 26, fan = MideaAc.Fan.Auto),
         )
-        assertEquals(listOf(0xA1, 0x00, 0x09, 0xFF, 0xFF, 0xB7), frame.toList())
+        assertEquals(listOf(0xA1, 0x00, 0x49, 0xFF, 0xFF, 0xD7), frame.toList())
+    }
+
+    @Test
+    fun `摄氏原装帧对齐上游 17 度与 30 度向量`() {
+        // 上游 CelsiusRemoteTemp 的真实捕获：on_cool_low_17c / on_cool_low_30c
+        assertEquals(
+            listOf(0xA1, 0x88, 0x40, 0xFF, 0xFF, 0x56),
+            MideaAc.frame(
+                MideaAc.State(
+                    power = true,
+                    mode = MideaAc.Mode.Cool,
+                    fan = MideaAc.Fan.Low,
+                    tempC = 17,
+                ),
+            ).toList(),
+        )
+        assertEquals(
+            listOf(0xA1, 0x88, 0x4D, 0xFF, 0xFF, 0x5D),
+            MideaAc.frame(
+                MideaAc.State(
+                    power = true,
+                    mode = MideaAc.Mode.Cool,
+                    fan = MideaAc.Fan.Low,
+                    tempC = 30,
+                ),
+            ).toList(),
+        )
     }
 
     @Test
@@ -51,13 +80,13 @@ class MideaAcTest {
         val frame = MideaAc.frame(
             MideaAc.State(power = true, mode = MideaAc.Mode.Heat, tempC = 26, fan = MideaAc.Fan.High),
         )
-        assertEquals(listOf(0xA1, 0x9B, 0x09, 0xFF, 0xFF, 0x28), frame.toList())
+        assertEquals(listOf(0xA1, 0x9B, 0x49, 0xFF, 0xFF, 0x48), frame.toList())
     }
 
     @Test
     fun `温度写入低 5 位并钳制`() {
-        assertEquals(0x00, MideaAc.frame(MideaAc.State(tempC = 17))[2])
-        assertEquals(0x0D, MideaAc.frame(MideaAc.State(tempC = 30))[2])
+        assertEquals(0x40, MideaAc.frame(MideaAc.State(tempC = 17))[2])
+        assertEquals(0x4D, MideaAc.frame(MideaAc.State(tempC = 30))[2])
         assertEquals(
             MideaAc.frame(MideaAc.State(tempC = 17)).toList(),
             MideaAc.frame(MideaAc.State(tempC = 10)).toList(),
@@ -73,7 +102,7 @@ class MideaAcTest {
         val frame = MideaAc.frame(
             MideaAc.State(power = true, mode = MideaAc.Mode.Dry, tempC = 22, fan = MideaAc.Fan.Medium),
         )
-        assertEquals(listOf(0xA1, 0x91, 0x05, 0xFF, 0xFF), frame.take(5))
+        assertEquals(listOf(0xA1, 0x91, 0x45, 0xFF, 0xFF), frame.take(5))
         assertEquals(frame[5], MideaAc.checksum(frame.copyOf(5)))
     }
 
@@ -118,12 +147,42 @@ class MideaAcTest {
         assertEquals(105600, out[399])
     }
 
+    // ---- 单次发射的时长预算（小米 ir-spi HAL 会整条丢弃超时长的序列）----
+
+    @Test
+    fun `默认一次只发一组`() {
+        assertEquals("叠组会撞 HAL 的总时长上限", 1, MideaAc.DEFAULT_REPEATS)
+    }
+
+    @Test
+    fun `单组波形 291_5ms 且在预算内`() {
+        val pattern = MideaAc.pattern(MideaAc.frame(MideaAc.State(power = true)))
+        assertEquals(200, pattern.size)
+        assertEquals(291_520L, MideaAc.totalMicros(pattern))
+        assertTrue(
+            "单组必须留在发射预算内",
+            MideaAc.totalMicros(pattern) <= MideaAc.TRANSMIT_BUDGET_US,
+        )
+    }
+
+    @Test
+    fun `主帧与切换帧各自在预算内，拼成一条就超`() {
+        val main = MideaAc.pattern(MideaAc.frame(MideaAc.State(power = true)))
+        val special = MideaAc.pattern(MideaAc.Toggle.Light.frameBytes)
+        assertTrue(MideaAc.totalMicros(special) <= MideaAc.TRANSMIT_BUDGET_US)
+        // 真机实测：拼成一条 583ms 会被拉长到 713ms，切换键因此长期发不出去
+        assertTrue(
+            "主帧 + 切换帧必须分两次 transmit",
+            MideaAc.totalMicros(main + special) > MideaAc.TRANSMIT_BUDGET_US,
+        )
+    }
+
     // ---- 睡眠 / 定时 / 切换帧 ----
 
     @Test
     fun `睡眠位在第二位字节`() {
         val frame = MideaAc.frame(MideaAc.State(power = true, sleep = true, tempC = 26))
-        assertEquals(listOf(0xA1, 0xC0, 0x09, 0xFF, 0xFF, 0x57), frame.toList())
+        assertEquals(listOf(0xA1, 0xC0, 0x49, 0xFF, 0xFF, 0x17), frame.toList())
     }
 
     @Test
@@ -141,11 +200,11 @@ class MideaAcTest {
     @Test
     fun `开关机定时写在各自的字节`() {
         assertEquals(
-            listOf(0xA1, 0x80, 0x09, 0xFF, 0x9B, 0x48),
+            listOf(0xA1, 0x80, 0x49, 0xFF, 0x9B, 0x08),
             MideaAc.frame(MideaAc.State(power = true, tempC = 26, onTimerMinutes = 7 * 60)).toList(),
         )
         assertEquals(
-            listOf(0xA1, 0x80, 0x09, 0x83, 0xFF, 0x54),
+            listOf(0xA1, 0x80, 0x49, 0x83, 0xFF, 0x14),
             MideaAc.frame(MideaAc.State(power = true, tempC = 26, offTimerMinutes = 60)).toList(),
         )
     }

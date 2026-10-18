@@ -3,13 +3,15 @@ package edu.jxslu.schedule.domain
 /**
  * 美的空调红外协议（48 位，DESIGN §4.48）：虚拟遥控状态 → 帧 → 脉冲序列。
  *
- * 口径对齐 IRremoteESP8266 的 ir_Midea（美的及 Comfee / Pioneer / Danby 等 OEM 的
- * 公开实现），帧结构、校验和与整段波形逐位对齐它的测试向量（由 `MideaAcTest` 钉死）。
+ * 口径对齐 IRremoteESP8266 的 ir_Midea（Pioneer / Comfee / Danby 等 OEM 与部分美的），
+ * 帧结构、校验和与整段波形逐位对齐它的测试向量（由 `MideaAcTest` 钉死）。
+ * **国内美的挂机更常见的是 [MideaR05d]**（`B2 4D` 口径）；两套按 [AcProtocol] 切换。
  *
  * 帧 = 6 字节（线上顺序，先发的在前）：
  * 1. `0xA1`：类型 001（命令）+ 固定头 10100；
  * 2. 电源位 7 · 睡眠位 6（恒 0）· 保留位 5 · 风速位 4..3 · 模式位 2..0；
- * 3. 华氏标志位 5（恒 0）· 温度位 4..0（摄氏 = 17 + 位值，17–30℃）；
+ * 3. **固定位 6（恒 1，原装帧每一帧都有）** · 华氏标志位 5（恒 0）· 温度位 4..0
+ *    （摄氏 = 17 + 位值，17–30℃）；
  * 4. 关机定时字节（[timerByte]：30 分钟一档，0xFF = 不定时）；
  * 5. 开机定时字节（同上）；
  * 6. 校验和 = 前 5 字节逐字节按位反序求和，取 256 的补，再按位反序。
@@ -19,7 +21,13 @@ package edu.jxslu.schedule.domain
  *
  * 发射波形（38kHz 载波）：每组 = 头 4480/4480 → 正码 48 位 → 560/5600 →
  * 头 4480/4480 → 按位取反的 48 位 → 560/105600（5600 结束间隔 + 100ms 重发间隔）。
- * 每位 = mark 560 + 间隔（1 → 1680，0 → 560）；默认连发 [DEFAULT_REPEATS] 组。
+ * 每位 = mark 560 + 间隔（1 → 1680，0 → 560）；默认 [DEFAULT_REPEATS] 组（= 1 组）。
+ *
+ * **一组 ≈ 291 ms，一次 `transmit` 只许发一组**：小米的 `ir-spi` HAL 会按整条序列的总
+ * 时长拒发（真机 logcat：`E ConsumerIrHal: ir-spi total_time out of range 1166075`，
+ * 1.17 s 被整条丢掉、一个脉冲都不发；583 ms 通过）。原装遥控与万能遥控也都是「一次
+ * 按键 = 一组」的量级（实测 206–303 ms）。要更抗干扰就多调几次 `transmit`
+ * （见 `AcRemoteViewModel`），不要在一条序列里堆组数。
  */
 object MideaAc {
 
@@ -30,8 +38,21 @@ object MideaAc {
     const val MIN_TEMP_C = 17
     const val MAX_TEMP_C = 30
 
-    /** 每次发射连发几组：正码 + 反码算一组，原装遥控一帧多连发，2 组更稳。 */
-    const val DEFAULT_REPEATS = 2
+    /**
+     * 一次 `transmit` 里放几组（正码 + 反码算一组）。**固定 1 组 ≈ 291 ms**：
+     * 堆到 2 组就是 583 ms，实测这条会被 HAL 拉长到 713 ms，再叠上切换帧直接超限被整条丢弃
+     * （见文件头的 `ir-spi total_time out of range`）。
+     */
+    const val DEFAULT_REPEATS = 1
+
+    /**
+     * 单次 `transmit` 的时长预算（微秒）。小米 `ir-spi` HAL 的上限落在实测区间
+     * 583 ms（通过）～1166 ms（拒发）之间，取 400 ms 留余量；单组约 291.5 ms。
+     */
+    const val TRANSMIT_BUDGET_US = 400_000
+
+    /** 一条时长序列的总时长（微秒）：给测试与调用方核预算用。 */
+    fun totalMicros(pattern: IntArray): Long = pattern.sumOf { it.toLong() }
 
     /** 模式位值（帧字节 2 的低 3 位）。 */
     enum class Mode(val bits: Int) {
@@ -101,6 +122,12 @@ object MideaAc {
 
     private const val HEAD_BYTE = 0xA1
 
+    /**
+     * 温度字节的固定位 6。原装遥控的每一帧都置 1（17℃ = 0x40、30℃ = 0x4D，
+     * 上游 stateReset 的 `A1 82 6F FF FF 62` 同款）；漏掉它空调可能整帧不认。
+     */
+    private const val TEMP_CONSTANT_BIT = 0x40
+
     /** 单组（正 + 反）的脉冲个数：2 头 + 2×48 位×2 + 2 尾×2 = 200。 */
     const val GROUP_LENGTH = 2 + 48 * 2 + 2 + 2 + 48 * 2 + 2
 
@@ -110,7 +137,7 @@ object MideaAc {
         val byte1 = (if (state.power) 0x80 else 0) or
             (if (state.sleep) 0x40 else 0) or
             (state.fan.bits shl 3) or state.mode.bits
-        val byte2 = temp - MIN_TEMP_C
+        val byte2 = TEMP_CONSTANT_BIT or (temp - MIN_TEMP_C)
         val five = intArrayOf(
             HEAD_BYTE,
             byte1,

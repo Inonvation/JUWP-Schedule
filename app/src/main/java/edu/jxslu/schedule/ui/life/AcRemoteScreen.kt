@@ -3,6 +3,7 @@ package edu.jxslu.schedule.ui.life
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -39,21 +40,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import edu.jxslu.schedule.domain.AcProtocol
 import edu.jxslu.schedule.domain.MideaAc
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import kotlinx.coroutines.delay
@@ -68,10 +73,11 @@ import me.rerere.hugeicons.stroke.Power
  * 生活页 → 校园服务 → 空调遥控（DESIGN §3.31 / §4.48）。
  *
  * 页面结构（自上而下，全走描边卡）：主控卡（电源圆钮 · 状态行 · 温度 ±）→
- * 模式 / 风速卡 → 附加功能卡（睡眠 / 风向 / 屏显 / 强力 / ECO）→ 定时卡（两行，
- * 点开弹层）。温度步进支持长按连发；送风档温度置灰（该档没有温度目标）。
+ * 模式 / 风速卡 → 协议卡（R05D / A1）→ 附加功能卡（睡眠 / 风向 / 屏显 / 强力 /
+ * ECO）→ 定时卡（两行，点开弹层）。附加与定时只有 A1 才有公开编码，R05D 下隐藏。
+ * 温度步进支持长按连发；送风档温度置灰（该档没有温度目标）。
  *
- * 每次操作按完整状态发一帧，协议见 [MideaAc]；状态本机持久化。无红外发射器的
+ * 每次操作按完整状态发一帧，协议见 [AcProtocol]；状态本机持久化。无红外发射器的
  * 机型进页只给提示；底部一行说明「面板是本机记忆」的口径。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,6 +89,7 @@ fun AcRemoteScreen(
     ),
 ) {
     val snapshot by viewModel.snapshot.collectAsStateWithLifecycle()
+    val transmitError by viewModel.transmitError.collectAsStateWithLifecycle()
     val state = snapshot.state
     var timerTarget by remember { mutableStateOf<TimerKind?>(null) }
 
@@ -125,7 +132,11 @@ fun AcRemoteScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    PowerButton(on = state.power) { viewModel.togglePower() }
+                    PowerButton(
+                        on = state.power,
+                        onTap = viewModel::togglePower,
+                        onHold = { viewModel.repeatCurrent() },
+                    )
                     Spacer(Modifier.height(12.dp))
                     Text(
                         text = if (state.power) {
@@ -143,6 +154,16 @@ fun AcRemoteScreen(
                         onDelta = viewModel::bumpTemp,
                     )
                 }
+            }
+
+            // 发射失败不再静默：无发射器 / 系统拒发（含序列超长被 HAL 丢弃）都走这一行
+            transmitError?.let { reason ->
+                Text(
+                    text = "发射失败：$reason",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             // 模式 / 风速：一张卡两组，中间细分隔线
@@ -170,38 +191,43 @@ fun AcRemoteScreen(
                 }
             }
 
-            // 附加功能：切换类按钮（协议无状态位，芯片亮 = 本机记的「最近一次」）
-            AppCard {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ToggleChip("睡眠", selected = state.sleep) { viewModel.toggleSleep() }
-                    ToggleChip("风向", selected = snapshot.toggles.swingOn) {
-                        viewModel.toggleSpecial(MideaAc.Toggle.SwingV)
+            // 协议口径：R05D 国内美的常见；A1 用于部分 OEM / 出口机型
+            ProtocolCard(protocol = snapshot.protocol, onSelect = viewModel::setProtocol)
+
+            if (snapshot.protocol == AcProtocol.A1) {
+                // 附加功能：切换类按钮（协议无状态位，芯片亮 = 本机记的「最近一次」）
+                AppCard {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ToggleChip("睡眠", selected = state.sleep) { viewModel.toggleSleep() }
+                        ToggleChip("风向", selected = snapshot.toggles.swingOn) {
+                            viewModel.toggleSpecial(MideaAc.Toggle.SwingV)
+                        }
+                        ToggleChip("屏显", selected = snapshot.toggles.lightOn) {
+                            viewModel.toggleSpecial(MideaAc.Toggle.Light)
+                        }
+                        ToggleChip("强力", selected = snapshot.toggles.turboOn) {
+                            viewModel.toggleSpecial(MideaAc.Toggle.Turbo)
+                        }
+                        ToggleChip("ECO", selected = snapshot.toggles.ecoOn) {
+                            viewModel.toggleSpecial(MideaAc.Toggle.Eco)
+                        }
                     }
-                    ToggleChip("屏显", selected = snapshot.toggles.lightOn) {
-                        viewModel.toggleSpecial(MideaAc.Toggle.Light)
-                    }
-                    ToggleChip("强力", selected = snapshot.toggles.turboOn) {
-                        viewModel.toggleSpecial(MideaAc.Toggle.Turbo)
-                    }
-                    ToggleChip("ECO", selected = snapshot.toggles.ecoOn) {
-                        viewModel.toggleSpecial(MideaAc.Toggle.Eco)
+                }
+
+                // 定时：两行，点开弹层选预设
+                AppCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp)) {
+                    Column {
+                        TimerRow("定时关机", state.offTimerMinutes) { timerTarget = TimerKind.Off }
+                        AppCardDivider()
+                        TimerRow("定时开机", state.onTimerMinutes) { timerTarget = TimerKind.On }
                     }
                 }
             }
 
-            // 定时：两行，点开弹层选预设
-            AppCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp)) {
-                Column {
-                    TimerRow("定时关机", state.offTimerMinutes) { timerTarget = TimerKind.Off }
-                    AppCardDivider()
-                    TimerRow("定时开机", state.onTimerMinutes) { timerTarget = TimerKind.On }
-                }
-            }
-
-            SettingsNote("面板显示的是本机记住的设置；红外遥控没有回执，可能与空调实际状态不一致。")
+            SettingsNote("面板显示的是本机记住的设置；红外遥控没有回执，可能与空调实际状态不一致。信号弱时对准空调长按电源键，会按当前设定连发几次。")
             Spacer(Modifier.height(4.dp))
         }
     }
@@ -219,6 +245,38 @@ fun AcRemoteScreen(
     }
 }
 
+/** 协议卡：R05D / A1 二选一；切换只改本机口径，不发红外。 */
+@Composable
+private fun ProtocolCard(protocol: AcProtocol, onSelect: (AcProtocol) -> Unit) {
+    AppCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
+        Column {
+            ControlLabel("红外协议")
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ToggleChip("R05D（国内常见）", selected = protocol == AcProtocol.R05D) {
+                    onSelect(AcProtocol.R05D)
+                }
+                ToggleChip("A1（部分机型）", selected = protocol == AcProtocol.A1) {
+                    onSelect(AcProtocol.A1)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (protocol == AcProtocol.R05D) {
+                    "开关没反应时切到 A1 试试。R05D 只发开关 / 模式 / 温度 / 风速；切换后按一下电源键生效。"
+                } else {
+                    "A1 额外支持睡眠 / 定时 / 风向 / 屏显 / 强力 / ECO；没反应时换回 R05D。切换后按一下电源键生效。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 /** 模式芯片的展示顺序（与美的遥控习惯一致：自动 → 制冷 → 除湿 → 送风 → 制热）。 */
 private val MODE_ORDER = listOf(
     MideaAc.Mode.Auto,
@@ -231,16 +289,23 @@ private val MODE_ORDER = listOf(
 /** 定时预设（分钟）：30 分钟起、30 分钟一档，最多 8 小时，够寝室场景。 */
 private val TIMER_PRESETS = listOf(30, 60, 90, 120, 180, 240, 360, 480)
 
-/** 温度长按连发的起判时长与重复间隔（毫秒）：发射一组约 260ms，间隔留足。 */
+/** 温度长按连发的起判时长与重复间隔（毫秒）：一组约 190–290ms，间隔留足。 */
 private const val HOLD_START_DELAY_MS = 420L
 private const val HOLD_REPEAT_INTERVAL_MS = 680L
 
 /** 开关机定时的弹层目标。 */
 private enum class TimerKind { On, Off }
 
+/**
+ * 电源圆钮：**单击切换开关机，长按不动状态、连发当前帧**（红外单向，面板记的状态
+ * 可能与空调不一致，长按只解决「单次发不中」）。长按由 `detectTapGestures` 接管，
+ * 长按识别后不会再补一次单击。
+ */
 @Composable
-private fun PowerButton(on: Boolean, onClick: () -> Unit) {
+private fun PowerButton(on: Boolean, onTap: () -> Unit, onHold: () -> Unit) {
     val haptics = rememberAppHaptics()
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnHold by rememberUpdatedState(onHold)
     Box(
         modifier = Modifier
             .size(100.dp)
@@ -249,9 +314,17 @@ private fun PowerButton(on: Boolean, onClick: () -> Unit) {
                 if (on) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.surfaceVariant,
             )
-            .clickable {
-                haptics.tap()
-                onClick()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = {
+                        haptics.tap()
+                        currentOnHold()
+                    },
+                    onTap = {
+                        haptics.tap()
+                        currentOnTap()
+                    },
+                )
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -419,6 +492,7 @@ private fun TimerPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 TIMER_PRESETS.forEach { minutes ->
                     val current = minutes == currentMinutes

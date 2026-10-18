@@ -4,15 +4,19 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import edu.jxslu.schedule.domain.AcProtocol
 import edu.jxslu.schedule.domain.MideaAc
 import kotlinx.coroutines.flow.first
 
 /** 空调遥控的独立 DataStore（DESIGN §4.48），不与显示偏好互相牵动。 */
 private val Context.acRemotePrefs by preferencesDataStore(name = "ac_remote_prefs")
 
-/** 空调遥控的全部持久态：协议状态 + 切换记忆。 */
+/** 空调遥控的全部持久态：协议口径 + 协议状态 + 切换记忆。 */
 data class AcRemoteSnapshot(
+    /** 红外口径；默认 R05D（国内美的挂机），A1 留给部分 OEM / 出口机型。 */
+    val protocol: AcProtocol = AcProtocol.R05D,
     val state: MideaAc.State = MideaAc.State(),
     val toggles: MideaAc.Toggles = MideaAc.Toggles(),
 )
@@ -30,6 +34,7 @@ data class AcRemoteSnapshot(
 class AcRemotePrefsStore(private val context: Context) {
 
     private object Keys {
+        val protocol = stringPreferencesKey("protocol")
         val power = booleanPreferencesKey("power")
         val modeBits = intPreferencesKey("mode_bits")
         val tempC = intPreferencesKey("temp_c")
@@ -51,7 +56,11 @@ class AcRemotePrefsStore(private val context: Context) {
         val fan = prefs[Keys.fanBits]
             ?.let { bits -> MideaAc.Fan.entries.firstOrNull { it.bits == bits } }
             ?: MideaAc.Fan.Auto
+        val protocol = prefs[Keys.protocol]
+            ?.let { name -> AcProtocol.entries.firstOrNull { it.name == name } }
+            ?: AcProtocol.R05D
         return AcRemoteSnapshot(
+            protocol = protocol,
             state = MideaAc.State(
                 power = prefs[Keys.power] ?: false,
                 mode = mode,
@@ -73,6 +82,7 @@ class AcRemotePrefsStore(private val context: Context) {
     suspend fun save(snapshot: AcRemoteSnapshot) {
         val state = snapshot.state
         context.acRemotePrefs.edit { prefs ->
+            prefs[Keys.protocol] = snapshot.protocol.name
             prefs[Keys.power] = state.power
             prefs[Keys.modeBits] = state.mode.bits
             prefs[Keys.tempC] = state.tempC
