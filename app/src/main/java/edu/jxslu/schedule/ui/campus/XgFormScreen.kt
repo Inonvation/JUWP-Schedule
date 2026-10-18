@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.ui.campus
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
@@ -101,9 +103,7 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
     ) { result ->
         val callback = fileCallback
         fileCallback = null
-        callback?.onReceiveValue(
-            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data),
-        )
+        callback?.onReceiveValue(parseFileChooserResult(result.resultCode, result.data))
     }
 
     // 与左上角箭头同语义：网页能后退就先回退，退不动了才关窗口。表单流程要连着走
@@ -312,6 +312,24 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
             },
         )
     }
+}
+
+/**
+ * 解析文件选择器的结果。
+ *
+ * **不能用** [WebChromeClient.FileChooserParams.parseResult]：Chromium 的实现
+ * （`AwContentsClient.parseFileChooserResult`）只读 `Intent.data`，不读 `ClipData`。
+ * 表单页的附件控件是 `<input type="file" multiple>`，选择器在这种模式下会把选中的
+ * 文件放进 `ClipData`——只选一张也一样（照片选择器、部分文件管理器都如此）。
+ * 交给它解析等于把所有选择都当成「取消」，附件位置永远是空的。
+ */
+private fun parseFileChooserResult(resultCode: Int, data: Intent?): Array<Uri>? {
+    if (resultCode != Activity.RESULT_OK || data == null) return null
+    data.clipData?.let { clip ->
+        val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+        if (uris.isNotEmpty()) return uris.toTypedArray()
+    }
+    return data.data?.let { arrayOf(it) }
 }
 
 /**

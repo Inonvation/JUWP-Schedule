@@ -35,7 +35,11 @@
   **别换成**超星的 `/passport/mlogin`（手机号 + 学习通密码，是另一套账号，学校没配它）；
   **也别去复刻** `/office/...` 的表单提交：请求里那批 `pageEnc` / `traceId` / `nodeUniqueId`
   由服务端每次下发，复刻出来的实现必然随官方改版失效。附件上传靠
-  `WebChromeClient.onShowFileChooser`（漏了它 = 点上传没反应），状态条按域分档的判据
+  `WebChromeClient.onShowFileChooser`（漏了它 = 点上传没反应）；**结果解析不能交给
+  `FileChooserParams.parseResult`**——Chromium 的实现只读 `Intent.data`、丢 `ClipData`，
+  而表单的附件控件是 `<input type="file" multiple>`，选择器在多选模式下把选中项放进
+  `ClipData`（只选一张也一样），交给它等于把每次选择都当成取消，附件位置恒为空
+  （`XgFormScreen.parseFileChooserResult`：先读 `ClipData` 再回退 `data`）。状态条按域分档的判据
   与直达闸门唯一实现在 `data/xg/XgUrls.kt`。直达的顺序是硬约束：**先 `/sfrz/`，
   落到学工域后再进表单页**——表单页自己匿名可访问，先开它会把人引到超星 passport
   那套账号上；而闸门必须排除 `/sfrz/`（它也在学工域），否则 CAS 回跳的一刻被截断。
