@@ -416,7 +416,14 @@ class QzxyWaterFlow(
 
     companion object {
         const val RESPONSE_TIMEOUT_MILLIS = 5_000
-        const val QUERY_TIMEOUT_MILLIS = 1_500
+        /**
+         * 查询设备状态的等待上限。
+         *
+         * 1.5 秒在刚建链、系统正在写 CCCD 或设备刚从休眠醒来时偏紧；
+         * 超时又会让 [Link] 直接 close()，用户看到的是「设备没有回应」。
+         * 3 秒仍比人工重试便宜，先给足一帧往返的时间。
+         */
+        const val QUERY_TIMEOUT_MILLIS = 3_000
 
         /**
          * 下单成功、`downData` 却没写进设备时的提示。这一刻服务端已经建单并预扣，

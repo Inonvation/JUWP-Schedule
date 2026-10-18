@@ -12,12 +12,12 @@ import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
 import edu.jxslu.schedule.domain.QzxyFrame
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
@@ -81,17 +81,37 @@ data class QzxyGattCharacteristicInfo(
  */
 class QzxyGattLink(private val context: Context) {
 
+    @Volatile
     private var gatt: BluetoothGatt? = null
 
     /** 可写特征值，按 [PREFERRED_WRITE_UUIDS] 优先级排好；一次请求会依次试到有回应为止。 */
+    @Volatile
     private var writeCharacteristics: List<BluetoothGattCharacteristic> = emptyList()
 
     /** 协商到的 ATT MTU；没协商上就用默认 23（有效载荷 20 字节）。 */
+    @Volatile
     private var mtu = DEFAULT_MTU
 
     /** 设备主动上报的数据块，按到达顺序排队。 */
     private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
+
+    /**
+     * 流控特征值的通知。
+     *
+     * 这条通道必须与 [incoming] 分开：流控字节不是 `#<hex>\n` 回包，
+     * 混进回包队列会卡在 [readUntilLineFeed] 的缓冲里，把下一条真正的回包顶掉。
+     * 目前只做隔离与丢弃，不猜字节语义；真正的写入节流靠 GATT 写回执。
+     */
+    private val flowControl = Channel<ByteArray>(Channel.CONFLATED)
     private var buffered = ByteArray(0)
+
+    /** 当前等待回执的 GATT 写操作；同一时刻只允许一个操作在飞。 */
+    @Volatile
+    private var pendingWrite: CompletableDeferred<Boolean>? = null
+
+    /** 当前等待回执的 CCCD 描述符写操作。 */
+    @Volatile
+    private var pendingDescriptorWrite: CompletableDeferred<Boolean>? = null
 
     val isConnected: Boolean
         get() = linkAlive && gatt != null
@@ -117,13 +137,16 @@ class QzxyGattLink(private val context: Context) {
     val serviceTable: List<QzxyGattCharacteristicInfo> get() = cachedServiceTable
 
     /** 当前连接的设备地址与上次发现的服务表，用来判断能否复用连接。 */
+    @Volatile
     private var connectedAddress: String? = null
+    @Volatile
     private var cachedServiceTable: List<QzxyGattCharacteristicInfo> = emptyList()
 
     /**
      * 链路是否活着。自己维护而不是问 `BluetoothGatt`：官方 App 抢占或设备侧超时断开时，
      * 连接对象仍在，只有回调会告诉我们它已经断了。
      */
+    @Volatile
     private var linkAlive = false
 
     /**
@@ -165,10 +188,16 @@ class QzxyGattLink(private val context: Context) {
                         gatt.discoverServices()
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> if (!discovered.isCompleted) {
-                        linkAlive = false
+                        markDisconnected()
                         discovered.completeExceptionally(
                             IllegalStateException("设备已断开（状态码 $status）"),
                         )
+                    } else {
+                        // 服务发现完成后设备仍可能被官方 App 抢占、走远或超时断开。
+                        // 这里必须把链路标记清掉：connect() 复用判断只看 linkAlive +
+                        // 缓存的服务表，留着旧值会把下一条命令写到已经断开的 gatt 上，
+                        // 用户看到的就是「第一条命令超时，重连后才正常」。
+                        markDisconnected()
                     }
                 }
             }
@@ -214,11 +243,33 @@ class QzxyGattLink(private val context: Context) {
                 }
             }
 
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int,
+            ) {
+                pendingWrite?.complete(status == BluetoothGatt.GATT_SUCCESS)
+                pendingWrite = null
+            }
+
+            override fun onDescriptorWrite(
+                gatt: BluetoothGatt,
+                descriptor: BluetoothGattDescriptor,
+                status: Int,
+            ) {
+                pendingDescriptorWrite?.complete(status == BluetoothGatt.GATT_SUCCESS)
+                pendingDescriptorWrite = null
+            }
+
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
+                if (characteristic.uuid == FLOW_CONTROL_UUID) {
+                    flowControl.trySend(value)
+                    return
+                }
                 incoming.trySend(value)
             }
 
@@ -229,17 +280,42 @@ class QzxyGattLink(private val context: Context) {
             ) {
                 @Suppress("DEPRECATION")
                 val value = characteristic.value ?: return
+                if (characteristic.uuid == FLOW_CONTROL_UUID) {
+                    flowControl.trySend(value)
+                    return
+                }
                 incoming.trySend(value)
             }
         }
 
         return@withContext try {
             gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-            val table = withTimeout(timeoutMillis) { discovered.await() }
-            enableNotifications()
+            // 用 withTimeoutOrNull 而不是 withTimeout：后者的超时异常也是
+            // CancellationException，会被下面的取消分支原样抛给调用方，
+            // 把「连接超时」误报成协程取消。
+            val table = withTimeoutOrNull(timeoutMillis) { discovered.await() }
+                ?: throw IllegalStateException("连接设备超时（${timeoutMillis}ms）")
+            // CCCD 写是 GATT 操作，必须等它落地再让调用方发第一条命令；
+            // 开通知失败不阻断建链（部分设备没有 CCCD，但主通道仍可用）。
+            try {
+                enableNotifications()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // 开通知失败不阻断建链，主通道仍可能可用
+            }
+            if (!linkAlive) {
+                close()
+                return@withContext Result.failure(
+                    IllegalStateException("设备在启用通知时断开"),
+                )
+            }
             connectedAddress = address
             cachedServiceTable = table
             Result.success(table)
+        } catch (error: CancellationException) {
+            close()
+            throw error
         } catch (error: Exception) {
             close()
             Result.failure(error)
@@ -257,7 +333,7 @@ class QzxyGattLink(private val context: Context) {
      * 服务表里认不出这两条时退回原来的做法：没见过的设备也不能收不到回包。
      */
     @SuppressLint("MissingPermission")
-    private fun enableNotifications() {
+    private suspend fun enableNotifications() {
         val current = gatt ?: return
         val notifiable = current.services
             .flatMap { service -> service.characteristics }
@@ -274,30 +350,49 @@ class QzxyGattLink(private val context: Context) {
             .filter { it.uuid == READ_UUID || it.uuid == FLOW_CONTROL_UUID }
             .sortedBy { if (it.uuid == READ_UUID) 0 else 1 }
         (preferred.ifEmpty { notifiable }).forEach { characteristic ->
-            enableNotification(current, characteristic)
+            // 回包口必须等 CCCD 写完；流控口只开通知，不阻塞建链。
+            enableNotification(
+                gatt = current,
+                characteristic = characteristic,
+                await = characteristic.uuid == READ_UUID,
+            )
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun enableNotification(
+    private suspend fun enableNotification(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
+        await: Boolean,
     ) {
-        runCatching {
-            gatt.setCharacteristicNotification(characteristic, true)
-            characteristic.getDescriptor(CCCD_UUID)?.let { descriptor ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    gatt.writeDescriptor(
-                        descriptor,
-                        BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    @Suppress("DEPRECATION")
-                    gatt.writeDescriptor(descriptor)
-                }
+        try {
+            if (!gatt.setCharacteristicNotification(characteristic, true)) return
+            val descriptor = characteristic.getDescriptor(CCCD_UUID) ?: return
+            val deferred = if (await) CompletableDeferred<Boolean>() else null
+            pendingDescriptorWrite = deferred
+            val queued = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(
+                    descriptor,
+                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
+                ) == BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                gatt.writeDescriptor(descriptor)
             }
+            if (!queued) {
+                pendingDescriptorWrite = null
+                return
+            }
+            if (deferred != null) {
+                withTimeoutOrNull(DESCRIPTOR_WRITE_TIMEOUT_MILLIS) { deferred.await() }
+                if (pendingDescriptorWrite === deferred) pendingDescriptorWrite = null
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            pendingDescriptorWrite = null
         }
     }
 
@@ -310,19 +405,23 @@ class QzxyGattLink(private val context: Context) {
             if (writeCharacteristics.isEmpty()) {
                 return@withContext Result.failure(IllegalStateException("设备没有可写特征值"))
             }
-            runCatching {
+            try {
                 val payload = QzxyFrame.wrap(frame)
                 for (characteristic in writeCharacteristics) {
                     drainIncoming()
                     buffered = ByteArray(0)
                     writeChunked(current, characteristic, payload)
                     val response = withTimeoutOrNull(timeoutMillis.toLong()) { readUntilLineFeed() }
-                    if (response != null) return@runCatching response
+                    if (response != null) return@withContext Result.success(response)
                 }
                 // 每个候选都写过了，设备一声不吭。多半是链路已经废了（被别的 App 抢占、
                 // 或设备侧断开），把连接清掉，下一次操作重新建链，别继续复用死连接
                 close()
-                null
+                Result.success(null)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Result.failure(error)
             }
         }
 
@@ -360,6 +459,8 @@ class QzxyGattLink(private val context: Context) {
         // 返回 false 且不报错。刚连上时最常见：CCCD 写还没落地，第一条指令就被丢了，
         // 现象是「连接后的第一条命令超时」。所以这里重试几次，别把 false 当成功。
         repeat(WRITE_ATTEMPTS) { attempt ->
+            val deferred = CompletableDeferred<Boolean>()
+            pendingWrite = deferred
             val queued = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 // API 33 起这个重载返回 BluetoothStatusCodes 而不是 Boolean
                 gatt.writeCharacteristic(
@@ -375,10 +476,26 @@ class QzxyGattLink(private val context: Context) {
                 @Suppress("DEPRECATION")
                 gatt.writeCharacteristic(characteristic)
             }
-            if (queued) return
+            if (queued) {
+                // 队列里排上不等于写成功：等 onCharacteristicWrite 回执再发下一包。
+                // 这样长 downData 不会在上一个 GATT 操作还没落地时被下一包挤掉。
+                val completed = withTimeoutOrNull(WRITE_COMPLETION_TIMEOUT_MILLIS) {
+                    deferred.await()
+                }
+                if (pendingWrite === deferred) pendingWrite = null
+                when (completed) {
+                    true -> return
+                    false -> Unit // 设备明确回了失败，重试是安全的
+                    // 回执没来：写入可能已经在设备侧生效，重发会造成重复的
+                    // 0x21 / 0x86。这里直接报错，把「是否重试」交给上层流程。
+                    null -> throw IllegalStateException("GATT 写入回执超时")
+                }
+            } else {
+                pendingWrite = null
+            }
             if (attempt < WRITE_ATTEMPTS - 1) delay(WRITE_RETRY_DELAY_MILLIS)
         }
-        throw IllegalStateException("GATT 忙，写入没有排上队")
+        throw IllegalStateException("GATT 写入没有完成")
     }
 
     /** 累积通知数据到出现换行为止；设备可能分好几包发。 */
@@ -402,15 +519,36 @@ class QzxyGattLink(private val context: Context) {
     /** 断开并释放。页面退出、重连前、异常分支都调它，不抛异常。 */
     @SuppressLint("MissingPermission")
     fun close() {
+        pendingWrite?.complete(false)
+        pendingWrite = null
+        pendingDescriptorWrite?.complete(false)
+        pendingDescriptorWrite = null
         runCatching { gatt?.disconnect() }
         runCatching { gatt?.close() }
         gatt = null
+        markDisconnected()
+        mtu = DEFAULT_MTU
+    }
+
+    /**
+     * 链路断开后的内存清理。
+     *
+     * 只清复用判断依赖的现场，不碰 [gatt] 本身：真正的释放仍由 [close] 做，
+     * 而断线回调里再调 disconnect/close 容易触发重入。
+     */
+    private fun markDisconnected() {
         linkAlive = false
         writeCharacteristics = emptyList()
         connectedAddress = null
         cachedServiceTable = emptyList()
-        mtu = DEFAULT_MTU
         buffered = ByteArray(0)
+        while (flowControl.tryReceive().isSuccess) {
+            // 清掉断链前的流控残留
+        }
+        pendingWrite?.complete(false)
+        pendingWrite = null
+        pendingDescriptorWrite?.complete(false)
+        pendingDescriptorWrite = null
     }
 
     /** 已知优先级的排前面，其余按服务发现给出的原顺序跟在后面。 */
@@ -440,8 +578,14 @@ class QzxyGattLink(private val context: Context) {
         const val WRITE_GAP_MILLIS = 30L
 
         /** 写入排队失败时的重试次数与间隔：等上一个 GATT 操作落地。 */
-        const val WRITE_ATTEMPTS = 5
+        const val WRITE_ATTEMPTS = 3
         const val WRITE_RETRY_DELAY_MILLIS = 40L
+
+        /** 单次 GATT 写回执的最长等待；超时按这次写失败处理，再试下一轮。 */
+        const val WRITE_COMPLETION_TIMEOUT_MILLIS = 1_000L
+
+        /** CCCD 描述符写回执的最长等待。 */
+        const val DESCRIPTOR_WRITE_TIMEOUT_MILLIS = 2_000L
 
         /** Microchip/ISSC 蓝牙透传服务的三条特征值，用途见 [roleOf]。 */
         val WRITE_UUID: UUID = UUID.fromString("49535343-8841-43f4-a8d4-ecbe34729bb3")

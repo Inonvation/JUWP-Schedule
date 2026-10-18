@@ -14,4 +14,12 @@ object QzxyApiConfig {
     /** 蓝牙设备广播名前缀，扫描过滤用（官方水控设备形如 `KLCXKJ-Water,G,490067305242`）。 */
     const val BLE_NAME_PREFIX = "KLCXKJ"
 
+    /**
+     * Microchip/ISSC 透传服务的 UUID。
+     *
+     * 设备广播里不一定带名字（部分手机/系统会截断或隐藏 deviceName），
+     * 但服务 UUID 通常还在广播包里；扫描时名字前缀与服务 UUID 二者命中其一即可。
+     */
+    const val BLE_SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"
+
 }

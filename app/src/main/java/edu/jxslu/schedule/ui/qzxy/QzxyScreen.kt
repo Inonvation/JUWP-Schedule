@@ -908,14 +908,28 @@ private fun FailureBlock(
     Button(
         // 开阀被「未结算的老记录」挡住时，主出口是先去结算——提示让点「结束用水」，
         // 这里就必须真的给出那个按钮（旧版只有「重试开阀」，用户只能卡住）
-        onClick = { if (failure.settleRecovery) viewModel.stopWater() else viewModel.openValveFromCard() },
+        onClick = {
+            when {
+                failure.clearThenOpen -> viewModel.clearAndOpen()
+                failure.resendRecovery -> viewModel.resendOpenData()
+                failure.settleRecovery -> viewModel.stopWater()
+                else -> viewModel.openValveFromCard()
+            }
+        },
         enabled = state.hasUsableDevice,
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 12.dp)
             .height(48.dp),
     ) {
-        Text(if (failure.settleRecovery) "结算设备记录" else "重试开阀")
+        Text(
+            when {
+                failure.clearThenOpen -> "清除并继续开阀"
+                failure.resendRecovery -> "重发开阀数据"
+                failure.settleRecovery -> "结算设备记录"
+                else -> "重试开阀"
+            },
+        )
     }
     Row(
         modifier = Modifier
@@ -930,7 +944,7 @@ private fun FailureBlock(
                 .weight(1f)
                 .height(42.dp),
         ) {
-            Text("清除设备记录")
+            Text(if (failure.clearThenOpen) "只清除记录" else "清除设备记录")
         }
         OutlinedButton(
             onClick = onShowDetail,

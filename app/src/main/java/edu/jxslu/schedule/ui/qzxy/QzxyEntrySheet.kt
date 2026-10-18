@@ -79,10 +79,14 @@ fun QzxyEntrySheet(
     /** 登录态取自仓库那条流，不由 [state] 转述：会话登录可能发生在别的窗口。 */
     loggedIn: Boolean,
     onStart: () -> Unit,
+    /** 服务端已下单、蓝牙写入失败后的「重发开阀数据」。 */
+    onResend: () -> Unit,
     onStop: () -> Unit,
     onAbandon: () -> Unit,
     /** 清设备上那条没结算的消费记录（与趣智校园页失败卡的次按钮同一个动作）。 */
     onClearDeviceRecord: () -> Unit,
+    /** 清除别人的残留记录后立刻开阀（与趣智校园页失败卡的主按钮同一个动作）。 */
+    onClearAndOpen: () -> Unit,
     onDismissSettlement: () -> Unit,
     onOpenPage: () -> Unit,
     /** 失败详情里的「去诊断页」。参数是当前设备地址，诊断页据此选中同一台。 */
@@ -236,6 +240,10 @@ fun QzxyEntrySheet(
                                     haptics.tap()
                                     onStart()
                                 },
+                                onResend = {
+                                    haptics.tap()
+                                    onResend()
+                                },
                                 onClear = {
                                     haptics.tap()
                                     onClearDeviceRecord()
@@ -243,6 +251,10 @@ fun QzxyEntrySheet(
                                 onSettle = {
                                     haptics.tap()
                                     onStop()
+                                },
+                                onClearAndOpen = {
+                                    haptics.tap()
+                                    onClearAndOpen()
                                 },
                                 onDetail = { failureDetail = content.failure },
                             )
@@ -405,8 +417,10 @@ private fun FailureBlock(
     canRetry: Boolean,
     canClear: Boolean,
     onRetry: () -> Unit,
+    onResend: () -> Unit,
     onClear: () -> Unit,
     onSettle: () -> Unit,
+    onClearAndOpen: () -> Unit,
     onDetail: () -> Unit,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -428,14 +442,28 @@ private fun FailureBlock(
     }
     Button(
         // 开阀被「未结算的老记录」挡住时，主出口是先去结算（与趣智页失败卡同一口径）
-        onClick = { if (failure.settleRecovery) onSettle() else onRetry() },
+        onClick = {
+            when {
+                failure.clearThenOpen -> onClearAndOpen()
+                failure.resendRecovery -> onResend()
+                failure.settleRecovery -> onSettle()
+                else -> onRetry()
+            }
+        },
         enabled = canRetry,
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 12.dp)
             .height(48.dp),
     ) {
-        Text(if (failure.settleRecovery) "结算设备记录" else "重试开阀")
+        Text(
+            when {
+                failure.clearThenOpen -> "清除并继续开阀"
+                failure.resendRecovery -> "重发开阀数据"
+                failure.settleRecovery -> "结算设备记录"
+                else -> "重试开阀"
+            },
+        )
     }
     Row(
         modifier = Modifier
@@ -450,7 +478,7 @@ private fun FailureBlock(
                 .weight(1f)
                 .height(42.dp),
         ) {
-            Text("清除设备记录")
+            Text(if (failure.clearThenOpen) "只清除记录" else "清除设备记录")
         }
         OutlinedButton(
             onClick = onDetail,

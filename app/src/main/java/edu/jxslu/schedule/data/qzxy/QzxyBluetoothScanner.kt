@@ -77,16 +77,27 @@ class QzxyBluetoothScanner(context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun publish(result: ScanResult) {
-        val name = result.scanRecord?.deviceName ?: result.device.name ?: return
-        if (!name.startsWith(QzxyApiConfig.BLE_NAME_PREFIX, ignoreCase = true)) return
+        val record = result.scanRecord
+        val name = (record?.deviceName ?: result.device.name)?.takeIf { it.isNotBlank() }
+        // 名字可能被系统截断/隐藏，服务 UUID 还在广播包里。两者命中其一即可：
+        // 只认名字会漏设备，只认 UUID 又会把没广播 UUID 的老设备挡在外面。
+        val hasService = record?.serviceUuids?.any {
+            it.uuid.toString().equals(QzxyApiConfig.BLE_SERVICE_UUID, ignoreCase = true)
+        } == true
+        val hasName = name?.startsWith(QzxyApiConfig.BLE_NAME_PREFIX, ignoreCase = true) == true
+        // 名字明确是别的设备时直接排除：透传服务 UUID 是通用 UUID，
+        // 不能因为广播里带了它就认定是本家水表。
+        if (name != null && !hasName) return
+        if (!hasService && !hasName) return
         val address = result.device.address ?: return
         if (!seen.add(address.uppercase(Locale.US))) return
         onDevice?.invoke(
             QzxyScannedDevice(
-                name = name,
+                name = name ?: address,
                 address = address,
                 rssi = result.rssi,
-                deviceKey = extractDeviceKey(name, address),
+                deviceKey = name?.let { extractDeviceKey(it, address) }
+                    ?: address.replace(":", "").uppercase(Locale.US),
             ),
         )
     }
