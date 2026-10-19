@@ -15,39 +15,30 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -62,6 +53,9 @@ import edu.jxslu.schedule.domain.CurriculumCourse
 import edu.jxslu.schedule.domain.CurriculumRules
 import edu.jxslu.schedule.domain.CurriculumYear
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.PageEmpty
+import edu.jxslu.schedule.ui.common.PageRefreshAction
+import edu.jxslu.schedule.ui.common.PageScaffold
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -182,99 +176,77 @@ fun CurriculumScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("培养方案", style = MaterialTheme.typography.titleMedium) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    if (busy) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(end = 14.dp).width(20.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        IconButton(onClick = { runSync(force = true, silent = false) }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "重新导入")
-                        }
-                    }
-                },
+    PageScaffold(
+        title = "培养方案",
+        onBack = onBack,
+        snackbar = snackbar,
+        state = listState,
+        actions = {
+            PageRefreshAction(
+                busy = busy,
+                onClick = { runSync(force = true, silent = false) },
+                label = "重新导入",
             )
         },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { padding ->
-        if (!ready) {
-            // 首帧：什么都不画，比闪一下空态好
-            Spacer(Modifier.fillMaxSize().padding(padding))
-            return@Scaffold
-        }
-        if (courses.isEmpty()) {
-            EmptyState(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                busy = busy,
-                error = lastError,
-                onRetry = { runSync(force = true, silent = false) },
+        // 首帧（Room 未发射）与首次抓取都算加载：原实现首帧画一屏纯空白
+        loading = !ready || (busy && courses.isEmpty()),
+        loadingText = if (!ready) "正在读取培养方案" else "正在从教务获取…",
+        empty = if (!busy && courses.isEmpty()) {
+            PageEmpty(
+                title = "还没有培养方案数据",
+                body = lastError
+                    ?: "在首启引导里登录过教务的话，数据会自动获取；也可以现在手动导入一次。",
+                actionLabel = "重新导入",
+                onAction = { runSync(force = true, silent = false) },
             )
-            return@Scaffold
-        }
-
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (planName.isNotBlank()) {
-                item {
-                    Text(
-                        text = planName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                }
-            }
-
-            item { SummaryCard(courses) }
-
-            years.forEach { year ->
-                item(key = "year-${year.label}") { YearHeader(year) }
-                items(year.terms, key = { "term-${it.term}" }) { term ->
-                    TermCard(
-                        title = "第 ${term.term} 学期 · ${term.label}",
-                        courses = term.courses,
-                        expanded = term.term in expanded,
-                        onToggle = { toggleTerm(term.term, "term-${term.term}") },
-                        onCourseClick = { detailCourse = it },
-                    )
-                }
-            }
-
-            if (unlabeled.isNotEmpty()) {
-                item(key = "unlabeled") {
-                    TermCard(
-                        title = "未标注学期",
-                        courses = unlabeled,
-                        // 兜底区用 0 当展开键；正常数据不出现，出现了说明页面结构在变
-                        expanded = 0 in expanded,
-                        onToggle = { toggleTerm(0, "unlabeled") },
-                        onCourseClick = { detailCourse = it },
-                    )
-                }
-            }
-
+        } else null,
+    ) {
+        if (planName.isNotBlank()) {
             item {
                 Text(
-                    text = "数据来自教务「培养方案」，开设学期为建议修读学期（计划口径），" +
-                        "以教务处正式安排为准。",
+                    text = planName,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(top = 6.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
             }
+        }
+
+        item { SummaryCard(courses) }
+
+        years.forEach { year ->
+            item(key = "year-${year.label}") { YearHeader(year) }
+            items(year.terms, key = { "term-${it.term}" }) { term ->
+                TermCard(
+                    title = "第 ${term.term} 学期 · ${term.label}",
+                    courses = term.courses,
+                    expanded = term.term in expanded,
+                    onToggle = { toggleTerm(term.term, "term-${term.term}") },
+                    onCourseClick = { detailCourse = it },
+                )
+            }
+        }
+
+        if (unlabeled.isNotEmpty()) {
+            item(key = "unlabeled") {
+                TermCard(
+                    title = "未标注学期",
+                    courses = unlabeled,
+                    // 兜底区用 0 当展开键；正常数据不出现，出现了说明页面结构在变
+                    expanded = 0 in expanded,
+                    onToggle = { toggleTerm(0, "unlabeled") },
+                    onCourseClick = { detailCourse = it },
+                )
+            }
+        }
+
+        item {
+            Text(
+                text = "数据来自教务「培养方案」，开设学期为建议修读学期（计划口径），" +
+                    "以教务处正式安排为准。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
     }
 
@@ -528,37 +500,6 @@ private fun DetailRow(label: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
         )
-    }
-}
-
-@Composable
-private fun EmptyState(
-    modifier: Modifier = Modifier,
-    busy: Boolean,
-    error: String?,
-    onRetry: () -> Unit,
-) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 32.dp),
-        ) {
-            Text(
-                text = if (busy) "正在从教务获取…" else "还没有培养方案数据",
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = error
-                    ?: "在首启引导里登录过教务的话，数据会自动获取；也可以现在手动导入一次。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            )
-            if (!busy) {
-                Spacer(Modifier.height(12.dp))
-                TextButton(onClick = onRetry) { Text("重新导入") }
-            }
-        }
     }
 }
 

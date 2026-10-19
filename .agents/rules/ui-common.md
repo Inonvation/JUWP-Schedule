@@ -48,6 +48,21 @@
 - **Snackbar 会压住贴底的主操作**：页面底部若有常驻动作条（如骑行页），把它实测的高度垫进
   `AppSnackbarHost` 的 `Modifier.padding(bottom = …)`，否则提示一来就看不见主按钮。
 
+## 二级页一律走 PageScaffold（2026-10-18 起）
+
+- 二级页（SubpageActivity 承载）**不要自己拼** Scaffold + TopAppBar + LazyColumn，
+  用 ui/common/PageScaffold.kt：列表型 PageScaffold(...)，表单 / 设置型 PageScaffoldColumn(...)。
+- 骨架钉死的口径（此前 14 个页面各写一套，抽查出 2 套顶栏字号、5 套空态、5 种首帧加载、
+  3 档卡片间距、2 套提示宿主）：顶栏标题 	itleMedium（16sp）+ Ellipsis、返回键 AutoMirrored、
+  提示宿主 AppSnackbarHost、页面边距 16dp、卡片间距 10dp、列表内边距 16/12。
+- 三态顺序由骨架保证：**loading > empty > content**，两者都在视口内居中（illParentMaxSize）。
+  loading / empty 是**声明**，不要写进 content 里自己判——那会让两者同时成立，
+  又回到「先渲染空态再跳数据」。
+- 刷新动作统一 PageRefreshAction(busy, onClick)：busy 时换成 20dp 转圈，不是只把图标置灰。
+- 迁移时顺手把该页的 DialogWindowFadeEffect() 挪进弹窗内容槽（见下一节）。
+  样板：ui/scholar/ScholarScreen.kt（原先是裸 SnackbarHost + 首帧一屏纯空白 + 自造空态）。
+- 新页面偏离以上任何一条，要显式传参并在 KDoc 写理由。
+
 ## 卡片观感只有两处定义（描边卡 / 状态英雄卡）
 
 - 卡片观感**只有两处定义**，按「这张卡在页面里是什么角色」选，别自己另写一套：
@@ -173,8 +188,11 @@
   **⚠️ 放 `AlertDialog` 调用外面是死代码（2026-10-08 实测）**：那时 `LocalView` 是页面
   窗口、取不到 dialog window，不会挂上本应用样式——与不调用完全等价（A/B：内容槽内
   `wanim=0x7f…` 本应用样式；外面 = 框架默认 `0x103030a`，与无调用弹窗一致）。
-  **快趣出行那 5 处已挪进内容槽（2026-10-14）**；其余调用点仍是外置旧写法、均未生效，
-  待统一。新弹窗一律按「内容槽第一行」写。首启「全部跳过」确认弹窗（`OnboardingScreen`）
+  **快趣出行那 5 处已挪进内容槽（2026-10-14）**；**其余 16 处外置旧写法已于 2026-10-18
+  全量移正**（AiChat / WheelPicker / WaterScreen / QzxyScreen / WeekScreen / InboxScreen 等），
+  并补齐 8 处从未调用过的（笔记与作业详情的删除/放弃、清空成绩、删除预选、免扰时段、空调定时）。
+  校验方式：DialogWindowFadeEffect() 的下一行若是 AlertDialog( 即为死代码，当前剩余 **0 处**。
+  新弹窗一律按「内容槽第一行」写。首启「全部跳过」确认弹窗（`OnboardingScreen`）
   已是正确写法可参照。
   material3 升到 1.4.0（弹窗自带进出场动画）后，调用点可整体删掉。
 - **锁时长由宿主算好传入，弹窗不做「是否首次」的判断**：

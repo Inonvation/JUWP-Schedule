@@ -193,12 +193,12 @@ private fun WenquActionConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    DialogWindowFadeEffect()
     val isApply = kind == SheetConfirm.APPLY
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isApply) "报名确认" else "取消报名") },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 Text(
                     text = activityName,
@@ -246,11 +246,11 @@ private fun WenquPreregConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("预报名确认") },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 Text(
                     text = activityName,

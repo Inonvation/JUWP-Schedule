@@ -83,6 +83,24 @@ fun courseColor(colorIndex: Int): Color =
     coursePalette[((colorIndex % coursePalette.size) + coursePalette.size) % coursePalette.size]
 
 /**
+ * 课程块上的文字色（2026-10-18）。
+ *
+ * 原先一律 `Color.White`。实测 16 色色板对纯白的对比度是 **2.07–3.45:1**，
+ * 全部低于 WCAG AA 大字下限 3:1（最差的 `#D4B050` 黄只有 2.07:1，白字在真机上已难辨认）；
+ * 同一批颜色配深色文字是 5.05–8.39:1，全部达标。
+ *
+ * 判据取**等对比度点**：设底色相对亮度为 L，白字对比度 = 1.05/(L+0.05)，
+ * 深色字 = (L+0.05)/0.05，两者在 L+0.05 = 0.229 即 **L ≈ 0.179** 处相等。
+ * 高于它用深色字更清楚，低于它用白字。现有调色板 16 色亮度落在 0.255–0.456，
+ * 因此全部走深色字——但函数保留判据，用户改调色板（或未来加深色块）时不会失效。
+ *
+ * 半透明叠加（`GridCellStyle.opacity` 50%–100%）不影响判据：粉彩叠在深色 `surface` 上
+ * 亮度最多掉一半，仍高于 0.179；叠在浅色 `surface` 上只会更亮。
+ */
+fun onCourseColor(accent: Color): Color =
+    if (accent.luminance() > 0.179f) Color(0xFF1A1A1A) else Color.White
+
+/**
  * 网格色块的样式参数（来自「显示设置」，由 WeekScreen 组装后传给各卡片）。
  * 默认值即 WakeUp 基准：6dp 圆角、全不透明、左对齐顶部起排、显示教师、显示虚线描边。
  *
@@ -223,6 +241,8 @@ fun GridCourseCard(
     val location = compactPosition(course.position)
     val align = if (style.centerHorizontal) TextAlign.Center else TextAlign.Start
     val columnAlign = if (style.centerHorizontal) Alignment.CenterHorizontally else Alignment.Start
+    // 文字色跟底色走（见 onCourseColor）：粉彩底配白字只有 2.0–3.5:1
+    val onAccent = onCourseColor(accent)
     // surface 明度区分深浅色：深色下描边收敛，避免白虚线扎眼
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val hasBadge = course.kind != CourseKind.Theory
@@ -256,7 +276,7 @@ fun GridCourseCard(
                     lineHeight = nameSize * 1.2f,
                     fontWeight = FontWeight.SemiBold,
                 ),
-                color = Color.White,
+                color = onAccent,
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = align,
@@ -265,7 +285,7 @@ fun GridCourseCard(
                 Text(
                     text = if (style.showAtSign) "@$location" else location,
                     style = TextStyle(fontSize = roomSize, lineHeight = roomSize * 1.15f),
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = onAccent.copy(alpha = 0.9f),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = align,
@@ -282,7 +302,7 @@ fun GridCourseCard(
                 Text(
                     text = course.teacher,
                     style = TextStyle(fontSize = teacherSize, lineHeight = teacherSize * 1.15f),
-                    color = Color.White.copy(alpha = 0.74f),
+                    color = onAccent.copy(alpha = 0.74f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     // 类型徽章占据右下角，教师名预先让位，避免长教师名压到徽章底下
@@ -343,6 +363,7 @@ fun SingleSectionCard(
 ) {
     val accent = courseColor(course.colorIndex)
     val textSize = if (days > 5) 10.sp else 11.5.sp
+    val onAccent = onCourseColor(accent)
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     Box(
         modifier = modifier
@@ -366,7 +387,7 @@ fun SingleSectionCard(
                 lineHeight = textSize * 1.2f,
                 fontWeight = FontWeight.SemiBold,
             ),
-            color = Color.White,
+            color = onAccent,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = if (style.centerHorizontal) TextAlign.Center else TextAlign.Start,

@@ -38,6 +38,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.QuietWindow
 import edu.jxslu.schedule.domain.QuietWindows
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsNote
@@ -170,7 +171,12 @@ fun QuietHoursScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("删除这个时段？") },
-            text = { Text("「${target.label}」将从列表里移除；预置时段删除后也可重新添加。") },
+            text = {
+                // 弹窗进出场动画：必须在弹窗窗口自己的组合里（内容槽第一行）。
+                // 写在 AlertDialog 外面拿到的是页面窗口，与不调用等价（ui-common.md）。
+                DialogWindowFadeEffect()
+                Text("「${target.label}」将从列表里移除；预置时段删除后也可重新添加。")
+            },
             confirmButton = {
                 TextButton(onClick = {
                     deleting = null

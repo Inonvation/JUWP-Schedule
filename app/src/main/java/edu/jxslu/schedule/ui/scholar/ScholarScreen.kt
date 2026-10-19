@@ -12,26 +12,21 @@ import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
@@ -44,21 +39,18 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -79,6 +71,8 @@ import edu.jxslu.schedule.domain.ScholarProgressRules
 import edu.jxslu.schedule.domain.ScholarTotals
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDefaults
+import edu.jxslu.schedule.ui.common.PageEmpty
+import edu.jxslu.schedule.ui.common.PageScaffold
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
@@ -232,156 +226,145 @@ fun ScholarScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("学业完成情况", style = MaterialTheme.typography.titleMedium) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+    // 局部快照：progress 是委托属性，直接在 when 分支里判空会触发 smart cast 失败
+    val progressNow = progress
+    PageScaffold(
+        title = "学业完成情况",
+        onBack = onBack,
+        snackbar = snackbar,
+        state = listState,
+        actions = {
+            if (busy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    progress?.let { (done, total) ->
+                        Text(
+                            text = "$done/$total",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                        Spacer(Modifier.width(8.dp))
                     }
-                },
-                actions = {
-                    if (busy) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            progress?.let { (done, total) ->
-                                Text(
-                                    text = "$done/$total",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            CircularProgressIndicator(
-                                modifier = Modifier.padding(end = 14.dp).width(20.dp),
-                                strokeWidth = 2.dp,
-                            )
-                        }
-                    } else {
-                        IconButton(onClick = {
-                            searchOpen = !searchOpen
-                            if (!searchOpen) query = ""
-                        }) {
-                            Icon(
-                                imageVector = if (searchOpen) Icons.Filled.Close else Icons.Filled.Search,
-                                contentDescription = if (searchOpen) "关闭搜索" else "搜索课程",
-                            )
-                        }
-                        IconButton(onClick = { runSync(force = true, silent = false) }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "重新导入")
-                        }
-                    }
-                },
-            )
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(end = 14.dp).width(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                }
+            } else {
+                IconButton(onClick = {
+                    searchOpen = !searchOpen
+                    if (!searchOpen) query = ""
+                }) {
+                    Icon(
+                        imageVector = if (searchOpen) Icons.Filled.Close else Icons.Filled.Search,
+                        contentDescription = if (searchOpen) "关闭搜索" else "搜索课程",
+                    )
+                }
+                IconButton(onClick = { runSync(force = true, silent = false) }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "重新导入")
+                }
+            }
         },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { padding ->
-        if (!ready) {
-            // 首帧：什么都不画，比闪一下空态好
-            Spacer(Modifier.fillMaxSize().padding(padding))
-            return@Scaffold
-        }
-        if (groups.isEmpty()) {
-            EmptyState(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                busy = busy,
-                progress = progress,
-                error = lastError,
-                onRetry = { runSync(force = true, silent = false) },
+        // 首帧（Room 未发射）与首次抓取都算加载：原实现首帧画一屏纯空白，
+        // 用户会以为点空了。三态顺序现在由骨架保证，这里只描述状态。
+        loading = !ready || (busy && groups.isEmpty()),
+        loadingText = when {
+            !ready -> "正在读取学业完成情况"
+            progressNow != null -> "正在从教务获取…（${progressNow.first}/${progressNow.second}）"
+            else -> "正在从教务获取…"
+        },
+        empty = if (!busy && groups.isEmpty()) {
+            PageEmpty(
+                title = "还没有学业完成情况数据",
+                body = lastError
+                    ?: "在首启引导里登录过教务的话，数据会自动获取；也可以现在手动导入一次。",
+                actionLabel = "重新导入",
+                onAction = { runSync(force = true, silent = false) },
             )
-            return@Scaffold
-        }
-
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (planName.isNotBlank()) {
-                item {
-                    Text(
-                        text = planName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                }
-            }
-
-            item { DimensionChips(dimension = dimension, onPick = { dimensionId = it.id }) }
-
-            if (searchOpen) {
-                item { CourseSearchField(query = query, onQueryChange = { query = it }) }
-            }
-
-            item { TotalsCard(totals = totals) }
-
-            item {
-                GroupListHeader(
-                    groupCount = visibleGroups.size,
-                    courseCount = matchedCourses.values.sumOf { it.size },
-                    // 搜索时全部强制展开了，这个按钮按下去没有可见效果，索性不给
-                    allExpanded = allExpanded,
-                    onToggleAll = if (searching) null else {
-                        {
-                            if (allExpanded) {
-                                expanded = expanded - dimKeys
-                                fullyExpanded = fullyExpanded - dimKeys
-                            } else {
-                                // 「全部展开」的意思就是要通读，不再留「显示其余」的折行
-                                expanded = expanded + dimKeys
-                                fullyExpanded = fullyExpanded + dimKeys
-                            }
-                        }
-                    },
-                )
-            }
-
-            if (searching && visibleGroups.isEmpty()) {
-                item {
-                    Text(
-                        text = "当前维度下没有匹配「$query」的课程",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(vertical = 20.dp),
-                    )
-                }
-            }
-
-            items(visibleGroups, key = { it.dimension + "|" + it.name }) { group ->
-                val key = "${group.dimension}|${group.name}"
-                GroupCard(
-                    group = group,
-                    courses = matchedCourses[group.name].orEmpty(),
-                    // 搜索时强制展开：收起状态下命中了也看不见，等于白搜
-                    expanded = searching || key in expanded,
-                    // 搜索命中的本来就不多，不再折半；手动展开的走「前 N 门」
-                    showAllCourses = searching || key in fullyExpanded,
-                    onToggle = {
-                        val willExpand = key !in expanded
-                        if (willExpand) {
-                            // 每次展开都从「前 N 门」重新开始：不带上次「显示其余」的状态，
-                            // 否则再展开又是一下子几千 dp
-                            fullyExpanded = fullyExpanded - key
-                            expanded = expanded + key
-                            scrollToReveal(key)
-                        } else {
-                            expanded = expanded - key
-                        }
-                    },
-                    onShowAllCourses = { fullyExpanded = fullyExpanded + key },
-                    onCourseClick = { detailCourse = it },
-                )
-            }
-
+        } else null,
+    ) {
+        if (planName.isNotBlank()) {
             item {
                 Text(
-                    text = "数据来自教务「学业达成情况」，仅供参考；以教务处正式单据为准。",
+                    text = planName,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(top = 6.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
             }
+        }
+
+        item { DimensionChips(dimension = dimension, onPick = { dimensionId = it.id }) }
+
+        if (searchOpen) {
+            item { CourseSearchField(query = query, onQueryChange = { query = it }) }
+        }
+
+        item { TotalsCard(totals = totals) }
+
+        item {
+            GroupListHeader(
+                groupCount = visibleGroups.size,
+                courseCount = matchedCourses.values.sumOf { it.size },
+                // 搜索时全部强制展开了，这个按钮按下去没有可见效果，索性不给
+                allExpanded = allExpanded,
+                onToggleAll = if (searching) null else {
+                    {
+                        if (allExpanded) {
+                            expanded = expanded - dimKeys
+                            fullyExpanded = fullyExpanded - dimKeys
+                        } else {
+                            // 「全部展开」的意思就是要通读，不再留「显示其余」的折行
+                            expanded = expanded + dimKeys
+                            fullyExpanded = fullyExpanded + dimKeys
+                        }
+                    }
+                },
+            )
+        }
+
+        if (searching && visibleGroups.isEmpty()) {
+            item {
+                Text(
+                    text = "当前维度下没有匹配「$query」的课程",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(vertical = 20.dp),
+                )
+            }
+        }
+
+        items(visibleGroups, key = { it.dimension + "|" + it.name }) { group ->
+            val key = "${group.dimension}|${group.name}"
+            GroupCard(
+                group = group,
+                courses = matchedCourses[group.name].orEmpty(),
+                // 搜索时强制展开：收起状态下命中了也看不见，等于白搜
+                expanded = searching || key in expanded,
+                // 搜索命中的本来就不多，不再折半；手动展开的走「前 N 门」
+                showAllCourses = searching || key in fullyExpanded,
+                onToggle = {
+                    val willExpand = key !in expanded
+                    if (willExpand) {
+                        // 每次展开都从「前 N 门」重新开始：不带上次「显示其余」的状态，
+                        // 否则再展开又是一下子几千 dp
+                        fullyExpanded = fullyExpanded - key
+                        expanded = expanded + key
+                        scrollToReveal(key)
+                    } else {
+                        expanded = expanded - key
+                    }
+                },
+                onShowAllCourses = { fullyExpanded = fullyExpanded + key },
+                onCourseClick = { detailCourse = it },
+            )
+        }
+
+        item {
+            Text(
+                text = "数据来自教务「学业达成情况」，仅供参考；以教务处正式单据为准。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
     }
 
@@ -782,42 +765,6 @@ private fun statusColor(status: String): androidx.compose.ui.graphics.Color =
 /** 状态标签：库里存的是 label，未知值原样显示（脏数据也不至于变成空白）。 */
 private fun StatusLabel(status: String): String =
     ScholarCourseStatus.entries.firstOrNull { it.label == status }?.label ?: status
-
-@Composable
-private fun EmptyState(
-    modifier: Modifier = Modifier,
-    busy: Boolean,
-    progress: Pair<Int, Int>?,
-    error: String?,
-    onRetry: () -> Unit,
-) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 32.dp),
-        ) {
-            Text(
-                text = when {
-                    !busy -> "还没有学业完成情况数据"
-                    progress != null -> "正在从教务获取…（${progress.first}/${progress.second}）"
-                    else -> "正在从教务获取…"
-                },
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = error
-                    ?: "在首启引导里登录过教务的话，数据会自动获取；也可以现在手动导入一次。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            )
-            if (!busy) {
-                Spacer(Modifier.height(12.dp))
-                TextButton(onClick = onRetry) { Text("重新导入") }
-            }
-        }
-    }
-}
 
 /**
  * 搜索框。打开搜索就自动聚焦——用户点搜索图标的意思就是要打字，不该再点一次输入框。

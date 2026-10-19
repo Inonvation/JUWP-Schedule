@@ -156,11 +156,11 @@ fun AiHistoryScreen(onBack: () -> Unit) {
     }
 
     confirming?.let { record ->
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirming = null },
             title = { Text("撤销这次应用？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "会把这次应用的改动倒回（课表与日期覆盖在同一事务里）。" +
                         "应用之后你手动改过的行会跳过，事后如实报条数。",

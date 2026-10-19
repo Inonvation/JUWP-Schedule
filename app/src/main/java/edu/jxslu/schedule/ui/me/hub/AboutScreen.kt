@@ -361,11 +361,11 @@ fun AboutScreen(
     // 清理缓存确认：交代清什么与不清什么——清缓存最容易被误解成「数据没了」
     // （范式照抄快趣出行「清除地图缓存」；实现与清单见 data/repo/AppCacheCleaner）。
     if (showClearCache) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { if (!clearingCache) showClearCache = false },
             title = { Text("清理缓存？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     buildString {
                         append("将删除网页缓存与登录状态、离线地图瓦片、崩溃记录、校历图片等临时数据")

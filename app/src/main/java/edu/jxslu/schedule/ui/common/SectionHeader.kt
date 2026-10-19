@@ -29,12 +29,24 @@ fun SectionHeader(
     topPadding: Dp = 18.dp,
     /** 下边距，默认 8dp。 */
     bottomPadding: Dp = 8.dp,
+    /**
+     * 左右内距，默认 16dp。
+     *
+     * 放进已带 16dp `contentPadding` 的列表（如 [PageScaffold] 的 LazyColumn）时传 `0.dp`，
+     * 否则会变成 32dp 双倍缩进——本组件长期只在"无内距容器"里用，这个坑一直没暴露。
+     */
+    horizontalPadding: Dp = 16.dp,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = topPadding, bottom = bottomPadding),
+            .padding(
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = topPadding,
+                bottom = bottomPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

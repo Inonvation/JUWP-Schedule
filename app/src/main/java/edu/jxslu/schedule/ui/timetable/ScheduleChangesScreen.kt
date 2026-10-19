@@ -346,11 +346,11 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
     }
 
     if (confirmingIgnore) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmingIgnore = false },
             title = { Text("忽略这些差异？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "忽略后本轮不再提醒；基线保持不变，教务课表与你课表的差异仍然存在，" +
                         "教务再出新变化时会连同这些一起重新提醒。",

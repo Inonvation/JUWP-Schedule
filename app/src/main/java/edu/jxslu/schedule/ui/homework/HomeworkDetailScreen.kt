@@ -62,6 +62,7 @@ import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.AttachmentStrip
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
@@ -455,7 +456,12 @@ fun HomeworkDetailScreen(
         AlertDialog(
             onDismissRequest = { showDelete = false },
             title = { Text("删除这条作业？") },
-            text = { Text("删除后无法恢复（详情里的图片会一并清理）。") },
+            text = {
+                // 弹窗进出场动画：必须在弹窗窗口自己的组合里（内容槽第一行）。
+                // 写在 AlertDialog 外面拿到的是页面窗口，与不调用等价（ui-common.md）。
+                DialogWindowFadeEffect()
+                Text("删除后无法恢复（详情里的图片会一并清理）。")
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -476,7 +482,12 @@ fun HomeworkDetailScreen(
         AlertDialog(
             onDismissRequest = { showDiscard = false },
             title = { Text("放弃未保存的修改？") },
-            text = { Text("这条作业有改动还没保存。") },
+            text = {
+                // 弹窗进出场动画：必须在弹窗窗口自己的组合里（内容槽第一行）。
+                // 写在 AlertDialog 外面拿到的是页面窗口，与不调用等价（ui-common.md）。
+                DialogWindowFadeEffect()
+                Text("这条作业有改动还没保存。")
+            },
             confirmButton = {
                 TextButton(
                     onClick = {

@@ -224,11 +224,11 @@ fun InboxScreen(onBack: () -> Unit) {
     }
 
     if (confirmingDelete) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmingDelete = false },
             title = { Text("删除所选消息？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "将删除选中的 ${selection.orEmpty().size} 条消息。" +
                         "若同一事件后续又有更新（如余额持续偏低），会以新消息重新出现。",

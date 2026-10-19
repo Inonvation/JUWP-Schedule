@@ -45,6 +45,7 @@ import edu.jxslu.schedule.domain.LocalTimeLike
 import edu.jxslu.schedule.domain.buildTodayState
 import edu.jxslu.schedule.domain.dayLabel
 import edu.jxslu.schedule.ui.common.courseColor
+import edu.jxslu.schedule.ui.common.onCourseColor
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 
@@ -508,7 +509,7 @@ private fun WeekCourseCell(block: WidgetWeekBlock) {
                 text = block.name,
                 style = TextStyle(
                     fontSize = 7.sp,
-                    color = ColorProvider(Color.White),
+                    color = ColorProvider(onCourseColor(accent)),
                 ),
                 maxLines = 2,
                 modifier = GlanceModifier.padding(horizontal = 2.dp, vertical = 1.dp),

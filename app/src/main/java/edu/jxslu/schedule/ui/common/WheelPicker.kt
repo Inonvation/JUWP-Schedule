@@ -200,11 +200,11 @@ fun TimeWheelDialog(
     val hours = HOURS
     val minutes = MINUTES
 
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
+            DialogWindowFadeEffect()
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
                     WheelPicker(
@@ -244,11 +244,11 @@ fun WheelValueDialog(
     onDismiss: () -> Unit,
 ) {
     var selected by remember { mutableIntStateOf(initialIndex.coerceIn(0, (values.size - 1).coerceAtLeast(0))) }
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
+            DialogWindowFadeEffect()
             Box(Modifier.fillMaxWidth()) {
                 WheelPicker(
                     values = values,

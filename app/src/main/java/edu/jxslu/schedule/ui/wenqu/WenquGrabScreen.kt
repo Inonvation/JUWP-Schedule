@@ -525,7 +525,6 @@ private fun WenquGrabHitDialog(
     onPeek: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    DialogWindowFadeEffect()
     val name = activity.title.ifBlank { activity.projectName.ifBlank { "志愿服务活动" } }
     val quota = WenquRules.quotaText(activity.joinNum, activity.peopleNum)
     val applyRange = WenquRules.timeRange(activity.applyStartTime, activity.applyEndTime)
@@ -533,6 +532,7 @@ private fun WenquGrabHitDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("蹲到了") },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 Text(
                     text = name,

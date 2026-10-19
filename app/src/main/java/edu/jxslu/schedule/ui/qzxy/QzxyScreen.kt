@@ -306,11 +306,11 @@ fun QzxyScreen(
 
     // 退出二次确认（2026-09-27）：顶栏图标就在返回键旁边，一次误触就得重新收短信才能回来
     if (confirmLogout) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmLogout = false },
             title = { Text("退出趣智校园登录？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "将清除本机保存的趣智校园会话，今日页卡片回到未登录态。" +
                         "如果水还在流，退出前先点「结束用水」结算。",
@@ -969,11 +969,11 @@ internal fun FailedDetailDialog(
     onOpenDiagnostics: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("失败详情") },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 Text(failure.reason, style = MaterialTheme.typography.bodyMedium)
                 failure.detail?.let { detail ->

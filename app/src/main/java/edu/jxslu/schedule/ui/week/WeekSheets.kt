@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,8 +60,11 @@ fun WeekPickerSheet(
     todayWeek: Int,
     totalWeeks: Int,
     weeksWithCourses: Set<Int>,
+    /** 当前课表名；空白 = 不渲染切换入口。 */
+    timetableName: String,
     onPickWeek: (Int) -> Unit,
     onBackToCurrentWeek: () -> Unit,
+    onSwitchTimetable: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -85,6 +90,36 @@ fun WeekPickerSheet(
                 weeksWithCourses = weeksWithCourses,
                 onPick = onPickWeek,
             )
+            // 顶栏那个「课表名 ▾」在 62dp 顶栏里只能给到 32dp 命中区（2026-10-18）。
+            // 这里补一个真正的 48dp 入口，用户不必瞄准顶栏那半行字。
+            if (timetableName.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClickLabel = "切换课表", onClick = onSwitchTimetable)
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "当前课表：$timetableName",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "切换 ›",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         }
     }
 }
@@ -97,7 +132,9 @@ private fun WeekChipGrid(
     weeksWithCourses: Set<Int>,
     onPick: (Int) -> Unit,
 ) {
-    val perRow = 6
+    // 5 列而不是 6：6 列在 360dp 屏上单格只有约 46.7dp 宽，两个方向都不到 48dp，
+    // 20 周的网格里点错周是常态（2026-10-18）。5 列时单格约 57dp。
+    val perRow = 5
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         (1..totalWeeks.coerceAtLeast(1)).chunked(perRow).forEach { chunk ->
             Row(
@@ -144,7 +181,7 @@ private fun WeekChip(
     }
     Column(
         modifier = modifier
-            .height(44.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             // 「本周」描边：翻走几周后打开面板也找得回今天在哪一周（选中态自绘 primary 底，

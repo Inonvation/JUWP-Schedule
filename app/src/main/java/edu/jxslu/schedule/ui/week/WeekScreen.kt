@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -131,7 +132,7 @@ private val fullDateFmt = DateTimeFormatter.ofPattern("yyyy/M/d")
 // buildGridLayout（WeekGridLayout.kt）产出的 GridLayout（railWidth / dayHeaderHeight 字段）。
 // internal：导出为图片要按「课表页的网格可用高」反推板的行高，顶栏是那笔预算的一段
 //（见 WeekGridLayout.shareBoardGridHeightDp）——单一来源，别在两处各写一个 56。
-internal val TopBarHeight = 56.dp
+internal val TopBarHeight = 62.dp
 
 /**
  * 周课表：小节 × 星期网格。
@@ -584,6 +585,11 @@ fun WeekScreen(
                 pickerOpen = false
                 viewModel.goToToday()
             },
+            timetableName = state.timetableName,
+            onSwitchTimetable = {
+                pickerOpen = false
+                switchOpen = true
+            },
             onDismiss = { pickerOpen = false },
         )
     }
@@ -758,7 +764,6 @@ fun WeekScreen(
 /** 覆盖详情弹窗：日期 + 类型 + 原有安排 + 实际安排 + 说明（DESIGN §4.40）。 */
 @Composable
 private fun OverrideInfoDialog(detail: ScheduleOverrides.Detail, onDismiss: () -> Unit) {
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -774,6 +779,7 @@ private fun OverrideInfoDialog(detail: ScheduleOverrides.Detail, onDismiss: () -
             )
         },
         text = {
+            DialogWindowFadeEffect()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -925,7 +931,14 @@ private fun WeekTopBar(
             // 小字行放两个独立可点区：周次信息 → 周次选择器；课表名 ▾ → 切换课表。
             // 放同一行是空间取舍：顶栏横向放不下第四个常驻入口，而课表名与「第 N 周」
             // 同属"当前看的是哪张课表的哪一周"这一语义层。
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            //
+            // 命中区（2026-10-18）：原来课表名只有文字本身约 14.4dp 高，与"选周次"只隔 8dp，
+            // 而两个弹层语义完全不同。现用 heightIn(32.dp) 撑开——顶栏总高 62dp 撑不下 48dp，
+            // 32dp 是本布局能给的上限；真正的 48dp 入口在周次弹层里的「切换课表」行。
+            Row(
+                modifier = Modifier.heightIn(min = 32.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
                     text = "第 $week 周 ${dayLabels[today.dayOfWeek.value - 1]}",
                     style = MaterialTheme.typography.labelMedium,
@@ -933,21 +946,28 @@ private fun WeekTopBar(
                 )
                 if (timetableName.isNotBlank()) {
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "$timetableName ▾",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
+                    Box(
                         modifier = Modifier
+                            .heightIn(min = 32.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .clickable(
                                 onClickLabel = "切换课表",
                                 role = Role.Button,
                                 onClick = onOpenTimetables,
                             )
-                            .padding(horizontal = 2.dp),
-                    )
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = "$timetableName ▾",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            // 长课表名原来硬切（maxLines 却没有 overflow）
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }

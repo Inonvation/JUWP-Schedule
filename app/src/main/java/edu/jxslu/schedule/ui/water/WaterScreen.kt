@@ -379,11 +379,11 @@ fun WaterScreen(
 
     // 退出二次确认（2026-09-27）：顶栏图标就在返回键旁边，一次误触就得重新收短信才能回来
     if (confirmLogout) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmLogout = false },
             title = { Text("退出胖乖登录？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "将清除本机保存的胖乖 Token 与开水订单快照。" +
                         "今日页开水卡回到未登录态，重新登录需要再收一次短信验证码。",
@@ -1057,11 +1057,11 @@ private fun toResult(item: OrderHistoryItem) = UnlockResult(
 
 @Composable
 private fun ErrorDetailDialog(item: UnlockFlowState.Failed, onDismiss: () -> Unit) {
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("失败详情") },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 Text(item.message, style = MaterialTheme.typography.bodyMedium)
                 Text(
@@ -1088,11 +1088,11 @@ private fun ErrorDetailDialog(item: UnlockFlowState.Failed, onDismiss: () -> Uni
 
 @Composable
 private fun OrderDetailDialog(item: UnlockResult, onDismiss: () -> Unit) {
-    DialogWindowFadeEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("订单详情") },
         text = {
+            DialogWindowFadeEffect()
             Column {
                 DetailRow("订单号", item.orderNo)
                 DetailRow("原价", "¥${item.originPrice}")

@@ -22,10 +22,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -62,11 +65,13 @@ import edu.jxslu.schedule.TranscriptActivity
 import edu.jxslu.schedule.domain.ScoreCalculator
 import edu.jxslu.schedule.domain.ScoreGroups
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.TermSummary
 import edu.jxslu.schedule.domain.YearGroup
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.LoadingHint
@@ -156,6 +161,7 @@ fun ScoreScreen(onBack: () -> Unit) {
     }
 
     var confirmDelete by remember { mutableStateOf(false) }
+    var overflowOpen by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -175,9 +181,31 @@ fun ScoreScreen(onBack: () -> Unit) {
                     }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "从教务导入")
                     }
+                    // 危险操作不进顶栏（2026-10-18）：原来「清空本学期」的垃圾桶与「从教务导入」的
+                    // 刷新图标并排、同色无区分，一次误触就得重导。现在收进溢出菜单，菜单项本身
+                    // 用 error 色做危险提示，确认弹窗仍在。
                     if (!groupByYear && selectedTerm != null && selectedTerm != SCOPE_ALL) {
-                        IconButton(onClick = { confirmDelete = true }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "清空本学期")
+                        Box {
+                            IconButton(onClick = { overflowOpen = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "更多操作")
+                            }
+                            DropdownMenu(
+                                expanded = overflowOpen,
+                                onDismissRequest = { overflowOpen = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "清空本学期成绩",
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    },
+                                    onClick = {
+                                        overflowOpen = false
+                                        confirmDelete = true
+                                    },
+                                )
+                            }
                         }
                     }
                 },
@@ -343,6 +371,7 @@ fun ScoreScreen(onBack: () -> Unit) {
             onDismissRequest = { confirmDelete = false },
             title = { Text("清空本学期成绩？") },
             text = {
+                DialogWindowFadeEffect()
                 Text("将删除「${selectedTerm.orEmpty()}」的全部成绩记录；需要时可重新从教务导入。")
             },
             confirmButton = {
@@ -351,7 +380,15 @@ fun ScoreScreen(onBack: () -> Unit) {
                         val term = selectedTerm
                         confirmDelete = false
                         if (term != null) {
-                            scope.launch { scoreRepo.deleteTerm(term) }
+                            // 不可恢复操作必须有回声：原实现删完什么都不说，
+                            // 列表空掉时分不清"删掉了"还是"加载失败"（2026-10-18）
+                            scope.launch {
+                                val result = runCatching { scoreRepo.deleteTerm(term) }
+                                snackbar.showNotice(
+                                    if (result.isSuccess) "已清空「$term」的成绩"
+                                    else "清空失败，请稍后重试",
+                                )
+                            }
                         }
                     },
                 ) { Text("删除", color = MaterialTheme.colorScheme.error) }

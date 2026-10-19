@@ -341,11 +341,11 @@ fun AiChatScreen(
 
     // ---- 首次隐私确认（声明类弹窗走 M3 AlertDialog + 统一进出场）
     if (privacyPrompt) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = viewModel::dismissPrivacyPrompt,
             title = { Text("使用前确认") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "使用「AI 调课」时，当前课表的课程名 / 时间 / 周次 / 地点、" +
                         "你粘贴的通知与图片会发送到「配置」里填写的服务。" +
@@ -363,11 +363,11 @@ fun AiChatScreen(
 
     // ---- 「当前模型未标记支持图片」的发送前拦截
     if (imagePrompt) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = viewModel::dismissImagePrompt,
             title = { Text("当前模型未标记支持图片") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "你在「配置」里没有开启「支持图片识别」。直接把图片发出去，" +
                         "部分上游会返回 400，或者静默忽略图片——后者更麻烦，你会以为模型看过图了。" +

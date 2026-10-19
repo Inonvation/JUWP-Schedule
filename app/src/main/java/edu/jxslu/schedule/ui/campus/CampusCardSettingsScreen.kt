@@ -641,11 +641,11 @@ fun CampusCardSettingsScreen(
     }
 
     if (confirmDisable) {
-        DialogWindowFadeEffect()
         AlertDialog(
             onDismissRequest = { confirmDisable = false },
             title = { Text("关闭并清除凭证？") },
             text = {
+                DialogWindowFadeEffect()
                 Text(
                     "将清除已保存的学号密码，生活页的付款码与钱包回到未开启状态，寝室电费与余额提醒也会一并关闭" +
                         "（它们都要用这份凭证）；重新开启时需要重新输入并验证。",

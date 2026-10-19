@@ -54,6 +54,7 @@ import edu.jxslu.schedule.domain.SelectionWish
 import edu.jxslu.schedule.domain.SelectionWishes
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.LoadingHint
@@ -275,7 +276,12 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("删除这条预选？") },
-            text = { Text("「${target.nameKeyword}」将从清单里移除。") },
+            text = {
+                // 弹窗进出场动画：必须在弹窗窗口自己的组合里（内容槽第一行）。
+                // 写在 AlertDialog 外面拿到的是页面窗口，与不调用等价（ui-common.md）。
+                DialogWindowFadeEffect()
+                Text("「${target.nameKeyword}」将从清单里移除。")
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
