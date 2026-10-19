@@ -312,7 +312,7 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
 | 项 | 规格 |
 |----|------|
 | 风格 | 极简校园工具；低装饰；信息密度高但不挤 |
-| 色彩 | Material You 动态取色默认开、可关；关掉后按**内置六套配色**之一渲染（2026-09-28，§3.3「主题配色」，默认蓝绿·水电意象）；课程色**按课程名排序顺序分配调色板下标**（16 色，同一周内不同课不撞色——12 色时代理论+实验课名超 12 必回绕撞色，已扩容并带启动自愈重排） |
+| 色彩 | Material You 动态取色**默认关**、可开；默认按**内置六套配色**的**晴空蓝**渲染（2026-10-20，§3.3「主题配色」；水电青保留为可选，原默认）；课程色**按课程名排序顺序分配调色板下标**（16 色，同一周内不同课不撞色——12 色时代理论+实验课名超 12 必回绕撞色，已扩容并带启动自愈重排） |
 | 圆角 | 课表色块 **6dp**；描边卡 **14dp**（出处：`ui/common/AppCard.kt` 的 `AppCardDefaults.Shape`）；状态英雄卡 **16dp**（出处：`ui/common/StatusHeroCard.kt` 的 `StatusHeroCardDefaults.Shape`） |
 | 状态英雄卡（2026-10-16） | 卡片观感的**第二种官方规格**（第一种是下面的描边卡），`ui/common/StatusHeroCard.kt` 的 `StatusHeroCard` + `HeroTone`：**实心 tonal 底 + 无描边 + 16dp 圆角**，用于「页面此刻正在发生的事」（首个落地：U净 在案订单卡）。**一屏只该有一张**。语气四档 Primary / Neutral / Success / Error，底色映射只在 `heroToneContainer` 一处、强调色只在 `heroToneAccent` 一处，语气变化走 220ms 底色过渡；内容排版归调用方（组件只管底 / 圆角 / 内间距 16/14dp） |
 | 卡片（2026-09-22 统一） | 描边卡统一走 `AppCard` / `AppCardRow`：14dp 圆角、1dp `outlineVariant` 描边、`surface` 底、内间距 14/12dp、外间距由调用方的 `modifier` 给。此前两套并存——12dp + `outline` 22%（笔记 / 作业 / 课程库 / 今日页作业卡）与 14dp + `outlineVariant`（今日页底部服务卡），同屏两种观感，且 22% 描边在浅色主题下几乎看不见。已迁移：今日页全部卡片、笔记·课件与作业的全部页面。未迁移（各自私有 shape，后续按需）：水卡页、付款码页、流水页、成绩页、设置类页面。改规格只动 `AppCardDefaults`；点击涟漪与触感由 `AppCard` 统一处理，调用方不要再自己包 `clickable`。`highlighted` 的三处颜色（底 / 描边色 / 描边宽）自 2026-10-16 起走 180ms 过渡，选中与取消选中不再突变 | 
@@ -638,23 +638,26 @@ action/category：小组件点击与通知跳板都不带，它们该正常起�
   （`ScheduleRepository.strongReminderVibration`，`baseDisplayPrefs` 的 combine 已满员
   不进合并模型），提醒链在发通知前 `first()` 读一次传入；其余提醒（U净 / 余额 /
   调课 / 选课）没接直接震动，不受此开关影响
-- **主题配色**（2026-09-28，`domain/ThemePalette` + `ui/theme/Palettes.kt`）：
-  内置六套——水电青（默认，即品牌色）· 晴空蓝 · 暮山紫 · 樱花粉 · 落日橙 · 森野绿，
+- **主题配色**（2026-09-28；2026-10-20 默认改晴空蓝，`domain/ThemePalette` + `ui/theme/Palettes.kt`）：
+  内置六套——晴空蓝（默认）· 水电青（原品牌色）· 暮山紫 · 樱花粉 · 落日橙 · 森野绿，
   每套深浅两份方案，**全角色落值**（2026-09-28 补齐：此前每套只填 9 个角色，
   surfaceContainer* / onSurfaceVariant / outline* / tertiary / secondaryContainer /
   inverse* 全落到 M3 紫色基线——卡片、弹层、次要文字、分割线、Snackbar 与主色系不搭，
   用户反馈「和各种组件都不搭配」；补的值由各配色主色按 M3 TONALSPOT 标准色板生成
   （material-color-utilities，contrast 0，浅色 primary 作种子），色相与主色同源，
   原 9 角色保持不变；容器亮度单调与关键对比度由 `PaletteContractTest` 钉住，单测红着别合入）。
-  **动态取色优先**：开着时配色被忽略、设置行置灰提示「关闭动态取色后生效」；
+  **动态取色默认关**：开着时配色被忽略、设置行置灰提示「关闭动态取色后生效」；
   关掉后按所选配色渲染。选中即写偏好（DataStore 键 `theme_palette`，存稳定 id，
-  未知值回落水电青——单测钉死），**实时生效**（`JuwRoot` 统一 collect，含弹层窗口；
+  未知值回落晴空蓝——单测钉死），**实时生效**（`JuwRoot` 统一 collect，含弹层窗口；
   每个窗口首帧用进程级 `ThemeSnapshot` 兜底——二级页每次新建都要等 DataStore
   第一份数据，没有它进「通用设置」会先闪默认主题再跳到所选配色，2026-09-28 修复）。
   选择器 = 色卡弹层（`ImeAwareModalBottomSheet`）：每行 4 色点（主色/容器/次要/底色，
   浅色系）+ 名称 + 选中勾，选中不关层、可连续试色。小组件三卡（合并卡 + 开水两卡）
   的胶囊/「用水中」强调色跟随所选配色的**浅色主色**（白字对比度各配色都够，不随系统
-  深浅切换），切换配色即时重渲染（`LifeWidgetSync.onThemePaletteChanged`，零网络）
+  深浅切换），切换配色即时重渲染（`LifeWidgetSync.onThemePaletteChanged`，零网络）。
+  **配色来源**：页面颜色只从 `MaterialTheme.colorScheme` 取；禁止写死 `PrimaryLight` /
+  十六进制品牌色。语义色（成功/警告/错误）、课程色、第三方品牌色、地图定位色、
+  功能图标类别色与桌面图标除外。
 - **深色适配**（2026-09-29）：Compose 里 `Text` / `Icon` 不写 `color` / `tint` 时读
   `LocalContentColor`，而它唯一的正式提供方是 M3 的 `Surface`（`Scaffold` / `Card` /
   `Button` 内部都有）。页面根节点只用 `Modifier.background` 画底色时没人提供，正文落回

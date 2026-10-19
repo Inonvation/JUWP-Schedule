@@ -24,6 +24,7 @@
 4) 胖乖 API 以本地 F:\light-life-v3.0 为准，禁止实现刷积分
 5) 改导航或课表领域模型：写代码 → 编译/装机 → 最后同步 DESIGN.md 对应章节
 6) 改完代码要能说明如何在 Android Studio 跑起来
+7) 配色默认晴空蓝；界面颜色只从 MaterialTheme.colorScheme 取，禁止写死品牌色/十六进制
 ```
 
 ---

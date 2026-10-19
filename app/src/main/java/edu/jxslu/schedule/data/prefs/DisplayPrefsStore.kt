@@ -71,10 +71,13 @@ enum class ReminderKeyKind(val prefix: String) {
 data class DisplayPrefs(
     /** 应用主题模式。System = 跟随系统深浅色。全局项。 */
     val themeMode: ThemeMode = ThemeMode.System,
-    /** 动态取色（Material You）。全局项；false = 用回内置配色方案。 */
-    val dynamicColor: Boolean = true,
-    /** 内置主题配色（DESIGN §3.3）。全局项；动态取色开着时被忽略。 */
-    val themePalette: ThemePalette = ThemePalette.Brand,
+    /**
+     * 动态取色（Material You）。全局项；false = 用回内置配色方案。
+     * **默认关**（2026-10-20）：默认观感固定为晴空蓝，想跟壁纸的用户再打开。
+     */
+    val dynamicColor: Boolean = false,
+    /** 内置主题配色（DESIGN §3.3）。全局项；动态取色开着时被忽略。默认晴空蓝。 */
+    val themePalette: ThemePalette = ThemePalette.SkyBlue,
     /**
      * 悬浮导航栏（DESIGN §4.22）。全局项，**默认关**：底栏半透明磨砂，
      * 课表页背景图透到屏幕底部。关 = 保持原样（不透明底栏）。
@@ -390,12 +393,12 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_FONT_SCALE_LOCKED] ?: true
     }
 
-    /** 动态取色（Material You）。全局项，默认开；关 = 用回内置配色方案。 */
+    /** 动态取色（Material You）。全局项，默认关；关 = 用回内置配色方案。 */
     val dynamicColor: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_DYNAMIC_COLOR] ?: true
+        p[KEY_DYNAMIC_COLOR] ?: false
     }
 
-    /** 内置主题配色。全局项，默认品牌青；动态取色开着时忽略本项。 */
+    /** 内置主题配色。全局项，默认晴空蓝；动态取色开着时忽略本项。 */
     val themePalette: Flow<ThemePalette> = context.displayDataStore.data.map { p ->
         ThemePalette.fromId(p[KEY_THEME_PALETTE])
     }

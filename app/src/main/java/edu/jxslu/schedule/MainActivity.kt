@@ -329,7 +329,7 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
         ThemeMode.Dark -> true
         ThemeMode.System -> isSystemInDarkTheme()
     }
-    // 动态取色开着（默认）跟壁纸；关掉后用内置配色里选中的那套，品牌青是默认值
+    // 动态取色默认关；关着时用内置配色里选中的那套（默认晴空蓝），开着才跟壁纸
     JuwTheme(
         darkTheme = darkTheme,
         dynamicColor = dynamicColor,

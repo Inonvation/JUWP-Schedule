@@ -2,6 +2,7 @@ package edu.jxslu.schedule.data
 
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.domain.StartPage
+import edu.jxslu.schedule.domain.ThemePalette
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,5 +39,12 @@ class DisplayPrefsDefaultsTest {
     @Test
     fun startPageDefaultsToToday() {
         assertEquals("启动页默认今日（DESIGN §3.3）", StartPage.Today, DisplayPrefs().startPage)
+    }
+
+    @Test
+    fun themeDefaultsToSkyBlueWithoutDynamicColor() {
+        val prefs = DisplayPrefs()
+        assertFalse("动态取色默认关（默认观感固定晴空蓝）", prefs.dynamicColor)
+        assertEquals("默认配色晴空蓝（DESIGN §3.3）", ThemePalette.SkyBlue, prefs.themePalette)
     }
 }

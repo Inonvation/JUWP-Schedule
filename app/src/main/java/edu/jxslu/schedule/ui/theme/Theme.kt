@@ -14,11 +14,11 @@ import edu.jxslu.schedule.domain.ThemePalette
 @Composable
 fun JuwTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
-    palette: ThemePalette = ThemePalette.Brand,
+    dynamicColor: Boolean = false,
+    palette: ThemePalette = ThemePalette.SkyBlue,
     content: @Composable () -> Unit,
 ) {
-    // 优先级：动态取色（Material You，Android 12+）> 内置配色 > 品牌青兜底
+    // 优先级：动态取色（Material You，Android 12+，默认关）> 内置配色 > 晴空蓝兜底
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current

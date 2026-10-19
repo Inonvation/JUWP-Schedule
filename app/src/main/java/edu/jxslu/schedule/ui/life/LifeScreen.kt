@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,10 +50,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -104,7 +107,6 @@ import me.rerere.hugeicons.stroke.Settings01
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.graphics.Brush
-import edu.jxslu.schedule.ui.theme.PrimaryLight
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.Analytics01
 import me.rerere.hugeicons.stroke.HeartHandshake
@@ -680,6 +682,27 @@ internal fun openExternal(
 }
 
 /**
+ * 钱包 hero 卡的深浅角色：浅色 primary/onPrimary，深色 primaryContainer/onPrimaryContainer。
+ * 卡片本体与胶囊按钮共用这一份，避免两边角色漂移。
+ */
+private data class WalletHeroTone(
+    val top: Color,
+    val on: Color,
+    val dark: Boolean,
+)
+
+@Composable
+private fun walletHeroTone(): WalletHeroTone {
+    val scheme = MaterialTheme.colorScheme
+    val dark = scheme.background.luminance() < 0.5f
+    return WalletHeroTone(
+        top = if (dark) scheme.primaryContainer else scheme.primary,
+        on = if (dark) scheme.onPrimaryContainer else scheme.onPrimary,
+        dark = dark,
+    )
+}
+
+/**
  * 我的钱包卡（2026-10-13 改版）：一卡通余额做主视觉的 hero 卡。
  *
  * 版式（参考图二）：一卡通余额大字 → 「电子账户 / 寝室电费」副行 → 充值 · 付款码 · 账单
@@ -704,11 +727,13 @@ private fun WalletHeroCard(
     onPayCode: () -> Unit,
     onStatement: () -> Unit,
 ) {
-    // hero 卡固定走品牌青、不吃动态取色（2026-10-13 用户口径）：钱包是主视觉，方案稿定的
-    // 就是这套青；跟随壁纸变蓝 / 变紫会和整页其它卡片脱节
-    val heroTop = PrimaryLight
-    val heroBottom = lerp(PrimaryLight, Color.Black, 0.22f)
-    val onHero = Color.White
+    // hero 卡跟随主题（2026-10-20 用户口径，取代 2026-10-13 的固定品牌青）：
+    // 浅色用 primary/onPrimary，深色用 primaryContainer/onPrimaryContainer；
+    // 动态取色与内置六套配色都自动生效，不再写死品牌色。
+    val tone = walletHeroTone()
+    val heroTop = tone.top
+    val heroBottom = lerp(heroTop, Color.Black, if (tone.dark) 0.18f else 0.22f)
+    val onHero = tone.on
     val haptics = rememberAppHaptics()
     var showNote by remember { mutableStateOf(false) }
 
@@ -767,17 +792,22 @@ private fun WalletHeroCard(
                 Text(
                     text = if (enabled) "一卡通余额" else "一卡通未开启",
                     style = MaterialTheme.typography.bodySmall,
-                    color = onHero.copy(alpha = 0.8f),
+                    color = onHero,
                 )
-                Spacer(Modifier.weight(1f))
                 if (metaText != null) {
                     Text(
                         text = metaText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = onHero.copy(alpha = 0.7f),
+                        color = onHero,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp),
                     )
+                } else {
+                    Spacer(Modifier.weight(1f))
                 }
                 // 「钱包说明」入口（2026-10-13 补回：hero 化时误删，2026-09-24 用户要求的口径）
                 if (enabled) {
@@ -795,7 +825,7 @@ private fun WalletHeroCard(
                         Icon(
                             HugeIcons.InformationCircle,
                             contentDescription = null,
-                            tint = onHero.copy(alpha = 0.75f),
+                            tint = onHero.copy(alpha = 0.9f),
                             modifier = Modifier.size(15.dp),
                         )
                     }
@@ -810,26 +840,53 @@ private fun WalletHeroCard(
                 maxLines = 1,
             )
             Spacer(Modifier.height(9.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = accountText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = onHero.copy(alpha = 0.92f),
+                    color = onHero,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(20.dp)
+                        .background(onHero.copy(alpha = 0.25f)),
+                )
+                Spacer(Modifier.width(12.dp))
                 Text(
                     text = powerText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = onHero.copy(alpha = 0.92f),
+                    color = onHero,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1.4f),
                 )
             }
             Spacer(Modifier.height(15.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HeroPillButton(if (enabled) "充值" else "去开启", HugeIcons.Add01, Modifier.weight(1f), onRecharge)
-                HeroPillButton("付款码", HugeIcons.QrCodeScan, Modifier.weight(1f), onPayCode)
-                HeroPillButton("账单", HugeIcons.Receipt, Modifier.weight(1f), onStatement)
+                HeroPillButton(
+                    label = if (enabled) "充值" else "去开启",
+                    icon = HugeIcons.Add01,
+                    modifier = Modifier.weight(1f),
+                    onClick = onRecharge,
+                )
+                HeroPillButton(
+                    label = "付款码",
+                    icon = HugeIcons.QrCodeScan,
+                    modifier = Modifier.weight(1f),
+                    emphasized = true,
+                    onClick = onPayCode,
+                )
+                HeroPillButton(
+                    label = "账单",
+                    icon = HugeIcons.Receipt,
+                    modifier = Modifier.weight(1f),
+                    onClick = onStatement,
+                )
             }
         }
     }
@@ -852,31 +909,46 @@ private fun WalletHeroCard(
     }
 }
 
-/** 钱包 hero 卡上的胶囊按钮：半透明白底 + 图标 + 文字。 */
+/**
+ * 钱包 hero 卡上的胶囊按钮。
+ *
+ * 强调项（付款码）用实心 on 色底 + hero 底色字；其余用描边。
+ * 不再用「半透明白底 + 白字」：浅色主题下这种组合对比度只有约 3.6:1。
+ */
 @Composable
 private fun HeroPillButton(
     label: String,
     icon: ImageVector,
     modifier: Modifier = Modifier,
+    emphasized: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val onHero = Color.White
+    val tone = walletHeroTone()
+    val contentColor = if (emphasized) tone.top else tone.on
+    val shape = RoundedCornerShape(22.dp)
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(onHero.copy(alpha = 0.17f))
+            .clip(shape)
+            .background(if (emphasized) tone.on else Color.Transparent)
+            .then(
+                if (emphasized) {
+                    Modifier
+                } else {
+                    Modifier.border(1.dp, tone.on.copy(alpha = 0.45f), shape)
+                },
+            )
             .clickable(onClickLabel = label) { onClick() }
             .padding(vertical = 9.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = onHero, modifier = Modifier.size(17.dp))
+        Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(6.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
-            color = onHero,
+            color = contentColor,
             maxLines = 1,
         )
     }

@@ -2,6 +2,12 @@
 
 作用域：新增或修改弹层、卡片、区块标题、一次性提示时读。视觉规格见 DESIGN §3.2。
 
+## 配色只从主题取
+
+- 页面颜色只从 `MaterialTheme.colorScheme` 取；禁止写死 `PrimaryLight`、`Color(0xFF...)` 品牌色。
+  课程色、语义色（成功/警告/错误）、第三方品牌、地图定位、功能图标类别色与桌面图标除外。
+- 默认配色晴空蓝（`ThemePalette.SkyBlue`）；新增界面按晴空蓝出方案。
+
 ## 含输入框的弹层一律用 ImeAwareModalBottomSheet
 
 - **含输入框的弹层一律用 `ui/common/SheetDismissIme.kt` 的 `ImeAwareModalBottomSheet`**
