@@ -60,7 +60,7 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 | Gradle Wrapper | **8.11.1** |
 | AGP | **8.9.1**（androidx.core 1.17.0 的 AAR 下限，也是 compileSdk 36 的下限） |
 | Kotlin | **2.1.21**（compose / serialization 同版本；KSP `2.1.21-2.0.1`） |
-| SDK 档位 | compileSdk **36** / targetSdk **36**（Android 16）。免费倒计时通知的「灵动岛」用的是系统标准 Live Updates，`setRequestPromotedOngoing` / `setShortCriticalText` 要 compileSdk 36；本机已装 android-36 + build-tools 36.0.0 |
+| SDK 档位 | compileSdk **36** / targetSdk **36**（Android 16）。免费倒计时通知的「灵动岛」用的是系统标准 Live Updates，`setRequestPromotedOngoing` 要 compileSdk 36；卡片头部秒数用系统 chronometer，芯片仍用 `setShortCriticalText`（HyperOS 3 不显示芯片 chronometer）；本机已装 android-36 + build-tools 36.0.0 |
 | AndroidX core | **1.17.0**（两个 Live Updates compat API 从 1.17 起）。**别升到 1.18+**：那要 compileSdk 36.1 |
 | Room | **2.7.1**（2.6 + Kotlin 2.1 会 KSP `unexpected jvm signature V`） |
 | Room DB | **v20**。表：`courses`（含 `kind` / `remark` / `timetableId`）、`time_slots`、`semester_config`、`timetables`（v14 起 `term` 列记数据学期，是详情查教材的钥匙）、`scores`、`scholar_groups` / `scholar_courses`（学业完成情况，v13）、`ykt_turnovers`（v15 起 `fromAccount` / `accType` 记交易账户，消费流水「充值到哪」的钥匙）、`notes`、`homework`、`power_readings`（含 `roomId` 数字 id 与 `roomName` 房号显示名，两者别混用）、`textbooks`（教材，v14，挂 courseName 带 term）、`ride_records`（本机骑行记录，v16，只记本机用车那条链路）、`course_selections`（选课记录，v17，按学期替换，DESIGN §4.35）、`inbox_messages`（收件箱，v18，§4.38）、`date_overrides`（日期覆盖：调休 / 停课，v19，§4.40）、`curriculum_courses`（培养方案课程设置，v20，§4.41）。迁移逐级 `ALTER TABLE` / `CREATE TABLE`，**禁止**改 destructive；实体 `@Index` 必须与迁移 `CREATE INDEX` 对齐，漏声明会迁移校验崩溃；**实体带 Kotlin 默认值的列，迁移建表必须写 `DEFAULT`**（v7→v8 remark、v11→v12 roomName、v13→v14 教材展示列同坑；v19 的 `note` 特意不给 Kotlin 默认值来绕开这条） |

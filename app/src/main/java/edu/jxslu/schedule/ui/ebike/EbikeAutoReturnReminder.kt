@@ -153,6 +153,7 @@ object EbikeAutoReturnReminder {
         when (result) {
             is AutoReturnResult.Returned -> {
                 AppKvcxSideEffects.recordRide(result.summary)
+                EbikeRideSignal.notifyEnded("已自动还车，订单已结束")
                 EbikeAutoReturnNotifier.postSuccess(
                     app,
                     EbikeAutoReturn.successText(
@@ -163,7 +164,10 @@ object EbikeAutoReturnReminder {
                 )
             }
             // 订单已不在（其他端还了 / 已结束）：收计时、不打扰——还车的动作不是我们做的
-            AutoReturnResult.AlreadyEnded -> AppKvcxSideEffects.endRideAndBurn()
+            AutoReturnResult.AlreadyEnded -> {
+                AppKvcxSideEffects.endRideAndBurn()
+                EbikeRideSignal.notifyEnded("订单已在其他端结束")
+            }
             AutoReturnResult.NotLoggedIn ->
                 EbikeAutoReturnNotifier.postFailure(app, EbikeAutoReturn.NOT_LOGGED_IN_TEXT, strongVibration)
             is AutoReturnResult.Failed -> Unit // 每次失败都已在 onAttemptFailed 里通知过

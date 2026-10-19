@@ -239,24 +239,25 @@ fun RideScreen(
     }
     /**
      * 在骑这辆车的坐标（GCJ-02）：优先订单快照里的实时坐标，其次开锁那一刻附近查询里的
-     * 同一辆车。用来判断"人是不是就在车边"——远程开锁时镜头与「我的车」标记都不该跟到
-     * 人身上（2026-10-19 用户报「点了地图上很远的车开锁，视角和车标却跑到我的位置」）。
+     * 同一辆车。只用于判断"人是不是就在车边"（镜头是否跟随）；「我的车」标记始终画在
+     * 这个坐标上，不跟用户走。
      */
     val rideBikePos = remember(ride, state.clusters, state.highlightedCar) {
         rideBikePosition(ride, state)
     }
     /**
-     * 「我的车」标记是否并到蓝点（骑行中车随人走，服务端坐标只是拉取那一刻的快照）。
+     * 骑行开始时镜头是否已经跟随用户（2026-10-19 修订）。
      *
-     * 开锁时人就在车边才成立，且**一旦成立就保持到订单结束**——骑走之后人车距离必然变大，
-     * 不能因此把标记甩回开锁点。新订单 / 还车后重新判定。
+     * 只控制**镜头**；「我的车」标记始终画在车辆自己的坐标上（用户 2026-10-19 报
+     * 「开锁时车标跳到我的位置、锁车后才回准确位置」）。开锁时人就在车边才打开跟随；
+     * 远程开锁后走过去，也在这个 false→true 的转折点打开。新订单 / 还车后重新判定。
      *
      * 用 `rememberSaveable(ride?.carNum)` 而不是普通 `remember`：转屏 / 改字号 / 深色切换
      * 会重建 Activity，普通 `remember` 会把闩丢掉；重建时若订单坐标是开锁前的旧值，
-     * 「人已经骑走」会被误判成「远程开锁」，车标被甩回开锁点。按车号做输入，
+     * 「人已经骑走」会被误判成「远程开锁」，镜头跟随会重新判定。按车号做输入，
      * 换车 / 还车后仍会自动重判。
      */
-    var rideMarkerFollowsUser by rememberSaveable(ride?.carNum) { mutableStateOf(false) }
+    var rideCameraFollowArmed by rememberSaveable(ride?.carNum) { mutableStateOf(false) }
     /**
      * 最近一次拿到的车辆坐标：骑行中列表换批（刷新 / 拖动停稳）后同一辆车可能不在新结果里，
      * 订单快照又可能缺 `lat/lng`——留一份最后已知坐标，车标不会凭空消失。
@@ -270,14 +271,14 @@ fun RideScreen(
         if (rideBike != null) lastRideBikePos = rideBike
     }
     LaunchedEffect(ride?.carNum, ride?.locked, rideBike, state.userLat, state.userLng) {
-        if (rideMarkerFollowsUser || ride?.locked != false) return@LaunchedEffect
+        if (rideCameraFollowArmed || ride?.locked != false) return@LaunchedEffect
         val bike = rideBike ?: return@LaunchedEffect
         val userLat = state.userLat ?: return@LaunchedEffect
         val userLng = state.userLng ?: return@LaunchedEffect
         if (BikeNearby.distanceMeters(userLat, userLng, bike.first, bike.second) <=
             RIDE_NEAR_USER_METERS
         ) {
-            rideMarkerFollowsUser = true
+            rideCameraFollowArmed = true
             // 远程开锁后走到车边：从这里开始镜头跟着用户（phase 那一次按"人还不在车边"
             // 没打开跟随）。只在这个 false → true 的转折点触发，用户之后拖图仍能退出跟随。
             if (phase == RidePhase.Riding) viewModel.startFollowing()
@@ -593,12 +594,11 @@ fun RideScreen(
             spotGlyph = Color(0xFFFFFFFF).toArgb(),
         )
     }
-    // 「我的车」坐标口径：开锁时人就在车边且车未锁 → 并到蓝点（骑行中车随人走，服务端
-    // 坐标只是拉取那一刻的快照）；远程开锁 / 已锁 → 用车辆自己的坐标，别把车标画到人身上。
-    val rideFollowsUser = rideMarkerFollowsUser && ride?.locked == false &&
-        state.userLat != null && state.userLng != null
-    val rideMarkerLat = if (rideFollowsUser) state.userLat else rideBike?.first
-    val rideMarkerLng = if (rideFollowsUser) state.userLng else rideBike?.second
+    // 「我的车」坐标口径（2026-10-19 用户修订）：始终画车辆自己的坐标；不再并到蓝点。
+    // 旧版在「开锁时人就在车边」后把车标画到用户坐标，用户看到的是开锁瞬间车标跳到
+    // 自己位置、锁车后才回准确位置。镜头跟随是另一件事（见上面的 phase effect）。
+    val rideMarkerLat = rideBike?.first
+    val rideMarkerLng = rideBike?.second
     /**
      * 页面底部常驻块（动作区 + 免责）的**实时**实测高度（含导航栏内边距）。
      *
@@ -1245,11 +1245,11 @@ private fun KvcxConfirmDialog(
 private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里允许位置信息，或手动拖动地图找车"
 
 /**
- * 开锁时「人就在车边」的判定半径（米）：骑行开始的镜头跟随、以及「我的车」标记并到蓝点，
- * 都以它为准。
+ * 开锁时「人就在车边」的判定半径（米）：只用于骑行开始的镜头跟随。
  *
- * 远程开锁（地图上点了几百米外的车）不该把视角和车标拽到人身上；站在车边开锁时
- * GPS 误差通常几十米内，100 米足够宽容，又不会把"同一片校区但不在车边"算进来。
+ * 远程开锁（地图上点了几百米外的车）不该把视角拽到人身上；站在车边开锁时 GPS 误差
+ * 通常几十米内，100 米足够宽容，又不会把"同一片校区但不在车边"算进来。「我的车」标记
+ * 始终用车辆坐标，不受这个半径影响。
  */
 private const val RIDE_NEAR_USER_METERS = 100.0
 

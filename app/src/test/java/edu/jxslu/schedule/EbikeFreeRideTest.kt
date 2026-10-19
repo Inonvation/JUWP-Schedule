@@ -222,7 +222,7 @@ class EbikeFreeRideTest {
     @Test
     fun `灵动岛芯片文案压到七字符内`() {
         // Android 16 的 Live Update 芯片宽 96dp，**超过 7 个字符就可能只留图标**
-        // （官方芯片规则），所以这条文案不带「免费」二字（2026-10-16）。
+        // （官方芯片规则），所以这条文案不带「免费」二字。
         assertEquals("剩15:00", EbikeFreeRide.countdownChipText(start, start))
         assertEquals("剩0:30", EbikeFreeRide.countdownChipText(start, minutesAfterStart(14) + 30_000L))
         // 到点兜底与 countdownText 同源，不出现负数

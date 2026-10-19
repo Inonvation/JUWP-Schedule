@@ -325,8 +325,10 @@
             android:exported="false" />
 
         <!-- 免费时长常驻倒计时（DESIGN §3.9，2026-09-24）：前台服务，只在「开关开 + 计时中」
-             这 15 分钟里存在。倒计时文案由服务每秒重发；Android 16+ 上这条通知被系统提升为
-             灵动岛（Live Update，见 POST_PROMOTED_NOTIFICATIONS 那条权限）。
+             这 15 分钟里存在。卡片头部由系统 chronometer 走秒；芯片文案与进度条每秒
+             重发一次（HyperOS 3 的芯片不显示 chronometer，只能靠每秒重发让岛上逐秒走）。
+             Android 16+ 上这条通知被系统
+             提升为灵动岛（Live Update，见 POST_PROMOTED_NOTIFICATIONS 那条权限）。
              specialUse 的 use case 必须写在 <property> 里（系统按它审核用途）。 -->
         <service
             android:name=".ui.ebike.EbikeFreeRideService"

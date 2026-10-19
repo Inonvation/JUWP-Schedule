@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -81,6 +82,9 @@ class KvcxViewModel(
     private val _events = Channel<KvcxEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
+    /** 骑行查询序号：外部结束订单 / 新查询发起时 +1，晚到的旧包直接丢弃。 */
+    private var rideQuerySeq = 0L
+
     /**
      * 本机骑行记录（DESIGN §3.9「最近骑行」）：最近的在前。
      * 页面不可见时不订阅（WhileSubscribed），退出登录也照样显示——它是本机数据。
@@ -100,6 +104,14 @@ class KvcxViewModel(
         _events.trySend(KvcxEvent.Notice(text, tone))
 
     init {
+        // 自动还车 Worker 结束订单后，本页的 ride 不会自己变——订阅进程内信号清卡
+        viewModelScope.launch {
+            EbikeRideSignal.ended.collect { text ->
+                rideQuerySeq++
+                _uiState.update { it.copy(ride = null, querying = false) }
+                if (text.isNotBlank()) notice(text, NoticeTone.Success)
+            }
+        }
         // 登录态跨窗口共享（hub 与本页各持一份 VM）：以仓库那条流为准
         viewModelScope.launch {
             session.loggedIn.collect { loggedIn ->
@@ -108,6 +120,7 @@ class KvcxViewModel(
                     if (loggedIn) {
                         it.copy(loggedIn = true, accountMobile = session.currentMobile.orEmpty())
                     } else {
+                        rideQuerySeq++ // 退出登录：作废还在飞的骑行查询，别把旧卡写回来
                         KvcxUiState() // 退出：表单与骑行卡一起归零
                     }
                 }
@@ -170,6 +183,7 @@ class KvcxViewModel(
     }
 
     fun logout() {
+        rideQuerySeq++
         session.logout()
         // 退出登录后凭证没了：自动还车排着也执行不了，撤销（reconcile 内部按登录态判断）
         viewModelScope.launch {
@@ -184,13 +198,16 @@ class KvcxViewModel(
     fun refreshRide() = viewModelScope.launch {
         if (!session.loggedIn.value) return@launch
         if (!accountMode()) return@launch
+        val seq = ++rideQuerySeq
         _uiState.update { it.copy(querying = true) }
         runCatching { session.queryUnderway() }
             .onSuccess { ride ->
+                if (seq != rideQuerySeq) return@onSuccess
                 _uiState.update { it.copy(querying = false, ride = ride) }
                 if (ride == null) notice("当前没有进行中的骑行", NoticeTone.Info)
             }
             .onFailure {
+                if (seq != rideQuerySeq) return@onFailure
                 _uiState.update { it.copy(querying = false) }
                 notice(queryErrorText(it), NoticeTone.Error)
             }

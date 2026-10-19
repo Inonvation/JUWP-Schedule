@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -413,10 +414,15 @@ class BikeMapViewModel(
     private var locatedOnce = false
 
     init {
+        // 自动还车 Worker 结束订单后，页面状态不会自己变——订阅进程内信号把骑行卡收起
+        // （2026-10-19 用户报「自动还车后卡片还在，只是没有时长条」）。
+        viewModelScope.launch {
+            EbikeRideSignal.ended.collect { notice -> kvcx.onRideEndedExternally(notice) }
+        }
         // 骑行态吞掉识别高亮（2026-10-08 修「开始骑的位置残留一个奇怪的圆圈」）：
         // 高亮是「找这辆车」的指示（双层圈 + 车号标签），只对"车还停在那儿"成立；
-        // 车一旦成了在骑的这辆，它就跟着人走了——「我的车」标记（未锁时并到蓝点）已经
-        // 表达"车在哪"，旧坐标上的高亮圈只剩误导。高亮按车号在最近一次查询结果里重找，
+        // 车一旦成了在骑的这辆，旧高亮圈就只剩误导——「我的车」标记用车辆坐标表达
+        // "车在哪"。高亮按车号在最近一次查询结果里重找，
         // 骑行中不轮询、结果不换批，它就会一直钉在开骑前的位置——所以在案订单快照
         // 带出车号时比对一次、命中即清。还车后 ride 归 null，高亮早已清掉不会复活；
         // 若骑的是另一辆车，高亮说的是"那辆还停在那儿"，保留不动。
@@ -618,7 +624,7 @@ class BikeMapViewModel(
         // 旧目标被后来的定位动作意外触发（自动开锁只认最近一次扫码）
         autoUnlockCar = if (autoUnlock) carNum else autoUnlockCar?.takeIf { it == carNum }
         // 这辆车就是在骑的这辆：不再按旧结果的坐标画高亮、也不把镜头拽向过期位置——
-        // 车随人走，「我的车」标记已经表达它在哪（与 init 里骑行吞高亮同一条判据）。
+        // 「我的车」标记用车辆坐标表达它在哪（与 init 里骑行吞高亮同一条判据）。
         // 还车之后 ride 已归 null，从这里带车号进来仍照常定位（车又停回某个点位了）。
         if (kvcx.state.value.ride?.carNum == carNum) {
             clearHighlight()
@@ -840,6 +846,7 @@ class BikeMapViewModel(
      */
     fun onLocated(lat: Double, lng: Double, accuracyMeters: Float = 0f, animated: Boolean = true) {
         if (!lat.isFinite() || !lng.isFinite()) return
+        EbikeUserLocation.update(lat, lng)
         locatedOnce = true
         followCameraLat = lat
         followCameraLng = lng
@@ -876,6 +883,7 @@ class BikeMapViewModel(
      */
     fun onUserLocationChanged(lat: Double, lng: Double, accuracyMeters: Float = 0f) {
         if (!lat.isFinite() || !lng.isFinite()) return
+        EbikeUserLocation.update(lat, lng)
         locatedOnce = true
         _uiState.update {
             it.copy(

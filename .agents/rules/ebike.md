@@ -298,7 +298,7 @@
   那些动作表达的是"我现在要看别处"。**远程开锁不打开跟随**（2026-10-19 用户报「点了地图上
   很远的车开锁，视角却回到我的位置」）：开锁时按 `rideBikePosition` 判人车距离，超过
   `RIDE_NEAR_USER_METERS`（100 米）就不跟随、并 `stopFollowing`，镜头留在车上；之后人走到
-  车边（距离进入 100 米）才在 `rideMarkerFollowsUser` 的 false → true 转折点重新打开。
+  车边（距离进入 100 米）才在 `rideCameraFollowArmed` 的 false → true 转折点重新打开。
   小程序方式只有计时、没有本机订单，无从判距离，照旧跟随。View 层先 `stopAnimation` 再回调 `onUserPan`，
   别让跟随的缓动和手指抢。地图右上那枚定位按钮在跟随态走主色底（`MapCircleButton.active`），
   用户一眼知道镜头正跟着自己。挪点口径 `shouldMoveDot`（**明显更粗的
@@ -493,19 +493,28 @@
 
 - **倒计时上「灵动岛」= 系统标准 Live Updates，不是小米私有焦点通知**（2026-10-16 用户要求）：
   倒计时通知在 **Android 16+** 上被系统提升为 Live Update——状态栏芯片
-  （`EbikeFreeRide.countdownChipText`，「剩mm:ss」，压到 7 字符内，芯片 96dp 放得下）＋
-  通知抽屉顶部常驻卡；**开启通知即默认生效，没有开关**。做法只有两条：manifest 声明普通权限
-  `POST_PROMOTED_NOTIFICATIONS`（安装即授予），通知上 `.setRequestPromotedOngoing(true)` +
-  `.setShortCriticalText(...)`（androidx.core 1.17 的 compat，低版本自动 no-op，不是"分档实现"）。
+  （`EbikeFreeRide.countdownChipText`，「剩mm:ss」，每秒重发；**HyperOS 3 的芯片不显示
+  chronometer**，没这条只显示通知标题）＋ 卡片头部由 `setWhen(免费结束时刻)` +
+  `setUsesChronometer(true)` + `setChronometerCountDown(true)` 自己走 `mm:ss` ＋ 通知抽屉顶部
+  常驻卡；**开启通知即默认生效，没有开关**。提升请求只要两件东西：manifest 声明普通权限
+  `POST_PROMOTED_NOTIFICATIONS`（安装即授予），通知上 `.setRequestPromotedOngoing(true)`。
+  芯片小图标用 `ic_stat_ebike`（实心自行车，2026-10-19；倒计时这一条专用）。**别用
+  HugeIcons 的线性滑板车**（16dp 下糊成一团），**别用桌面图标**（小图标只取 alpha 通道，
+  会压成白块）；两条到点提醒继续用 `ic_stat_bell`。
   **卡片带进度条**（`ProgressStyle`，填满 = 免费时长还剩满格、随免费时间流干；不设 segment /
   tracker 图标，走默认「按进度着色」，无 segment 时满刻度 100）。**它曾被当成「岛抖」的嫌疑犯
   撤掉过一次（2026-10-16 二轮），用户确认抖动在它之前就有、已按用户要求加回**——别再拿它当
-  抖动的原因：那笔代价是「每秒重发」本身（系统侧重绘），要治只能减少更新次数，那就动功能了。
+  抖动的原因。**2026-10-19 用户先报「下拉状态栏时水贝贝图标一闪一闪」，看了 5 秒版后
+  又明确「我要看的就是倒计时」**：HyperOS 3 的芯片不显示 chronometer，岛上逐秒走只能靠
+  每秒重发 `setShortCriticalText`；代价是 Live Update 卡片每收到一次更新会重绘头部的
+  应用图标。最终口径：**芯片文案与进度条每秒重发**（`EbikeFreeRideService.TICK_MS =
+  1_000L`），正文用静态 `COUNTDOWN_TEXT`，秒数优先、接受闪烁。**别再改成 5 秒一跳**；
+  **也别把芯片文案去掉**（HyperOS 会退回显示通知标题，岛上就没有秒数了）。
   这条链上做过两处**无损**优化（2026-10-16 二轮，观感与行为不变）：① 落点 PendingIntent
-  进程内缓存（`contentIntents` 按 requestCode / `cachedDelete` 按起点，每秒少两趟到
+  进程内缓存（`contentIntents` 按 requestCode / `cachedDelete` 按起点，每轮少两趟到
   ActivityManager 的 IPC；删除落点那份**必须是单个不可变持有者、一次原子读**——拆成两个
   `@Volatile` 字段会在换车时读到「新 intent + 旧起点」）；
-  ② 服务只在「文案 + 进度刻度」真变了时才 notify（扫一扫后那 5 秒缓冲期文案满格不动、原本白刷；
+  ② 服务只在芯片文案或进度刻度真变了时才 notify（扫一扫后那 5 秒缓冲期进度满格不动、原本白刷；
   灭屏回来必补一次，所以「点亮即准」照旧）。
   **被划掉就收手**（`setDeleteIntent` → `EbikeCountdownDismissReceiver` → `EbikeCountdownDismissal`
   记账 + 停常驻服务；`EbikeFreeRideService.start` 对同一轮起点直接返回 false，`check` 每轮都调它，
@@ -589,9 +598,12 @@
   与支付分授权（11035）**不重试**，直接通知收场（`isRetryable`）。
   **与「写操作零自动重试」的关系**：仓库层红线不变——重试是这条**用户显式开启**的
   自动功能自己的行为、次数由设置封顶；别据此给手动还车加任何重试。
-- **还车位置不碰手机定位**：判区只看车辆上传到服务器的位置（用户 2026-10-10 口径：
-  车在还车点就能还），执行时现查在案订单、用快照里的 `Ride.lat`/`Ride.lng`；缺坐标
-  也不拦（服务端以车辆位置为准）。别把 `BikeLocator` 加回这条路。
+- **还车坐标：用户定位优先、车辆坐标兜底**（2026-10-19 修订）：自动还车不再只用
+  `Ride.lat/lng`。执行时读骑行页留下的最近用户定位（`EbikeUserLocation`，5 分钟、进程内，
+  **不主动定位**）；先用它，缺了/过期才用车辆坐标；**车辆已锁**（`ride.locked == true`）
+  时不用用户定位——人可能已经走开，车停在哪就用哪个坐标。遇到 50011（不在还车区域）**换另一个
+  来源再试一次**（`preferUser` 翻转）——车辆上报滞后与用户定位漂移都可能造成「人在还车点
+  却报 50011」。别把 `BikeLocator` 主动加回这条路（后台拿不到定位，也没必要）。
 - **调度三层**（`ui/ebike/EbikeAutoReturnReminder.kt`）：精确闹钟（`setAlarmClock`，
   requestCode **4004**，与上课 4002 / 免费提醒 4003 错开）到点 → `EbikeAutoReturnAlarmReceiver`
   入队一次性 `EbikeAutoReturnWorker`（WorkManager 唯一名 `ebike_auto_return`，KEEP）→
@@ -605,6 +617,10 @@
   不该让 App 立刻还车；已排着的闹钟也不撤，到点按最新设置复核。
   `run` 的早退（开关关 / 非账号方式 / 没到点 / 过了迟到窗口 / 已执行过）**都不落键**：
   那是"这次不该跑"，不是"这轮跑完了"。
+- **订单结束后要通知活着的页面**（2026-10-19）：Worker 拿不到页面的 `KvcxRideController`，
+  只清 DataStore 会出现「自动还车后车辆卡片还在、只是没有时长条」。`EbikeRideSignal.notifyEnded()`
+  是唯一交接点；RideScreen（`BikeMapViewModel`）与快趣账号页（`KvcxViewModel`）各收一次，
+  清 `ride` 并补一条 Snackbar。手动还车也发一次空文案，清账号页那份状态。
 - **执行窗 = 触发点 ~ 免费结束后 5 分钟**（`EbikeAutoReturn.isDue`，迟到窗口与免费提醒的
   `END_WINDOW_MS` 同口径）：闹钟晚到十几秒仍要还车，拖过窗口就不再追；窗口外由
   `reconcile` 清残留排程。
@@ -826,17 +842,13 @@
   - 标记坐标来自 `Ride.lat/lng`：**与地图瓦片同基准（GCJ-02），不要再过 `Gcj02` 转换**
     （转了车标会偏几百米）。「当前用车」标记画在簇标记之上、蓝点之下；点它的命中判定要
     **排在最前**（否则被它盖住的簇先接走点击）。
-  - **「我的车」标记是否并到蓝点：开锁时人就在车边才成立**（2026-09-28 建口径，
-    2026-10-19 加距离闸）：未锁 = 正在骑，车就在你身边，而服务端坐标是拉取那一刻的快照
-    （骑出去几百米后标记还杵在原地，看着像"我的车丢了"）；但**远程开锁**（地图上点了几百米
-    外的车）不能把车标画到人身上（用户报「在我的位置显示一个车辆位置的图标，实际上车在
-    很远的地方」）。现在的判据在 `RideScreen`：
-    `rideFollowsUser = rideMarkerFollowsUser && ride.locked == false && 有定位`；
-    `rideMarkerFollowsUser` 是**一次锁定的闩**——用户位置与 `rideBikePosition`（订单快照的
-    `lat/lng`，缺失时退回开锁那一刻附近查询里的同一辆车）距离 ≤ `RIDE_NEAR_USER_METERS`
-    （100 米）才置 true，**一旦 true 保持到订单结束**（骑走后人车距离必然变大，不能反向
-    甩回车位）。新订单 / 还车后重判。已锁或锁状态未知 = 车停在某处，用车位坐标；没有自己
-    的定位时退回车位坐标。卡上对应写「未锁 · 标记随你」。
+  - **「我的车」标记始终用车辆坐标**（2026-10-19 用户修订）：旧版在「开锁时人就在车边」
+    后把车标画到用户位置，用户报「开锁瞬间车标跳到我的位置，锁车后才回准确位置」。现在
+    `rideMarkerLat/Lng` 只取 `rideBikePosition`（订单快照 `Ride.lat/lng`，缺失时退回开锁
+    那一刻附近查询里的同一辆车），不再有 `rideFollowsUser` / `rideMarkerFollowsUser`。
+    蓝点只表达用户位置，车标只表达车辆位置。**镜头跟随是另一件事**：`rideCameraFollowArmed`
+    仍按 `RIDE_NEAR_USER_METERS`（100 米）在开锁 / 走到车边时打开，只控制 `startFollowing()`，
+    不改车标坐标；远程开锁不把镜头拽到人身上。已锁 / 锁状态未知也不影响车标。
   - 骑行状态仍然是**进页一次 / 动作后 / 手动刷新**驱动，**不轮询**——地图上的位置是拉取那一刻
     的快照，卡上写「位置 hh:mm」把这件事说清楚，别让用户以为车就在那。
   - 地图页的骑行卡用 `AnimatedContent` 而不是 `AnimatedVisibility`：该处同时具备 BoxScope 与
@@ -1026,8 +1038,8 @@
   （`carDetailJob`），查不到就停，**不轮询**。
 - **识别高亮要随骑行态吞掉**（2026-10-08 修「开始骑的位置残留一个奇怪的圆圈」）：
   高亮（`highlightCarNum` / `highlightedCar`，画成双层圈 + 车号标签）是「找这辆车」的指示，
-  只对"车还停在那儿"成立；车一旦成了在骑的这辆，它跟着人走，「我的车」标记已经表达它在哪，
-  旧坐标上的高亮圈只剩误导。清的理由很具体：高亮按车号在最近一次查询结果里重找，而骑行中
+  只对"车还停在那儿"成立；车一旦成了在骑的这辆，旧高亮圈就只剩误导——「我的车」标记用
+  车辆坐标表达它在哪。清的理由很具体：高亮按车号在最近一次查询结果里重找，而骑行中
   不轮询、结果不换批，它就会一直钉在开骑前的位置。落点两处、同一判据（`kvcx.state` 的
   在案订单车号 == 高亮车号）：① VM init 里 collect 骑行快照，命中即 `clearHighlight()`
   （标记 + `fetchedCarDetail` 一起清——详情兜底会在后续重算里把旧坐标画回来）；

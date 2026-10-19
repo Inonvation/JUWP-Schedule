@@ -21,8 +21,9 @@ import edu.jxslu.schedule.ui.reminder.ReminderVibration
  *
  * 两个 channel 分工明确，别合并：
  * - [EbikeFreeRide.NotificationIds.COUNTDOWN_CHANNEL]（LOW）：前台服务的常驻倒计时。
- *   无声、不弹、`ongoing`，文案由服务**每秒重发一次**（不用系统 chronometer，见
- *   [countdownNotification]）；Android 16+ 上它被系统提升为 Live Update（灵动岛）。
+ *   无声、不弹、`ongoing`，卡片头部由系统 chronometer 走秒，芯片文案与进度条由服务每秒
+ *   重发一次（见 [countdownNotification] 与 `EbikeFreeRideService.TICK_MS`）；
+ *   Android 16+ 上它被系统提升为 Live Update（灵动岛）。
  * - [EbikeFreeRide.NotificationIds.ALERT_CHANNEL]（HIGH）：两条到点提醒，要响要弹。
  *
  * 关于「弹不出来」（2026-09-30 用户报「只出现在通知栏，不在屏幕上弹出」）：App 这一侧
@@ -65,8 +66,8 @@ internal object EbikeFreeRideNotifier {
      * 落点 PendingIntent 的**进程内缓存**（2026-10-16 二轮）。
      *
      * `PendingIntent.getActivity/getBroadcast` 每次都是一趟到 ActivityManager 的 binder
-     * 往返；倒计时通知**每秒重发**，那两个落点却几乎不变（内容落点与起点无关，删除落点只
-     * 随起点变），所以缓存起来——每秒少两趟 IPC，观感与行为完全不变。
+     * 往返；倒计时通知每秒重发一次，那两个落点却几乎不变（内容落点与起点无关，删除落点只
+     * 随起点变），所以缓存起来——每轮少两趟 IPC，观感与行为完全不变。
      * 起点换了就换一份（`deleteIntent` 按起点比对）；进程被杀缓存即丢，重建即可。
      * `getOrPut` 非原子也没关系：同一个 `(requestCode, intent)` 取回来的是**同一个系统
      * PendingIntent**（值相等），最坏是并发时各建一次、其中一个被丢弃。
@@ -159,16 +160,28 @@ internal object EbikeFreeRideNotifier {
     }
 
     /**
-     * 常驻倒计时通知（前台服务用）。文案由 [EbikeFreeRide.countdownText] 给出，
-     * **服务每秒重发一次**——不用系统 chronometer：真机实测（Redmi K70 / 澎湃OS）
-     * 面板静止时系统不主动重绘 chronometer，用户看到的是不动的数字。
+     * 常驻倒计时通知（前台服务用）。**卡片头部的秒数交给系统 chronometer**
+     * （`.setWhen(免费结束)` + `.setUsesChronometer(true)` + `.setChronometerCountDown(true)`），
+     * 服务每秒刷新芯片文案与进度条（[EbikeFreeRideService.TICK_MS]）。
+     *
+     * **卡片头部保留 chronometer，芯片仍每秒重发**（2026-10-19）：卡片头部交给系统计时器，
+     * 正文用静态 [EbikeFreeRide.COUNTDOWN_TEXT]；但 HyperOS 3 的芯片不显示 chronometer，
+     * 要岛上逐秒走只能每秒重发 `setShortCriticalText`。用户明确「我要看的就是倒计时」，
+     * 所以接受 Android 16 Live Update 卡片每收到一次更新就重绘头部应用图标的代价
+     * （下拉状态栏能看到一闪一闪）。**别再为了省重绘把芯片改成 5 秒一跳**。
+     *
+     * **芯片仍要用 `setShortCriticalText`**：2026-10-19 在 HyperOS 3 实测，Live Update
+     * 芯片不显示系统 chronometer，没有短文案时只显示通知标题（「免费时长倒计时」），
+     * 岛上就看不到秒数了。所以芯片回退到 [EbikeFreeRide.countdownChipText]，每秒重发；
+     * 卡片头部仍由 chronometer 走秒。
      *
      * **灵动岛（DESIGN §3.9，2026-10-16）**：Android 16 起系统能把这条通知提升为
      * Live Update——状态栏上出现一枚芯片、通知抽屉里是一条置顶常驻卡。请求提升只要
      * 两件东西：`setRequestPromotedOngoing(true)`（compat 内部就是往 extras 塞
-     * `android.requestPromotedOngoing`）+ 芯片文案 `setShortCriticalText`；manifest 里
-     * 还得声明 `POST_PROMOTED_NOTIFICATIONS`（普通权限）。**开启通知即默认上岛，没有开关。**
-     * 低版本设备上这两条都被系统忽略，通知照旧（不是"分档实现"，就是同一份通知）。
+     * `android.requestPromotedOngoing`）+ manifest 里的 `POST_PROMOTED_NOTIFICATIONS`
+     * （普通权限）。芯片文案见上（HyperOS 必须给 `setShortCriticalText`）。
+     * **开启通知即默认上岛，没有开关。** 低版本设备上提升请求被系统忽略，通知照旧
+     * （不是"分档实现"，就是同一份通知）。
      *
      * 官方给的资格清单我们都满足：`ongoing` ✓、有 contentTitle ✓、无自定义 RemoteViews ✓、
      * 非 group summary ✓、不 colorized ✓、渠道是 LOW（不是 IMPORTANCE_MIN）✓、
@@ -178,18 +191,22 @@ internal object EbikeFreeRideNotifier {
      * **进度条**：卡片走 `ProgressStyle`（填满 = 免费时长还剩满格，随免费时间流干；不设
      * segment / tracker 图标，走默认「按进度着色」，无 segment 时满刻度 100）。
      * **它曾经被当成「岛抖」的嫌疑犯撤掉过一次（2026-10-16 二轮），但用户确认抖动在它之前
-     * 就有，已按用户要求加回来**——别再拿它当抖动的原因；每秒重发本身（系统侧重绘）才是
-     * 那笔代价，要治只能减少更新次数，那就动功能了。
+     * 就有，已按用户要求加回来**——别再拿它当抖动的原因；旧版每秒重发本身（系统侧重绘）
+     * 才是那笔代价。2026-10-19 最终口径：卡片头部用系统 chronometer，芯片文案 + 进度
+     * **每秒**重发，秒数优先。
      *
      * **被划掉就收手（2026-10-16）**：用户划掉过这一轮，就**不再请求提升**（见
      * [EbikeCountdownDismissal]）；划掉本身由 [deleteIntent] 收进 [EbikeCountdownDismissReceiver]。
      */
     fun countdownNotification(context: Context, startAtMillis: Long, nowMillis: Long) =
         NotificationCompat.Builder(context, EbikeFreeRide.NotificationIds.COUNTDOWN_CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_bell)
+            .setSmallIcon(R.drawable.ic_stat_ebike)
             .setContentTitle(EbikeFreeRide.COUNTDOWN_TITLE)
-            .setContentText(EbikeFreeRide.countdownText(startAtMillis, nowMillis))
-            .setShowWhen(false)
+            .setContentText(EbikeFreeRide.COUNTDOWN_TEXT)
+            .setWhen(EbikeFreeRide.freeEndMillis(startAtMillis))
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
@@ -210,7 +227,7 @@ internal object EbikeFreeRideNotifier {
             .setContentIntent(contentIntent(context, REQUEST_COUNTDOWN))
             .build()
 
-    /** 每秒刷新常驻通知的文案（同一 id，只换正文）。 */
+    /** 每秒刷新常驻通知的芯片文案与进度（同一 id；卡片头部由系统 chronometer 走）。 */
     fun updateCountdown(context: Context, startAtMillis: Long, nowMillis: Long) {
         runCatching {
             NotificationManagerCompat.from(context).notify(

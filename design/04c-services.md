@@ -1847,11 +1847,14 @@ API，第三方 App 无法代调**（支付分 App SDK 需商户侧把应用登�
 提前量 10~60 秒 / 步长 5 / 默认 30，**恒早于免费结束**（晚于免费时段的还车会开始计费，用户口径）。
 默认关；失败重试 1~3 次（默认 2，**上一次失败后 3 秒内重试**）、**每次尝试结果都发通知**
 （成功一条；失败写原因原文 + 第 i/N 次 + 是否重试），调度费与支付分授权（11035）不重试。
-还车判区只看**车辆上传到服务器的位置**（用户口径），执行时现查在案订单、用快照里的
-`Ride.lat`/`lng`，不碰手机定位；结算口径与手动还车共用 `performReturnBike`
+还车坐标**先用骑行页留下的最近用户定位**（`EbikeUserLocation`，5 分钟、进程内，不主动
+定位），缺失/过期才用快照里的 `Ride.lat`/`lng`；车辆已锁时不用用户定位；遇到 50011
+（不在还车区域）换另一个来源
+再试一次（`preferUser` 翻转）。结算口径与手动还车共用 `performReturnBike`
 （本地走时在订单结束那一刻截停、扣款确认轮询、结果卡字段——**只允许一份**）。调度 =
 独立精确闹钟（requestCode 4004）+ 一次性 `EbikeAutoReturnWorker`（唯一名 `ebike_auto_return`，
-KEEP），同一轮只跑一次（`doneKey` 带计时起点；进页 / 账号页 / 开锁 `reconcile` 兜底，
+KEEP），同一轮只跑一次（`doneKey` 带计时起点；进页 / 账号页 /
+开锁 `reconcile` 兜底，
 **设置变更不追补**已过触发点的这一轮），执行窗 = 触发点 ~ 免费结束后 5 分钟
 （`EbikeAutoReturn.isDue`），与免费时长提醒**两套独立开关**。**与「写操作零自动重试」的
 关系**：仓库层的零重试红线不变——重试是这条**用户显式开启**的自动功能自己的行为、次数由
@@ -1859,6 +1862,9 @@ KEEP），同一轮只跑一次（`doneKey` 带计时起点；进页 / 账号页
 `ui/ebike/EbikeAutoReturnRunner.kt`（`EbikeAutoReturnTest` 钉住时序）、调度
 `ui/ebike/EbikeAutoReturnReminder.kt`、通知 `ui/ebike/EbikeAutoReturnNotifier.kt`
 （channel `ebike_auto_return`、id 1014、落点 2007）。
+**结束订单要通知页面**：自动还车 Worker / 手动还车都发 `EbikeRideSignal.notifyEnded()`；
+RideScreen（`BikeMapViewModel`）与快趣账号页（`KvcxViewModel`）收集后清 `ride`，否则自动
+还车后卡片还在、只是没有时长条（2026-10-19 用户报）。
 
 **使用方式（2026-09-29 用户口径）**：账号与用车这一整套（登录、开锁 / 锁车 / 还车、本机骑行记录、
 地图上的「开锁」与「当前用车」卡）现在由一档显式设置把关——

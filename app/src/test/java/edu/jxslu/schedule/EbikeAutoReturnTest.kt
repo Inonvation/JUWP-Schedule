@@ -6,6 +6,7 @@ import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.ui.ebike.AutoReturnResult
+import edu.jxslu.schedule.ui.ebike.EbikeUserLocation
 import edu.jxslu.schedule.ui.ebike.runAutoReturn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -73,6 +74,111 @@ class EbikeAutoReturnTest {
         // 拖过迟到窗口就不再追（订单已经计费，交给失败通知与手动处理）
         assertTrue(!EbikeAutoReturn.isDue(start, 30, end + EbikeFreeRide.END_WINDOW_MS))
         assertTrue(!EbikeAutoReturn.isDue(0L, 30, end))
+    }
+
+    @Test
+    fun `自动还车坐标：人车在一处时用用户定位`() {
+        val now = 1_760_000_000_000L
+        val point = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = 30.0000,
+            vehicleLng = 120.0000,
+            userLat = 30.0002,
+            userLng = 120.0002,
+            userFixAtMillis = now - 30_000L,
+            nowMillis = now,
+        )
+        assertEquals(30.0002, point.lat, 1e-9)
+        assertEquals(120.0002, point.lng, 1e-9)
+        assertEquals("session", point.source)
+        assertTrue(point.valid)
+    }
+
+    @Test
+    fun `自动还车坐标：用户定位过期或明确不优先时用车辆坐标`() {
+        val now = 1_760_000_000_000L
+        val far = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = 30.0,
+            vehicleLng = 120.0,
+            userLat = 31.0,
+            userLng = 121.0,
+            userFixAtMillis = now,
+            nowMillis = now,
+            preferUser = false,
+        )
+        assertEquals(30.0, far.lat, 1e-9)
+        assertEquals(120.0, far.lng, 1e-9)
+        assertEquals("vehicle", far.source)
+
+        // 默认优先用户定位：即使车辆坐标在几百米外，也先用人所在的点（50011 时再换回来）
+        val farButPreferred = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = 30.0,
+            vehicleLng = 120.0,
+            userLat = 31.0,
+            userLng = 121.0,
+            userFixAtMillis = now,
+            nowMillis = now,
+        )
+        assertEquals(31.0, farButPreferred.lat, 1e-9)
+        assertEquals("session", farButPreferred.source)
+
+        val stale = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = 30.0,
+            vehicleLng = 120.0,
+            userLat = 30.0002,
+            userLng = 120.0002,
+            userFixAtMillis = now - EbikeAutoReturn.USER_FIX_MAX_AGE_MS - 1,
+            nowMillis = now,
+        )
+        assertEquals("vehicle", stale.source)
+    }
+
+    @Test
+    fun `自动还车坐标：车辆已锁时不用用户定位`() {
+        val now = 1_760_000_000_000L
+        val point = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = 30.0,
+            vehicleLng = 120.0,
+            userLat = 30.0002,
+            userLng = 120.0002,
+            userFixAtMillis = now,
+            nowMillis = now,
+            vehicleLocked = true,
+        )
+        assertEquals(30.0, point.lat, 1e-9)
+        assertEquals("vehicle", point.source)
+    }
+
+    @Test
+    fun `自动还车坐标：车辆坐标无效时退回新鲜用户定位`() {
+        val now = 1_760_000_000_000L
+        val point = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = 0.0,
+            vehicleLng = 0.0,
+            userLat = 30.0002,
+            userLng = 120.0002,
+            userFixAtMillis = now,
+            nowMillis = now,
+        )
+        assertEquals(30.0002, point.lat, 1e-9)
+        assertEquals("session", point.source)
+        assertTrue(point.valid)
+    }
+
+    @Test
+    fun `自动还车坐标：两边都没有有效定位时给无效兜底`() {
+        val now = 1_760_000_000_000L
+        val point = EbikeAutoReturn.chooseReturnPoint(
+            vehicleLat = null,
+            vehicleLng = null,
+            userLat = null,
+            userLng = null,
+            userFixAtMillis = null,
+            nowMillis = now,
+        )
+        assertEquals(0.0, point.lat, 1e-9)
+        assertEquals(0.0, point.lng, 1e-9)
+        assertEquals("none", point.source)
+        assertTrue(!point.valid)
     }
 
     @Test
@@ -145,6 +251,7 @@ class EbikeAutoReturnTest {
 
         var returnCalls = 0
         var queryCalls = 0
+        val returnSources = mutableListOf<String>()
 
         override suspend fun queryUnderway(): KqcxAuth.Ride? {
             queryCalls++
@@ -181,6 +288,7 @@ class EbikeAutoReturnTest {
             wasLocked: Boolean?,
         ): KqcxAuth.EndOutcome.Ended {
             returnCalls++
+            returnSources += locationSource
             if (returnCalls <= failFirst) throw failWith
             return KqcxAuth.EndOutcome.Ended(needPay = false, wechatScore = null)
         }
@@ -301,6 +409,25 @@ class EbikeAutoReturnTest {
         assertEquals(AutoReturnResult.NotLoggedIn, outcome.result)
         assertEquals(0, session.queryCalls)
         assertTrue(outcome.attempts.isEmpty())
+    }
+
+    @Test
+    fun `50011 后换坐标来源再试一次`() {
+        val session = FakeSession()
+        session.failFirst = 1
+        session.failWith = KvcBusinessError(50011, "当前位置不在还车区域内")
+        val now = System.currentTimeMillis()
+        EbikeUserLocation.update(28.6802, 115.8502, now)
+        try {
+            val outcome = run(session, retries = 1)
+
+            assertEquals(2, session.returnCalls)
+            assertEquals(listOf("session", "vehicle"), session.returnSources)
+            assertTrue(outcome.result is AutoReturnResult.Returned)
+        } finally {
+            // 不让这条用例的用户定位泄漏到其他用例
+            EbikeUserLocation.update(0.0, 0.0, nowMillis = 0L)
+        }
     }
 
     /** 现查订单每拍一次（车辆坐标要最新那份），不是只查一次。 */

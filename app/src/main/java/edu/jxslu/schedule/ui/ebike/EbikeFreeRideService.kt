@@ -30,8 +30,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 服务里的协程 `delay` 要等到下一个唤醒点才跑，会迟到几分钟；而 `setAlarmClock`
  * 是系统级精确闹钟，到点唤醒设备，不受 Doze/省电推迟。
  *
- * 刷新策略（2026-09-24 省电口径）：
- * - **亮屏**：每秒把剩余时间写进通知（`EbikeFreeRide.countdownText`），用户看得到跳秒；
+ * 刷新策略（2026-10-19 修订）：
+ * - **亮屏**：每秒刷新芯片文案与进度条；卡片头部由系统 chronometer 自己走秒。
+ *   **秒数优先**：用户 2026-10-19 明确要岛上逐秒走，接受 Live Update 卡片头部的应用图标
+ *   跟着每秒重绘（下拉状态栏能看到闪）；别再改成 5 秒一跳。
  * - **灭屏**：**一个 notify 都不发**——通知栏此刻没人看，这是 15 分钟里最大的一块浪费。
  *   协程阻塞在屏幕事件上等（零 CPU），计时到点也由 `withTimeoutOrNull` 兜住；
  * - **重新亮屏**：立刻补刷一次，所以点亮屏幕的瞬间数值就是准的（不会停在一个旧值上）。
@@ -96,15 +98,15 @@ class EbikeFreeRideService : Service() {
     }.isSuccess
 
     /**
-     * 亮屏每秒刷新、灭屏不刷新的 tick 循环（见类 KDoc）。
+     * 亮屏每秒刷新芯片文案与进度、灭屏不刷新的 tick 循环（见类 KDoc）。
      *
      * 到点提醒**不在这里发**——那是 `setAlarmClock` 的活；本协程只负责「刷新通知」
      * 与「到点后把常驻通知摘掉」两件事。
      *
-     * **只在「看得见的东西变了」时才真的 notify**（2026-10-16 二轮）：每次 notify 都是一趟
-     * binder + 系统侧重绘，而点扫一扫后的 5 秒缓冲期内文案与进度都是满格不动的（`remainingSeconds`
-     * 钳上限），那几秒白刷。判据用文案 + 进度刻度拼的键，**观感与行为完全不变**（同内容重复发
-     * 本来就看不见）；灭屏那一支回来时会把键清掉，所以「点亮即准」照旧（亮屏后第一次一定发）。
+     * **只在芯片文案或进度刻度变了时才真的 notify**（2026-10-19）：正文已是静态说明，
+     * 卡片头部由系统 chronometer 走，服务只负责芯片短文案与进度条。点扫一扫后的 5 秒
+     * 缓冲期内进度满格不动，那几秒不必重发；灭屏那一支回来时会把键清掉，所以「点亮即准」
+     * 照旧（亮屏后第一次一定发）。
      */
     private fun startTicking(startAt: Long) {
         tickJob?.cancel()
@@ -115,13 +117,13 @@ class EbikeFreeRideService : Service() {
                 val now = System.currentTimeMillis()
                 if (!EbikeFreeRide.isActive(startAt, now)) break
                 if (screenOn) {
-                    val visible = EbikeFreeRide.countdownText(startAt, now) +
+                    val visible = EbikeFreeRide.countdownChipText(startAt, now) +
                         '|' + EbikeFreeRide.progressPercent(startAt, now)
                     if (visible != lastPosted) {
                         EbikeFreeRideNotifier.updateCountdown(this@EbikeFreeRideService, startAt, now)
                         lastPosted = visible
                     }
-                    // 等满一秒，或等屏幕状态变化（灭屏立刻停手，不用等满这一秒）
+                    // 等满一秒，或等屏幕状态变化（灭屏立刻停手，不用等满这一轮）
                     withTimeoutOrNull(TICK_MS) { screenEvents.receive() }
                 } else {
                     // 灭屏：不刷任何通知，阻塞等屏幕亮；最长等到免费结束，
@@ -188,8 +190,10 @@ class EbikeFreeRideService : Service() {
         private const val STOP_GRACE_MS = 2 * 60_000L
 
         /**
-         * 常驻通知的刷新间隔。**每秒一次是系统允许的上限**（更密会被 NotificationManager
-         * 限流丢弃），也正是倒计时需要的粒度；灭屏时完全不刷，见类 KDoc。
+         * 常驻通知的刷新间隔（1 秒）。**秒数优先**：HyperOS 3 的芯片不显示 chronometer，
+         * 只能靠每秒重发 `setShortCriticalText` 让岛上逐秒走；代价是 Live Update 卡片
+         * 头部的应用图标每秒重绘（2026-10-19 用户看了 5 秒版后明确「我要看的就是倒计时」，
+         * 接受这个闪烁）。每秒一次也是系统允许的上限；灭屏时完全不刷，见类 KDoc。
          */
         private const val TICK_MS = 1_000L
 

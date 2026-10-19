@@ -1053,6 +1053,23 @@ class KvcxRideControllerTest {
     }
 
     @Test
+    fun `外部结束清掉骑行卡并补提示`() {
+        val session = FakeSession()
+        val kvcx = controller(session)
+        kvcx.query(quiet = true)
+        assertNotNull(kvcx.state.value.ride)
+        notices.clear()
+
+        kvcx.onRideEndedExternally("已自动还车，订单已结束")
+
+        assertNull(kvcx.state.value.ride)
+        assertEquals(
+            listOf("已自动还车，订单已结束" to NoticeTone.Success),
+            notices,
+        )
+    }
+
+    @Test
     fun `还车结果卡先出且不补查订单消失`() {
         val session = FakeSession()
         session.returnResult = KqcxAuth.EndOutcome.Ended(needPay = true, wechatScore = null)

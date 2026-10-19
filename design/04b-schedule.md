@@ -460,12 +460,16 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   计时结束即撤，平时零唤醒）。闹钟用 `AlarmManager.setAlarmClock`
   （系统级精确、到点唤醒设备、不需要任何特殊权限，与上课提醒同一手法；requestCode 4003，
   与上课的 4002 错开）。`ui/ebike/EbikeFreeRideService.kt` 是前台服务（`specialUse` 类型），
-  只负责通知栏常驻倒计时——**亮屏时每秒**重发一次通知文案（`EbikeFreeRide.countdownText`）
-  刷新剩余时间，**灭屏不刷**（协程阻塞等屏幕亮，点亮补刷一次），不用系统 chronometer
-  （真机实测澎湃OS 面板静止时不重绘，数字不动）；**Android 16+ 上这条通知被系统提升为
-  Live Update（灵动岛）**——状态栏芯片显 `EbikeFreeRide.countdownChipText`（「剩mm:ss」）+
-  通知抽屉顶部常驻卡，开启通知即默认生效、无开关（manifest `POST_PROMOTED_NOTIFICATIONS` +
-  `setRequestPromotedOngoing` / `setShortCriticalText` + `ProgressStyle` 进度条，2026-10-16；
+  只负责通知栏常驻倒计时——**卡片头部由系统 chronometer 走秒**（`setWhen` +
+  `setUsesChronometer` + `setChronometerCountDown`，2026-10-19），芯片仍用
+  `setShortCriticalText`（`countdownChipText`，每秒重发；HyperOS 3 的芯片不显示
+  chronometer，去掉只显示通知标题）；通知正文用静态 `COUNTDOWN_TEXT`，芯片文案与进度条
+  **每秒重发**，**灭屏不刷**（协程阻塞等屏幕亮，点亮补刷一次）。用户 2026-10-19 明确
+  「我要看的就是倒计时」，接受 Live Update 卡片头部图标每秒重绘。
+  **Android 16+ 上这条通知被系统提升为 Live Update（灵动岛）**——小图标用
+  `ic_stat_ebike`（实心自行车，2026-10-19），通知抽屉顶部保留常驻卡，开启通知即
+  默认生效、无开关（manifest `POST_PROMOTED_NOTIFICATIONS` + `setRequestPromotedOngoing` +
+  `ProgressStyle` 进度条，2026-10-16；
   是系统标准 API，**不碰**小米私有的焦点通知 / 超级岛——那要小米平台白名单）；
   **被划掉就收手**（`setDeleteIntent` → `EbikeCountdownDismissReceiver` → 记账 + 停常驻服务，
   `start` 对同一轮起点直接拒绝），提醒闹钟与 App 内倒计时块不受影响；

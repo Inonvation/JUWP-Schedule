@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit
  * | 层 | 手段 | 作用 |
  * |----|------|------|
  * | 主 | `AlarmManager.setAlarmClock` | 两个提醒点的**精确**触发，到点唤醒设备、不受 Doze/省电推迟，不需要任何特殊权限 |
- * | 中 | [EbikeFreeRideService] | 通知栏常驻倒计时（服务每秒重发文案；Android 16+ 上被系统提升为灵动岛），顺带抬高进程优先级 |
+ * | 中 | [EbikeFreeRideService] | 通知栏常驻倒计时（卡片头部由系统 chronometer 走秒；芯片文案与进度条每秒重发。Android 16+ 上被系统提升为灵动岛），顺带抬高进程优先级 |
  * | 兜 | [EbikeFreeRideCheckWorker] 10 分钟周期 + 进页 / 冷启动 | 补发漏掉的提醒、把状态收干净 |
  *
  * **提醒不由服务里的协程负责**：屏幕关闭后 CPU 会挂起，`delay` 要等下一个唤醒点才跑，

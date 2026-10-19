@@ -11,8 +11,10 @@ package edu.jxslu.schedule.domain
  * - 失败**每次尝试结果都发通知**（原因逐条写清，如「当前位置不在还车区域内」），
  *   并在上一次失败后 [RETRY_INTERVAL_MS] 内重试，最多再试 [RETRY_MIN]~[RETRY_MAX]
  *   次（默认 [DEFAULT_RETRIES] 次）。
- * - 还车判定只看**车辆上传到服务器的位置**（用户口径：车辆在还车点即可还车）：
- *   自动还车直接用骑行快照里车辆自己的坐标（`KqcxAuth.Ride.lat` / `.lng`），不碰手机定位。
+ * - 还车坐标**优先用骑行页留下的最近用户定位**（[USER_FIX_MAX_AGE_MS] 内，来源 `session`），
+ *   缺失/过期才用车辆坐标（`KqcxAuth.Ride.lat` / `.lng`，来源 `vehicle`）——手动还车走的是
+ *   同一条路径，能避开车辆位置上报滞后造成的「明明在还车点却报 50011」。遇到 50011 换另一个
+ *   来源再试。**不主动请求手机定位**，只读页面的进程内缓存。
  * - 开关**默认关**：它替用户执行有计费后果的写动作，只能显式开启。
  *
  * 本文件是纯 JVM 的时刻计算、钳制与文案（与 [EbikeFreeRide] 同款），不含 Android API。
@@ -66,6 +68,9 @@ object EbikeAutoReturn {
     /** 未登录（凭证失效）时的失败文案：重试救不了，只能让用户手动处理。 */
     const val NOT_LOGGED_IN_TEXT = "快趣登录已失效，请在「骑行」页重新登录后手动还车"
 
+    /** 用户定位最多用 5 分钟（与 `BikeLocator` 的缓存定位同口径）。 */
+    const val USER_FIX_MAX_AGE_MS = 5 * 60_000L
+
     /** 重试次数吸附到 [RETRY_MIN]..[RETRY_MAX]（防线脏数据）。 */
     fun coerceRetries(retries: Int): Int = retries.coerceIn(RETRY_MIN, RETRY_MAX)
 
@@ -85,6 +90,55 @@ object EbikeAutoReturn {
      */
     fun triggerAtMillis(startAtMillis: Long, leadSeconds: Int): Long =
         EbikeFreeRide.freeEndMillis(startAtMillis) - coerceLeadSeconds(leadSeconds) * 1_000L
+
+    /** 还车请求要带的坐标与来源（纯数据，JVM 可测）。 */
+    data class ReturnPoint(
+        val lat: Double,
+        val lng: Double,
+        val source: String,
+        val valid: Boolean,
+    )
+
+    private fun isValidCoord(lat: Double, lng: Double): Boolean =
+        lat.isFinite() && lng.isFinite() &&
+            lat in -90.0..90.0 && lng in -180.0..180.0 &&
+            !(lat == 0.0 && lng == 0.0)
+
+    /**
+     * 选自动还车的坐标（2026-10-19）：
+     * - [preferUser] 且用户定位新鲜 → 用户坐标（来源 `session`；与手动还车同源）；
+     * - 否则车辆坐标有效 → 车辆坐标（来源 `vehicle`）；
+     * - 车辆坐标无效但用户定位新鲜 → 用户坐标；
+     * - 都没有 → 0,0 + `none`（与手动还车的无效兜底同口径）。
+     *
+     * 默认先用用户定位：车辆位置上报可能滞后，用户在还车点却报 50011 时换个来源
+     * 再试一次；调用方在 50011 后把 [preferUser] 翻到另一侧。车辆已锁（[vehicleLocked] =
+     * true）时**不用用户定位**——人可能已经走开，车停在哪就该用哪个坐标。
+     */
+    fun chooseReturnPoint(
+        vehicleLat: Double?,
+        vehicleLng: Double?,
+        userLat: Double?,
+        userLng: Double?,
+        userFixAtMillis: Long?,
+        nowMillis: Long,
+        vehicleLocked: Boolean? = null,
+        preferUser: Boolean = true,
+    ): ReturnPoint {
+        val userFresh = userLat != null && userLng != null && userFixAtMillis != null &&
+            isValidCoord(userLat, userLng) &&
+            nowMillis - userFixAtMillis in 0..USER_FIX_MAX_AGE_MS
+        if (preferUser && userFresh && vehicleLocked != true) {
+            return ReturnPoint(userLat!!, userLng!!, source = "session", valid = true)
+        }
+        if (vehicleLat != null && vehicleLng != null && isValidCoord(vehicleLat, vehicleLng)) {
+            return ReturnPoint(vehicleLat, vehicleLng, source = "vehicle", valid = true)
+        }
+        if (userFresh) {
+            return ReturnPoint(userLat!!, userLng!!, source = "session", valid = true)
+        }
+        return ReturnPoint(0.0, 0.0, source = "none", valid = false)
+    }
 
     /**
      * 该不该在 [nowMillis] 执行本轮自动还车：已到触发点，且没越过**迟到窗口**

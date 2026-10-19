@@ -3,6 +3,7 @@ package edu.jxslu.schedule.ui.ebike
 import edu.jxslu.schedule.data.kqcx.KvcxRideSession
 import edu.jxslu.schedule.domain.EbikeAutoReturn
 import edu.jxslu.schedule.domain.KqcxAuth
+import edu.jxslu.schedule.domain.KvcBusinessError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -40,7 +41,9 @@ internal sealed interface AutoReturnResult {
  * 自动还车主循环：最多 [retries] + 1 次尝试，每次失败后隔 [retryDelayMs] 重试。
  *
  * 每一拍都**现查一次在案订单**：一是确认订单还在（其他端还了就不再动作），二是拿车辆
- * 最新上报的坐标——还车判区只看车辆位置（用户口径），快照里的 `lat`/`lng` 就是它。
+ * 最新上报的坐标。还车坐标由 [EbikeAutoReturn.chooseReturnPoint] 选：先用骑行页留下、
+ * 仍在五分钟内的用户定位（与手动还车同源）；没有就退回车辆坐标。遇到 50011
+ * （不在还车区域）时换另一个来源再试——车辆位置上报滞后与用户定位漂移都可能是成因。
  *
  * [onOrderEnded] 在还车请求成功、**扣款确认之前**调用（本地走时要在订单结束那一刻截停，
  * 口径见 [performReturnBike]）；[onAttemptFailed] 每次失败都调（每次尝试结果都发通知，
@@ -64,6 +67,8 @@ internal suspend fun runAutoReturn(
     val total = EbikeAutoReturn.totalAttempts(retries)
     var attempt = 0
     var lastError: Throwable? = null
+    // 50011（不在还车区域）时换坐标来源：用户定位 ↔ 车辆坐标。其他错误保持当前来源。
+    var preferUser = true
     while (attempt < total) {
         attempt++
         val ride = try {
@@ -84,17 +89,25 @@ internal suspend fun runAutoReturn(
         try {
             val lat = ride.lat
             val lng = ride.lng
-            val coordsValid = lat != null && lng != null && isValidReturnCoord(lat, lng)
+            val userFix = EbikeUserLocation.fresh()
+            val point = EbikeAutoReturn.chooseReturnPoint(
+                vehicleLat = lat,
+                vehicleLng = lng,
+                userLat = userFix?.lat,
+                userLng = userFix?.lng,
+                userFixAtMillis = userFix?.atMillis,
+                nowMillis = System.currentTimeMillis(),
+                vehicleLocked = ride.locked,
+                preferUser = preferUser,
+            )
             val summary = performReturnBike(
                 session = session,
                 before = ride,
                 fetchedAt = System.currentTimeMillis(),
-                // 还车判区只看车辆自己上传的位置；快照缺坐标时给 0（服务端以车辆位置为准，
-                // 这两个字段只是随请求带上的记录）——不因缺坐标拦下还车
-                gcjLat = lat ?: 0.0,
-                gcjLng = lng ?: 0.0,
-                locationSource = if (coordsValid) "vehicle" else "none",
-                locationValid = coordsValid,
+                gcjLat = point.lat,
+                gcjLng = point.lng,
+                locationSource = point.source,
+                locationValid = point.valid,
                 onOrderEnded = onOrderEnded,
             )
             return AutoReturnResult.Returned(summary)
@@ -102,6 +115,9 @@ internal suspend fun runAutoReturn(
             throw error
         } catch (error: Throwable) {
             lastError = error
+            if (error is KvcBusinessError && error.errorCode == 50011) {
+                preferUser = !preferUser
+            }
             val state = retryState(error, attempt, total)
             onAttemptFailed(error, attempt, total, state)
             if (state != EbikeAutoReturn.RetryState.RETRYING) {
@@ -115,11 +131,6 @@ internal suspend fun runAutoReturn(
         attempt,
     )
 }
-
-private fun isValidReturnCoord(lat: Double, lng: Double): Boolean =
-    lat.isFinite() && lng.isFinite() &&
-        lat in -90.0..90.0 && lng in -180.0..180.0 &&
-        !(lat == 0.0 && lng == 0.0)
 
 /**
  * 还车 + 结算口径的**唯一实现**（手动还车 [KvcxRideController.returnBike] 与自动还车共用，

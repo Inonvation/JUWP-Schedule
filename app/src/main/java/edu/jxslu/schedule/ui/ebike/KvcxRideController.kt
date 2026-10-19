@@ -592,6 +592,8 @@ class KvcxRideController internal constructor(
             )
         }
         effects.recordRide(summary)
+        // 手动还车也把「订单结束」告诉其他活着的页面（账号页 / 另一个骑行页实例）
+        EbikeRideSignal.notifyEnded()
         if (summary.settling) {
             // 欠费/自动扣款结果在后台补；结果卡先显示“结算中”。只回写同一张结果卡，
             // 用户已经关掉卡或开始下一单时不复活旧内容。
@@ -625,6 +627,22 @@ class KvcxRideController internal constructor(
     /** 关掉还车结果卡（用户点「知道了」）。 */
     fun dismissReturnSummary() {
         _state.update { it.copy(returnSummary = null) }
+    }
+
+    /**
+     * 订单在**别的路径**结束了（自动还车 Worker / 其他端）：清掉骑行卡与悬置标志。
+     *
+     * [notice] 非空时给页面补一条 Snackbar；手动还车自己会落结果卡，不需要这条。
+     * 这是 2026-10-19 修「自动还车后卡片还在、只是没时长条」的页面侧入口——后台 Worker
+     * 拿不到当前 ViewModel，只能通过 [EbikeRideSignal] 交接。
+     */
+    fun onRideEndedExternally(notice: String = "") {
+        // 作废在飞的查询：它们可能在订单结束前发出、结束后才回来，防把 ride 又写回来
+        snapshotSeq++
+        readSeq++
+        val hadRide = _state.value.ride != null
+        _state.update { it.copy(ride = null, unlockPending = false, lockPending = false) }
+        if (hadRide && notice.isNotBlank()) onNotice(notice, NoticeTone.Success)
     }
 
     /**

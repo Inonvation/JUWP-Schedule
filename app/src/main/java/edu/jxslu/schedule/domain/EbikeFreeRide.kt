@@ -19,9 +19,9 @@ import kotlin.math.roundToInt
  * 提醒通道的演变：2026-09-22 首版 = App 通知；2026-09-23 改系统日历；
  * **2026-09-24 改回 App 通知**（用户拍板）——日历 App 发提醒时 App 自己没法展示
  * 倒计时，体验与 App 内是两套。现在两个提醒点由 [NotificationIds] 那两条通知承担，
- * 倒计时由前台服务的常驻通知展示（服务每秒重发一次文案，见 `EbikeFreeRideService`）；
- * 2026-10-16 起该通知在 Android 16+ 上被系统提升为 Live Update（灵动岛芯片显示
- * [countdownChipText]）。
+ * 倒计时由前台服务的常驻通知展示（卡片头部由系统 chronometer 走秒；芯片文案与进度条
+ * 由服务每秒重发一次，见 `EbikeFreeRideService` / `EbikeFreeRideNotifier`）；
+ * 2026-10-16 起该通知在 Android 16+ 上被系统提升为 Live Update（灵动岛）。
  */
 object EbikeFreeRide {
 
@@ -94,33 +94,37 @@ object EbikeFreeRide {
         const val LEGACY_ALERT_CHANNEL = "ebike_free_ride_alert"
     }
 
-    /** 常驻倒计时通知的标题（剩余时间由 [countdownText] 写进正文）。 */
+    /** 常驻倒计时通知的标题（剩余时间由系统 chronometer 显示在芯片/卡片头部）。 */
     const val COUNTDOWN_TITLE = "免费时长倒计时"
 
-    /** 常驻倒计时通知的正文（无计时可显示时的兜底，正常路径走 [countdownText]）。 */
+    /** 常驻倒计时通知的正文（静态说明；秒数由系统 chronometer 显示，正文不再每秒重写）。 */
     const val COUNTDOWN_TEXT = "按套餐卡 $FREE_MINUTES 分钟免费计，超时开始计费"
 
     /**
-     * 常驻倒计时通知的正文 = 「免费剩余 mm:ss」。
+     * 倒计时文案 = 「免费剩余 mm:ss」。
      *
-     * **不依赖系统 chronometer**（2026-09-24 真机实测后改）：`setUsesChronometer` +
-     * `setChronometerCountDown` 在 Redmi K70（澎湃OS）上展开面板能显示，但**面板静止时
-     * 系统不主动重绘**，用户看到的是一个不动的数字。改成服务每秒主动 `notify` 一次，
-     * 任何 ROM 上都一定跳秒——代价是 15 分钟里约 900 次通知更新（每秒一次是系统
-     * 允许的上限，不会触发限流）。
+     * 2026-10-19 起不再由通知服务每秒重写：卡片头部交给系统 chronometer，正文固定用
+     * [COUNTDOWN_TEXT]，芯片走 [countdownChipText] 且每秒重发。这个函数仍供今日页
+     * 的倒计时块使用，也可供需要一次性文案的地方复用。
+     *
+     * 旧版曾因 2026-09-24 在 Redmi K70 / 澎湃OS 实测「面板静止时不重绘 chronometer」
+     * 改成每秒主动 notify；代价是 Android 16 Live Update 卡片头部应用图标每秒重绘，
+     * 下拉状态栏可见闪烁。现在卡片头部交给系统计时器，服务每秒刷芯片文案与进度条——
+     * 用户要岛上逐秒走，接受这个闪烁。
      */
     fun countdownText(startAtMillis: Long, nowMillis: Long): String =
         "免费剩余 ${formatRemaining(remainingSeconds(startAtMillis, nowMillis))}"
 
     /**
-     * 状态栏「灵动岛」芯片上的短文案（2026-10-16）：`剩mm:ss`。
+     * 状态栏「灵动岛」芯片上的短文案：`剩mm:ss`。
      *
-     * 只在 Android 16+ 上被系统用（[EbikeFreeRideService] 把它塞进
+     * 只在 Android 16+ 上被系统用（`EbikeFreeRideNotifier` 把它塞进
      * `setShortCriticalText`）；低版本设备这个字段没人读。
      *
-     * **为什么要单独一条、不复用 [countdownText]**：芯片宽 96dp，系统只在整段文字放得下时
-     * 才显示——**超过 7 个字符就可能只留图标**（官方 Live Updates 的芯片规则）。所以这里
-     * 去掉了「免费」二字，压到 5~6 个字符（`剩15:00`），保证一眼能看到秒数。
+     * **为什么还要这条（2026-10-19）**：HyperOS 3 的 Live Update 芯片不显示系统
+     * chronometer，没有 `setShortCriticalText` 时只显示通知标题；为了岛上仍有秒数，
+     * 保留这条并每秒重发一次。芯片宽 96dp，超过 7 个字符可能只留图标，所以压到
+     * `剩mm:ss`。
      */
     fun countdownChipText(startAtMillis: Long, nowMillis: Long): String =
         "剩${formatRemaining(remainingSeconds(startAtMillis, nowMillis))}"
