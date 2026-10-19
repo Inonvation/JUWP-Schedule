@@ -25,7 +25,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -135,7 +134,10 @@ fun FloatingBallOverlay(
             animationSpec = BallMotion,
             label = "ballScale",
         )
-        // 常态半透明、拖动时提到全不透明：既压得住内容，拖动时又看得清
+        // 常态半透明、拖动时提到全不透明：既压得住内容，拖动时又看得清。
+        // **不透明度落在 Surface 底色上**（图标 tint 保持不透明），不能对整个节点用
+        // Modifier.alpha：那会生成一层离屏图层，把 Surface 的 elevation 阴影裁成
+        // 节点矩形（用户 2026-10-19 反馈的「球下方矩形阴影」）。
         val alpha by animateFloatAsState(
             targetValue = if (dragging) 1f else BallIdleAlpha,
             animationSpec = BallMotion,
@@ -146,7 +148,7 @@ fun FloatingBallOverlay(
 
         Surface(
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
             shadowElevation = 6.dp,
             modifier = Modifier
                 .offset(
@@ -155,7 +157,6 @@ fun FloatingBallOverlay(
                 )
                 .size(ballSize)
                 .scale(scale)
-                .alpha(alpha)
                 .pointerInput(Unit) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = {

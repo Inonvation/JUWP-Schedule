@@ -120,6 +120,10 @@
     **常态半透明**（`BallIdleAlpha` 0.8，压得住内容又不喧宾夺主）、**拖动时放大 1.08**
     （`BallDragScale`）并提到全不透明。**别再写「松手吸附到最近边缘」**——
     那会「啪」地闪到边上，用户已否掉。
+  - **半透明度落在颜色上，不要对整球用 `Modifier.alpha`**（2026-10-19 修矩形阴影）：
+    整层 alpha 会生成离屏图层，把 `Surface` 的 elevation 阴影裁成节点矩形（球下方一块
+    方块阴影）。改成 `color = primary.copy(alpha = …)`；图标 tint 保持 `onPrimary` 不透明
+    （整层 alpha 时图标也一起被稀释，落到颜色上后若再给 tint 加 alpha 会比原来暗一档）。
   - **手势是两个独立 `pointerInput`**（`detectTapGestures` + `detectDragGesturesAfterLongPress`）：
     单击/双击共存意味着单击有一档 ~300ms 判定延迟；长按原地松手会误判成单击，
     靠「拖动结束时刻」挡掉（`TapSuppressAfterDragMs`）。改手势前先在真机上对一遍手感。
