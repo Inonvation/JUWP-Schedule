@@ -267,8 +267,10 @@ private fun WenquPreregConfirmDialog(
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = "确认后本应用会代替你在开放时刻自动提交报名：从开始前 15 秒起，" +
-                        "最多试 20 发，成功或失败都会通知你；活动时间有变化会自动顺延。" +
+                    text = "确认后本应用会代替你在开放时刻自动提交报名：从开始前 " +
+                        "${WenquRules.PREREG_TRY_BEFORE_MS / 1000} 秒起，" +
+                        "最多试 ${WenquRules.PREREG_MAX_ATTEMPTS} 发，成功或失败都会通知你；" +
+                        "活动时间有变化会自动顺延。" +
                         "平台有时提前几秒放行，自动提交就是为了吃到这几秒；期间随时可在本页取消。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),

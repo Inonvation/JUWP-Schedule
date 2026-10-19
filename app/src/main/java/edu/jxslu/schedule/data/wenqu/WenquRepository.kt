@@ -220,10 +220,19 @@ class WenquRepository(
 
     /**
      * 预报名执行器专用 API（[WenquRules.PREREG_ATTEMPT_TIMEOUT_S] 秒 + `Date` 头时钟记账）：
-     * 试发与只读核对都走它，走完整 30 秒等于把执行窗口全占了（见 `WenquServerClock`）。
+     * 试发走它，走完整 30 秒等于把执行窗口全占了（见 `WenquServerClock`）。
+     * 只读核对另派生一个更短的 [preregCheckApi]。
      */
     private val preregApi: WenquApi =
         WenquApi.create(WenquRules.PREREG_ATTEMPT_TIMEOUT_S, withServerClock = true)
+
+    /**
+     * 预报名只读核对专用 API（[WenquRules.PREREG_CHECK_TIMEOUT_S] 秒）：写请求超时后
+     * 的 `apply` 核对不能跟写一样挂 5 秒，否则高峰期每发白等 3 秒；2 秒拿不到就交给
+     * 下一发（下一发若已报上会回「已报名」）。
+     */
+    private val preregCheckApi: WenquApi =
+        WenquApi.create(WenquRules.PREREG_CHECK_TIMEOUT_S, withServerClock = true)
 
     // ---- 进程内缓存（DESIGN §4.45「进页不重复取数」）------------------------------
     // 「我的记录 / 星级」只有一个资源，键用常量；活动列表按关键词缓存（换关键词 = 换一份）。
@@ -838,7 +847,7 @@ class WenquRepository(
      */
     suspend fun preregAppliedNow(id: Long): WenquPreregCheck = withContext(Dispatchers.IO) {
         try {
-            val detail = fetchDetailUncached(id, preregApi)
+            val detail = fetchDetailUncached(id, preregCheckApi)
             when {
                 detail == null -> WenquPreregCheck.Unknown
                 detail.applied -> {

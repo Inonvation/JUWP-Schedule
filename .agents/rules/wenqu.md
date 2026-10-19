@@ -403,7 +403,9 @@ POST /api/volunteer/apply/cancel/{id}   {}（id 走路径）                  �
   **发布窗口** = `[publishAt - GRAB_BURST_BEFORE_MS(20 秒), publishAt + GRAB_BURST_AFTER_MS
   (15 秒)]`，成功与失败都加密到 1 秒（`GRAB_POLL_INTERVAL_FAST_MS`）；前缘 2026-10-16 由
   5 秒放宽到 20 秒——平台**写接口会提前约 10 秒放行**（用户实测）。`publishAt` 由
-  `grabPublishAt`（周日 12:00，非周日回 0）给；串行保证高峰时自然退化成服务器响应速度。
+  `grabPublishAt` 给：**盯了活动就用它的实际报名开始时刻**（`pinnedOpenAt`，周二 / 周三的
+  定点开放也能吃到 1 秒档与 3 秒短超时，2026-10-19 全马活动就是周二 12:00）；没盯才退回
+  「周日 12:00，非周日回 0」的旧口径。串行保证高峰时自然退化成服务器响应速度。
 - **窗口（2026-10-16 重做）**：点「开始蹲点」**立即检测，不再待机到 11:59:50**（旧
   `grabDetectStartAt` 已删——它既挡不住「提前开放」，又让 11:50 前开蹲的窗口在 12:00 被掐断）。
   检测窗口默认自开蹲起算 10 分钟（`GRAB_WINDOW_MS`），**开始早于发布时刻时锚到「发布 +
@@ -489,7 +491,7 @@ POST /api/volunteer/apply/cancel/{id}   {}（id 走路径）                  �
 - 入口在**活动详情弹层**（主页与蹲点页的弹层都有；记录页不传）：仅当
   `applyBlockReason == WenquRules.APPLY_NOT_STARTED`（「招募中 + 报名时间可解析 + 还没到」）
   时给「预报名 · 准点自动抢」按钮，点击过 `WenquPreregConfirmDialog`（二次确认写明活动名 /
-  报名时间 / 自动提交 / 最多 20 发 / 可随时取消）；已排上显示「已预报名 · <时刻> 自动抢
+  报名时间 / 自动提交 / 最多 30 发 / 可随时取消）；已排上显示「已预报名 · <时刻> 自动抢
   （点此取消）」状态行。
 - 落盘三键 `wenqu_prereg_id / _title / _opens_at`（一起写、一起清，见 `DisplayPrefsStore`）；
   同一时间只支持一条。
@@ -506,14 +508,21 @@ POST /api/volunteer/apply/cancel/{id}   {}（id 走路径）                  �
   精确闹钟触发属于「允许从后台启动前台服务」的官方豁免——`restrictions-bg-start`，
   同骑行自动还车那条链）。起服务失败 → 一次性 Work 直接跑执行器（无进度通知）。
 - 执行器时序：**T−60s** 预热 token → **并发校对**（列表第一页带 `isBlack` + 本条详情带
-  状态 / 名额 / 报名时间；平台改过时间顺延重排并通知）→ **T−15s 起串行试发**（每发失败先
-  只读核对 `preregAppliedNow`；「已报名」当成功，已满 / 被限制 / 已下架当终结）→ 收工
-  （`preregShouldStop`：≤`PREREG_MAX_ATTEMPTS = 20` 发、总时长 ≤`PREREG_RUN_MS = 150` 秒、
+  状态 / 名额 / 报名时间；平台改过时间顺延重排并通知）→ **T−15s 起串行试发**（结果不明时
+  只读核对 `preregAppliedNow`；平台明确回「尚未开始」时**不核对**——那一发确定没落库，
+  核对只会白占一个来回；「已报名」当成功，已满 / 被限制 / 已下架当终结）→ 收工
+  （`preregShouldStop`：≤`PREREG_MAX_ATTEMPTS = 30` 发、总时长 ≤`PREREG_RUN_MS = 150` 秒、
   开始后 ≤`PREREG_END_AFTER_MS = 90` 秒，三闸取先到）。
 - 单发超时 `PREREG_ATTEMPT_TIMEOUT_S = 5` 秒（`preregApi`）；发与发之间
-  `PREREG_ATTEMPT_GAP_MS = 2` 秒。**写请求不自动重发**：网络类失败 → 只读核对；核对不上 →
+  `PREREG_ATTEMPT_GAP_MS = 1` 秒（2026-10-19 由 2 秒收到 1 秒：240 个名额的热门活动可能几秒
+  报满，2 秒档在开放那一刻最坏会晚 2 秒多）。**写请求不自动重发**：网络类失败 → 只读核对；核对不上 →
   下一发；平台业务话术分类见 `WenquRules.classifyPreregReject`（认不出的按 Unknown 继续试、
   靠次数封顶，不硬认成终结）。
+- **只读核对单独用 2 秒超时**（`PREREG_CHECK_TIMEOUT_S` / `preregCheckApi`，2026-10-19）：
+  写请求超时后核对与写走同一条拥堵链路，挂 5 秒等于把下一发推后 3 秒；2 秒拿不到就交给
+  下一发——下一发若已报上，平台回「已报名」，同样按成功收尾。
+- **不要用快照的 `balance_num` 提前判「名额已满」**：活动还没开放报名时平台可能把剩余名额写成 0，
+  提前 abort 等于把还能抢的活动直接判死。到点真发，第一发回「名额已满」再按终结收工。
 - 通知（channel `wenqu_prereg` / id **1017** / 落点 requestCode **3016**）：执行中常驻进度
   （静默，服务持有；结束时结果就地替换、`STOP_FOREGROUND_DETACH` 保留，空跑则摘掉）；
   结果「报名成功 / 没抢到 / 未执行」**直接震动、不过免扰时段**（同名额空出提醒口径）。

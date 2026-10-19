@@ -808,11 +808,17 @@ object WenquRules {
     /**
      * 蹲点锚定的**发布时刻**：周日 [WEEKLY_ALERT_HOUR]:[WEEKLY_ALERT_MINUTE]（本地时区）；
      * 非周日回 0——没有已知发布点，就不做加密轮询（见 [grabNextDelayMs]）。
+     *
+     * 盯了指定活动时把它的报名开始时刻传进 [pinnedOpenAt]：平台不是只在周日 12:00 放活动，
+     * 周二 / 周三的定点开放同样需要 1 秒档与短超时（2026-10-19 全马活动就是周二 12:00）。
+     * 只在锚点**晚于**开蹲时刻时采用，已过的不拿来当窗口锚。
      */
     fun grabPublishAt(
         armedAt: Long,
         zone: ZoneId = ZoneId.systemDefault(),
+        pinnedOpenAt: Long = 0L,
     ): Long {
+        if (pinnedOpenAt > armedAt) return pinnedOpenAt
         val zoned = Instant.ofEpochMilli(armedAt).atZone(zone)
         if (zoned.dayOfWeek != DayOfWeek.SUNDAY) return 0L
         return zoned.toLocalDate()
@@ -939,14 +945,29 @@ object WenquRules {
      */
     const val PREREG_TRY_BEFORE_MS: Long = 15_000L
 
-    /** 两次试发之间的等待（串行：上一发连同核对落地才发下一发）。 */
-    const val PREREG_ATTEMPT_GAP_MS: Long = 2_000L
+    /**
+     * 两次试发之间的等待（串行：上一发连同核对落地才发下一发）。
+     *
+     * 2026-10-19 由 2 秒收到 1 秒：平台写接口大约提前 10 秒放行，2 秒档在「刚好开放」
+     * 那一刻最多会晚 2 秒多；热门活动 240 个名额可能几秒内报满。1 秒档把最坏延迟压到
+     * 1 秒出头。次数相应从 20 提到 30，覆盖的窗口仍是开始前 15 秒到开始后 15 秒左右。
+     */
+    const val PREREG_ATTEMPT_GAP_MS: Long = 1_000L
 
     /** 单发报名请求的 call timeout（秒）：高峰期挂 30 秒等于把执行窗口全占了。 */
     const val PREREG_ATTEMPT_TIMEOUT_S: Long = 5L
 
-    /** 一次预报名最多试发多少发（含第一发）。 */
-    const val PREREG_MAX_ATTEMPTS: Int = 20
+    /**
+     * 预报名**只读核对**的 call timeout（秒，2026-10-19）：比试发短。
+     *
+     * 写请求超时后要先看「其实报上了没」。核对与写走同一条拥堵链路，挂 5 秒等于
+     * 把下一发白白推后 3 秒；2 秒拿不到就交给下一发——下一发若已报上，平台会回
+     * 「已报名」，同样按成功收尾。
+     */
+    const val PREREG_CHECK_TIMEOUT_S: Long = 2L
+
+    /** 一次预报名最多试发多少发（含第一发）：30 发 × 1 秒 ≈ 覆盖开始前后各 15 秒。 */
+    const val PREREG_MAX_ATTEMPTS: Int = 30
 
     /** 执行器总时长上限（自服务启动起算）：一次 shortService 的前台额度约 3 分钟。 */
     const val PREREG_RUN_MS: Long = 150_000L
@@ -1023,6 +1044,16 @@ object WenquRules {
     /** 「已报名」类拒绝 = 实际已经报上了（先前某发已生效，或用户手动报了）。 */
     fun preregRejectIsApplied(kind: PreregRejectKind): Boolean =
         kind == PreregRejectKind.AlreadyApplied
+
+    /**
+     * 业务拒绝之后要不要补一次只读核对（`volunteer/detail/{id}` 的 `apply` 段）。
+     *
+     * 「尚未开始」是平台明确没受理那一发：既没落库，也没有「其实报上了」的可能，
+     * 核对只会白占一个来回——高峰期这个来回可能就是 1–5 秒。其余（认不出的异常）
+     * 仍要核对，宁可多一个请求，也不把已经报上的当成失败。
+     */
+    fun preregNeedsReadBack(kind: PreregRejectKind): Boolean =
+        kind != PreregRejectKind.NotStarted
 
     // ---- 服务器时钟（预报名校准用，2026-10-16）----------------------------------
     //

@@ -1061,8 +1061,10 @@ UI 规格见 §3.28。
 放行**（活动写着 12:00 开始报名，11:59:50 就能抢），手点抢不过；要「选好活动、到点全自动」。
 **全 App 唯一允许自动提交的路径**，只对用户点名的单条活动生效。分层：
 `ui/wenqu/WenquPreregReminder.kt`（落盘 + 精确闹钟 4008 + 兜底 Work + 通知 1017 / 落点 3016）+
-`WenquPreregRunner.kt`（执行器：T−60s 预热与并发校对 → T−15s 起串行试发，每发失败先只读核对；
-≤20 发 / ≤150 秒 / 开始后 ≤90 秒三闸收工；平台话术分类 `WenquRules.classifyPreregReject`）+
+`WenquPreregRunner.kt`（执行器：T−60s 预热与并发校对 → T−15s 起串行试发，结果不明才只读核对
+（「尚未开始」确定没落库，不核对；核对单独用 2 秒短超时）；≤30 发 / 每发间隔 1 秒 /
+≤150 秒 / 开始后 ≤90 秒三闸收工；
+平台话术分类 `WenquRules.classifyPreregReject`）+
 `WenquPreregService.kt`（`shortService` 短时前台服务——精确闹钟触发属官方豁免，同骑行那条链）+
 `data/wenqu/WenquServerClock.kt`（`Date` 头时钟偏移，试发窗口按服务器钟折算）。
 入口在详情弹层（`applyBlockReason == APPLY_NOT_STARTED` 才给按钮 + `WenquPreregConfirmDialog`

@@ -729,6 +729,24 @@ class WenquRulesTest {
         assertEquals(at(2026, 10, 11, 12, 0), WenquRules.grabPublishAt(at(2026, 10, 11, 11, 55), zone))
         // 非周日（2026-10-10 周六）→ 0（没有已知发布点）
         assertEquals(0L, WenquRules.grabPublishAt(at(2026, 10, 10, 11, 55), zone))
+        // 盯了活动时用它的实际报名开始时刻：周二 12:00 也要能触发加密窗口
+        assertEquals(
+            at(2026, 10, 20, 12, 0),
+            WenquRules.grabPublishAt(
+                at(2026, 10, 19, 23, 0),
+                zone,
+                pinnedOpenAt = at(2026, 10, 20, 12, 0),
+            ),
+        )
+        // 已经过了的锚点不采用，退回原口径（非周日 = 0）
+        assertEquals(
+            0L,
+            WenquRules.grabPublishAt(
+                at(2026, 10, 20, 13, 0),
+                zone,
+                pinnedOpenAt = at(2026, 10, 20, 12, 0),
+            ),
+        )
     }
 
     @Test
@@ -967,6 +985,9 @@ class WenquRulesTest {
         assertFalse(WenquRules.preregRejectIsTerminal(WenquRules.PreregRejectKind.Unknown))
         assertTrue(WenquRules.preregRejectIsApplied(WenquRules.PreregRejectKind.AlreadyApplied))
         assertFalse(WenquRules.preregRejectIsApplied(WenquRules.PreregRejectKind.Full))
+        // 「尚未开始」确定没落库，不补只读核对；认不出的仍要核对
+        assertFalse(WenquRules.preregNeedsReadBack(WenquRules.PreregRejectKind.NotStarted))
+        assertTrue(WenquRules.preregNeedsReadBack(WenquRules.PreregRejectKind.Unknown))
     }
 
     @Test

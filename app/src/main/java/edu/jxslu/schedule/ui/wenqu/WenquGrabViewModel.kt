@@ -230,8 +230,6 @@ class WenquGrabViewModel(
         grabJob?.cancel()
         shownHitIds.clear()
         val armedAt = System.currentTimeMillis()
-        // 周日 12:00 的发布点（非周日为 0）：发布窗口内加密轮询（见 `grabNextDelayMs`）
-        val publishAt = WenquRules.grabPublishAt(armedAt)
         _state.update {
             it.copy(
                 phase = Phase.Checking,
@@ -251,6 +249,16 @@ class WenquGrabViewModel(
             runCatching { repo.prewarmSession() }
             var failures = 0
             while (isActive) {
+                // 发布窗口的锚点：盯了活动就用它的**实际报名开始时刻**（周二 / 周三的
+                // 定点开放也能吃到 1 秒档与短超时）；没盯才退回「周日 12:00」的旧口径。
+                // 每轮重算：列表项可能一开始没带报名时间，盯的详情回来后就会补上。
+                val pinnedOpenAt = _state.value.pinnedActivity
+                    ?.let { WenquRules.stampMillis(it.applyStartTime) }
+                    ?: 0L
+                val publishAt = WenquRules.grabPublishAt(
+                    armedAt,
+                    pinnedOpenAt = pinnedOpenAt,
+                )
                 if (WenquRules.grabShouldStop(
                         checks = _state.value.checks,
                         detectStartedAt = armedAt,

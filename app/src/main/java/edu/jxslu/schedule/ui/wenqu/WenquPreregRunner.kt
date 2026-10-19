@@ -21,8 +21,9 @@ import kotlin.math.abs
  * 时序（报名开始时刻 T，服务器钟口径）：
  * 1. **T−60s**（闹钟提前量）：预热 token（要重登就现在登）→ 并发拉列表第一页 + 本条详情
  *    校对状态 / 名额 / 报名时间（平台改过时间就顺延重排），顺手用响应 `Date` 头校准服务器钟；
- * 2. **T−15s 起**：进入试发段——**串行**试发报名，每发失败先只读核对（「其实报上了」
- *    不当失败），发与发之间 [WenquRules.PREREG_ATTEMPT_GAP_MS]；
+ * 2. **T−15s 起**：进入试发段——**串行**试发报名，结果不明时先只读核对（「其实报上了」
+ *    不当失败；平台明确回「尚未开始」时不核对），发与发之间
+ *    [WenquRules.PREREG_ATTEMPT_GAP_MS]；
  * 3. **收工**：成功 / 平台硬拒（已满 / 被限制 / 已下架）/ 次数与时长触顶
  *    （[WenquRules.preregShouldStop]）；结果通知 + 清落盘。
  *
@@ -135,9 +136,9 @@ object WenquPreregRunner {
                     2 -> return abort(context, prefs, id, title, "活动已开始，报名已截止", startedAt)
                     3 -> return abort(context, prefs, id, title, "活动已结束", startedAt)
                 }
-                if (WenquRules.isFull(activity.status, activity.peopleNum, activity.balanceNum)) {
-                    return abort(context, prefs, id, title, "名额已满", startedAt)
-                }
+                // 这里**故意不拿快照的 balance_num 判「已满」**：活动还没开放报名时，
+                // 平台完全可能把剩余名额写成 0，提前 abort 等于把还能抢的活动直接判死。
+                // 到点真发才是权威——第一发若回「名额已满」，下面按终结拒绝收工。
             }
         }
 
@@ -152,7 +153,7 @@ object WenquPreregRunner {
             delay(minOf(waitMs, 500L))
         }
 
-        // 4) 试发段：串行单发；每发失败先只读核对；平台硬拒 / 触顶收工
+        // 4) 试发段：串行单发；结果不明才只读核对；平台硬拒 / 触顶收工
         var attempts = 0
         var lastSoftReason = ""
         var success = false
@@ -211,7 +212,14 @@ object WenquPreregRunner {
                             needCheck = false
                         }
 
-                        else -> lastSoftReason = outcome.msg
+                        else -> {
+                            lastSoftReason = outcome.msg
+                            // 「尚未开始」= 这一发确定没落库，跳过详情核对，把下一个来回
+                            // 留给真正的试发（热门活动开放后的头两秒最值钱）。
+                            if (!WenquRules.preregNeedsReadBack(outcome.kind)) {
+                                needCheck = false
+                            }
+                        }
                     }
                 }
 
