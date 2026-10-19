@@ -27,6 +27,20 @@
 - **远课轻提示（`NextStartHint`）已删**：不再有 60 分钟窗口的「下一节」提示。
 - 改版前先读 DESIGN §3.3 的 2026-10-13 段。
 
+## 宿舍报修卡（2026-10-19，DESIGN §4.49）
+
+- 位置：**滚动区第一项**（今日课程上方）；未开学 / 课表为空的空态也通过
+  `TodayCenteredShell` 的 `topContent` 显示——不能只在有课时才出现。
+- 可见性由 `DormRepairRules.cardRecord` 决定：有在途优先（最新提交），没有在途才显示
+  3 天内已完成且未被用户隐藏的；完成 3 天后自动不渲染（快照仍保留，收件箱可回查）。
+- 卡片只展示状态 / 宿舍 · 故障 / 当前节点或完成时间；姓名、学号等个人字段解析层已丢弃，
+  **不要**为了「信息更全」把它们加回卡片。
+- 数据源：`Graph.dormRepairStore(context).snapshot`（进程级单例）。自动检查在
+  `MainActivity.onResume` → `DormRepairReminder.checkOnAppOpen`：30 分钟内不重复请求，
+  自动 CAS 登录最多 12 小时一次；今日页下拉刷新顺带 `Graph.dormRepairSync(context).refresh()`，
+  与课表刷新并行、不阻塞。
+- 点整卡进 `SubpageScreen.DORM_REPAIR` 原生详情页；「去学工报修页核对」才开 WebView。
+
 ## 顶栏「+」快捷入口（2026-10-02，2026-10-06 加收件箱，2026-10-08 加志愿服务，2026-10-12 加百宝箱，2026-10-13 删志愿服务）
 
 - 顶栏右上角一枚 `Add01` + 下拉四行：「扫一扫」「付款码」「收件箱」「百宝箱」

@@ -65,6 +65,7 @@ import me.rerere.hugeicons.stroke.Exchange01
 import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Inbox
+import me.rerere.hugeicons.stroke.Repair
 import me.rerere.hugeicons.stroke.Wallet01
 
 /**
@@ -365,7 +366,7 @@ private fun EmptyState() {
         Spacer(Modifier.size(12.dp))
         Text("暂无消息", style = MaterialTheme.typography.bodyLarge)
         Text(
-            "考试安排、成绩、调课、余额预警等重要信息会自动收进来。",
+            "考试安排、成绩、调课、报修办结、余额预警等重要信息会自动收进来。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
         )
@@ -383,6 +384,7 @@ private fun kindIcon(kind: String) = when (
     InboxKind.POWER_LOW -> HugeIcons.Alert02
     InboxKind.YKT_LOW -> HugeIcons.Wallet01
     InboxKind.WENQU_ACTIVITY -> HugeIcons.HeartHandshake
+    InboxKind.DORM_REPAIR -> HugeIcons.Repair
 }
 
 /** 时间标签：当天只给 HH:mm，当年给「M月d日 HH:mm」，更早带年份。 */

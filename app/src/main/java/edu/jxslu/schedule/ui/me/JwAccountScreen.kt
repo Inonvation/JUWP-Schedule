@@ -230,6 +230,8 @@ fun JwAccountScreen(onBack: () -> Unit) {
                         // 清完再返回，状态卡重读时看到的才是真的「未登录」
                         scope.launch {
                             cas.logout()
+                            // 换账号后不要把上一位用户的报修记录留在今日页（DESIGN §4.49）
+                            Graph.dormRepairStore(context).clear()
                             onBack()
                         }
                     },

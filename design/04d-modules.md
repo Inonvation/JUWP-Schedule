@@ -1287,3 +1287,58 @@ RGBA_F16 / RGBA_1010102 这类非常规配置，不该漏给出图侧。
   （`A20FFFFFFF73`，仅制热档）、静音（`A212/13` 开关系）——都是现成的切换帧形态，
   要加就在 `MideaAc.Toggle` 补一条 + UI 一个芯片；R05D 的睡眠 / 定时编码公开资料
   只有占位，未确认；Coolix 作为第三套口径，等 R05D / A1 都不认再上。
+
+### 4.49 宿舍报修进度：今日页卡片 · 原生详情 · 办结提醒（2026-10-19；UI 见 §3.3 / §3.15）
+
+宿舍报修本身仍在学工 WebView 里提交（§4.26），App 只**只读**抄一份「个人提交记录」
+到本机：今日页顶部一张卡片、点进原生二级页 `DORM_REPAIR`、办结时入收件箱并发通知。
+**绝不调用提交 / 审批 / 退回 / 保存接口**——写操作仍然只由用户在官方页面里完成。
+
+- **只读接口**：`POST https://xgxt.juwp.edu.cn/office/data/approve/apps/forms/fore/user/list`
+  （`XgUrls.OFFICE_RECORD_LIST`）。参数由 `XgForm.recordListForm()` 生成：
+  `formId` / `aprvAppId` 同值（报修 278625）、`pageEnc`、`cpage=1`、`pageSize=20`、
+  `version=2`、空的搜索 / 时间 / 脱敏参数；`uid` 可省（会话 cookie 足够）。
+  同目录下的 `approve/flow/approve/handle/*`、`user/save`、`submit/validate` 一律不碰。
+- **会话两级（按成本从低到高）**：
+  1. **WebView 现成的 office 会话**（`DormRepairWebClient`）：`CookieManager.getCookie(
+     "https://xgxt.juwp.edu.cn/office/")` → 直接带 `Cookie` 头 POST。不登录、最便宜；
+     用户刚在报修页提交完关窗 / 回前台时，这条一定新鲜——卡片立刻更新。
+  2. **CAS 回退**（`CasSession`）：`ensureValid` → `GET /sfrz/login343962` →
+     `GET /office/` → 同一个 POST。**自动检查的 CAS 登录最多 12 小时一次**
+     （`DormRepairSync.AUTO_LOGIN_INTERVAL_MS`）；手动刷新不受限。这样既能在关掉 App
+     后仍发现办结，又不会每个冷启动都完整登一次统一认证（教务脚本踩过 CAS 风控）。
+  两条都不可用 → 静默 `Skipped`，保留旧快照；不在今日页弹错误。
+- **解析**（`data/xg/DormRepairParser`，纯 JVM 可测）：
+  - `formsConfig` 建 `id → label` 映射，再按 **label** 取 `formData`：
+    「当前状态」→ 报修状态（待处理 / 已派单 / 已完成）；「宿舍信息」（没有则「宿舍」）、
+    「故障类型」、「详情描述」、「最终完成时间」。
+  - `aprvStatusType` / `aprvStatusTypeId` 是审批状态；`currentApproveUserList` 的
+    `nodeUniqueId` 用来标出 `flowUser` 里当前审批节点；`cardType == 2` 的抄送节点不进流程条。
+  - **姓名 / 学号 / 院系 / 专业 / 班级 / 手机号在解析阶段直接丢弃**（`PERSONAL_LABELS`），
+    不进快照、不上屏、不进日志。
+  - 完成判定：表单「当前状态」= 已完成，或审批到终点（已通过 / 已拒绝 / 已撤销）。
+    审批通过后表单来不及改成「已完成」时，卡片主状态按「已完成」，详情页把表单的
+    「已派单」并列列出，不藏差异。
+- **本机快照**（`data/repo/DormRepairStore`）：`filesDir/dorm_repair.json`，含最近 20 条、
+  `dismissedIds`（用户点过「完成并隐藏」）、`notifiedIds`（已发过办结通知）、
+  `checkedOnce` / `tracking`（打开 App 检查的闸门）。**已登记进两份备份排除 XML**。
+  失败宁旧勿空；`tracking` 一旦用户用过报修就保持（进程重启后仍会检查）。
+  **退出学校统一认证时 `JwAccountScreen` 调 `DormRepairStore.clear()` 删掉快照**，
+  换账号后不能把上一位用户的报修记录留在今日页。
+- **卡片 / 详情**：
+  - 今日页滚动区**第一项**（今日课程上方；未开学 / 课表为空时也在顶部槽），没有可见
+    记录时整卡不渲染。有在途优先（最新提交）；没有在途才显示 3 天内已完成的。
+  - 详情页 `SubpageScreen.DORM_REPAIR`：状态英雄卡 + 报修信息 + 审批流程 + 当前处理人；
+    「去学工报修页核对」打开现有 `XgFormActivity`；「完成并隐藏（仅本机）」只写
+    `dismissedIds`，不向学工提交任何写操作。
+- **办结通知与收件箱**（`ui/reminder/DormRepairReminder`）：
+  - 只在**回到前台**时核对（不做后台轮询）；同一进程 30 分钟内不重复请求。
+  - 首跑只建基线；只有「上次同一条未结束 → 这次结束」才入箱
+    （`InboxKind.DORM_REPAIR`，key `repair|done|<formUserId>`）。通知开关只拦通知，
+    不拦入箱；免扰时段走 `QuietHoursGate`（事实型，时段结束补发）。
+  - 通知渠道 `dorm_repair`（IMPORTANCE_DEFAULT），id 1018 / tag `dorm_repair` /
+    requestCode 3018；点击落 `DORM_REPAIR` 详情页。完成时间超过 3 天的不再弹通知
+    （只入箱）。
+- **已知边界**：自动检查优先用 WebView 会话；若进程重启后 WebView 会话已不在、
+  且 12 小时 CAS 窗口未到，则本轮跳过，卡片继续显示上次快照——用户可在详情页手动
+  刷新或打开报修页后恢复。打卡片只进原生详情，不跳 Web。

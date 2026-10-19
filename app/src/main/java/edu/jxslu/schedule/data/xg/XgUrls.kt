@@ -42,6 +42,27 @@ data class XgForm(
         append(appId)
         append("&isManager=false")
     }
+
+    /**
+     * 「个人提交记录」列表的**只读**参数（DESIGN §4.49）。
+     *
+     * 走 `OFFICE_RECORD_LIST`（`data/approve/apps/forms/fore/user/list`），只查自己提交过的
+     * 单子；提交 / 审批 / 退回那几个 `handle/…`、`user/save`、`submit/validate` 一律不碰。
+     * 字段口径来自表单引擎的移动端列表页：`formId` 与 `aprvAppId` 同值，`pageEnc` 是表单标识。
+     */
+    fun recordListForm(pageSize: Int = 20): List<Pair<String, String>> = listOf(
+        "formId" to appId.toString(),
+        "formUserId" to "",
+        "aprvAppId" to appId.toString(),
+        "pageEnc" to pageEnc,
+        "cpage" to "1",
+        "pageSize" to pageSize.coerceIn(1, 50).toString(),
+        "desensitization" to "",
+        "startTime" to "",
+        "endTime" to "",
+        "searchParam" to "",
+        "version" to "2",
+    )
 }
 
 /**
@@ -72,6 +93,14 @@ object XgUrls {
 
     /** 超星 office 表单引擎根；各表单跑在 `apps/forms/mobile/apply.html`。 */
     const val OFFICE = "$BASE/office/"
+
+    /**
+     * 「个人提交记录」列表（只读，DESIGN §4.49）。
+     *
+     * 参数见 [XgForm.recordListForm]；返回 `data.formsUserList`，含审批状态、当前审批人、
+     * 流程节点与表单字段。**绝不调用**同目录下的提交 / 审批 / 退回接口。
+     */
+    const val OFFICE_RECORD_LIST = "$OFFICE/data/approve/apps/forms/fore/user/list"
 
     /** 宿舍报修（学工 → 宿管服务 → 宿舍报修）。 */
     val REPAIR = XgForm(

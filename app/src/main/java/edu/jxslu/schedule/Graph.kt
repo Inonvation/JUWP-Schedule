@@ -62,6 +62,8 @@ import edu.jxslu.schedule.data.repo.ScholarProgressRepository
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.data.repo.CurriculumRepository
 import edu.jxslu.schedule.data.repo.CurriculumSync
+import edu.jxslu.schedule.data.repo.DormRepairStore
+import edu.jxslu.schedule.data.repo.DormRepairSync
 import edu.jxslu.schedule.data.repo.ScoreRepository
 import edu.jxslu.schedule.data.repo.ScoreSync
 import edu.jxslu.schedule.data.repo.SelectionRepository
@@ -184,6 +186,14 @@ object Graph {
 
     @Volatile
     private var curriculumSync: CurriculumSync? = null
+
+    /** 宿舍报修快照（DESIGN §4.49）：filesDir 一份 JSON，今日页卡片与详情页共用。 */
+    @Volatile
+    private var dormRepairStore: DormRepairStore? = null
+
+    /** 宿舍报修只读同步（DESIGN §4.49）：打开 App / 关闭报修窗口 / 手动刷新时跑。 */
+    @Volatile
+    private var dormRepairSync: DormRepairSync? = null
 
     @Volatile
     private var scoreSync: ScoreSync? = null
@@ -376,6 +386,22 @@ object Graph {
                 repo = curriculumRepository(context),
                 prefs = displayPrefs(context),
             ).also { curriculumSync = it }
+        }
+
+    /** 宿舍报修快照单例（DESIGN §4.49）：今日页卡片、详情页、同步三处共用一份。 */
+    fun dormRepairStore(context: Context): DormRepairStore =
+        dormRepairStore ?: synchronized(this) {
+            dormRepairStore ?: DormRepairStore(context.applicationContext).also { dormRepairStore = it }
+        }
+
+    /** 宿舍报修只读同步单例（DESIGN §4.49）：复用 CAS 会话与收件箱。 */
+    fun dormRepairSync(context: Context): DormRepairSync =
+        dormRepairSync ?: synchronized(this) {
+            dormRepairSync ?: DormRepairSync(
+                cas = casSession(context),
+                store = dormRepairStore(context),
+                inbox = inboxRepository(context),
+            ).also { dormRepairSync = it }
         }
 
     /** 成绩自动导入单例（DESIGN §4.29）：与成绩页共用同一份解析与仓库。 */

@@ -79,6 +79,7 @@ import edu.jxslu.schedule.ui.common.rememberQuickScan
 import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.me.hub.UpdateAvailableDialogHost
+import edu.jxslu.schedule.ui.reminder.DormRepairReminder
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -180,6 +181,15 @@ class MainActivity : ComponentActivity() {
             JuwRoot {
                 JuwApp(pendingRoute = pendingRoute, pendingSubpages = pendingSubpages)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 宿舍报修（DESIGN §4.49）：只在回到前台时核对（不做后台轮询）。
+        // 30 分钟内不重复打接口，闸门在 DormRepairSync 里；用 applicationContext 不持有 Activity。
+        Graph.appScope.launch {
+            DormRepairReminder.checkOnAppOpen(applicationContext)
         }
     }
 
@@ -1096,6 +1106,10 @@ internal fun JuwApp(
                             },
                             onOpenAcRemote = {
                                 SubpageActivity.start(context, SubpageScreen.AC_REMOTE)
+                            },
+                            // 宿舍报修进度（DESIGN §4.49）：今日页卡片进原生只读详情页
+                            onOpenDormRepair = {
+                                SubpageActivity.start(context, SubpageScreen.DORM_REPAIR)
                             },
                             // 付款码（DESIGN §3.10）：校园卡付款码展示页，独立窗口
                             onOpenPayCode = {

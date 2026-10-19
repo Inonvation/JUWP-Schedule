@@ -247,7 +247,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
               菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
                受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（今日页「江水生活」图标入口，
-               寝室美的空调红外，§3.31 / §4.48））
+               寝室美的空调红外，§3.31 / §4.48）；宿舍报修进度 DORM_REPAIR（今日页报修卡 /
+               收件箱办结通知的落点，原生只读，§4.49））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
                  + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
                  + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
@@ -287,6 +288,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  历史编解码，纯函数，§4.47）
  + MideaR05d·MideaAc·AcProtocol（美的空调红外：R05D 默认 / A1 可选 · 48 位帧 ·
  ConsumerIrManager 脉冲序列生成，纯函数，§3.31 / §4.48）
+ + DormRepair·DormRepairRules（宿舍报修进度：状态 / 完成判定 / 3 天保留 / 卡片选记录 /
+ 过渡通知，§4.49）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
  SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
  §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
@@ -312,6 +315,8 @@ data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成�
                  ScheduleSync（课表直取 + 首启自动导入 + 调课检查）/ ScheduleBaselineStore
                  （调课基线 filesDir JSON，§4.17）
                  InboxRepository（收件箱留痕层，旁路不发网络请求，§4.38；规则见 .agents/rules/inbox.md）
+                 DormRepairStore / DormRepairSync（报修快照 filesDir/dorm_repair.json + 只读同步：
+                 WebView office 会话优先、CAS 12 小时窗口回退，§4.49）
 data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）+ 空调遥控状态（ac_remote_prefs，§4.48）
 data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
                  + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
@@ -323,6 +328,9 @@ data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleP
                  + TeachingCalendarParser（教学日历 = 教务返 HTML，只取第 1 周周一，§4.42）
                  + InternshipBaseParser（实习基地 = layui JSON，§4.43）
                  + JwTeachingEval（学生评教：token 注入脚本 · 平台域判据 · 日志脱敏，§4.44）
+data/xg/         XgUrls（学工表单清单 / 只读记录列表地址）+ DormRepairParser（报修列表 JSON，
+                 按 label 取字段、个人信息解析阶段丢弃）+ DormRepairWebClient（WebView office
+                 会话回退，§4.26 / §4.49）
 data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
 data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
                  已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
@@ -376,7 +384,7 @@ data/ir/         空调红外发射（今日页「江水生活」图标入口，
                  进页只给提示）；协议纯逻辑见 domain/MideaR05d（默认）/ MideaAc（A1），
                  状态见 AcRemotePrefsStore
                  规则见 .agents/rules/ac-remote.md
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|ai|toolbox
+ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|reminder|ai|toolbox
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```

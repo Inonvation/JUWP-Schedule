@@ -6,11 +6,16 @@
 
 - 投递只发生在各业务链「数据已到手并完成对比」的结果点上（`ExamSync` 落快照后 /
   `ScoreSync` 写库后 / `ScheduleSync.check` 落待处置缓存处 / `SelectionAlertReminder`
-  发通知成功处 / `BalanceAlertReminder` 判定处）。**收件箱链路自己不发任何网络请求**；
+  发通知成功处 / `BalanceAlertReminder` 判定处 / `DormRepairSync` 对比出
+  「上次未结束 → 这次结束」处）。**收件箱链路自己不发任何网络请求**；
   `InboxRepository` 的每个写操作内部吞错只留日志——留痕失败不能让主链路跟着失败。
 - 去重语义三条（`domain/InboxRules`，`InboxRulesTest` 钉住）：无键插入；未删重投刷新并
   **重新置未读**（状态型「已读后次日仍低 → 重新未读」靠它）；**已删重投只刷新不复活**。
   消息键见 `domain/InboxKeys`，调课与轮次的键必须与既有指纹/已发键**同源**，别另写一套。
+- **宿舍报修办结**（§4.49）：`InboxKind.DORM_REPAIR`，key `repair|done|<formUserId>`，
+  按**单条报修**去重；只有「上次同一条未结束 → 这次结束」才投递，首跑只建基线。
+  完成时间超过 3 天的仍入箱（可回查）但不发通知；route = `DORM_REPAIR`，
+  focusItemId = 记录 id。通知渠道 / id 见 `DormRepairReminder`。
 - 保留策略：软删 30 天 / 已读 90 天 / 未删总量 200 条保最新，冷启动 purge 一次。
   `planPurge` 的总量上限**只数未删行**（与列表查询的 `deletedAt IS NULL` 同口径）——
   把软删行计入容量会误裁活消息（2026-10-06 单测抓过这个 bug）。

@@ -24,6 +24,7 @@ import edu.jxslu.schedule.ui.me.hub.TimetableHubScreen
 import edu.jxslu.schedule.ui.me.hub.WidgetCalendarHubScreen
 import edu.jxslu.schedule.ui.campus.CampusCalendarScreen
 import edu.jxslu.schedule.ui.campus.CampusCardSettingsScreen
+import edu.jxslu.schedule.ui.campus.DormRepairScreen
 import edu.jxslu.schedule.ui.campus.PayCodeScreen
 import edu.jxslu.schedule.ui.campus.StatementScreen
 import edu.jxslu.schedule.ui.curriculum.CurriculumScreen
@@ -166,6 +167,11 @@ enum class SubpageScreen {
     KVCX,
     /** 我的 → 校园服务 → 校历（仓库镜像 + 内置兜底，DESIGN §4.34） */
     CAMPUS_CALENDAR,
+    /**
+     * 今日页报修卡 / 收件箱办结通知 → 宿舍报修进度（DESIGN §3.15 / §4.49，2026-10-19）。
+     * 纯原生只读页；「去学工报修页核对」另开 [XgFormActivity]。
+     */
+    DORM_REPAIR,
     /** 我的 → 校园服务 → U净（美的校园洗衣：空闲看板 · 扫码识别，DESIGN §4.37） */
     UJING,
     /** U净 扫码后 → 下单页（档位单选 · 水温 · 投放加购，数据走 UjingDraftStore，DESIGN §3.23） */
@@ -308,6 +314,11 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.WATER -> WaterScreen(onBack = onBack, autoStart = autoStart)
             SubpageScreen.KVCX -> KvcxScreen(onBack = onBack)
             SubpageScreen.CAMPUS_CALENDAR -> CampusCalendarScreen(onBack = onBack)
+            // 宿舍报修进度（DESIGN §4.49）：focusItemId = 学工记录 id；收件箱通知按下标定位
+            SubpageScreen.DORM_REPAIR -> DormRepairScreen(
+                onBack = onBack,
+                focusItemId = focusItemId,
+            )
             // U净 三页链（DESIGN §3.23）：主页（看板 / 扫码）→ 下单页（档位 / 投放）→ 历史账单。
             // 下单页与主页间的大对象交接不走 extra，走 Graph 的 UjingDraftStore（进程内草稿）
             SubpageScreen.UJING -> UjingScreen(

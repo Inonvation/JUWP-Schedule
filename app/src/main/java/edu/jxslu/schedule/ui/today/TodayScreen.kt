@@ -94,6 +94,8 @@ import com.google.zxing.client.android.Intents
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.domain.Course
+import edu.jxslu.schedule.domain.DormRepairRecord
+import edu.jxslu.schedule.domain.DormRepairRules
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.QuickScanTarget
@@ -219,6 +221,8 @@ fun TodayScreen(
     onOpenCainiao: () -> Unit = {},
     /** 江水生活「空调遥控」图标：寝室美的空调红外页（DESIGN §3.31） */
     onOpenAcRemote: () -> Unit = {},
+    /** 今日页宿舍报修卡：原生进度页（DESIGN §4.49） */
+    onOpenDormRepair: () -> Unit = {},
     /** 顶栏「+ → 付款码」：校园卡付款码展示页（DESIGN §3.10） */
     onOpenPayCode: () -> Unit = {},
     /** 顶栏「+ → 收件箱」：应用内重要事实的留痕页（DESIGN §3.24） */
@@ -290,6 +294,14 @@ fun TodayScreen(
     val inboxUnread by remember(context) { Graph.inboxRepository(context) }
         .unreadCount
         .collectAsStateWithLifecycle(initialValue = 0)
+    // 宿舍报修进度（DESIGN §4.49）：有在途记录优先，没有则显示 3 天内已完成的
+    val dormRepairSnapshot by remember(context) { Graph.dormRepairStore(context) }
+        .snapshot
+        .collectAsStateWithLifecycle()
+    val dormRepair = DormRepairRules.cardRecord(
+        snapshot = dormRepairSnapshot,
+        now = System.currentTimeMillis(),
+    )
     // 百宝箱入口开关（DESIGN §4.47，默认开）：关掉时「+」菜单里整行不出现
     val toolboxEnabled by remember(context) { Graph.displayPrefs(context) }
         .toolboxEnabled
@@ -750,6 +762,10 @@ fun TodayScreen(
                         viewModel.refreshTick()
                         waterViewModel?.refreshBalance()
                         waterViewModel?.refreshDevices()
+                        // 宿舍报修进度（DESIGN §4.49）：下拉时顺带刷新，不阻塞课表刷新
+                        scope.launch {
+                            runCatching { Graph.dormRepairSync(context).refresh() }
+                        }
                     },
                 ),
         ) {
@@ -762,6 +778,8 @@ fun TodayScreen(
                     actionLabel = "去设置学期",
                     onAction = onOpenTimetableSettings,
                     bottomDock = bottomDock,
+                    dormRepair = dormRepair,
+                    onOpenDormRepair = onOpenDormRepair,
                 )
 
                 state.totalCourseCount == 0 -> TodayEmptyContent(
@@ -770,6 +788,8 @@ fun TodayScreen(
                     actionLabel = "从教务导入",
                     onAction = onOpenJwImport,
                     bottomDock = bottomDock,
+                    dormRepair = dormRepair,
+                    onOpenDormRepair = onOpenDormRepair,
                 )
 
                 else -> TodayContent(
@@ -779,6 +799,8 @@ fun TodayScreen(
                     onOpenCourse = { detailCourse = it },
                     onOpenHomeworkTodo = onOpenHomeworkTodo,
                     bottomDock = bottomDock,
+                    dormRepair = dormRepair,
+                    onOpenDormRepair = onOpenDormRepair,
                 )
             }
             PullToRefreshDefaults.Indicator(
@@ -1025,10 +1047,13 @@ private fun TodayBottomDock(
 @Composable
 private fun TodayCenteredShell(
     bottomDock: @Composable () -> Unit,
+    /** 顶部常驻内容（今日页的宿舍报修卡）：空态/未开学时也要在，不能只在有课时出现。 */
+    topContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     // 顶部/底部的避让由外层刷新容器给（2026-09-23 起），这里不再吃 Scaffold 的 padding
     Column(modifier = Modifier.fillMaxSize()) {
+        topContent?.invoke()
         // fillMaxWidth 必须带：Box 默认 wrap 内容、crossAxis 左对齐，
         // 少了它整个居中态贴左（旧版加载态左偏的根因）
         Box(
@@ -1065,8 +1090,13 @@ private fun TodayEmptyContent(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
     bottomDock: @Composable () -> Unit,
+    dormRepair: DormRepairRecord? = null,
+    onOpenDormRepair: () -> Unit = {},
 ) {
-    TodayCenteredShell(bottomDock) {
+    val top: (@Composable () -> Unit)? = dormRepair?.let { record ->
+        @Composable { DormRepairCard(record = record, onClick = onOpenDormRepair) }
+    }
+    TodayCenteredShell(bottomDock, topContent = top) {
         EmptyHint(title, body, actionLabel, onAction)
     }
 }
@@ -1079,6 +1109,8 @@ private fun TodayContent(
     onOpenCourse: (Course) -> Unit,
     onOpenHomeworkTodo: () -> Unit,
     bottomDock: @Composable () -> Unit,
+    dormRepair: DormRepairRecord? = null,
+    onOpenDormRepair: () -> Unit = {},
 ) {
     val sectionColumnWidth = rememberSectionColumnWidth(state.timeline)
     Column(modifier = Modifier.fillMaxSize()) {
@@ -1086,6 +1118,13 @@ private fun TodayContent(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 16.dp),
         ) {
+            // 宿舍报修进度（DESIGN §4.49）：有在途记录（或 3 天内完成）时置顶，
+            // 没有就整卡不出现。报修是短时事件，值得占课程区上方这一格。
+            if (dormRepair != null) {
+                item(key = "dorm-repair") {
+                    DormRepairCard(record = dormRepair, onClick = onOpenDormRepair)
+                }
+            }
             // 今日课程：一列到底。正在上的课**留在原位**、就地套焦点卡形态；最近一节已上完的
             // 课置灰保留（更早的不出现）——三态切换的动画在 TodayCourseCard 里。
             // 今天没课 / 不在学期 / 全部上完：一行状态卡（DoneBlock）。

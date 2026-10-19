@@ -22,6 +22,8 @@ enum class InboxKind {
     YKT_LOW,
     /** 问渠平台上出现新的可报名志愿活动（`WenquActivityAlertReminder`，2026-10-08）。 */
     WENQU_ACTIVITY,
+    /** 宿舍报修办结（`DormRepairSync` 打开 App 时对比出状态过渡，2026-10-19）。 */
+    DORM_REPAIR,
 }
 
 /** 收件箱消息的领域模型（`InboxMessageEntity` 的镜像，纯逻辑层可测）。 */
@@ -81,6 +83,15 @@ object InboxKeys {
      * 同一条活动只留一条痕，之后不会因为又空出一次而重复。
      */
     const val WENQU_SLOT_PREFIX = "wenqu|slot|"
+
+    /**
+     * 宿舍报修办结：`repair|done|` + 学工记录 id（`formUserId`）。
+     *
+     * 按**单条报修**去重：同一条只在「未结束 → 已结束」时投一次；入箱后同键重投
+     * 会刷新内容并重新置未读（`InboxRules.onPost`），但 [DormRepairSync] 的
+     * `notifiedIds` 保证正常路径不会重复走到这里。
+     */
+    const val DORM_REPAIR_PREFIX = "repair|done|"
 }
 
 /**

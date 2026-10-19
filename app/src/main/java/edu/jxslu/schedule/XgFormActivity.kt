@@ -9,6 +9,8 @@ import androidx.activity.enableEdgeToEdge
 import edu.jxslu.schedule.data.xg.XgForm
 import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.ui.campus.XgFormScreen
+import edu.jxslu.schedule.ui.reminder.DormRepairReminder
+import kotlinx.coroutines.launch
 
 /**
  * 学工表单独立窗口（DESIGN §3.15）：宿舍报修、请假等共用。
@@ -40,9 +42,23 @@ class XgFormActivity : ComponentActivity() {
                 XgFormScreen(form = form, onBack = { finish() })
             }
         }
+        // 报修进度（DESIGN §4.49）：用户用过报修一次，之后 App 打开检查才持续运行；
+        // 只写本机快照的 tracking 标记，不碰 WebView 里的任何表单数据。
+        if (form.id == XgUrls.REPAIR.id) {
+            Graph.appScope.launch {
+                runCatching { Graph.dormRepairSync(applicationContext).onRepairWindowOpened() }
+            }
+        }
     }
 
     override fun finish() {
+        // 关闭报修窗口（可能刚提交完）：延迟刷新一次，让今日页卡片尽快拿到新记录。
+        // 用 applicationContext，后台协程不持有 Activity。
+        if (form.id == XgUrls.REPAIR.id) {
+            Graph.appScope.launch {
+                runCatching { DormRepairReminder.onRepairWindowClosed(applicationContext) }
+            }
+        }
         super.finish()
         applySubpageCloseTransition(this)
     }

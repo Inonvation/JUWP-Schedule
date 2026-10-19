@@ -74,6 +74,15 @@ class CasSession(
      */
     suspend fun ensureValid(): CasEnsureResult = loginMutex.withLock { ensureValidLocked() }
 
+    /**
+     * 进程内是否已经有 CAS / 教务 cookie（只读，不发请求）。
+     *
+     * 给「可选自动检查」用（宿舍报修进度）：冷启动时 jar 是空的，若为了一个低频只读检查
+     * 直接走 [ensureValid]，每个冷启动都会完整登一次 CAS（教务侧脚本已经踩过风控）。
+     * 调用方可以按「已有 cookie 才顺带用 CAS，否则退 WebView 会话」来避免这次登录。
+     */
+    fun hasCookies(): Boolean = http.hasCookies()
+
     /** [ensureValid] 的实现体；调用方必须已经持有 [loginMutex]（Mutex 不可重入）。 */
     private suspend fun ensureValidLocked(): CasEnsureResult {
         if (isProxyActive()) return CasEnsureResult.Failed(PROXY_HINT)

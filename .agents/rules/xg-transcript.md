@@ -1,6 +1,6 @@
 # 学工表单 · 盖章成绩单
 
-作用域：改学工 WebView 表单（宿舍报修 / 请假）、成绩单导出与「最近导出」时读。规格见 DESIGN §3.15 / §4.25 / §4.26。
+作用域：改学工 WebView 表单（宿舍报修 / 请假）、报修进度只读链、成绩单导出与「最近导出」时读。规格见 DESIGN §3.15 / §4.25 / §4.26 / §4.49。
 
 ## 盖章成绩单走签章管理系统
 
@@ -44,3 +44,27 @@
   落到学工域后再进表单页**——表单页自己匿名可访问，先开它会把人引到超星 passport
   那套账号上；而闸门必须排除 `/sfrz/`（它也在学工域），否则 CAS 回跳的一刻被截断。
   直达地址**不带 `uuid`**：那是前端提交时现场生成的随机值，URL 上那个没有读取点。
+
+## 报修进度是只读直取，不碰表单写接口（DESIGN §4.49）
+
+- **唯一接口**：`POST /office/data/approve/apps/forms/fore/user/list`（`XgUrls.OFFICE_RECORD_LIST`，
+  参数 `XgForm.recordListForm()`）。`handle/*`（审批/退回/转交）、`user/save`、`submit/validate`
+  **一律不碰**——这条链路只负责读「个人提交记录」。
+- **取数顺序按成本从低到高**（`DormRepairSync.fetchBody`）：
+  1. `DormRepairWebClient` 读 `CookieManager.getCookie("https://xgxt.juwp.edu.cn/office/")`
+     的现成会话直接 POST——不登录、最便宜，刚用过报修页时一定新鲜；
+  2. `CasSession`（`ensureValid` → `GET /sfrz/login343962` → `GET /office/` → POST）。
+     **自动检查的 CAS 登录最多 12 小时一次**（`AUTO_LOGIN_INTERVAL_MS`），
+     回到前台 30 分钟内不重复请求；手动刷新不受限。冷启动别为一条低频记录完整登录。
+- **解析按 label 不按字段 id**（`data/xg/DormRepairParser`）：`formsConfig` 建
+  `id → label`，从 `formData` 取「当前状态 / 宿舍信息 / 宿舍 / 故障类型 / 详情描述 /
+  最终完成时间」；`flowUser` 只取 `cardType == 1` 的审批节点，当前节点靠
+  `currentApproveUserList[].nodeUniqueId` 匹配。
+- **个人信息解析阶段丢弃**（姓名/学号/院系/专业/班级/手机号，`PERSONAL_LABELS`），
+  不进快照、不上屏、不进日志；`dorm_repair.json` 已进两份备份排除 XML。
+- 完成判定 = 表单「已完成」或审批到终点（`2 / -1 / -2`）。审批通过后表单还是「已派单」
+  时卡片按「已完成」，详情页并列显示表单口径，不藏差异。
+- 失败宁旧勿空；自动检查没有可用会话就静默跳过，不在今日页弹错误。
+- **退出学校统一认证时清空 `dorm_repair.json`**（`JwAccountScreen` 里 `DormRepairStore.clear()`）：
+  换账号后不能把上一位用户的宿舍/故障/描述留在今日页。新增任何「本机镜像学校数据」的
+  store 时都按这条检查一遍退出路径。
