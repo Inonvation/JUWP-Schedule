@@ -187,7 +187,7 @@ private class DrawnOverlayInputs(var value: MapOverlayInputs? = null)
  * @param onCameraApplied 镜头移动执行完的回调；调用方据此把请求清掉，别让它被重放。
  * @param userLat / userLng 已取到的用户位置（GCJ-02），画成蓝点；null 不画。
  * @param userAccuracyMeters 用户位置的定位精度（米，半径）；0 = 不画精度圈。
- * @param userHeadingFlow 蓝点的罗盘朝向（度，0–360，来自 [BikeCompass]）；值为 null 不画朝向扇形。
+ * @param userHeadingFlow 蓝点的罗盘朝向（度，0–360，来自 [BikeCompass]）；值为 null 不画朝向箭头。
  *   收成**独立的一条流**、由本组件自己收集（2026-10-13）：罗盘 ≤10Hz 的更新只重组这一层，
  *   不把整个 `RideScreen`（含底部车辆列表）一起重组。
  * @param rideLat / rideLng 当前用车的车位置（GCJ-02，与瓦片同基准），画成「我的车」标记；null 不画。
@@ -202,7 +202,7 @@ internal fun OsmMapView(
     userLng: Double?,
     /** 用户位置的定位精度（米，半径）；0 = 不画精度圈。 */
     userAccuracyMeters: Float = 0f,
-    /** 蓝点的罗盘朝向流（度，0–360，北 = 0 顺时针）；值为 null = 不画朝向扇形。 */
+    /** 蓝点的罗盘朝向流（度，0–360，北 = 0 顺时针）；值为 null = 不画朝向箭头。 */
     userHeadingFlow: StateFlow<Float?>,
     rideLat: Double?,
     rideLng: Double?,

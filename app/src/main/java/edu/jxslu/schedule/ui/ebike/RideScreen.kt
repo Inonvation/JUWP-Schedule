@@ -238,6 +238,52 @@ fun RideScreen(
         else -> RidePhase.Finding
     }
     /**
+     * 在骑这辆车的坐标（GCJ-02）：优先订单快照里的实时坐标，其次开锁那一刻附近查询里的
+     * 同一辆车。用来判断"人是不是就在车边"——远程开锁时镜头与「我的车」标记都不该跟到
+     * 人身上（2026-10-19 用户报「点了地图上很远的车开锁，视角和车标却跑到我的位置」）。
+     */
+    val rideBikePos = remember(ride, state.clusters, state.highlightedCar) {
+        rideBikePosition(ride, state)
+    }
+    /**
+     * 「我的车」标记是否并到蓝点（骑行中车随人走，服务端坐标只是拉取那一刻的快照）。
+     *
+     * 开锁时人就在车边才成立，且**一旦成立就保持到订单结束**——骑走之后人车距离必然变大，
+     * 不能因此把标记甩回开锁点。新订单 / 还车后重新判定。
+     *
+     * 用 `rememberSaveable(ride?.carNum)` 而不是普通 `remember`：转屏 / 改字号 / 深色切换
+     * 会重建 Activity，普通 `remember` 会把闩丢掉；重建时若订单坐标是开锁前的旧值，
+     * 「人已经骑走」会被误判成「远程开锁」，车标被甩回开锁点。按车号做输入，
+     * 换车 / 还车后仍会自动重判。
+     */
+    var rideMarkerFollowsUser by rememberSaveable(ride?.carNum) { mutableStateOf(false) }
+    /**
+     * 最近一次拿到的车辆坐标：骑行中列表换批（刷新 / 拖动停稳）后同一辆车可能不在新结果里，
+     * 订单快照又可能缺 `lat/lng`——留一份最后已知坐标，车标不会凭空消失。
+     */
+    var lastRideBikePos by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    LaunchedEffect(ride?.carNum) {
+        lastRideBikePos = null
+    }
+    val rideBike = rideBikePos ?: lastRideBikePos
+    LaunchedEffect(rideBike) {
+        if (rideBike != null) lastRideBikePos = rideBike
+    }
+    LaunchedEffect(ride?.carNum, ride?.locked, rideBike, state.userLat, state.userLng) {
+        if (rideMarkerFollowsUser || ride?.locked != false) return@LaunchedEffect
+        val bike = rideBike ?: return@LaunchedEffect
+        val userLat = state.userLat ?: return@LaunchedEffect
+        val userLng = state.userLng ?: return@LaunchedEffect
+        if (BikeNearby.distanceMeters(userLat, userLng, bike.first, bike.second) <=
+            RIDE_NEAR_USER_METERS
+        ) {
+            rideMarkerFollowsUser = true
+            // 远程开锁后走到车边：从这里开始镜头跟着用户（phase 那一次按"人还不在车边"
+            // 没打开跟随）。只在这个 false → true 的转折点触发，用户之后拖图仍能退出跟随。
+            if (phase == RidePhase.Riding) viewModel.startFollowing()
+        }
+    }
+    /**
      * 列表与地图要不要换成还车点（2026-10-01 第二次修订）。
      *
      * 骑行态优先给还车点：那一刻用户要找的是"停哪儿"。**两档都适用**——图层接口不需要
@@ -261,10 +307,28 @@ fun RideScreen(
             pickedCar = null
             showCarNumberSheet = false
         }
-        // 骑行开始 = 镜头重新跟随用户（2026-10-19 用户要求：从一个地方骑到另一个地方，
-        // 地图不能还停在开锁那一刻的位置）。骑行中用户仍可单指拖图退出跟随；phase 不变，
-        // 这条 effect 不会把用户刚拖到的视野反复拽回来。
-        if (phase == RidePhase.Riding) viewModel.startFollowing()
+        // 骑行开始的镜头口径（2026-10-19 修订）：**人就在车边才跟随**。从一个地方骑到
+        // 另一个地方时镜头要跟着走；但在地图上远程开锁几百米外的车时，把镜头拽回人身上
+        // 是错的（用户报「点了很远的车开锁，视角却回到我的位置」）。位置还没齐时不动跟随，
+        // 等连续定位与车标判定各自到位。
+        // 骑行中用户仍可单指拖图退出跟随；phase 不变，这条 effect 不会把视野反复拽回来。
+        if (phase == RidePhase.Riding) {
+            val bike = rideBike
+            val userLat = state.userLat
+            val userLng = state.userLng
+            when {
+                // 小程序方式只有计时、没有本机订单：无从判断"人车距离"，照旧跟随
+                ride == null -> viewModel.startFollowing()
+                bike != null && userLat != null && userLng != null ->
+                    if (BikeNearby.distanceMeters(userLat, userLng, bike.first, bike.second) <=
+                        RIDE_NEAR_USER_METERS
+                    ) {
+                        viewModel.startFollowing()
+                    } else {
+                        viewModel.stopFollowing()
+                    }
+            }
+        }
     }
 
     // ── 权限与动作 ──
@@ -480,7 +544,7 @@ fun RideScreen(
         }
     }
     // 蓝点实时更新：只挪蓝点与「距你」距离，不移镜头、不重查接口
-    // 罗盘朝向（2026-10-08）挂同一段生命周期：只转蓝点的朝向扇形，同样不移镜头、不重查。
+    // 罗盘朝向（2026-10-08）挂同一段生命周期：只转蓝点上的朝向箭头，同样不移镜头、不重查。
     // 两条流都先发过 BikeCompass / BikeLocator 内部的过滤，到这里频率对地图重绘是安全的
     LaunchedEffect(lifecycleOwner, locationGranted) {
         if (!locationGranted) return@LaunchedEffect
@@ -529,10 +593,12 @@ fun RideScreen(
             spotGlyph = Color(0xFFFFFFFF).toArgb(),
         )
     }
-    // 「我的车」坐标口径：未锁 = 正在骑，车就在你身边（服务端坐标是拉取那刻的快照）
-    val rideFollowsUser = ride?.locked == false && state.userLat != null && state.userLng != null
-    val rideMarkerLat = if (rideFollowsUser) state.userLat else ride?.lat
-    val rideMarkerLng = if (rideFollowsUser) state.userLng else ride?.lng
+    // 「我的车」坐标口径：开锁时人就在车边且车未锁 → 并到蓝点（骑行中车随人走，服务端
+    // 坐标只是拉取那一刻的快照）；远程开锁 / 已锁 → 用车辆自己的坐标，别把车标画到人身上。
+    val rideFollowsUser = rideMarkerFollowsUser && ride?.locked == false &&
+        state.userLat != null && state.userLng != null
+    val rideMarkerLat = if (rideFollowsUser) state.userLat else rideBike?.first
+    val rideMarkerLng = if (rideFollowsUser) state.userLng else rideBike?.second
     /**
      * 页面底部常驻块（动作区 + 免责）的**实时**实测高度（含导航栏内边距）。
      *
@@ -1179,6 +1245,15 @@ private fun KvcxConfirmDialog(
 private const val DENIED_HINT = "已拒绝定位权限；可在系统设置里允许位置信息，或手动拖动地图找车"
 
 /**
+ * 开锁时「人就在车边」的判定半径（米）：骑行开始的镜头跟随、以及「我的车」标记并到蓝点，
+ * 都以它为准。
+ *
+ * 远程开锁（地图上点了几百米外的车）不该把视角和车标拽到人身上；站在车边开锁时
+ * GPS 误差通常几十米内，100 米足够宽容，又不会把"同一片校区但不在车边"算进来。
+ */
+private const val RIDE_NEAR_USER_METERS = 100.0
+
+/**
  * 底部常驻块高度的**首帧兜底估值**（dp）：`liveBlockDp` 的首值，等第一次布局回调量到真值就替换。
  * 只影响首帧的地图平移量与 Snackbar 垫高，估偏一点点也看不见。
  */
@@ -1207,6 +1282,26 @@ private val CENTER_PIN_DOT = Color(0xFF63D099)
  * 值在模拟器上按各档块高实测后定的（见 `.agents/rules/ebike.md`）；改它要重新量。
  */
 private const val BOTTOM_RESERVE_DP = 400f
+
+/**
+ * 在骑这辆车的坐标（GCJ-02）：优先用订单快照里的实时坐标（`queryUnderwayOrder` 拉到的
+ * 车辆位置），快照还没补全时退回开锁那一刻附近查询里的同一辆车。
+ *
+ * 只用于判断"人是不是就在车边"与远程开锁时画车标；与地图瓦片同基准，**不要再过 Gcj02**。
+ * 坐标缺失（订单刚建、附近结果也换了一批）时返回 null——宁可不画，也不画错位置。
+ */
+private fun rideBikePosition(ride: KqcxAuth.Ride?, state: BikeMapUiState): Pair<Double, Double>? {
+    val lat = ride?.lat
+    val lng = ride?.lng
+    // 0,0 是服务端"没有坐标"的占位值（与写动作里的锚点判定同口径），不能当真
+    if (lat != null && lng != null && !(lat == 0.0 && lng == 0.0)) return lat to lng
+    val carNum = ride?.carNum ?: return null
+    state.highlightedCar?.takeIf { it.carNum == carNum }?.let { return it.lat to it.lng }
+    state.clusters.forEach { cluster ->
+        cluster.bikes.firstOrNull { it.carNum == carNum }?.let { return it.lat to it.lng }
+    }
+    return null
+}
 
 /**
  * 取一次定位并把镜头移过去。[silent] = 失败不弹提示（进页自动定位那条路用）。

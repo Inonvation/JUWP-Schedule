@@ -127,9 +127,10 @@ data class BikeMapUiState(
      * [FOLLOW_RECENTER_METERS] 才动，站定的小抖动不推镜头）；**只挪镜头，不重查接口**
      * ——「刷新只由用户动作驱动」的红线不变。
      *
-     * 进页自动定位、点「定位」按钮、开始骑行都会打开它；用户单指拖动地图、点「回到校区」、
-     * 点某个停车点 / 车辆定位时会关掉——那些动作表达的是"我现在要看别处"，再跟着人走
-     * 只会把用户刚挪到的视野抢回去。
+     * 进页自动定位、点「定位」按钮、**人就在车边时**开始骑行都会打开它；用户单指拖动地图、
+     * 点「回到校区」、点某个停车点 / 车辆定位时会关掉——那些动作表达的是"我现在要看别处"，
+     * 再跟着人走只会把用户刚挪到的视野抢回去。远程开锁（车在几百米外）不打开跟随：
+     * 那不是在骑车，镜头留在原地（判定在 `RideScreen` 的 phase effect）。
      */
     val followUser: Boolean = true,
     /**
@@ -888,7 +889,8 @@ class BikeMapViewModel(
 
     /**
      * 打开自动跟随（2026-10-19）：镜头立刻回到用户身上（已有位置时），之后由
-     * [onUserLocationChanged] 接管。骑行开始时页面调它（见 `RideScreen` 的 phase effect）。
+     * [onUserLocationChanged] 接管。页面在「人就在车边」的骑行开始、点「定位」时调它
+     * （见 `RideScreen` 的 phase effect）；远程开锁不走这条路。
      */
     fun startFollowing() {
         val current = _uiState.value
@@ -945,7 +947,7 @@ class BikeMapViewModel(
         if (meters.isFinite() && meters > 0f) meters else 0f
 
     /**
-     * 罗盘朝向的最新读数（2026-10-08）：**只转蓝点的朝向扇形**。
+     * 罗盘朝向的最新读数（2026-10-08）：**只转蓝点上的朝向箭头**。
      *
      * 与 [onUserLocationChanged] 同一条纪律——不移镜头、不重查、不动参照点。
      * 传感器流已在 `BikeCompass` 内做过低通 + 节流（>2° 且 ≥100ms 才发），

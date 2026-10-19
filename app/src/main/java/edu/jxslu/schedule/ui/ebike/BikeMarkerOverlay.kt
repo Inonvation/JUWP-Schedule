@@ -201,8 +201,8 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     /** 围栏路径，每帧按投影重算（缩放时屏幕坐标全变）。 */
     private val fencePath = Path()
 
-    /** 朝向扇形的环形扇区路径（只画光晕外圈那一小段），逐帧复用。 */
-    private val wedgePath = Path()
+    /** 朝向箭头的三角形路径，逐帧复用。 */
+    private val headingPath = Path()
 
     /** 还车点 / 禁停区多边形共用的一条路径（逐个画完就 reset，不跨帧保留）。 */
     private val zonePath = Path()
@@ -319,26 +319,21 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
         // 反过来（先画）会被停车点聚合圈盖住——人站在车桩边上时正好是这种情形，
         // 而"我在哪"恰恰是点了定位之后要确认的事。代价是极少数情况下遮住一个聚合圈的
         // 数字，那点信息底部列表里还有。
-        //
-        // 蓝点正落在镜头中心时，中心针的针尖会插在它身上——两者说的是同一件事
-        // （"现在查的是这里"就是"我在这"），藏掉针让"我在哪"干净地读出来（见文件末的常量）
-        var userDotAtCenter = false
         userPoint?.let { point ->
             mapView.project(point.lat, point.lng, out)
             val x = out.x.toFloat()
             val y = out.y.toFloat()
-            userDotAtCenter = hypot(x - canvas.width / 2f, y - canvas.height / 2f) <=
-                CENTER_PIN_HIDE_RADIUS_DP * density
             // 精度圈（2026-10-13）：真实定位精度折算成的屏幕半径，垫在最底下
             drawUserAccuracy(canvas, mapView, point.lat, point.lng, x, y)
-            // 朝向扇形（2026-10-08）：蓝点后方的锥形光带，先画、垫在圆点底下。
+            // 光晕：官方小程序同款的淡绿平铺圆，先画、垫在朝向箭头与圆点底下
+            drawUserHalo(canvas, x, y)
+            // 朝向箭头（2026-10-19 改自朝向弧）：实心小三角，底边压在圆点内部，
+            // 由白描边盖住接缝——官方小程序就是这种"圆点 + 小箭头"的形态。
             // 罗盘朝向画在屏幕坐标——它与地图北方对齐，不随瓦片投影变形，
             // 坐标基准也不相干（方向角不是坐标，不过 Gcj02）。
             userHeading?.let { heading ->
-                drawHeadingWedge(canvas, x, y, heading)
+                drawHeadingArrow(canvas, x, y, heading)
             }
-            // 光晕：柔和径向渐变，比一层平铺的实心圆更像「位置光圈」，边沿不再是一圈硬边
-            drawUserHalo(canvas, x, y)
             // 圆点：白描边，压在明暗不定的瓦片上都读得出边界
             val dotRadius = USER_DOT_RADIUS_DP * density
             fill.color = colors.userDot
@@ -348,7 +343,7 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
             canvas.drawCircle(x, y, dotRadius, ring)
         }
 
-        if (!userDotAtCenter) drawCenterPin(canvas)
+        drawCenterPin(canvas)
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
@@ -450,7 +445,7 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
 
     /**
      * 缩放 ARGB 颜色的 alpha（位运算，不引 ColorUtils），结果钳在 0..255。
-     * 朝向扇形的内层与精度圈都由它派生，避免两处各写一遍位运算。
+     * 精度圈的颜色由它派生，避免两处各写一遍位运算。
      */
     private fun Int.scaleAlpha(factor: Float): Int {
         val alpha = (Color.alpha(this) * factor).toInt().coerceIn(0, 255)
@@ -458,35 +453,29 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 
     /**
-     * 蓝点的朝向扇形光晕（2026-10-08；2026-10-19 改成光环外的「方向弧段」）。
+     * 蓝点的朝向箭头（2026-10-19，用户对照官方小程序截图要求「实心小箭头」）。
      *
-     * 旧版是从圆心铺开的锥形（两层饼图），光晕改成官方那种平铺淡绿后，半透明叠加会在
-     * 圆底上染出一块明显更深的扇形，整个定位点就不再是官方那种干净的圆。
-     * 现在只画**光晕外圈的一小段环形扇区**（11→14dp、60°）：圆点本体保持对称，
-     * 方向提示只剩光环外沿的一小截绿弧。角度以蓝点为轴心，0° = 正北（屏幕正上方），
-     * 顺时针，与 [BikeCompass] 的方位角同口径。
+     * 官方形态是**圆点左上/右上贴着的一枚实心小三角**，尖端指向手机顶边朝向，
+     * 底边压在圆点内部、由白色描边盖住接缝——不是从圆心铺开的扇形，也不是光晕外沿的弧。
+     * 角度以蓝点为轴心，0° = 正北（屏幕正上方），顺时针，与 [BikeCompass] 的方位角同口径。
+     *
+     * 绘制顺序在调用处：光晕 → 箭头 → 圆点 + 白描边，所以箭头根部自然被圆点盖住。
      */
-    private fun drawHeadingWedge(canvas: Canvas, x: Float, y: Float, heading: Float) {
-        // Canvas.rotate 的角度基准是「3 点钟方向为 0、顺时针为正」，罗盘是「12 点为 0、
-        // 顺时针为正」——先转 -90° 把基准挪到正上方，再叠加朝向角。
+    private fun drawHeadingArrow(canvas: Canvas, x: Float, y: Float, heading: Float) {
         canvas.save()
-        canvas.rotate(heading - 90f, x, y)
-        val outer = WEDGE_OUTER_RADIUS_DP * density
-        val inner = WEDGE_INNER_RADIUS_DP * density
-        val halfSweep = WEDGE_SWEEP_DEGREES / 2f
-        wedgePath.reset()
-        // 外弧：-30° → +30°（顺时针），再沿内弧反向收回，闭合成环形扇区
-        wedgePath.arcTo(
-            x - outer, y - outer, x + outer, y + outer,
-            -halfSweep, WEDGE_SWEEP_DEGREES, true,
-        )
-        wedgePath.arcTo(
-            x - inner, y - inner, x + inner, y + inner,
-            halfSweep, -WEDGE_SWEEP_DEGREES, false,
-        )
-        wedgePath.close()
-        fill.color = colors.userHalo
-        canvas.drawPath(wedgePath, fill)
+        // Canvas.rotate 的角度基准是「3 点钟方向为 0、顺时针为正」，而这里的三角形
+        // 直接按屏幕坐标画成「尖端朝上」，旋转 heading 即可对齐罗盘方位。
+        canvas.rotate(heading, x, y)
+        val tip = USER_ARROW_TIP_RADIUS_DP * density
+        val base = USER_ARROW_BASE_RADIUS_DP * density
+        val halfWidth = USER_ARROW_HALF_WIDTH_DP * density
+        headingPath.reset()
+        headingPath.moveTo(x, y - tip)
+        headingPath.lineTo(x - halfWidth, y - base)
+        headingPath.lineTo(x + halfWidth, y - base)
+        headingPath.close()
+        fill.color = colors.userDot
+        canvas.drawPath(headingPath, fill)
         canvas.restore()
     }
 
@@ -644,8 +633,8 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
      * 旧版是水滴形、先描 3.5dp 白边再填深色；官方是干净的 lollipop：针杆细、针头圆、
      * 针心一点亮绿。它钉在屏幕上不随地图走，表示「现在查的是这里」。
      *
-     * 针头立在中心上方、杆从针头下沿垂直落到中心：与用户位置绿点错开；
-     * 蓝点离中心很近时整枚浮标直接不画（见 [CENTER_PIN_HIDE_RADIUS_DP]）。
+     * 针头立在中心上方、杆从针头下沿垂直落到中心。**蓝点落在中心时也照画**（2026-10-19
+     * 用户口径）：它表示的是"查询中心"，与"我在哪"是两件事，不能因为重合就藏掉。
      */
     private fun drawCenterPin(canvas: Canvas) {
         val cx = canvas.width / 2f
@@ -666,18 +655,18 @@ internal class BikeMarkerOverlay(private val density: Float) : Overlay() {
     }
 }
 
-/** 朝向弧段外半径（dp）：比淡绿光晕（11dp）探出 3dp，方向提示只在光环外沿。 */
-private const val WEDGE_OUTER_RADIUS_DP = 14f
+/** 朝向箭头尖端离圆心的距离（dp）：官方截图约 7.6dp，落在淡绿光晕内部。 */
+private const val USER_ARROW_TIP_RADIUS_DP = 8f
 
-/** 朝向弧段内半径（dp）：与光晕同半径，圆点本体保持官方那种对称圆。 */
-private const val WEDGE_INNER_RADIUS_DP = 11f
+/** 朝向箭头底边离圆心的距离（dp）：压在圆点内部，白色描边盖住接缝。 */
+private const val USER_ARROW_BASE_RADIUS_DP = 3.5f
 
-/** 朝向弧段的张角（度）。 */
-private const val WEDGE_SWEEP_DEGREES = 60f
+/** 朝向箭头底边的半宽（dp）：官方那枚很小，比圆点直径还窄。 */
+private const val USER_ARROW_HALF_WIDTH_DP = 3f
 
 /**
  * 用户位置光晕半径（dp）：官方小程序同款的淡绿平铺圆（2026-10-19）。
- * 半径约是绿色圆点的 2.2 倍；与朝向扇形内层同半径，两者不打架。
+ * 半径约是绿色圆点的 2.2 倍；朝向箭头整枚落在光晕内部，两者不打架。
  */
 private const val USER_HALO_RADIUS_DP = 11f
 
@@ -704,9 +693,6 @@ private const val ACCURACY_FILL_ALPHA_FACTOR = 0.45f
 
 /** 精度圈描边的 alpha 系数（相对外晕色）：比填充实一点，圈边看得清。 */
 private const val ACCURACY_STROKE_ALPHA_FACTOR = 1.1f
-
-/** 蓝点离镜头中心这么近（dp）就不画中心针：针尖与蓝点重合，说的是同一件事。 */
-private const val CENTER_PIN_HIDE_RADIUS_DP = 12f
 
 /** 一个纬度约合多少米（精度圈折算用；BikeNearby 里那份是私有的，这边另记一个常量）。 */
 private const val METERS_PER_DEGREE_LAT = 111_320.0
