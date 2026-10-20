@@ -10,12 +10,13 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
- * 顶栏里「课表句」与「快下课句」的契约（DESIGN §3.29，2026-10-12）：
+ * 顶栏里「课表句」与「快下课句」的契约（DESIGN §3.29，2026-10-12；2026-10-20 收口）：
  *
  * [ScheduleTips.dayTipFor]：
- * - 南北楼往返跑 / 都在一栋楼：该半天 **≥2 节课**且楼全解析得出；
+ * - **一条只讲一件事**：实验课 > 往返跑 > 楼变化 > 同楼；
+ * - 往返跑：该半天 **≥2 节课**且楼全解析得出；两个半天都往返才合并，只有一个半天往返只报那一个；
  * - 有实验课（kind == Lab）：**只出实验课句**，南北楼句不再出；
- * - 措辞按「参考日是不是今天」定（今天 / 明天）。
+ * - 措辞按「参考日是不是今天」定（今天 / 明天），today 由调用方传入。
  *
  * [ScheduleTips.dismissalTipFor]：
  * - 距下课 ≤15 分钟、下课起 1 小时内有雨 → **整行只显示它**；
@@ -88,8 +89,11 @@ class ScheduleTipsTest {
         date: LocalDate,
         courses: List<Course>,
         overrides: List<ScheduleOverride> = emptyList(),
+        /** 真正的今天；默认与参考日相同（措辞说「今天」）。 */
+        today: LocalDate = date,
     ) = ScheduleTips.dayTipFor(
         date = date,
+        today = today,
         semester = semester,
         slots = slots,
         courses = courses,
@@ -128,11 +132,12 @@ class ScheduleTipsTest {
             tuesdayMorning("教学南大楼(南B206)", "教学北大楼(北B306)"),
         )
         assertNotNull(result)
-        assertEquals("🧭 ", result!!.prefix)
+        assertEquals(TodayTip.Kind.Schedule, result!!.kind)
+        assertTrue("实际=${result.text}", result.text.startsWith("🧭 "))
         assertTrue(
             "实际=${result.text}",
-            result.text.endsWith("上午要南北楼往返跑咯") ||
-                result.text.endsWith("上午得在南楼北楼之间来回跑咯"),
+            result.text.endsWith("上午得南北楼来回跑") ||
+                result.text.endsWith("上午要南北楼往返跑"),
         )
     }
 
@@ -145,8 +150,8 @@ class ScheduleTipsTest {
         assertNotNull(result)
         assertTrue(
             "实际=${result!!.text}",
-            result.text.endsWith("上午都在南楼哦") ||
-                result.text.endsWith("上午的课都在南楼，不用挪窝"),
+            result.text.endsWith("上午的课都在南楼") ||
+                result.text.endsWith("上午都在南楼"),
         )
     }
 
@@ -162,12 +167,11 @@ class ScheduleTipsTest {
         )
         assertNotNull(result)
         val text = result!!.text
-        assertTrue("实际=$text", text.contains("上午") && text.contains("下午"))
         // 上下午都要往返跑 → 合并一句，别各说一遍
         assertTrue(
             "上下午都往返跑应合并：$text",
-            text.contains("上午、下午都要南北楼往返跑咯") ||
-                text.contains("上午、下午都得在南楼北楼之间来回跑咯"),
+            text.endsWith("上下午都得南北楼来回跑") ||
+                text.endsWith("上下午都要南北楼往返跑"),
         )
     }
 
@@ -182,7 +186,7 @@ class ScheduleTipsTest {
                 ),
         )
         assertNotNull(result)
-        assertEquals("🧭 ", result!!.prefix)
+        assertTrue("实际=${result!!.text}", result.text.startsWith("🧭 "))
         assertTrue("实际=${result.text}", result.text.contains("一天的课都在南楼"))
         // 不该再拆成「上午…，下午…」两截
         assertTrue("实际=${result.text}", !result.text.contains("上午"))
@@ -228,11 +232,14 @@ class ScheduleTipsTest {
         )
         assertNotNull(result)
         val text = result!!.text
-        assertTrue("实际=$text", text.contains("上午都在南楼") || text.contains("上午的课都在南楼"))
-        assertTrue("实际=$text", text.contains("下午都在北楼") || text.contains("下午的课都在北楼"))
+        // 一句话说清一次换楼：上午南楼、下午北楼
+        assertTrue("实际=$text", text.contains("上午") && text.contains("南楼"))
+        assertTrue("实际=$text", text.contains("下午") && text.contains("北楼"))
         // 第二个半天不再重复日期前缀，也不叠「哦」
         assertTrue("实际=$text", !text.contains("明天下午") && !text.contains("今天下午"))
         assertTrue("实际=$text", !text.contains("哦"))
+        // 2026-10-20：一条只讲一件事，整句必须能放进顶栏一行
+        assertTrue("实际=$text", text.length <= 16)
     }
 
     @Test
@@ -248,7 +255,23 @@ class ScheduleTipsTest {
     }
 
     @Test
-    fun `每半天独立判定 下午单课不拖累上午`() {
+    fun `上下午各一节且不同楼不提示`() {
+        // 单节课不提示（2026-10-12）的延伸：两个半天各只有一节、只是换了栋楼，也不占顶栏
+        assertNull(
+            dayTip(
+                tuesday,
+                listOf(
+                    courseOf(1, 2, 1, 2, "教学南大楼(南B206)"),
+                    courseOf(2, 2, 5, 6, "教学北大楼(北B306)"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `只报往返跑的半天 不拼下午同楼`() {
+        // 2026-10-20 截图场景：早先会拼成「上午得在南楼北楼之间来回跑咯，下午都在南楼」
+        // （24 字，顶栏放不下）；现在只报最值得提前知道的那一件。
         val result = dayTip(
             tuesday,
             tuesdayMorning("教学南大楼(南B206)", "教学北大楼(北B306)") +
@@ -257,6 +280,24 @@ class ScheduleTipsTest {
         assertNotNull(result)
         assertTrue("实际=${result!!.text}", result.text.contains("上午"))
         assertTrue("下午只有一节课：${result.text}", !result.text.contains("下午"))
+        assertTrue("实际=${result.text}（${result.text.length} 字）", result.text.length <= 16)
+    }
+
+    @Test
+    fun `只有下午有课时报下午`() {
+        val result = dayTip(
+            tuesday,
+            listOf(
+                courseOf(1, 2, 5, 6, "教学南大楼(南B206)"),
+                courseOf(2, 2, 7, 8, "教学南大楼(南C303)"),
+            ),
+        )
+        assertNotNull(result)
+        assertTrue("实际=${result!!.text}", result.text.contains("下午"))
+        assertTrue(
+            "实际=${result.text}",
+            result.text.endsWith("下午的课都在南楼") || result.text.endsWith("下午都在南楼"),
+        )
     }
 
     @Test
@@ -290,8 +331,11 @@ class ScheduleTipsTest {
                 ),
         )
         assertNotNull(result)
-        assertTrue("实际=${result!!.text}", result.text.endsWith("上午要南北楼往返跑咯") ||
-            result.text.endsWith("上午得在南楼北楼之间来回跑咯"))
+        assertTrue(
+            "实际=${result!!.text}",
+            result.text.endsWith("上午得南北楼来回跑") ||
+                result.text.endsWith("上午要南北楼往返跑"),
+        )
         assertTrue("下午段不该出：${result.text}", !result.text.contains("下午"))
     }
 
@@ -335,7 +379,7 @@ class ScheduleTipsTest {
                 courseOf(3, 2, 5, 6, "工程训练中心208", kind = CourseKind.Lab),
         )
         assertNotNull(result)
-        assertEquals("🔬 ", result!!.prefix)
+        assertTrue("实际=${result!!.text}", result.text.startsWith("🔬 "))
         // 有实验课 → 南北楼句不再出（用户 2026-10-12 拍板）
         assertTrue("实际=${result.text}", result.text.endsWith("下午有实验课"))
         assertTrue("不该含南北楼：${result.text}", !result.text.contains("往返跑"))
@@ -384,15 +428,15 @@ class ScheduleTipsTest {
             courseOf(1, today.dayOfWeek.value, 1, 2, "教学南大楼(南B206)", weeks = setOf(todayWeek)),
             courseOf(2, today.dayOfWeek.value, 3, 4, "教学南大楼(南C303)", weeks = setOf(todayWeek)),
         )
-        val todayText = dayTip(today, courses)?.text.orEmpty()
-        assertTrue("实际=$todayText", todayText.startsWith("今天"))
+        val todayText = dayTip(today, courses, today = today)?.text.orEmpty()
+        assertTrue("实际=$todayText", todayText.startsWith("🧭 今天"))
         // 参考日 = 明天（同一学期周内，明天星期几就排星期几的课），措辞换成「明天」
         val tomorrowCourses = listOf(
             courseOf(1, tomorrow.dayOfWeek.value, 1, 2, "教学南大楼(南B206)", weeks = setOf(tomorrowWeek)),
             courseOf(2, tomorrow.dayOfWeek.value, 3, 4, "教学南大楼(南C303)", weeks = setOf(tomorrowWeek)),
         )
-        val tomorrowText = dayTip(tomorrow, tomorrowCourses)?.text.orEmpty()
-        assertTrue("实际=$tomorrowText", tomorrowText.startsWith("明天"))
+        val tomorrowText = dayTip(tomorrow, tomorrowCourses, today = today)?.text.orEmpty()
+        assertTrue("实际=$tomorrowText", tomorrowText.startsWith("🧭 明天"))
     }
 
     // ---- 快下课有雨 ----
@@ -408,8 +452,8 @@ class ScheduleTipsTest {
             ),
         )
         assertNotNull(result)
-        assertEquals(ScheduleTips.Style.Dismissal, result!!.style)
-        assertEquals("🌧️ ", result.prefix)
+        assertEquals(TodayTip.Kind.Schedule, result!!.kind)
+        assertTrue("实际=${result.text}", result.text.startsWith("🌧️ "))
         assertTrue(
             "实际=${result.text}",
             result.text.endsWith("记得带伞哦") ||
@@ -437,7 +481,7 @@ class ScheduleTipsTest {
             hourly = listOf(hour("2026-10-13T09:00", code = 61, prob = 80)),
         )
         assertNotNull(result)
-        assertEquals(ScheduleTips.Style.Dismissal, result!!.style)
+        assertEquals(TodayTip.Kind.Schedule, result!!.kind)
     }
 
     @Test
@@ -501,7 +545,7 @@ class ScheduleTipsTest {
             hourly = listOf(hour("2026-10-13T19:00", code = 61, prob = 80)),
         )
         assertNotNull(result)
-        assertEquals(ScheduleTips.Style.Dismissal, result!!.style)
+        assertEquals(TodayTip.Kind.Schedule, result!!.kind)
     }
 
     // ---- 变体稳定性 ----

@@ -16,6 +16,7 @@ import edu.jxslu.schedule.domain.ScheduleTips
 import edu.jxslu.schedule.domain.SemesterConfig
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.TodayState
+import edu.jxslu.schedule.domain.TodayTip
 import edu.jxslu.schedule.domain.WeatherAdvice
 import edu.jxslu.schedule.domain.buildTodayState
 import edu.jxslu.schedule.domain.pendingHomework
@@ -156,14 +157,16 @@ class TodayViewModel(
      * 3. 「快下课有雨」是**独立链路**（[ScheduleTips.dismissalTipFor]）：永远看今天的课，
      *    命中就整行独占——即便 18:00 后正文讲的是明天，此刻还在上的课要下课了照样提示
      *    （2026-10-12 复查补上，早先跟参考日走会在 18:00 后静默消失）；
-     *    它零网络（判据 = 课表 + 逐小时预报），天气关着也工作；
+     *    它依赖逐小时预报：**天气功能关着时没有这份数据，这条不出**（不猜；课表句照常出）。
+     *    它本身零网络，判据是课表 + 已取到的逐小时数据。
      * 4. **天气句与课表句各自独立成句、每 [ROTATE_MILLIS] 轮换**（用户 2026-10-12 定）：
      *    顶栏那一行窄，两句拼一起必被截断；轮换让每条都有整行宽度可读。
      *    只有一条时不轮换、直接常显；
-     * 5. 取不到任何句子给 null，顶栏不占位、不显示半截内容。
+     * 5. 每条都带 [TodayTip.Kind]：天气句点进天气页、课表句点进课表页（2026-10-20）；
+     * 6. 取不到任何句子给 null，顶栏不占位、不显示半截内容。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val weatherLine: StateFlow<String?> = scheduleInputs
+    val weatherLine: StateFlow<TodayTip?> = scheduleInputs
         .map { inputs -> segmentsFor(inputs) }
         // 每 30 秒的 tick 大多产出同一组句子：只有这组句子真的变了才重开轮换，
         // 否则每 30 秒会把轮换重置回第一条（2026-10-12 复查补上）
@@ -175,7 +178,7 @@ class TodayViewModel(
      * 算当前该显示的候选句（快下课独占 / 天气句 / 课表句），按显示优先级排列。
      * 天气开关关着时零网络，只出课表句。
      */
-    private suspend fun segmentsFor(inputs: TipInputs): List<String> {
+    private suspend fun segmentsFor(inputs: TipInputs): List<TodayTip> {
         val now = nowProvider()
         val weather = weatherRepo
         val snapshot = if (inputs.enabled && weather != null) {
@@ -197,15 +200,16 @@ class TodayViewModel(
         val date = now.toLocalDate().plusDays(WeatherAdvice.referenceDayIndex(now).toLong())
         return ScheduleTips.dayTipFor(
             date = date,
+            today = now.toLocalDate(),
             semester = inputs.semester,
             slots = inputs.slots,
             courses = inputs.courses,
             overrides = inputs.overrides,
-        )?.let { listOf(it.prefix + it.text) } ?: emptyList()
+        )?.let { listOf(it) } ?: emptyList()
     }
 
     /** 多条时每 [ROTATE_MILLIS] 轮换一条；单条常显；空表给 null（页面不占位）。 */
-    private fun rotate(segments: List<String>): Flow<String?> = flow {
+    private fun rotate(segments: List<TodayTip>): Flow<TodayTip?> = flow {
         when {
             segments.isEmpty() -> emit(null)
             segments.size == 1 -> emit(segments.first())

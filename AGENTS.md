@@ -290,8 +290,9 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
   `parseHttpDate` / `clockOffsetMs` 时钟偏移），§4.45）
  + Weather·WeatherAdvice（天气：WMO 码 → emoji/中文短语 · **18:00 分界**与话术优先级
  （正在下雨 > 雪/雷暴 > 有雨 > 降水概率 > 雾 > 防晒 > 防暑 > 添衣 > 大风 > 兜底），§3.29）
- + ScheduleTips（顶栏课表句：上午/下午南北楼往返跑 / 都在一栋楼 · 有实验课只出实验课句 ·
+ + ScheduleTips（顶栏课表句：**一条只讲一件事**——实验课 > 南北楼往返跑 > 楼变化/同楼 ·
  快下课有雨独占整行；≥2 节课且楼解析得出才说，否则整句丢弃，§3.29）
+ + TodayTip（顶栏提示类型：`kind` 决定点击落点——天气句进天气页、课表句进课表页，§3.29）
  + ToolboxImage（百宝箱图片排版：水印字号/密度三档 · 拼接取宽与
  像素上限，纯函数，§4.47）
  + StitchScan（智能拼接匹配核：公共头尾 · 滚动重叠逐行验证 · 容差三档 · **精修取最优对齐**，

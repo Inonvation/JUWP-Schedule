@@ -1318,9 +1318,20 @@ internal fun JuwApp(
                             onOpenToolbox = {
                                 SubpageActivity.start(context, SubpageScreen.TOOLBOX)
                             },
-                            // 天气详情（DESIGN §3.29，2026-10-11）：顶栏那行提示的落点
+                            // 天气详情（DESIGN §3.29，2026-10-11）：顶栏天气句的落点
                             onOpenWeather = {
                                 SubpageActivity.start(context, SubpageScreen.WEATHER)
+                            },
+                            // 课表句（南北楼 / 实验课）的落点：切到课表 Tab，
+                            // 与底栏同一套导航参数（2026-10-20）
+                            onOpenWeek = {
+                                navController.navigate(Routes.WEEK) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             },
                             // 作业卡 → 作业中心；课程详情弹窗 → 该课程的笔记·课件 / 作业（DESIGN §3.11）
                             onOpenHomeworkTodo = {

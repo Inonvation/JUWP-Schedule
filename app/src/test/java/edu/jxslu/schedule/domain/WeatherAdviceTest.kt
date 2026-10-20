@@ -63,7 +63,7 @@ class WeatherAdviceTest {
 
     /** 只取天气句：没有课表句 / 快下课句时，[WeatherAdvice.segments] 的第一条就是它。 */
     private fun weatherOf(snapshot: WeatherSnapshot, now: LocalDateTime): String? =
-        WeatherAdvice.segments(snapshot, now).firstOrNull()
+        WeatherAdvice.segments(snapshot, now).firstOrNull()?.text
 
     // ---- 18:00 分界 ----
 
@@ -187,6 +187,24 @@ class WeatherAdviceTest {
         assertNull(weatherOf(snapshot, at(20)))
     }
 
+    @Test
+    fun `参考日取不到时课表句照出`() {
+        // 2026-10-20：早先 `daily` 缺参考日会连课表句一起吞掉；课表句不依赖天气数据
+        val segments = WeatherAdvice.segments(
+            snapshot = snapshot(daily = emptyList()),
+            now = at(9),
+            semester = semester,
+            slots = slots,
+            courses = listOf(
+                course(1, "液压", "教学北大楼(北B102)", 1, 2),
+                course(2, "PLC", "教学北大楼(北B402)", 3, 4),
+            ),
+        )
+        assertEquals(1, segments.size)
+        assertEquals(TodayTip.Kind.Schedule, segments[0].kind)
+        assertTrue("实际=${segments[0].text}", segments[0].text.contains("北楼"))
+    }
+
     // ---- 课表句拼接（2026-10-12） ----
 
     /** 2026-10-12 周一（第 6 周）的课表上下文。 */
@@ -236,9 +254,11 @@ class WeatherAdviceTest {
             ),
         )
         assertEquals(2, segments.size)
-        assertEquals("☀️ 今天晴，19~28°C", segments[0])
-        assertTrue("实际=${segments[1]}", segments[1].startsWith("🧭 "))
-        assertTrue("实际=${segments[1]}", segments[1].contains("上午"))
+        assertEquals(TodayTip.Kind.Weather, segments[0].kind)
+        assertEquals("☀️ 今天晴，19~28°C", segments[0].text)
+        assertEquals(TodayTip.Kind.Schedule, segments[1].kind)
+        assertTrue("实际=${segments[1].text}", segments[1].text.startsWith("🧭 "))
+        assertTrue("实际=${segments[1].text}", segments[1].text.contains("上午"))
     }
 
     @Test
@@ -246,7 +266,10 @@ class WeatherAdviceTest {
         val snapshot = snapshot(
             daily = listOf(day(code = 0, max = 28.0, min = 19.0, prob = 0), day()),
         )
-        assertEquals(listOf("☀️ 今天晴，19~28°C"), WeatherAdvice.segments(snapshot, at(9)))
+        assertEquals(
+            listOf("☀️ 今天晴，19~28°C"),
+            WeatherAdvice.segments(snapshot, at(9)).map { it.text },
+        )
     }
 
     @Test
@@ -266,10 +289,10 @@ class WeatherAdviceTest {
             ),
         )
         assertEquals(2, segments.size)
-        assertEquals("☀️ 今天晴，19~28°C", segments[0])
-        assertTrue("实际=${segments[1]}", segments[1].startsWith("🔬 "))
-        assertTrue("实际=${segments[1]}", segments[1].contains("实验课"))
-        assertTrue("不该有南北楼句：${segments[1]}", !segments[1].contains("往返跑"))
+        assertEquals("☀️ 今天晴，19~28°C", segments[0].text)
+        assertTrue("实际=${segments[1].text}", segments[1].text.startsWith("🔬 "))
+        assertTrue("实际=${segments[1].text}", segments[1].text.contains("实验课"))
+        assertTrue("不该有南北楼句：${segments[1].text}", !segments[1].text.contains("往返跑"))
     }
 
     @Test
@@ -288,8 +311,9 @@ class WeatherAdviceTest {
             courses = listOf(course(1, "液压", "教学北大楼(北B102)", 1, 2)),
         )
         assertEquals(1, segments.size)
-        assertTrue("实际=${segments[0]}", segments[0].startsWith("🌧️ "))
-        assertTrue("实际=${segments[0]}", segments[0].contains("下课"))
+        assertEquals(TodayTip.Kind.Schedule, segments[0].kind)
+        assertTrue("实际=${segments[0].text}", segments[0].text.startsWith("🌧️ "))
+        assertTrue("实际=${segments[0].text}", segments[0].text.contains("下课"))
     }
 
     @Test

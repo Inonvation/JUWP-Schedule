@@ -1131,7 +1131,8 @@ UI 规格见 §3.28。
 （30 分钟 TTL + `Mutex` 保证同刻只放一个请求 + **刷新失败回退旧快照**；`load()` 带
 `fresh` 标记供页面判「这份可能旧了」）→ `domain/Weather`（快照模型 + WMO 码 → emoji /
 中文短语的唯一映射处）+ `domain/WeatherAdvice`（18:00 分界、话术优先级、候选句列表，
-纯函数）+ `domain/ScheduleTips`（顶栏课表句：南北楼 / 实验课 / 快下课有雨，纯函数）。
+纯函数）+ `domain/ScheduleTips`（顶栏课表句：南北楼 / 实验课 / 快下课有雨，**一条只讲一件事**，
+纯函数）+ `domain/TodayTip`（顶栏提示类型：`kind` 决定点击落点——天气句进天气页、课表句进课表页）。
 UI 见 §3.29。
 
 **查询点**：校区坐标（`WeatherApi.CAMPUS_LAT/LNG`，与 `BikeNearby.DEFAULT_CENTER_*` 同一组数字）。
@@ -1161,8 +1162,9 @@ UI 见 §3.29。
 单独一条流不进 `baseDisplayPrefs`（combine 已满员）；**关着时今日页一行网络都不发**。
 仓库单例走 `Graph.weatherRepository(context)`。
 
-**测试**：`WeatherAdviceTest`（18:00 边界 / 优先级顺序 / 兜底与容错 / 候选句列表）与
-`ScheduleTipsTest`（半天分组 · ≥2 节课门槛 · 南/北楼判定 · 实验课优先 · 快下课窗口边界）。
+**测试**：`WeatherAdviceTest`（18:00 边界 / 优先级顺序 / 兜底与容错 / 候选句列表与 kind /
+参考日缺失时课表句仍在）与 `ScheduleTipsTest`（半天分组 · ≥2 节课门槛 · 南/北楼判定 ·
+一条只讲一件事与长度上限 · 实验课优先 · 快下课窗口边界 · 措辞跟随传入的 today）。
 
 ### 4.47 百宝箱：图片水印 · 图片拼接 · 菜鸟批量查（2026-10-12，P6；UI 见 §3.30）
 

@@ -168,7 +168,7 @@ import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
 import me.rerere.hugeicons.stroke.Toolbox
 import me.rerere.hugeicons.stroke.Wallet01
-import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
+import edu.jxslu.schedule.domain.TodayTip
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
 
@@ -229,8 +229,10 @@ fun TodayScreen(
     onOpenInbox: () -> Unit = {},
     /** 顶栏「+ → 百宝箱」：小工具集合（图片工具 + 菜鸟批量查，DESIGN §4.47，2026-10-12） */
     onOpenToolbox: () -> Unit = {},
-    /** 顶栏天气提示那一行（DESIGN §3.29）：点它进天气详情页 */
+    /** 顶栏天气提示那一行（DESIGN §3.29）：天气句点它进天气详情页 */
     onOpenWeather: () -> Unit = {},
+    /** 顶栏课表提示（南北楼 / 实验课）：课表句点它进课表页（2026-10-20） */
+    onOpenWeek: () -> Unit = {},
     /** 作业中心（今日页作业卡入口，DESIGN §3.11） */
     onOpenHomeworkTodo: () -> Unit = {},
     /** 某课程的笔记·课件（课程详情弹窗入口，DESIGN §3.11） */
@@ -494,24 +496,24 @@ fun TodayScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = buildString {
-                                    append(state.date.format(MONTH_DAY_FORMAT))
+                                    // 日期用 M/d 短式（2026-10-20）：同一行还要放提示句，
+                                    // 「10月20日」在 360dp 上会先被挤掉周次
+                                    append("${state.date.monthValue}/${state.date.dayOfMonth}")
                                     append(" 周${dayLabel(state.day)}")
                                     if (state.week > 0) append(" · 第 ${state.week} 周")
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                                // 次标题**让位给提示行**（2026-10-12）：提示行不带 weight、在 Row 的
-                                // 非加权首轮里先按整行宽量（优先拿满），日期是唯一的加权子项、只拿
-                                // 剩下的那点宽度——内容超了就用省略号收尾。
-                                // `fill = false` 必留：默认 fill = true 会把「分给它的那格」整个占下，
-                                // 短日期也会在身后留空档、把提示顶到右半边（2026-10-12 用户报
-                                // 「提示语偏右」的根因）；fill = false 按内容宽占位，两段自然挨着。
+                                // 日期**恒为内容宽、不参与让位**（2026-10-20 反转了 2026-10-12 的口径）：
+                                // 早先提示行先拿满整行、日期只分剩余宽度，结果是日期被压成「10月…」，
+                                // 而 24 字的提示自己仍然截断——两头都没救。日期是定位信息，
+                                // 提示是锦上添花；现在提示拿剩余宽度、超了省略，日期始终可读。
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
                             )
                             // 天气 / 课表提示（DESIGN §3.29）：**接在次标题同一行的后面**，
-                            // emoji + 一句话（18:00 前讲今天、之后讲明天），点它进天气详情页。
+                            // emoji + 一句话（18:00 前讲今天、之后讲明天）。
+                            // 天气句点它进天气详情页，课表句进课表页（2026-10-20 按 kind 分流）。
                             //
                             // 为什么不做成顶栏里的第三行：M3 的 TopAppBar 高度是固定的 64dp，
                             // 标题区塞三行、用户又关掉「固定字体大小」时会被裁掉底边
@@ -535,6 +537,8 @@ fun TodayScreen(
                                     }
                                 },
                                 contentAlignment = Alignment.CenterStart,
+                                // 只拿日期之外剩下的宽度（日期先量），超了省略
+                                modifier = Modifier.weight(1f),
                                 label = "todayWeatherTip",
                             ) { line ->
                                 if (line == null) {
@@ -542,18 +546,19 @@ fun TodayScreen(
                                     Box(Modifier)
                                 } else {
                                     Text(
-                                        text = line,
+                                        text = line.text,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier
-                                            // **不带 weight**：Row 先量非加权子项，提示行因此拿到整行宽度
-                                            // （优先于日期）；日期是加权项，只分到剩余宽度。见次标题的说明。
                                             .clip(RoundedCornerShape(6.dp))
                                             .clickable {
                                                 quickHaptics.tap()
-                                                onOpenWeather()
+                                                when (line.kind) {
+                                                    TodayTip.Kind.Weather -> onOpenWeather()
+                                                    TodayTip.Kind.Schedule -> onOpenWeek()
+                                                }
                                             }
                                             // 竖向 4dp 是把命中区从一行字（约 14dp）撑到约 22dp，
                                             // 标题区三行合计 62dp 仍在 TopAppBar 的 64dp 之内；
