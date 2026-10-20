@@ -18,7 +18,8 @@ import kotlinx.coroutines.withContext
  *
  * **单次抓取、不做翻页**：教务该接口实测忽略一切分页参数（记录见
  * [InternshipBaseParser.listUrl]），固定只回前 10 条而 `count` 声明更多——多翻只会拿回
- * 同一页、合成重复行。`Loaded.declaredCount` 把该差额带给界面如实注明；
+ * 同一页、合成重复行。`Loaded.declaredCount` 只供日志与快照留档，界面不再展示
+ * （`count` 实测不可信，曾声明 17 而教务页面实际只有 10 条）；
  * 哪天教务修好翻页，解析层已按 qzTable 口径带号，只需在这里加回翻页循环。
  *
  * 与其它 Sync 同一套纪律：互斥让位、失败静默（返回值不抛）、更新失败时**宁旧勿空**
@@ -36,7 +37,8 @@ class InternshipBasesLoader(
 
     sealed interface Result {
         /**
-         * [declaredCount] 是教务声明的总数（-1 = 未声明）；大于 [bases] 条数时界面要注明。
+         * [declaredCount] 是教务声明的总数（-1 = 未声明）。**界面不展示它当总数**；
+         * 它只用于日志与快照留档，`count` 实测可能与教务页面不一致。
          * [fromCache] = 数据来自本机快照（本轮未打网络）；[updateFailed] = 想更新但失败、
          * 退回快照展示（界面要给「显示的是上次数据」的提示）。
          */

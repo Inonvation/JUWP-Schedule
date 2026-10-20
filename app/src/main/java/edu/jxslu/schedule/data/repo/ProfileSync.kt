@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.first
  * 三条纪律：
  * 1. **失败静默**：抓不到就维持现状，不弹错误、不阻塞任何流程——姓名与班级是锦上添花，
  *    不值得为它把「我的」页弄成错误态；
- * 2. **有闸门**：只在班级为空、且今天还没试过时抓（[ProfileSyncRules.shouldAttempt]）；
+ * 2. **有闸门**：只在学籍字段有缺失、且今天还没试过时抓（[ProfileSyncRules.shouldAttempt]）；
  * 3. **不覆盖已有值**：落库走 `setProfile`，它对空串不动键（脏解析不会抹掉已有数据）。
  */
 class ProfileSync(
@@ -32,9 +32,14 @@ class ProfileSync(
     suspend fun syncOnce(force: Boolean = false): Boolean {
         val todayKey = today().toString()
         if (!force) {
-            val classBlank = prefs.profileClass.first().isBlank()
+            val profileIncomplete = listOf(
+                prefs.profileClass.first(),
+                prefs.profileCollege.first(),
+                prefs.profileMajor.first(),
+                prefs.profileDuration.first(),
+            ).any { it.isBlank() }
             val lastAttempt = prefs.profileSyncDate.first()
-            if (!ProfileSyncRules.shouldAttempt(classBlank, lastAttempt, todayKey)) return false
+            if (!ProfileSyncRules.shouldAttempt(profileIncomplete, lastAttempt, todayKey)) return false
         }
         // 连会话都建不起来（没存密码、WebView 里也没有可用会话）= 这次**根本没试成**：
         // 不落「试过」日期，否则用户当天再去导入页手登一次，这一整天都不会补抓。
@@ -46,7 +51,14 @@ class ProfileSync(
         prefs.setProfileSyncDate(todayKey)
 
         val card = ScoreParser.parseStudentCard(html) ?: return false
-        prefs.setProfile(card.name, card.studentClass, card.studentId)
+        prefs.setProfile(
+            name = card.name,
+            className = card.studentClass,
+            studentId = card.studentId,
+            college = card.college,
+            major = card.major,
+            duration = card.duration,
+        )
         return true
     }
 }

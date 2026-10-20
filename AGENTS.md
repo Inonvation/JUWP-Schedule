@@ -235,21 +235,26 @@ MainActivity → 底栏今日/课表/教务（2026-10-20 起 3 Tab；生活与�
                + 层叠左侧栏（StackedDrawerState + ui/life/SideDrawer：身份 / 钱包 / 生活 / 学习 / 工具
                  / 设置 / 付款码；右滑展开，主页面在前、缩到 94%，侧栏是静态后层，DESIGN §3.1）
                + 路由 jw_import；SettingsActivity（独立窗口，2026-10-20，不再是隐藏「我的」路由）；
-               JwWebCheckActivity（教务「网页」只读核对：未登录自动回统一认证再重开原页）；
-               SubpageActivity 承载二级页（含成绩查询 SCORES、选课 SELECTIONS·SELECTION_WISHES、
+               JwImportActivity 的 Browse 模式（各业务页顶栏「网页」只读核对：复用导入窗口的
+               电脑版/手机版、统一认证、返回先关弹层与错误处理）；
+                SubpageActivity 承载二级页（含成绩查询 SCORES / 成绩设置 SCORE_SETTINGS、
+                考试安排 EXAMS / 考试设置 EXAM_SETTINGS、选课 SELECTIONS·SELECTION_WISHES、
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
                UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37；
                调课处置页 SCHEDULE_CHANGES，§4.17；账号与登录 ACCOUNTS（全量账号状态与
                补登入口，2026-10-20），§3.3；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
-               培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；问渠 WENQU +
+                培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES + 教材 TEXTBOOKS +
+                学籍信息 STUDENT_INFO + 教学日历 TEACHING_CALENDAR，§3.26 / §3.27；问渠 WENQU +
                志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
                 WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交）+ 预报名
                 （详情弹层入口 · **唯一自动提交路径** · 精确闹钟 4008 + shortService，§4.45），
                §3.28；天气详情 WEATHER + 天气设置 WEATHER_SETTINGS（今日页顶栏那行提示的
                落点与开关，默认关，§3.29）；学生评教走
-               JwImportActivity 的 TeachingEval 模式（§4.44）；教务 Tab JwHubScreen（§3.26 入口汇总，
-               本学期四行带实时数字：成绩门数/加权 · 考试场次 · 教材本数 · 本周节数）；
+                JwImportActivity 的 TeachingEval 模式（§4.44）；教务 Tab JwHubScreen（§3.26 入口汇总，
+                摘要卡带实时数字：成绩门数/加权 · 考试场次 · 教材本数 · 本周节数；快捷四格 =
+                理论课表 / 实验课表 / 成绩查询 / 考试安排；网页核对按钮已收进各业务页顶栏，
+                首页不再重复挂「网页」入口）；
                百宝箱 TOOLBOX +
               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
               菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，

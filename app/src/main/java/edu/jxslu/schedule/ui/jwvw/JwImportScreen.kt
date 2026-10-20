@@ -126,6 +126,12 @@ enum class JwImportMode {
      * 不提交任何接口；没有导入动作，底部不出现任何按钮。
      */
     TeachingEval,
+    /**
+     * 只读网页核对：从各业务页顶部的「网页」图标进来，登录后直接打开目标页。
+     * **只当浏览器用第三例**——没有导入动作、不写库，复用本窗口的电脑版预览、
+     * 统一认证、返回语义与错误态。
+     */
+    Browse,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -140,6 +146,9 @@ fun JwImportScreen(
     // 选课模式下直达某个轮次（DESIGN §4.35）：轮次 id 过白名单后拼「进入选课」页；
     // 空/不合法 = 落选课中心列表。其余模式忽略它。
     selectionRoundId: String? = null,
+    // Browse 模式：要打开的目标页与顶栏标题。
+    browseUrl: String = "",
+    browseTitle: String = "",
 ) {
     val context = LocalContext.current
     val repo = remember { Graph.repository(context) }
@@ -176,10 +185,21 @@ fun JwImportScreen(
      */
     val desktopMode by prefs.jwDesktopMode.collectAsStateWithLifecycle(initialValue = true)
 
+    /**
+     * 首屏 URL。教务目标仍从预热入口进（先写 `bzb_njw`，避免第一次 sso.jsp 的 500）；
+     * 非教务目标（学工 / 签章等）直接开目标页，让服务端自己的 CAS 回跳接管。
+     */
+    val startUrl: String =
+        if (mode == JwImportMode.Browse && browseUrl.isNotBlank() && !JwUrls.isJwHost(browseUrl)) {
+            browseUrl
+        } else {
+            JwUrls.SSO_WARMUP
+        }
+
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableIntStateOf(0) }
     var pageTitle by remember { mutableStateOf("学校统一身份认证") }
-    var currentUrl by remember { mutableStateOf(JwUrls.SSO_WARMUP) }
+    var currentUrl by remember { mutableStateOf(startUrl) }
     // 弹窗直接持有解析草稿：courses 之外还要带上页面学期（term）与识别分项供确认弹窗展示
     var importDraft by remember { mutableStateOf<ImportDraft?>(null) }
     /** 弹窗里切换学期后的重爬进行中：期间「导入」禁用、学期行不可点。 */
@@ -233,6 +253,7 @@ fun JwImportScreen(
         // 从考试页进来的窗口（DESIGN §4.33）：落理论课表页会触发 autoImportOnTheoryReady，
         // 一键导入理论+实验跑起来，跟入口写的「导入考试安排」不是一回事
         JwImportMode.Schedule -> if (startAtExam) JwUrls.EXAM_QUERY else JwUrls.SCHEDULE_LIST
+        JwImportMode.Browse -> browseUrl
     }
     val autoNavNote: String = when (mode) {
         JwImportMode.Scores -> "已登录教务主页，正在打开成绩查询页…"
@@ -243,6 +264,7 @@ fun JwImportScreen(
         } else {
             "已登录教务主页，正在打开学期理论课表…"
         }
+        JwImportMode.Browse -> "已登录教务主页，正在打开${browseTitle.ifBlank { "教务网页" }}…"
     }
     /**
      * 一键导入是否已经跑过（自动触发只做第一次，见 [autoImportOnTheoryReady] /
@@ -336,7 +358,7 @@ fun JwImportScreen(
             Log.d(TAG, "auto-retry after HTTP $statusCode at ${JwTeachingEval.redactForLog(failedUrl)}")
             statusNote = "教务返回 $statusCode，正在自动重试…"
             pageState = PageState.Loading
-            webView?.loadUrl(JwUrls.SSO_WARMUP)
+            webView?.loadUrl(startUrl)
             return
         }
         // 自动重试那一轮**不能**放行闸门：它换成了认证入口，目标页面之后才到。
@@ -840,7 +862,16 @@ fun JwImportScreen(
                     timeoutLoops = 20,
                 )
                 val card = cardHtml?.let { ScoreParser.parseStudentCard(it) }
-                if (card != null) prefs.setProfile(card.name, card.studentClass, card.studentId)
+                if (card != null) {
+                    prefs.setProfile(
+                        name = card.name,
+                        className = card.studentClass,
+                        studentId = card.studentId,
+                        college = card.college,
+                        major = card.major,
+                        duration = card.duration,
+                    )
+                }
             } catch (_: Exception) {
                 // 学籍卡失败不影响成绩导入结果
             }
@@ -886,11 +917,16 @@ fun JwImportScreen(
                                 JwImportMode.Selection -> "选课 · 统一认证"
                                 JwImportMode.TeachingEval -> "学生评教 · 统一认证"
                                 JwImportMode.Schedule -> "教务导入 · 统一认证"
+                                JwImportMode.Browse -> browseTitle.ifBlank { "网页核对" }
                             },
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            pageTitle,
+                            if (mode == JwImportMode.Browse) {
+                                "网页核对 · 以网页数据为准"
+                            } else {
+                                pageTitle
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1074,6 +1110,14 @@ fun JwImportScreen(
                                                     "请使用学校统一身份认证登录"
                                                 // 落地主页的文案与自动跳转共用一份口径（见 autoNavNote）
                                                 "xsMainV" in u -> autoNavNote
+                                                mode == JwImportMode.Browse &&
+                                                    JwUrls.isScoreQueryUrl(u) ->
+                                                    "已打开成绩查询页；点页面上的「查询」加载成绩。"
+                                                mode == JwImportMode.Browse &&
+                                                    JwUrls.isExamQueryUrl(u) ->
+                                                    "已打开考试安排页；点页面上的「查询」加载安排。"
+                                                mode == JwImportMode.Browse ->
+                                                    "已打开${browseTitle.ifBlank { "教务网页" }}。"
                                                 JwUrls.isSelectionCenterUrl(u) ->
                                                     "选课中心已打开。点「进入选课」在教务页面上完成选课，选好后返回即可。"
                                                 // 评教平台（DESIGN §4.44）：SPA 页面，进页即静候用户操作
@@ -1253,7 +1297,7 @@ fun JwImportScreen(
                                     // 两件事都别反过来做：等会话再 loadUrl 会让 WebView 白屏几十秒
                                     // （2026-09-24 真机：日志里连一条 onPageStarted 都没有）；
                                     // 预注入 cookie 也无效（属性缺 SameSite，WebView 不采用）。
-                                    loadUrl(JwUrls.SSO_WARMUP)
+                                    loadUrl(startUrl)
                                     when (val outcome = runCatching { cas.ensureValid() }.getOrNull()) {
                                         is CasEnsureResult.Failed -> statusNote = outcome.message
                                         CasEnsureResult.Suspended ->
@@ -1330,7 +1374,7 @@ fun JwImportScreen(
             val canOneClick = JwUrls.isJwHost(currentUrl) && !JwWebFit.isLoginLikeUrl(currentUrl)
             // 评教模式底部没有任何按钮（DESIGN §4.44）：整块不渲染——只留空分支的话，
             // Surface 的高程条与内边距会以一条空带留在页底
-            if (mode != JwImportMode.TeachingEval) {
+            if (mode != JwImportMode.TeachingEval && mode != JwImportMode.Browse) {
             Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
                 Column(
                     Modifier
@@ -1385,9 +1429,13 @@ fun JwImportScreen(
                         // 评教模式没有底部按钮（DESIGN §4.44）：动作全在注入脚本与平台页面里，
                         // 失败的出口是顶栏「刷新」（看门狗提示就指向它）
                         JwImportMode.TeachingEval -> Unit
+                        JwImportMode.Browse -> Unit
                     }
-                    // 选课 / 评教模式没有导入动作：这一条整块不出现
-                    if (mode != JwImportMode.Selection && mode != JwImportMode.TeachingEval) {
+                    // 选课 / 评教 / 网页核对模式没有导入动作：这一条整块不出现
+                    if (mode != JwImportMode.Selection &&
+                        mode != JwImportMode.TeachingEval &&
+                        mode != JwImportMode.Browse
+                    ) {
                         Button(
                             onClick = {
                                 when {
@@ -1616,7 +1664,7 @@ fun JwImportScreen(
                 // 用户刚验证保存的正确密码不该被它压住（对齐引导页 onCredentialsUpdated 口径）
                 cas.onCredentialsUpdated()
                 autoLoginTried = false
-                webView?.loadUrl(JwUrls.SSO_WARMUP)
+                webView?.loadUrl(startUrl)
             },
             onSkip = {
                 casLoginDeclined = true

@@ -153,16 +153,10 @@
         </activity>
         <!-- 教务导入独立窗口：adjustResize 保证登录表单不被键盘遮住。
              锁竖屏（DESIGN §4.4）：转屏会销毁 WebView 丢掉登录进度、并取消导入协程。
-             App 里锁方向的窗口只有这一个、下面的成绩单导出窗口与网页核对窗口，三者都因为
-             同一个原因（窗口里有统一认证的 WebView 表单）。 -->
+             App 里锁方向的窗口只有这一个与下面的成绩单导出窗口，两者都因为同一个原因
+             （窗口里有统一认证的 WebView 表单）。 -->
         <activity
             android:name=".JwImportActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:windowSoftInputMode="adjustResize" />
-        <!-- 教务网页核对（2026-10-20）：只读 WebView，会话与教务导入共用 -->
-        <activity
-            android:name=".JwWebCheckActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />

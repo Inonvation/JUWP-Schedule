@@ -41,12 +41,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.repo.InternshipBasesLoader
 import edu.jxslu.schedule.domain.InternshipBase
 import edu.jxslu.schedule.domain.InternshipBaseRules
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 
 /**
  * 实习基地查看（DESIGN §3.27 / §4.43）。
@@ -76,7 +78,7 @@ fun InternshipBasesScreen(onBack: () -> Unit) {
         state = LoadState.Loading
         state = when (val result = loader.load(force = forceRefresh)) {
             is InternshipBasesLoader.Result.Loaded ->
-                LoadState.Ready(result.bases, result.declaredCount, result.updateFailed)
+                LoadState.Ready(result.bases, result.updateFailed)
             is InternshipBasesLoader.Result.Failed -> LoadState.Error(result.reason)
             // 单飞护栏下到不了这里；真撞上（别的入口在跑）给出路而不是空白
             InternshipBasesLoader.Result.InProgress -> LoadState.Error("正在获取中，稍后再试")
@@ -93,6 +95,7 @@ fun InternshipBasesScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    JwWebActionButton("实习基地", JwUrls.INTERNSHIP_BASES_SHELL)
                     if (state is LoadState.Loading) {
                         CircularProgressIndicator(
                             modifier = Modifier.padding(end = 14.dp).width(20.dp),
@@ -132,7 +135,6 @@ fun InternshipBasesScreen(onBack: () -> Unit) {
             } else {
                 BaseList(
                     bases = s.bases,
-                    declaredCount = s.declaredCount,
                     updateFailed = s.updateFailed,
                     modifier = Modifier.fillMaxSize().padding(padding),
                     onClick = { detail = it },
@@ -150,7 +152,6 @@ private sealed interface LoadState {
     data object Loading : LoadState
     data class Ready(
         val bases: List<InternshipBase>,
-        val declaredCount: Int,
         val updateFailed: Boolean,
     ) : LoadState
     data class Error(val reason: String) : LoadState
@@ -159,7 +160,6 @@ private sealed interface LoadState {
 @Composable
 private fun BaseList(
     bases: List<InternshipBase>,
-    declaredCount: Int,
     updateFailed: Boolean,
     modifier: Modifier = Modifier,
     onClick: (InternshipBase) -> Unit,
@@ -182,18 +182,6 @@ private fun BaseList(
             item {
                 Text(
                     text = "更新失败，当前显示上次获取的数据。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-        }
-        if (declaredCount > bases.size) {
-            // 接口限制如实注明（DESIGN §4.43）：教务该接口当前只回前 10 条，不假装是全部
-            item {
-                Text(
-                    text = "注：教务接口当前只返回前 ${bases.size} 个（教务标注共 $declaredCount 个），" +
-                        "完整列表请以教务页面为准。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
                     modifier = Modifier.padding(top = 2.dp),

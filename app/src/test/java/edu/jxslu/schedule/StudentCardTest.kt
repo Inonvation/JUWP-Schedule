@@ -12,6 +12,8 @@ class StudentCardTest {
         <html><body>
           <div class="HeaderContentDetailtext">
             <span class="detiailtextItem">院系：示例学院</span>
+            <span class="detiailtextItem">专业：示例专业</span>
+            <span class="detiailtextItem">学制：4</span>
             <span class="detiailtextItem">班级：24示例专业01</span>
             <span class="detiailtextItem">学号：2024000000</span>
           </div>
@@ -32,6 +34,23 @@ class StudentCardTest {
         assertEquals("张三", card?.name)
         assertEquals("24示例专业01", card?.studentClass)
         assertEquals("2024000000", card?.studentId)
+        assertEquals("示例学院", card?.college)
+        assertEquals("示例专业", card?.major)
+        assertEquals("4", card?.duration)
+    }
+
+    @Test
+    fun `院系专业学制缺失不挡账号条`() {
+        val card = ScoreParser.parseStudentCard(
+            html
+                .replace("院系：示例学院", "")
+                .replace("专业：示例专业", "")
+                .replace("学制：4", ""),
+        )
+        assertEquals("张三", card?.name)
+        assertEquals("", card?.college)
+        assertEquals("", card?.major)
+        assertEquals("", card?.duration)
     }
 
     @Test

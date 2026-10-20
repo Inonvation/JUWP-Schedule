@@ -79,8 +79,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
-import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.xg.XgUrls
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.domain.FloatingBall
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -1372,44 +1372,36 @@ internal fun JuwApp(
                             },
                         )
                     }
-                    // 教务 Tab（2026-10-20）：入口汇总；每个入口仍落到原二级页，
-                    // 右侧「网页」打开教务/学工/签章系统的原始页面。
+                    // 教务 Tab（2026-10-20）：入口汇总；每个入口落到原生二级页。
+                    // 网页核对按钮已经收进各业务页顶栏，首页不再重复挂「网页」入口。
                     composable(Routes.JW) {
                         JwHubScreen(
+                            onOpenTheorySchedule = {
+                                JwImportActivity.startBrowse(context, "理论课表", JwUrls.SCHEDULE_LIST)
+                            },
+                            onOpenLabSchedule = {
+                                JwImportActivity.startBrowse(context, "实验课表", JwUrls.LAB_SCHEDULE)
+                            },
                             onOpenScores = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SCORES)) },
                             onOpenExams = { openSubpage(context, SubpageRequest(screen = SubpageScreen.EXAMS)) },
-                            onOpenTextbooks = {
-                                JwWebCheckActivity.start(context, "教材", JwUrls.TEXTBOOK_QUERY)
-                            },
-                            // 与底栏切 Tab 同一套栈语义：不留一条重复的 WEEK 在栈里
-                            onOpenSchedule = {
-                                navController.navigate(Routes.WEEK) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
+                            onOpenTextbooks = { openSubpage(context, SubpageRequest(screen = SubpageScreen.TEXTBOOKS)) },
                             onOpenScholar = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SCHOLAR)) },
                             onOpenCurriculum = { openSubpage(context, SubpageRequest(screen = SubpageScreen.CURRICULUM)) },
                             onOpenSelection = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SELECTIONS)) },
                             onOpenInternship = {
                                 openSubpage(context, SubpageRequest(screen = SubpageScreen.INTERNSHIP_BASES))
                             },
-                            onOpenTranscript = { openSubpage(context, SubpageRequest(screen = SubpageScreen.TRANSCRIPTS)) },
-                            onOpenStudentInfo = { openSubpage(context, SubpageRequest(screen = SubpageScreen.JW_ACCOUNT)) },
+                            onOpenStudentInfo = { openSubpage(context, SubpageRequest(screen = SubpageScreen.STUDENT_INFO)) },
                             onOpenTeachingCalendar = {
-                                openSubpage(context, SubpageRequest(screen = SubpageScreen.CAMPUS_CALENDAR))
+                                openSubpage(context, SubpageRequest(screen = SubpageScreen.TEACHING_CALENDAR))
                             },
                             onOpenTeachingEval = { JwImportActivity.start(context, JwImportMode.TeachingEval) },
                             onOpenLeave = { XgFormActivity.start(context, XgUrls.LEAVE) },
-                            onOpenRepair = { XgFormActivity.start(context, XgUrls.REPAIR) },
+                            onOpenRepair = { openSubpage(context, SubpageRequest(screen = SubpageScreen.DORM_REPAIR)) },
                             onOpenCalendar = {
                                 openSubpage(context, SubpageRequest(screen = SubpageScreen.CAMPUS_CALENDAR))
                             },
                             onOpenImport = { JwImportActivity.start(context) },
-                            onWebCheck = { title, url -> JwWebCheckActivity.start(context, title, url) },
                         )
                     }
                     // 生活页（DESIGN §3.13）：一卡通余额 / 付款码 / 寝室电费 / 充值入口 / 最近流水。

@@ -27,9 +27,9 @@
   主界面下方那条气泡**（用户口径：「导入成功提醒是软件内下方那个一行的气泡提醒，不是弹窗
   提醒」）。通道是 `ui/jwvw/JwImportResultBus`，**不再有「导入完成」弹窗**——留着它，用户
   点完「完成」就 finish，反馈停在他看不见的那个窗口里。
-- **六个落点**各调一次 `JwImportOutcomeEffect(snackbar)`：课表页 / 今日页 / 成绩页 /
-  学校统一认证页 / 课表中心页 / 考试页（`ui/exam/ExamScreen.kt`，2026-09-30 加；后三个
-  是本页的「导入课表」「导入成绩」「导入考试安排」入口，导入窗口 finish
+- **七个落点**各调一次 `JwImportOutcomeEffect(snackbar)`：课表页 / 今日页 / 成绩页 /
+  学校统一认证页 / 课表中心页 / 考试设置页 / 教务 Tab（2026-10-20 加；后四个
+  是本页的「导入课表」「导入成绩」「导入考试安排」「导入」入口，导入窗口 finish
   后落回的就是它们）。新增落点页面时别忘了同时补 `AppSnackbarHost`；`JwAccountScreen` 的
   Scaffold 把 `contentWindowInsets` 归零了，提示条要自己 `navigationBarsPadding()`。
 - 四条别改坏：① 课表/考试与成绩两条路径都发，文案各自拼（成绩不报课表名）；
@@ -389,6 +389,12 @@
   `adb forward tcp:8000 localabstract:webview_devtools_remote_<pid>` 后连 `/json` 里的 ws 目标
   `Runtime.evaluate`（2026-10-08 就是这么验的）。
 
+- **各业务页顶栏的「网页」按钮也走这个窗口**（2026-10-20）：统一入口是
+  `JwWebActionButton` → `JwImportActivity.startBrowse()` → `JwImportMode.Browse`。
+  不要再新建 WebView 窗口；Browse 模式没有导入按钮，教务目标仍从 `SSO_WARMUP`
+  落 `xsMainV` 后自动跳，非教务目标直接开目标页。网页核对由此天然继承电脑版/手机版、
+  返回先关弹层、会话失效回登录与错误态。
+
 ## 教务窗口的返回语义（2026-10-08，DESIGN §4.4.4）
 
 - 用户报「有时候按返回没有用」。根因是历史里有**退过去看不出变化**的条目，不是返回键坏了：
@@ -464,9 +470,9 @@
 ## 实习基地查看（2026-10-07，DESIGN §4.43）
 
 - 数据接口 `/jsxsd/sxsxgl/sxjd.do`（layui JSON）。**该接口忽略一切分页参数**（实测
-  `page` / `pageNum` / `pageSize` / `limit` 全形态都回同一页前 10 条、`count` 声明 17；
-  同会话成绩接口 `cjcx_list` 的 `pageNum=2` 翻页正常——不是参数名问题）。**单次抓取、
-  不做翻页**，差额界面如实注明；**多翻只会合成重复行**（曾因按页循环拿回两页同样的
+  `page` / `pageNum` / `pageSize` / `limit` 全形态都回同一页前 10 条；`count` 字段实测
+  不可信——曾声明 17，而教务页面实际只有 10 条）。**单次抓取、不做翻页**；
+  **界面只显示实际返回条数，不展示 `count` / 差额**；**多翻只会合成重复行**（曾因按页循环拿回两页同样的
   10 条，真机上表现为「每张卡重复一份」）。
 - **12 小时快照缓存**（`InternshipSnapshotStore`，filesDir JSON、**已进两份备份排除
   xml**）：新鲜期内进页零网络（`InternshipCacheRules.shouldUseCache` 纯函数判定），

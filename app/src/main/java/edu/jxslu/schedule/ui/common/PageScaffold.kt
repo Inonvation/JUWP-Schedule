@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -112,13 +113,18 @@ fun RowScope.PageRefreshAction(
     label: String = "刷新",
 ) {
     if (busy) {
-        CircularProgressIndicator(
+        // 固定 48dp 占位：忙碌时只换内容、不缩宽度，顶栏其它动作不会左右跳。
+        Box(
             modifier = Modifier
-                .align(Alignment.CenterVertically)
-                .padding(end = 14.dp)
-                .width(20.dp),
-            strokeWidth = 2.dp,
-        )
+                .size(48.dp)
+                .align(Alignment.CenterVertically),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+            )
+        }
     } else {
         IconButton(onClick = onClick) {
             Icon(Icons.Filled.Refresh, contentDescription = label)

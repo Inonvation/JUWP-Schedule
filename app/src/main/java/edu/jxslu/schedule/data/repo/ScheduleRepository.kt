@@ -1374,6 +1374,24 @@ class ScheduleRepository(
         }.distinctUntilChanged()
 
     /**
+     * 当前课表学期的全部教材（教材页的数据源，2026-10-20）。
+     *
+     * 与 [textbooksFor] / [textbookTitlesByCourse] 共用 [currentTermFlow]；没有学期号时
+     * 返回空列表，宁可少显示，也不跨学期串数据。
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val textbooksForCurrentTerm: Flow<List<Textbook>> =
+        currentTermFlow.flatMapLatest { term ->
+            if (term.isNullOrBlank()) {
+                flowOf(emptyList())
+            } else {
+                db.textbookDao().observeForTerm(term).map { list ->
+                    list.map { it.toDomain() }
+                }
+            }
+        }
+
+    /**
      * 当前课表的学期号（一次性读，教材查询的钥匙）；没课表 / 没写过 term 时 null。
      *
      * 教材原本只在导入路径上用到 term，冷启动补抓（[TextbookSync.backfillIfMissing]，

@@ -146,13 +146,28 @@ object ScoreParser {
         val name = inputAfter("姓名") ?: return null
         val studentClass = detailItem("班级") ?: return null
         val studentId = detailItem("学号") ?: return null
-        return StudentCard(name = name, studentClass = studentClass, studentId = studentId)
+        return StudentCard(
+            name = name,
+            studentClass = studentClass,
+            studentId = studentId,
+            college = detailItem("院系").orEmpty(),
+            major = detailItem("专业").orEmpty(),
+            duration = detailItem("学制").orEmpty(),
+        )
     }
 }
 
-/** 学籍卡片里账号条需要的三个字段（DESIGN §3.3）。 */
+/**
+ * 学籍卡片里的只读字段（DESIGN §3.3）。
+ *
+ * 前三项给账号条；院系 / 专业 / 学制给「学籍信息」页。后三项缺失时留空，
+ * 不因为教务少填一列就让整张卡片解析失败。
+ */
 data class StudentCard(
     val name: String,
     val studentClass: String,
     val studentId: String,
+    val college: String = "",
+    val major: String = "",
+    val duration: String = "",
 )

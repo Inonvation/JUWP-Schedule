@@ -1,7 +1,5 @@
 package edu.jxslu.schedule.ui.exam
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,8 +10,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -33,36 +34,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.JwImportActivity
+import edu.jxslu.schedule.SubpageActivity
+import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
 import edu.jxslu.schedule.data.repo.ExamSync
 import edu.jxslu.schedule.domain.ExamChangeDetector
 import edu.jxslu.schedule.domain.ExamMapper.ExamEntry
-import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.ui.common.AppCard
-import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
-import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.PageEmpty
 import edu.jxslu.schedule.ui.common.PageRefreshAction
 import edu.jxslu.schedule.ui.common.PageScaffold
 import edu.jxslu.schedule.ui.common.NoticeTone
-import edu.jxslu.schedule.ui.common.SettingItem
-import edu.jxslu.schedule.ui.common.SettingSwitchRow
-import edu.jxslu.schedule.ui.common.SettingsSection
-import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.showNotice
-import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
-import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
-import edu.jxslu.schedule.ui.score.maybeRequestNotifPermission
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Import
 
 /**
  * 考试页（DESIGN §4.33，2026-09-30）：考试变动提醒从课表 hub 内联两行抽成独立入口，
@@ -70,20 +62,15 @@ import me.rerere.hugeicons.stroke.Import
  * 数据，用户口径），页内把「教务眼里的考试安排」一条一卡铺开——口径与成绩页一致：
  * 数据来自教务，不依赖是否导入过课表。
  *
- * 三件事：
+ * 两件事：
  *
- * 1. **提醒设置**（页首卡）：开关 + 自动检查间隔（间隔与「成绩设置」里的出分提醒共用
- *    一份 DataStore 值），换页不换口径；
- * 2. **考试列表**：读 [ExamSnapshotStore]（[ExamSync] 每次检查成功后落的基线）——
+ * 1. **考试列表**：读 [ExamSnapshotStore]（[ExamSync] 每次检查成功后落的基线）——
  *    顶栏「更新」强制走一次 `ExamSync.sync(force = true)`（OkHttp 直取，不写课表），
  *    本次探测到的变动在对应卡上标「新增 / 调整」；已结束的排到列表末尾并置灰；
- * 3. **导入入口**：考试进课表只有手动导入一条路（DESIGN §4.14 红线），页尾留一张卡开
- *    **考试安排查询页**的导入窗口（`JwImportActivity.start(startAtExam = true)`）——
- *    不这么传的话窗口登录后落理论课表页，会自己跑起「一键导入课表」，与这张卡写的话不符。
- *    写库仍由用户在导入页点「导入考试安排」并过确认弹窗。
+ * 2. **设置入口**：提醒开关 / 自动检查间隔 / 导入到课表统一收进「考试设置」
+ *    （[SubpageScreen.EXAM_SETTINGS]）。考试进课表仍只有手动导入一条路（DESIGN §4.14 红线）。
  *
- * 本页是教务导入窗口的**第六个落点**：从这里起的导入窗口 finish 后落回本页，所以
- * [JwImportOutcomeEffect] 与 [AppSnackbarHost] 必须都在。
+ * 导入窗口现在从「考试设置」页打开，本页不再消费导入结果。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,29 +91,6 @@ fun ExamScreen(onBack: () -> Unit) {
      * 变动检测同时已把新基线落盘，所以列表本身显示的就是更新后的数据。
      */
     var changes by remember { mutableStateOf<Map<String, ExamChangeDetector.Kind>>(emptyMap()) }
-
-    val examAlertEnabled by prefs.examAlertEnabled.collectAsState(initial = true)
-    val intervalHours by prefs.examAlertIntervalHours
-        .collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
-    var intervalPickerOpen by remember { mutableStateOf(false) }
-
-    val notifPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (!granted) {
-            scope.launch {
-                snackbar.showNotice(
-                    AppNoticeVisuals(
-                        "未授予通知权限，提醒不会显示；可在系统设置里重新开启",
-                        tone = NoticeTone.Warning,
-                    ),
-                )
-            }
-        }
-    }
-
-    // 本页有「导入考试安排到课表」入口，导入窗口 finish 后落回的就是这一页
-    JwImportOutcomeEffect(snackbar)
 
     suspend fun reload() {
         snapshot = withContext(Dispatchers.IO) { snapshotStore.load() }
@@ -183,7 +147,11 @@ fun ExamScreen(onBack: () -> Unit) {
         onBack = onBack,
         snackbar = snackbar,
         actions = {
+            JwWebActionButton("考试安排", JwUrls.EXAM_QUERY)
             PageRefreshAction(busy = busy, onClick = { refresh() }, label = "从教务更新")
+            IconButton(onClick = { SubpageActivity.start(context, SubpageScreen.EXAM_SETTINGS) }) {
+                Icon(Icons.Filled.Settings, contentDescription = "考试设置")
+            }
         },
         loading = snapshot == null,
         loadingText = "正在读取考试安排",
@@ -197,20 +165,6 @@ fun ExamScreen(onBack: () -> Unit) {
             )
         } else null,
     ) {
-        item {
-            AlertSection(
-                enabled = examAlertEnabled,
-                intervalHours = intervalHours,
-                onToggle = { want ->
-                    scope.launch { prefs.setExamAlertEnabled(want) }
-                    if (want) {
-                        maybeRequestNotifPermission(context, notifPermissionLauncher)
-                        scope.launch { ScoreAlertReminder.onSettingsChanged(context) }
-                    }
-                },
-                onPickInterval = { intervalPickerOpen = true },
-            )
-        }
         items(rows) { row ->
             when (row) {
                 is ExamRow.Header -> ExamHeader(row)
@@ -219,89 +173,14 @@ fun ExamScreen(onBack: () -> Unit) {
             }
         }
         item {
-            AppCardRow(onClick = { JwImportActivity.start(context, startAtExam = true) }) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "导入考试安排到课表",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "打开导入页自动识别考试；确认后才写进课表",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                }
-                Icon(
-                    HugeIcons.Import,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-        item {
             Text(
                 "列表是教务最近一次检查到的考试安排，与「考试变动提醒」同一份数据；" +
-                    "考试只提醒不自动写课表。",
+                    "考试只提醒不自动写课表，提醒设置与导入都在右上角「设置」里。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-    }
-
-    if (intervalPickerOpen) {
-        WheelValueDialog(
-            title = "自动检查间隔",
-            values = ScoreAlertDefaults.INTERVAL_CHOICES.map { ScoreAlertDefaults.intervalLabel(it) },
-            initialIndex = ScoreAlertDefaults.intervalChoiceIndex(intervalHours),
-            onConfirm = { index ->
-                intervalPickerOpen = false
-                scope.launch {
-                    prefs.setExamAlertIntervalHours(ScoreAlertDefaults.INTERVAL_CHOICES[index])
-                    ScoreAlertReminder.onSettingsChanged(context)
-                }
-            },
-            onDismiss = { intervalPickerOpen = false },
-        )
-    }
-}
-
-/**
- * 提醒设置卡（页首）。开关与间隔都在这里——课表 hub 只留一个入口行，不再内联开关。
- * 间隔 2026-10-04 起独立设置（与成绩提醒各一份 DataStore 值），互不牵动。
- */
-@Composable
-private fun AlertSection(
-    enabled: Boolean,
-    intervalHours: Int,
-    onToggle: (Boolean) -> Unit,
-    onPickInterval: () -> Unit,
-) {
-    SettingsSection(
-        title = "考试变动提醒",
-        subtitle = "教务发布新考试、或时间/考场调整时通知",
-    ) {
-        SettingSwitchRow(
-            title = "开启提醒",
-            subtitle = "首次只记基线，之后有变动才通知",
-            checked = enabled,
-            onCheckedChange = onToggle,
-        )
-        SettingItem(
-            title = "自动检查间隔",
-            subtitle = "与成绩提醒分开设置，互不影响",
-            value = ScoreAlertDefaults.intervalLabel(intervalHours),
-            enabled = enabled,
-            onClick = onPickInterval,
-        )
-        Text(
-            "提醒需要「我的 → 教务账户」已保存统一认证账号；点通知回到本页，导入入口在页面底部。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-        )
     }
 }
 

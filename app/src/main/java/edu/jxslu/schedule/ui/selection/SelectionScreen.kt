@@ -45,6 +45,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.JwImportActivity
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.repo.SelectionSync
 import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
@@ -59,6 +60,7 @@ import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.reminder.SelectionAlertReminder
 import kotlinx.coroutines.delay
@@ -164,6 +166,7 @@ fun SelectionScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    JwWebActionButton("选课", JwUrls.SELECTION_CENTER)
                     IconButton(onClick = { refresh(force = true) }, enabled = !refreshing) {
                         Icon(Icons.Filled.Refresh, contentDescription = "更新")
                     }

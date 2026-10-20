@@ -8,15 +8,31 @@ import org.junit.Test
 class ProfileSyncRulesTest {
 
     @Test
-    fun classBlankAndNeverTried_attempts() {
-        assertTrue(ProfileSyncRules.shouldAttempt(classBlank = true, lastAttemptDate = null, today = "2026-09-24"))
+    fun profileIncompleteAndNeverTried_attempts() {
+        assertTrue(
+            ProfileSyncRules.shouldAttempt(
+                profileIncomplete = true,
+                lastAttemptDate = null,
+                today = "2026-09-24",
+            ),
+        )
     }
 
     @Test
-    fun classAlreadyKnown_neverAttempts() {
-        assertFalse(ProfileSyncRules.shouldAttempt(classBlank = false, lastAttemptDate = null, today = "2026-09-24"))
+    fun profileComplete_neverAttempts() {
         assertFalse(
-            ProfileSyncRules.shouldAttempt(classBlank = false, lastAttemptDate = "2026-09-23", today = "2026-09-24"),
+            ProfileSyncRules.shouldAttempt(
+                profileIncomplete = false,
+                lastAttemptDate = null,
+                today = "2026-09-24",
+            ),
+        )
+        assertFalse(
+            ProfileSyncRules.shouldAttempt(
+                profileIncomplete = false,
+                lastAttemptDate = "2026-09-23",
+                today = "2026-09-24",
+            ),
         )
     }
 
@@ -24,14 +40,22 @@ class ProfileSyncRulesTest {
     @Test
     fun triedToday_doesNotRetry() {
         assertFalse(
-            ProfileSyncRules.shouldAttempt(classBlank = true, lastAttemptDate = "2026-09-24", today = "2026-09-24"),
+            ProfileSyncRules.shouldAttempt(
+                profileIncomplete = true,
+                lastAttemptDate = "2026-09-24",
+                today = "2026-09-24",
+            ),
         )
     }
 
     @Test
     fun triedYesterday_retries() {
         assertTrue(
-            ProfileSyncRules.shouldAttempt(classBlank = true, lastAttemptDate = "2026-09-23", today = "2026-09-24"),
+            ProfileSyncRules.shouldAttempt(
+                profileIncomplete = true,
+                lastAttemptDate = "2026-09-23",
+                today = "2026-09-24",
+            ),
         )
     }
 }

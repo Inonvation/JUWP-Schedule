@@ -24,6 +24,8 @@ import edu.jxslu.schedule.ui.jwvw.JwImportScreen
  * [EXTRA_ROUND_ID] 只对选课模式有意义：登录后直达该轮次的「进入选课」页
  * （DESIGN §4.35；轮次 id 过 [edu.jxslu.schedule.data.jw.JwUrls.ROUND_ID_PATTERN] 白名单，
  * 不合法退回选课中心列表）。
+ * [EXTRA_BROWSE_URL] / [EXTRA_BROWSE_TITLE] 只对 [JwImportMode.Browse] 有意义：从各业务页
+ * 的「网页核对」入口直接打开目标页，复用本窗口的电脑版预览、统一认证、返回与错误处理。
  *
  * 动画与 [SubpageActivity] 同款：打开 = 新窗口从右缘推入覆盖主窗口（slide_in_right），
  * 关闭 = 向右滑出（slide_out_right），主窗口全程原地不动。此前该窗口没配转场，
@@ -40,6 +42,8 @@ class JwImportActivity : ComponentActivity() {
             ?: JwImportMode.Schedule
         val startAtExam = intent.getBooleanExtra(EXTRA_START_EXAM, false)
         val selectionRoundId = intent.getStringExtra(EXTRA_ROUND_ID)
+        val browseUrl = intent.getStringExtra(EXTRA_BROWSE_URL).orEmpty()
+        val browseTitle = intent.getStringExtra(EXTRA_BROWSE_TITLE).orEmpty()
         setContent {
             JuwRoot {
                 JwImportScreen(
@@ -47,6 +51,8 @@ class JwImportActivity : ComponentActivity() {
                     mode = mode,
                     startAtExam = startAtExam,
                     selectionRoundId = selectionRoundId,
+                    browseUrl = browseUrl,
+                    browseTitle = browseTitle,
                 )
             }
         }
@@ -61,6 +67,8 @@ class JwImportActivity : ComponentActivity() {
         private const val EXTRA_MODE = "mode"
         private const val EXTRA_START_EXAM = "start_exam"
         private const val EXTRA_ROUND_ID = "selection_round_id"
+        private const val EXTRA_BROWSE_URL = "browse_url"
+        private const val EXTRA_BROWSE_TITLE = "browse_title"
 
         /**
          * [startAtExam] = true：登录后直接落到 `xsksap_query`（考试安排查询页），
@@ -79,6 +87,19 @@ class JwImportActivity : ComponentActivity() {
                 .putExtra(EXTRA_MODE, mode.name)
                 .putExtra(EXTRA_START_EXAM, startAtExam)
                 .putExtra(EXTRA_ROUND_ID, selectionRoundId)
+            context.startActivity(intent)
+            applySubpageOpenTransition(context)
+        }
+
+        /**
+         * 只读打开一个教务网页，复用导入窗口的全部能力（电脑版 / 手机版、统一认证、
+         * 返回先关弹层、错误态与 Cookie 回灌）。各业务页顶部的外链图标走这里。
+         */
+        fun startBrowse(context: Context, title: String, url: String) {
+            val intent = Intent(context, JwImportActivity::class.java)
+                .putExtra(EXTRA_MODE, JwImportMode.Browse.name)
+                .putExtra(EXTRA_BROWSE_TITLE, title)
+                .putExtra(EXTRA_BROWSE_URL, url)
             context.startActivity(intent)
             applySubpageOpenTransition(context)
         }

@@ -62,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.repo.ScholarProgressSync
 import edu.jxslu.schedule.domain.ScholarCourse
 import edu.jxslu.schedule.domain.ScholarCourseStatus
@@ -76,6 +77,7 @@ import edu.jxslu.schedule.ui.common.PageScaffold
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 import kotlinx.coroutines.launch
 
 /**
@@ -234,6 +236,7 @@ fun ScholarScreen(onBack: () -> Unit) {
         snackbar = snackbar,
         state = listState,
         actions = {
+            JwWebActionButton("学业完成情况", JwUrls.SCHOLAR_PROGRESS)
             if (busy) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     progress?.let { (done, total) ->

@@ -7,12 +7,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +22,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -44,6 +49,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.ScoreAlertDefaults
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingsSection
@@ -57,8 +63,8 @@ import kotlinx.coroutines.launch
  *
  * 三段：**展示**（按学期/学年分组 · 排序——原成绩页顶栏菜单迁入）、**统计口径**
  * （任选课计入两项平均，原汇总卡内开关迁入）、**成绩变动提醒**（开关 + 自动检查间隔）。
- * 成绩页顶栏收一个齿轮入口进来；数据操作（导入 / 清空学期）仍留在成绩页——它们是
- * 页内动作不是设置。
+ * 成绩页顶栏收一个齿轮入口进来；导入仍留在成绩页，清空学期已迁到本页「数据」段
+ * （选择学期后二次确认）。
  *
  * 考试变动提醒**不在这里**：2026-09-30 起在独立考试页（`ui/exam/ExamScreen.kt`，
  * `SubpageScreen.EXAMS`，入口「我的 → 学习 → 成绩与考试 → 考试安排」），
@@ -70,6 +76,7 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { Graph.displayPrefs(context) }
+    val scoreRepo = remember { Graph.scoreRepository(context) }
     val snackbar = remember { SnackbarHostState() }
 
     val groupByYear by prefs.scoreGroupByYear.collectAsState(initial = false)
@@ -77,7 +84,10 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
     val sortMode by prefs.scoreSortMode.collectAsState(initial = ScoreSortMode.Default)
     val scoreAlertEnabled by prefs.scoreAlertEnabled.collectAsState(initial = true)
     val intervalHours by prefs.scoreAlertIntervalHours.collectAsState(initial = ScoreAlertDefaults.INTERVAL_DEFAULT)
+    val terms by scoreRepo.observeTerms().collectAsState(initial = emptyList())
     var intervalPickerOpen by remember { mutableStateOf(false) }
+    var clearDialogOpen by remember { mutableStateOf(false) }
+    var clearTerm by remember { mutableStateOf<String?>(null) }
 
     // 开启提醒那一刻请求 POST_NOTIFICATIONS（API 33+），拒绝不阻塞开关本身
     // （口径同 CampusCardSettingsScreen：功能在系统设置里授权后自动生效）
@@ -150,6 +160,10 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
                     },
                 )
             }
+            SettingsNote(
+                "加权平均分 = Σ(课程成绩 × 学分) ÷ Σ学分；" +
+                    "平均绩点 = Σ(课程绩点 × 学分) ÷ Σ学分。",
+            )
 
             SettingsSection(title = "成绩变动提醒") {
                 SettingItem(
@@ -177,6 +191,24 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
                 )
                 SettingsNote("首次开启只记基线，之后有新出分才通知；需已保存教务账号")
             }
+
+            SettingsSection(title = "数据") {
+                SettingItem(
+                    title = "清空学期成绩",
+                    subtitle = if (terms.isEmpty()) {
+                        "本机还没有可清空的成绩"
+                    } else {
+                        "删除某一学期已导入的成绩，可重新从教务导入"
+                    },
+                    value = "选择学期",
+                    enabled = terms.isNotEmpty(),
+                    onClick = {
+                        clearTerm = terms.firstOrNull()
+                        clearDialogOpen = true
+                    },
+                )
+            }
+            SettingsNote("清空只删本机成绩，不影响教务数据；重新导入即可恢复。")
         }
     }
 
@@ -194,6 +226,65 @@ fun ScoreSettingsScreen(onBack: () -> Unit) {
                 }
             },
             onDismiss = { intervalPickerOpen = false },
+        )
+    }
+
+    if (clearDialogOpen && clearTerm != null) {
+        AlertDialog(
+            onDismissRequest = { clearDialogOpen = false },
+            title = { Text("清空学期成绩？") },
+            text = {
+                DialogWindowFadeEffect()
+                Column {
+                    Text(
+                        "选择要清空的学期：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        terms.forEach { term ->
+                            FilterChip(
+                                selected = term == clearTerm,
+                                onClick = { clearTerm = term },
+                                label = { Text(term) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "将删除「${clearTerm.orEmpty()}」的全部成绩记录；需要时可重新从教务导入。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val term = clearTerm
+                        clearDialogOpen = false
+                        if (term != null) {
+                            scope.launch {
+                                val result = runCatching { scoreRepo.deleteTerm(term) }
+                                snackbar.showNotice(
+                                    if (result.isSuccess) "已清空「$term」的成绩"
+                                    else "清空失败，请稍后重试",
+                                )
+                            }
+                        }
+                    },
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearDialogOpen = false }) { Text("取消") }
+            },
         )
     }
 }

@@ -32,6 +32,7 @@ import edu.jxslu.schedule.ui.curriculum.CurriculumScreen
 import edu.jxslu.schedule.ui.ebike.KvcxScreen
 import edu.jxslu.schedule.ui.ebike.RideScreen
 import edu.jxslu.schedule.ui.exam.ExamScreen
+import edu.jxslu.schedule.ui.exam.ExamSettingsScreen
 import edu.jxslu.schedule.ui.life.AcRemoteScreen
 import edu.jxslu.schedule.ui.life.PowerBillScreen
 import edu.jxslu.schedule.ui.homework.HomeworkCourseScreen
@@ -40,6 +41,9 @@ import edu.jxslu.schedule.ui.homework.HomeworkLibraryScreen
 import edu.jxslu.schedule.ui.homework.HomeworkTodoScreen
 import edu.jxslu.schedule.ui.inbox.InboxScreen
 import edu.jxslu.schedule.ui.internship.InternshipBasesScreen
+import edu.jxslu.schedule.ui.jw.StudentInfoScreen
+import edu.jxslu.schedule.ui.jw.TeachingCalendarScreen
+import edu.jxslu.schedule.ui.jw.TextbookScreen
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.notes.NoteCourseScreen
 import edu.jxslu.schedule.ui.notes.NoteDetailScreen
@@ -108,6 +112,14 @@ enum class SubpageScreen {
     SCORE_SETTINGS,
     /** 我的 → 学习 → 考试安排（考试列表 · 考试变动提醒，DESIGN §4.33） */
     EXAMS,
+    /** 考试安排 → 设置（提醒 · 间隔 · 导入到课表，2026-10-20） */
+    EXAM_SETTINGS,
+    /** 教务 → 教材（当前课表学期的教材清单，2026-10-20） */
+    TEXTBOOKS,
+    /** 教务 → 学籍信息（教务学籍卡片，2026-10-20） */
+    STUDENT_INFO,
+    /** 教务 → 教学日历（第 1 周周一 · 每周起止，2026-10-20） */
+    TEACHING_CALENDAR,
     /** 我的 → 学习 → 学业完成情况（培养方案达成度，DESIGN §3.17 / §4.29） */
     SCHOLAR,
     /** 我的 → 学习 → 培养方案（课程设置总表 · 按学年/学期看计划课，DESIGN §3.26 / §4.41） */
@@ -368,6 +380,10 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.SCORES -> ScoreScreen(onBack = onBack)
             SubpageScreen.SCORE_SETTINGS -> ScoreSettingsScreen(onBack = onBack)
             SubpageScreen.EXAMS -> ExamScreen(onBack = onBack)
+            SubpageScreen.EXAM_SETTINGS -> ExamSettingsScreen(onBack = onBack)
+            SubpageScreen.TEXTBOOKS -> TextbookScreen(onBack = onBack)
+            SubpageScreen.STUDENT_INFO -> StudentInfoScreen(onBack = onBack)
+            SubpageScreen.TEACHING_CALENDAR -> TeachingCalendarScreen(onBack = onBack)
             SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)
             SubpageScreen.CURRICULUM -> CurriculumScreen(onBack = onBack)
             SubpageScreen.INTERNSHIP_BASES -> InternshipBasesScreen(onBack = onBack)

@@ -457,12 +457,37 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_PROFILE_STUDENT_ID].orEmpty()
     }
 
+    /** 学籍信息页：院系（教务学籍卡片）。 */
+    val profileCollege: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_COLLEGE].orEmpty()
+    }
+
+    /** 学籍信息页：专业（教务学籍卡片）。 */
+    val profileMajor: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_MAJOR].orEmpty()
+    }
+
+    /** 学籍信息页：学制（教务学籍卡片，原始文本如「4」）。 */
+    val profileDuration: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_PROFILE_DURATION].orEmpty()
+    }
+
     /** 学籍卡落库；各字段为空串时对应键不动，避免一次脏解析抹掉已有数据。 */
-    suspend fun setProfile(name: String?, className: String?, studentId: String? = null) {
+    suspend fun setProfile(
+        name: String?,
+        className: String?,
+        studentId: String? = null,
+        college: String? = null,
+        major: String? = null,
+        duration: String? = null,
+    ) {
         context.displayDataStore.edit { p ->
             if (!name.isNullOrBlank()) p[KEY_PROFILE_NAME] = name.trim()
             if (!className.isNullOrBlank()) p[KEY_PROFILE_CLASS] = className.trim()
             if (!studentId.isNullOrBlank()) p[KEY_PROFILE_STUDENT_ID] = studentId.trim()
+            if (!college.isNullOrBlank()) p[KEY_PROFILE_COLLEGE] = college.trim()
+            if (!major.isNullOrBlank()) p[KEY_PROFILE_MAJOR] = major.trim()
+            if (!duration.isNullOrBlank()) p[KEY_PROFILE_DURATION] = duration.trim()
         }
     }
 
@@ -475,6 +500,9 @@ class DisplayPrefsStore(private val context: Context) {
             p.remove(KEY_PROFILE_NAME)
             p.remove(KEY_PROFILE_CLASS)
             p.remove(KEY_PROFILE_STUDENT_ID)
+            p.remove(KEY_PROFILE_COLLEGE)
+            p.remove(KEY_PROFILE_MAJOR)
+            p.remove(KEY_PROFILE_DURATION)
             p.remove(KEY_PROFILE_SYNC_DATE)
         }
     }
@@ -2402,6 +2430,9 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_CLASS = stringPreferencesKey("profile_class")
         val KEY_PROFILE_STUDENT_ID = stringPreferencesKey("profile_student_id")
+        val KEY_PROFILE_COLLEGE = stringPreferencesKey("profile_college")
+        val KEY_PROFILE_MAJOR = stringPreferencesKey("profile_major")
+        val KEY_PROFILE_DURATION = stringPreferencesKey("profile_duration")
         val KEY_PROFILE_SYNC_DATE = stringPreferencesKey("profile_sync_date")
         val KEY_ONBOARDING_SEEN = booleanPreferencesKey("onboarding_seen")
         val KEY_SCHOLAR_PLAN_NAME = stringPreferencesKey("scholar_plan_name")

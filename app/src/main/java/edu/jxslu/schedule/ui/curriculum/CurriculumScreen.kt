@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.repo.CurriculumSync
 import edu.jxslu.schedule.domain.CurriculumCourse
 import edu.jxslu.schedule.domain.CurriculumRules
@@ -60,6 +61,7 @@ import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 import kotlinx.coroutines.launch
 
 /**
@@ -182,6 +184,7 @@ fun CurriculumScreen(onBack: () -> Unit) {
         snackbar = snackbar,
         state = listState,
         actions = {
+            JwWebActionButton("培养方案", JwUrls.CURRICULUM)
             PageRefreshAction(
                 busy = busy,
                 onClick = { runSync(force = true, silent = false) },

@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.PtworkTranscript
 import edu.jxslu.schedule.domain.TranscriptEntry
 import edu.jxslu.schedule.domain.TranscriptHistory
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -50,6 +51,7 @@ import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.showNotice
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,6 +110,7 @@ fun TranscriptHistoryScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    JwWebActionButton("成绩单", PtworkTranscript.CAS_ENTRY)
                     val list = entries
                     if (list != null && list.isNotEmpty()) {
                         TextButton(onClick = { confirmClear = true }) { Text("清空") }

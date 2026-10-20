@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,18 +20,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +35,6 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,10 +65,11 @@ import edu.jxslu.schedule.domain.ScoreRecord
 import edu.jxslu.schedule.domain.ScoreSortMode
 import edu.jxslu.schedule.domain.TermSummary
 import edu.jxslu.schedule.domain.YearGroup
-import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -88,14 +83,14 @@ private const val SCOPE_ALL = "\u0000all"
  * 两种视图首位都有「全部」档（全量聚合：总加权平均 / 总绩点 / 总修得学分）。
  *
  * 数据全局归属学生、按学期整体替换；页内「导入」复用教务 WebView（[JwImportMode.Scores]），
- * 「删除」清空当前学期（带确认，仅按学期视图提供——按学年是聚合视图，删除以学期为单位）。
+ * 清空学期已迁到「成绩设置」的「数据」段（选择学期后二次确认）。
  * 评教未完成（pendingReview）的课程不显示分数也不进统计，单独呈现「待评教」标记，
  * 避免用户误以为成绩丢失。
  *
  * 顶部「导出带章成绩单」（DESIGN §3.14）是另一个数据源：出的是教务处签章系统生成的正式单据，
  * 与本页的本地成绩库无关，所以放在学期/学年分组之外（不随 chip 变化）。
  *
- * 列表排序（DESIGN §4.15）：顶栏菜单三档——默认/成绩/绩点，只作用于学期分组内部；
+ * 列表排序（DESIGN §4.15）：设置页三档——默认/成绩/绩点，只作用于学期分组内部；
  * 加权平均分与平均绩点不计任选课（通识任选、专业任选等），汇总卡展示计算公式并标注「仅供参考」。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -160,9 +155,6 @@ fun ScoreScreen(onBack: () -> Unit) {
         }
     }
 
-    var confirmDelete by remember { mutableStateOf(false) }
-    var overflowOpen by remember { mutableStateOf(false) }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -173,40 +165,13 @@ fun ScoreScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { SubpageActivity.start(context, SubpageScreen.SCORE_SETTINGS) }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "成绩设置")
-                    }
                     IconButton(onClick = {
                         JwImportActivity.start(context, JwImportMode.Scores)
                     }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "从教务导入")
                     }
-                    // 危险操作不进顶栏（2026-10-18）：原来「清空本学期」的垃圾桶与「从教务导入」的
-                    // 刷新图标并排、同色无区分，一次误触就得重导。现在收进溢出菜单，菜单项本身
-                    // 用 error 色做危险提示，确认弹窗仍在。
-                    if (!groupByYear && selectedTerm != null && selectedTerm != SCOPE_ALL) {
-                        Box {
-                            IconButton(onClick = { overflowOpen = true }) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "更多操作")
-                            }
-                            DropdownMenu(
-                                expanded = overflowOpen,
-                                onDismissRequest = { overflowOpen = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            "清空本学期成绩",
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                    },
-                                    onClick = {
-                                        overflowOpen = false
-                                        confirmDelete = true
-                                    },
-                                )
-                            }
-                        }
+                    IconButton(onClick = { SubpageActivity.start(context, SubpageScreen.SCORE_SETTINGS) }) {
+                        Icon(Icons.Filled.Settings, contentDescription = "成绩设置")
                     }
                 },
             )
@@ -304,38 +269,33 @@ fun ScoreScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     item {
-                        // 入口在分组开关之外：导的是教务处正式单据，与本页选中的学期/学年无关
-                        ExportTranscriptCard(
-                            onClick = { TranscriptActivity.start(context) },
-                        )
-                    }
-                    item {
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            SegmentedButton(
-                                selected = !groupByYear,
-                                onClick = { scope.launch { prefsStore.setScoreGroupByYear(false) } },
-                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                            ) { Text("按学期") }
-                            SegmentedButton(
-                                selected = groupByYear,
-                                onClick = { scope.launch { prefsStore.setScoreGroupByYear(true) } },
-                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                            ) { Text("按学年") }
-                        }
-                    }
-                    item {
-                        if (groupByYear) {
-                            YearChips(
-                                groups = yearGroups,
-                                selected = selectedYear,
-                                onSelect = { selectedYear = it },
-                            )
-                        } else {
-                            TermChips(
-                                terms = terms,
-                                selected = selectedTerm,
-                                onSelect = { selectedTerm = it },
-                            )
+                        AppCard(contentPadding = PaddingValues(12.dp)) {
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                SegmentedButton(
+                                    selected = !groupByYear,
+                                    onClick = { scope.launch { prefsStore.setScoreGroupByYear(false) } },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                ) { Text("按学期") }
+                                SegmentedButton(
+                                    selected = groupByYear,
+                                    onClick = { scope.launch { prefsStore.setScoreGroupByYear(true) } },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                ) { Text("按学年") }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            if (groupByYear) {
+                                YearChips(
+                                    groups = yearGroups,
+                                    selected = selectedYear,
+                                    onSelect = { selectedYear = it },
+                                )
+                            } else {
+                                TermChips(
+                                    terms = terms,
+                                    selected = selectedTerm,
+                                    onSelect = { selectedTerm = it },
+                                )
+                            }
                         }
                     }
                     item {
@@ -343,6 +303,15 @@ fun ScoreScreen(onBack: () -> Unit) {
                             summary,
                             total = rows.count { it is ScoreRow.Record },
                             includeFreeElectives = includeFreeElectives,
+                        )
+                    }
+                    item {
+                        SectionHeader(
+                            title = "成绩明细",
+                            trailing = "${rows.count { it is ScoreRow.Record }} 门",
+                            horizontalPadding = 0.dp,
+                            topPadding = 6.dp,
+                            bottomPadding = 0.dp,
                         )
                     }
                     // 不设自定义 key：同学期同课号可能有多行（补考/重修批次），任何业务键组合
@@ -354,8 +323,14 @@ fun ScoreScreen(onBack: () -> Unit) {
                         }
                     }
                     item {
+                        ExportTranscriptCard(
+                            onClick = { TranscriptActivity.start(context) },
+                        )
+                    }
+                    item {
                         Text(
-                            "数据按学期整体替换存储；重新导入相同学期会覆盖。最长保留到手动删除。",
+                            "数据按学期整体替换存储；重新导入相同学期会覆盖。" +
+                                "清空学期在「成绩设置」里操作。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                             modifier = Modifier.padding(top = 4.dp),
@@ -366,38 +341,6 @@ fun ScoreScreen(onBack: () -> Unit) {
         }
     }
 
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("清空本学期成绩？") },
-            text = {
-                DialogWindowFadeEffect()
-                Text("将删除「${selectedTerm.orEmpty()}」的全部成绩记录；需要时可重新从教务导入。")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val term = selectedTerm
-                        confirmDelete = false
-                        if (term != null) {
-                            // 不可恢复操作必须有回声：原实现删完什么都不说，
-                            // 列表空掉时分不清"删掉了"还是"加载失败"（2026-10-18）
-                            scope.launch {
-                                val result = runCatching { scoreRepo.deleteTerm(term) }
-                                snackbar.showNotice(
-                                    if (result.isSuccess) "已清空「$term」的成绩"
-                                    else "清空失败，请稍后重试",
-                                )
-                            }
-                        }
-                    },
-                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
-            },
-        )
-    }
 }
 
 /** 列表行：按学年视图里学期小节头与成绩卡混排。 */
@@ -463,100 +406,74 @@ private fun SummaryCard(
     total: Int,
     includeFreeElectives: Boolean,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                if (summary?.weightedAverage != null) {
-                    Text(
-                        text = trimNum(summary.weightedAverage),
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        "  加权平均分",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(bottom = 3.dp),
-                    )
-                }
-                if (summary?.gpa != null) {
-                    Spacer(Modifier.width(16.dp))
-                    Text(
-                        text = trimNum(summary.gpa),
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        "  平均绩点",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(bottom = 3.dp),
-                    )
-                }
-                // 计算口径与教务正式单据可能有出入，数值旁固定标注（2026-09-19 用户要求）
-                if (summary?.weightedAverage != null || summary?.gpa != null) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "仅供参考",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            // 公式与页面统计口径一一对应（DESIGN §4.15）：有值才显示对应行
-            if (summary?.weightedAverage != null) {
-                FormulaLine("加权平均分 = Σ(课程成绩 × 学分) ÷ Σ学分")
-            }
-            if (summary?.gpa != null) {
-                FormulaLine("平均绩点 = Σ(课程绩点 × 学分) ÷ Σ学分")
-            }
-            Spacer(Modifier.height(4.dp))
-            val note = buildString {
-                append("共 $total 门")
-                if (summary != null && summary.credits > 0.0) {
-                    append(" · 修得 ${trimNum(summary.credits)} 学分")
-                }
-                if (summary != null && summary.excludedCount > 0) {
-                    if (includeFreeElectives) {
-                        append(" · 已计入 ${summary.excludedCount} 门任选课")
-                    } else {
-                        append(" · 已不计 ${summary.excludedCount} 门任选课")
-                    }
-                }
-                if (summary != null && summary.lockedCount > 0) {
-                    append(" · ${summary.lockedCount} 门待评教暂不显示分数")
-                }
-                if (summary != null && summary.courseCount <= 0) append(" · 暂无有效分数")
-            }
-            Text(
-                note,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+    AppCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            SummaryMetric(
+                label = "加权平均",
+                value = summary?.weightedAverage?.let(::trimNum) ?: "—",
+                modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.height(4.dp))
-            // 口径开关已迁「成绩设置」（2026-09-30）：卡上只留一行去向说明，
-            // 当前口径在 note 行里已经随 excludedCount 动态展示
-            Text(
-                "统计口径在「成绩设置」里调整",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            SummaryMetric(
+                label = "平均绩点",
+                value = summary?.gpa?.let(::trimNum) ?: "—",
+                modifier = Modifier.weight(1f),
             )
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 10.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+        )
+        val note = buildString {
+            append("共 $total 门")
+            if (summary != null && summary.credits > 0.0) {
+                append(" · 修得 ${trimNum(summary.credits)} 学分")
+            }
+            if (summary != null && summary.excludedCount > 0) {
+                if (includeFreeElectives) {
+                    append(" · 已计入 ${summary.excludedCount} 门任选课")
+                } else {
+                    append(" · 已不计 ${summary.excludedCount} 门任选课")
+                }
+            }
+            if (summary != null && summary.lockedCount > 0) {
+                append(" · ${summary.lockedCount} 门待评教暂不显示分数")
+            }
+            if (summary != null && summary.courseCount <= 0) append(" · 暂无有效分数")
+        }
+        Text(
+            note,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+        )
+        Spacer(Modifier.height(3.dp))
+        // 公式已收进「成绩设置」；卡上只留一句口径去向，避免首屏被公式占满。
+        Text(
+            "仅供参考 · 统计口径在「成绩设置」里调整",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+        )
     }
 }
 
-/** 汇总卡里的口径说明行。 */
 @Composable
-private fun FormulaLine(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-    )
+private fun SummaryMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 /** 学年内按学期分组的小节头：一门不落都看得出来源学期。 */
@@ -573,11 +490,10 @@ private fun TermSectionHeader(term: String, count: Int) {
 
 @Composable
 private fun ScoreCard(record: ScoreRecord) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    AppCard {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
