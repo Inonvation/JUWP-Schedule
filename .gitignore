@@ -22,6 +22,10 @@ scripts/gen_week_layout_preview.py
 # 围栏复核工具的瓦片缓存与预览图（临时产物，脚本按需重抓）
 tools/campus-fence/_tiles/
 
+# 应用图标预览脚本与产物（本地试验，非项目产物）
+tools/app-icon/preview/
+tools/app-icon/preview_*.py
+
 # ============ Android / Gradle ============
 .gradle/
 build/
