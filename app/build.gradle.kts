@@ -31,8 +31,8 @@ android {
         applicationId = "edu.jxslu.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "2.10.2"
+        versionCode = 24
+        versionName = "2.10.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
