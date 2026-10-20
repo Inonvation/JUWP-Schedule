@@ -509,6 +509,13 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 先从正文 `extractJson` 抽配对完整的 JSON 再解析，再不行把原文放进 `message`，**永不空屏**。
 上限：节次 1–11、周次 1–30、星期 1–7。
 
+**周次级改动**（2026-10-20）：单周调课（「原上课周次 8 周 → 新上课周次 9 周」）在 prompt
+里要求落成「原行 `modify` 去掉被调走的那一周 + 新时段 `add` 只含新周次」——**不允许**
+把整门课的 weeks 直接改成新周次。ADD 的防重 = 同 `mergeKey` 且**周次有交集**
+（`ScheduleDiff.duplicateOf`）；周次不相交的同槽位块另插一行（补课 / 回课时换教室）。
+预览周次 = 新态第一周 ∪ 被删的第一周，`changedCellSet` 对新旧两侧都描边
+（只取新态时单周调课在「应用前 / 应用后」看不出差别）。
+
 **落库**：`ScheduleRepository.applyLocalChanges`——2026-10-06 从 `applyScheduleChanges`
 拆出**唯一写实现** `applyChangeSet`（事务内逐条删/改/增，不碰基线），
 `applyScheduleChanges` = 它 + `refreshBaselineFromDb`（调课检测合并语义，行为不变）；

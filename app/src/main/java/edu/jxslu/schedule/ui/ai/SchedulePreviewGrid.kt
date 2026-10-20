@@ -253,9 +253,16 @@ internal fun changedCellSet(
     val out = mutableSetOf<Pair<Int, Int>>()
     changes.forEachIndexed { index, change ->
         if (index !in accepted) return@forEachIndexed
-        val course = change.new ?: change.old ?: return@forEachIndexed
-        if (week in course.weeks) {
-            for (section in course.startSection..course.endSection) out += course.day to section
+        // MODIFIED 的新旧两侧都要标：只标新态时，「应用前」栏里被挪走 / 被删掉的那一格
+        // 不会描边（单周调课看不出动了哪一周）；REMOVED / ADDED 只有一侧
+        val sides = when (change.kind) {
+            ScheduleDiff.ChangeKind.MODIFIED -> listOfNotNull(change.old, change.new)
+            else -> listOfNotNull(change.new ?: change.old)
+        }
+        sides.forEach { course ->
+            if (week in course.weeks) {
+                for (section in course.startSection..course.endSection) out += course.day to section
+            }
         }
     }
     overrides.forEach { override ->
@@ -300,6 +307,12 @@ internal fun previewWeeksOf(
         if (index !in accepted) return@forEachIndexed
         val course = change.new ?: change.old ?: return@forEachIndexed
         course.weeks.minOrNull()?.let { out += it }
+        // 只删周次的调整（old 有、new 没有的那几周）：补上被删的第一周。否则候选只看
+        // 新态，删掉的那一周不在候选里，「应用前 / 应用后」两栏看不出差别
+        if (change.kind == ScheduleDiff.ChangeKind.MODIFIED) {
+            val removedWeeks = change.old?.weeks.orEmpty() - change.new?.weeks.orEmpty()
+            removedWeeks.minOrNull()?.let { out += it }
+        }
     }
     return out.toList()
 }

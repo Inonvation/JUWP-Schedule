@@ -1650,8 +1650,9 @@ class ScheduleRepository(
 
                 edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.ADDED -> {
                     val course = change.new ?: run { skipped++; return@forEach }
-                    // 防重复：用户已经手动加过同门课（mergeKey 一致）就不再插一份
-                    if (current.any { it.mergeKey() == course.mergeKey() }) {
+                    // 防重复：同一课块且周次有交集才算重复（与预览、冲突提示同一把钥匙）；
+                    // 周次不相交的同槽位课块是补课 / 回课时换教室，要另插一行
+                    if (ScheduleDiff.duplicateOf(course, current) != null) {
                         skipped++
                     } else {
                         val colored = course.copy(

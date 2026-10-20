@@ -11,8 +11,10 @@ import org.junit.Test
  *
  * 核心契约：
  * - 指纹只含教务字段，本机字段（配色/备注/自定义时间）不参与——否则每次检查都报假差异；
- * - 同名同 kind 的一删一增合并成「调整」，多删多增宁可拆开也不错误配对；
- * - 「与你的修改冲突」判据是当前课表里指纹条目是否原样还在。
+ * - 同名同 kind 的一删一增合并成「调整」；多条时按同槽位（星期 + 节次）配对，
+ *   同槽位候选多于一个时按周次重叠严格最大配对，平手宁可拆开也不错误配对；
+ * - 「与你的修改冲突」判据是当前课表里指纹条目是否原样还在；ADDED 只看同一课块
+ *   且周次有交集（合并会跳过），同门课的其他时段不算冲突。
  */
 class ScheduleDiffTest {
 
@@ -169,14 +171,84 @@ class ScheduleDiffTest {
     }
 
     @Test
-    fun `教务新增但用户已手动加过同门课算冲突`() {
+    fun `单周调课拆成两块时配成一条调整加一条新增`() {
+        // 教务表达「第 8 周周四 7-8 节 → 第 9 周周二 3-4 节」的写法：原块去掉第 8 周，
+        // 新块只含第 9 周。基线行与两条远端行指纹都不相等，同槽位的那条才是同一块课——
+        // 不能报成「删除整门课 + 两条新增」（2026-10-20 用户实报）
+        val old = course(
+            name = "人机交互技术",
+            teacher = "曾刚",
+            position = "南B106",
+            day = 4,
+            startSection = 7,
+            endSection = 8,
+            weeks = setOf(1, 2, 4, 5, 6, 7, 8, 9, 10),
+        )
+        val kept = old.copy(weeks = setOf(1, 2, 4, 5, 6, 7, 9, 10))
+        val moved = old.copy(day = 2, startSection = 3, endSection = 4, position = "北B302", weeks = setOf(9))
+
+        val changes = ScheduleDiff.detect(listOf(old), listOf(kept, moved))
+        assertEquals(2, changes.size)
+        val modified = changes.first { it.kind == ScheduleDiff.ChangeKind.MODIFIED }
+        assertEquals(old, modified.old)
+        assertEquals(kept, modified.new)
+        assertEquals(moved, changes.first { it.kind == ScheduleDiff.ChangeKind.ADDED }.new)
+
+        // 两条都采纳后基线 = 教务，下次检查不再报差异
+        val advanced = ScheduleDiff.baselineAfter(
+            listOf(old),
+            listOf(
+                AppliedEntry(ScheduleDiff.ChangeKind.MODIFIED, before = old, after = kept),
+                AppliedEntry(ScheduleDiff.ChangeKind.ADDED, after = moved),
+            ),
+        )
+        assertTrue(ScheduleDiff.detect(advanced, listOf(kept, moved)).isEmpty())
+    }
+
+    @Test
+    fun `同槽位多条候选按周次重叠配对`() {
+        // 教务把单双周拆成两行（同槽位、周次不相交）：各配各的，不拆成 2 删 2 增
+        val odd = course(day = 3, weeks = (1..15 step 2).toSet())
+        val even = course(day = 3, weeks = (2..16 step 2).toSet())
+        val changes = ScheduleDiff.detect(
+            listOf(odd, even),
+            listOf(odd.copy(position = "教二202"), even.copy(position = "教二202")),
+        )
+        assertEquals(2, changes.size)
+        assertTrue(changes.all { it.kind == ScheduleDiff.ChangeKind.MODIFIED })
+    }
+
+    @Test
+    fun `教务新增的冲突判据是同一课块重复而不是同门课`() {
         val current = listOf(course(name = "大学物理", day = 5, teacher = "王五"))
-        assertTrue(
+        // 同门课的其他时段不是冲突（一门课本来就可能有多块）
+        assertFalse(
             ScheduleDiff.isConflicted(
                 ScheduleDiff.Change(ScheduleDiff.ChangeKind.ADDED, new = course(name = "大学物理", day = 2)),
                 current,
             ),
         )
+        // 同槽位但周次不相交：补课 / 回课时换教室，会另插一行，也不是冲突
+        assertFalse(
+            ScheduleDiff.isConflicted(
+                ScheduleDiff.Change(
+                    ScheduleDiff.ChangeKind.ADDED,
+                    new = course(name = "大学物理", day = 5, teacher = "王五", weeks = (17..18).toSet()),
+                ),
+                current,
+            ),
+        )
+        // 同一课块且周次有交集：合并会跳过，算冲突
+        assertTrue(
+            ScheduleDiff.isConflicted(
+                ScheduleDiff.Change(
+                    ScheduleDiff.ChangeKind.ADDED,
+                    new = course(name = "大学物理", day = 5, teacher = "王五"),
+                ),
+                current,
+            ),
+        )
+        // 不同的课不冲突
         assertFalse(
             ScheduleDiff.isConflicted(
                 ScheduleDiff.Change(ScheduleDiff.ChangeKind.ADDED, new = course(name = "数据结构", day = 2)),

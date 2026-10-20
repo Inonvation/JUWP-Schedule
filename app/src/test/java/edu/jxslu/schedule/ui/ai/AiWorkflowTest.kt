@@ -164,6 +164,34 @@ class AiWorkflowTest {
         assertEquals(listOf(5, 9), previewWeeksOf(changes, setOf(0, 1), emptyList(), null))
     }
 
+    @Test
+    fun `只删周次的调整把被删的第一周带进预览`() {
+        // 单周调课：原块去掉第 8 周。新态第一周是 1，被删的是 8——
+        // 候选里必须带上 8，否则「应用前 / 应用后」两栏看不出删了哪周
+        val change = ScheduleDiff.Change(
+            ScheduleDiff.ChangeKind.MODIFIED,
+            old = course(weeks = setOf(1, 2, 4, 5, 6, 7, 8, 9, 10)),
+            new = course(weeks = setOf(1, 2, 4, 5, 6, 7, 9, 10)),
+        )
+        assertEquals(listOf(1, 8), previewWeeksOf(listOf(change), setOf(0), emptyList(), semester))
+    }
+
+    @Test
+    fun `调整的预览描边覆盖新旧两侧`() {
+        val old = course(weeks = setOf(1, 8), day = 4)
+        val moved = course(weeks = setOf(1, 9), day = 2)
+        val change = ScheduleDiff.Change(ScheduleDiff.ChangeKind.MODIFIED, old = old, new = moved)
+        // 第 8 周描旧格（周四），第 9 周描新格（周二）——只标新态时前者会漏
+        assertEquals(
+            setOf(4 to 3, 4 to 4),
+            changedCellSet(listOf(change), setOf(0), emptyList(), listOf(old), 8, semester),
+        )
+        assertEquals(
+            setOf(2 to 3, 2 to 4),
+            changedCellSet(listOf(change), setOf(0), emptyList(), listOf(moved), 9, semester),
+        )
+    }
+
     // ---------------- 回执跨轮 ----------------
 
     @Test

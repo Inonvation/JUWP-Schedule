@@ -15,7 +15,11 @@ import kotlinx.serialization.json.Json
  * - 指纹完全一致的条目两两抵消；
  * - 余集里同名同 kind 恰好「一删一增」的一对合并成 [ChangeKind.MODIFIED]——
  *   「大学物理：周三 3-4 节 → 周五 1-2 节」是一条调整而不是一删一增两条；
- *   多删多增一律不配对（同名多块课部分变动时，排序配对会错配，宁可拆开给人看）；
+ * - 多条时按**同一天 + 同一节次**配对（2026-10-20 修）：教务表达「某一周调课」的
+ *   固定写法是「原块去掉那一周 + 新块只含那一周」，两行都与基线行指纹不等——
+ *   只按数量 1:1 配对会把一次单周调课报成「删除整门课 + 两条新增」。同槽位才是
+ *   同一块课；同槽位候选多于一个时只在周次重叠严格最大时配对，平手不配
+ *   （宁可拆开，也不冒充调整）；
  * - 剩下的是纯 [ChangeKind.ADDED] / [ChangeKind.REMOVED]。
  *
  * 指纹只含教务提供的字段（name/teacher/position/day/节次/周次/kind）。
@@ -70,19 +74,21 @@ object ScheduleDiff {
 
         val changes = mutableListOf<Change>()
         val consumedAdded = mutableSetOf<Course>()
-        // 同名同 kind 组内恰好一删一增 → 配成 MODIFIED。数量不等时不配对（会错配）。
         removed.groupBy(::identity).forEach { _, group ->
-            if (group.size == 1) {
-                val old = group.single()
-                val mates = added.filter { identity(it) == identity(old) && it !in consumedAdded }
-                if (mates.size == 1) {
-                    consumedAdded += mates.single()
-                    changes += Change(ChangeKind.MODIFIED, old = old, new = mates.single())
-                    return@forEach
+            // 组内恰好一删一增：整块时间挪动（周次 / 地点 / 教师都可能变），保持原口径
+            val free = added.filter { identity(it) == identity(group.first()) && it !in consumedAdded }
+            group.forEach { old ->
+                val mate = if (group.size == 1 && free.size == 1) {
+                    free.single()
+                } else {
+                    uniqueSameSlot(old, free.filter { it !in consumedAdded })
                 }
-                changes += Change(ChangeKind.REMOVED, old = old)
-            } else {
-                group.forEach { changes += Change(ChangeKind.REMOVED, old = it) }
+                if (mate != null) {
+                    consumedAdded += mate
+                    changes += Change(ChangeKind.MODIFIED, old = old, new = mate)
+                } else {
+                    changes += Change(ChangeKind.REMOVED, old = old)
+                }
             }
         }
         added.filter { it !in consumedAdded }
@@ -101,6 +107,25 @@ object ScheduleDiff {
                 { (it.old ?: it.new)?.startSection ?: 0 },
             ),
         )
+    }
+
+    /**
+     * 同槽位候选：`day + startSection + endSection` 完全一致 = 这块课的时间位置没动，
+     * 周次 / 地点 / 教师的变化都算同一块的调整。
+     *
+     * 候选多于一个（教务按周次把同一槽位拆成多行）时，只在「周次重叠严格最大」时
+     * 认一个；平手 = 无法确定对应关系，返回 null 交给调用方拆成删 / 增。
+     */
+    private fun uniqueSameSlot(old: Course, candidates: List<Course>): Course? {
+        val same = candidates.filter {
+            it.day == old.day && it.startSection == old.startSection && it.endSection == old.endSection
+        }
+        if (same.size == 1) return same.single()
+        if (same.isEmpty()) return null
+        val overlaps = same.map { it to it.weeks.count { week -> week in old.weeks } }
+        val max = overlaps.maxOf { it.second }
+        val best = overlaps.filter { it.second == max }
+        return if (max > 0 && best.size == 1) best.single().first else null
     }
 
     /**
@@ -161,11 +186,11 @@ object ScheduleDiff {
      * 一条教务差异是否与用户的本地修改冲突。冲突的条目在处置页默认不勾——
      * 采纳它会覆盖用户自己改过的内容，由用户逐条裁决。
      *
-     * 判据（基线里的条目在当前课表是否原样还在）：
+     * 判据（与写路径 `applyChangeSet` 的跳过条件逐条对齐）：
      * - REMOVED / MODIFIED：当前课表里已经找不到指纹一致的条目 = 用户改过或删过它；
-     * - ADDED：当前课表里已有同门课（同名同 kind）= 用户自己加过，再导一份会重复。
-     *   能出现在 ADDED 里说明基线没有它（指纹抵消过了），所以当前课表里的同名条目
-     *   必是用户手动加的。
+     * - ADDED：当前课表里已有**同一课块且周次有交集**的条目 = 合并会跳过
+     *   （见 [duplicateOf]）。同门课的其他时段不算冲突——一门课本来就可能有多块；
+     *   周次不相交的同槽位课块也不算（补课 / 回课时换教室，会另插一行）。
      */
     fun isConflicted(change: Change, current: List<Course>): Boolean {
         val cur = current.filter { it.kind != CourseKind.Exam }
@@ -177,9 +202,22 @@ object ScheduleDiff {
                 cur.none { fingerprint(it) == fingerprint(change.old!!) }
 
             ChangeKind.ADDED ->
-                cur.any { identity(it) == identity(change.new!!) }
+                duplicateOf(change.new!!, cur) != null
         }
     }
+
+    /**
+     * ADDED 的「已经有一份」判据（预览 / 落库 / 冲突提示三处共用）：同 [mergeKey]
+     * 且**周次有交集** = 同一课块，合并会跳过；周次不相交 = 同一课块另一段周次
+     * （补课 / 回课时换教室），应当另插一行。
+     *
+     * 只看 mergeKey 会把补课那一周静默丢掉（2026-10-20 复核）；只看指纹又会把
+     * 「同槽位不同周次」的合法课块当成重复。两处极端都不取。
+     */
+    fun duplicateOf(course: Course, current: List<Course>): Course? =
+        current.firstOrNull {
+            it.mergeKey() == course.mergeKey() && it.weeks.any { week -> week in course.weeks }
+        }
 
     /** 一批差异里有多少条与本地修改冲突（处置页汇总文案用）。 */
     fun countConflicts(changes: List<Change>, current: List<Course>): Int =
@@ -187,8 +225,9 @@ object ScheduleDiff {
 
     /**
      * **预览用**（DESIGN §3.25 方案 B）：把勾选的改动套到课程列表上，返回「应用后」的列表，
-     * **不落库**。匹配口径与 `ScheduleRepository.applyChangeSet` 完全一致（按指纹），
-     * 匹配不上的条目跳过——预览必须如实反映「应用会发生什么」，不能比真应用更乐观。
+     * **不落库**。匹配口径与 `ScheduleRepository.applyChangeSet` 完全一致（按指纹；
+     * ADDED 按 [duplicateOf] 的同课块 + 周次交集），匹配不上的条目跳过——预览必须如实
+     * 反映「应用会发生什么」，不能比真应用更乐观。
      *
      * 本机字段（配色 / 备注）与写库同样保留原行；新增条目用负数 id 占位（预览不落库，
      * 真应用时才由 Room 分配 id 与配色）。
@@ -244,7 +283,8 @@ object ScheduleDiff {
 
                 ChangeKind.ADDED -> {
                     val course = change.new ?: return@forEach
-                    if (current.any { it.mergeKey() == course.mergeKey() }) return@forEach
+                    // 与落库同一把钥匙：只有「同一课块且周次有交集」才视为已存在
+                    if (duplicateOf(course, current) != null) return@forEach
                     current = current + course.copy(id = Long.MIN_VALUE + index)
                 }
             }

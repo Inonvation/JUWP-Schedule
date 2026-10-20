@@ -83,6 +83,32 @@ class ScheduleDiffPreviewTest {
     }
 
     @Test
+    fun `新增同槽位不同周次时另插一行`() {
+        // 补课 / 回课时换教室：同 mergeKey、周次不相交，是同一课块的另一段，不是重复
+        val existing = course(weeks = (1..16).toSet())
+        val extra = course(weeks = (17..18).toSet())
+        val preview = ScheduleDiff.preview(
+            listOf(existing),
+            listOf(ScheduleDiff.Change(ScheduleDiff.ChangeKind.ADDED, new = extra)),
+            setOf(0),
+        )
+        assertEquals(2, preview.size)
+        assertEquals(setOf(17, 18), preview.last().weeks)
+    }
+
+    @Test
+    fun `新增同槽位且周次有交集时视为重复`() {
+        val existing = course(weeks = (1..16).toSet())
+        val overlapping = course(weeks = setOf(9, 17))
+        val preview = ScheduleDiff.preview(
+            listOf(existing),
+            listOf(ScheduleDiff.Change(ScheduleDiff.ChangeKind.ADDED, new = overlapping)),
+            setOf(0),
+        )
+        assertEquals(1, preview.size)
+    }
+
+    @Test
     fun `没勾的条目不参与预览`() {
         val old = course()
         val preview = ScheduleDiff.preview(

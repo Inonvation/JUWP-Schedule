@@ -70,8 +70,9 @@ import kotlinx.coroutines.launch
  *   「已阅」→ 清缓存。没勾的差异下次检查仍会如实报出。
  * - 忽略：写已阅指纹 → 清缓存。基线不动，同一次差异不再重复提醒；教务再出新差异
  *   指纹才会变。
- * - 冲突条目（`ScheduleDiff.isConflicted`：与你修改过的课相关）默认不勾，采纳与否由
- *   用户逐条决定——应用它会覆盖你自己的修改。
+ * - 冲突条目（`ScheduleDiff.isConflicted`：REMOVED/MODIFIED 与你修改过的课相关；
+ *   ADDED 是「已有同一节课」，合并会跳过）默认不勾，采纳与否由用户逐条决定——
+ *   REMOVED/MODIFIED 应用会覆盖你自己的修改。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -276,6 +277,13 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                         ScheduleChangeCard(
                             change = change,
                             conflicted = conflicts[index],
+                            // ADDED 的「冲突」是重复（合并会跳过），不会覆盖任何东西——
+                            // 用 REMOVED/MODIFIED 那句「覆盖你的修改」会误导
+                            conflictText = if (change.kind == ScheduleDiff.ChangeKind.ADDED) {
+                                "与你课表里已有的同一节课重复，合并时会跳过"
+                            } else {
+                                "与你修改过的课冲突，采纳会覆盖你的修改"
+                            },
                             checked = index in effectiveSelection,
                             onCheckedChange = { checked ->
                                 selected = effectiveSelection.toMutableSet().apply {
