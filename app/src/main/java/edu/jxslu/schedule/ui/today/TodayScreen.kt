@@ -160,6 +160,7 @@ import me.rerere.hugeicons.stroke.ChevronUp
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Inbox
+import me.rerere.hugeicons.stroke.Menu01
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.RemoteControl
 import me.rerere.hugeicons.stroke.WashingMachine
@@ -188,18 +189,17 @@ private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
  * - 点课程（焦点卡/课程行）弹**只读详情**（[CourseDetailSheet]，与课表页同口径），
  *   编辑/删除是详情里的二级动作——直跳编辑器易误触。
  *
- * 底部固定区（DESIGN §3.3）：江水生活的三枚图标入口（取快递 / U净 / 空调遥控，2026-10-19）
- * 在上、快趣出行码整行卡居中、生活卡片带（胖乖 + 趣智校园，§3.18）在最底，
- * 用 [TodayBottomDock]**钉在滚动区下方**——此前它们是 LazyColumn 的
- * 最后两项，课少时悬在屏幕中段、课多时要滑到底才看得见，同一个「固定区」在空态（贴底）
- * 与有课态（跟滚）之间还是两种表现。三态共用同一个 dock，位置不随状态漂移。
- * 开水卡默认常显（未登录给未登录态，显示设置可关）。
- * 水宝宝一卡通卡已于 2026-09-24 自今日页移除（生活页承接，DESIGN §3.13）。
+ * 底部固定区（2026-10-20）：**整块 dock 已收进左侧栏**（取快递 / U净 / 空调遥控 /
+ * 快趣出行 / 胖乖 / 趣智 / 问渠 / 笔记 / 作业 / 百宝箱 / 收件箱 / 天气）。
+ * 今日页只留课程与提示，课程区拿回全部高度；列表最后一项自己让开悬浮胶囊
+ * （[LocalBottomBarClearance]）。旧的 dock 组件与 `todayDockExpanded` 偏好一并删除。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
     onOpenJwImport: () -> Unit = {},
+    /** 左侧栏入口（2026-10-20）：顶栏汉堡；开合与动画在壳层 */
+    onOpenDrawer: () -> Unit = {},
     /** 「尚未开学」空态的 CTA：跳课表设置（学期起止） */
     onOpenTimetableSettings: () -> Unit = {},
     onOpenWater: () -> Unit = {},
@@ -306,7 +306,6 @@ fun TodayScreen(
     val toolboxEnabled by remember(context) { Graph.displayPrefs(context) }
         .toolboxEnabled
         .collectAsStateWithLifecycle(initialValue = true)
-    val dockExpanded by viewModel.todayDockExpanded.collectAsStateWithLifecycle()
     var showWaterEntrySheet by remember { mutableStateOf(false) }
     // 趣智校园的余额面板（DESIGN §3.18）：与开水面板同形态，入口也是卡片右侧的余额
     var showQzxyEntrySheet by remember { mutableStateOf(false) }
@@ -469,89 +468,6 @@ fun TodayScreen(
         }
     }
 
-    // 底部固定区（DESIGN §3.3）三态共用：同一份组合函数喂给加载中/空态/有课态，
-    // 「图标入口在上、快趣出行卡居中、开水卡最底」的顺序与贴底位置只有一处定义。
-    // 2026-10-19：取快递 / U净 / 空调遥控三枚图标入口落在这里（自生活页迁入）。
-    val bottomDock: @Composable () -> Unit = {
-        TodayBottomDock(
-            dockExpanded = dockExpanded,
-            onToggleDock = { viewModel.setTodayDockExpanded(dockExpanded != true) },
-            entryRow = {
-                DockQuickEntries(
-                    onPackagePickup = { showShortcutSheet = true },
-                    onUjing = {
-                        refreshUjingOrderIfStale()
-                        showUjingSheet = true
-                    },
-                    onAcRemote = onOpenAcRemote,
-                )
-            },
-            // 快趣出行 · 骑行卡（DESIGN §3.9，开关关 = 整卡不占位）：整卡点进「骑行」页。
-            // 2026-09-29 结构重构后不再有右侧「附近单车 ›」二级入口——地图就是那个页面的主体
-            ebikeCard = if (ebikeCardEnabled) {
-                {
-                    EbikeCard(
-                        onOpen = onOpenEbike,
-                        rideStartAt = ebikeRideStartAt,
-                        freeReminderEnabled = ebikeFreeReminderEnabled,
-                        useMode = ebikeUseMode,
-                    )
-                }
-            } else {
-                null
-            },
-            // 生活卡片带（DESIGN §4.30）：胖乖在左、趣智校园在右，各占半行；
-            // 任一方关掉后另一方独占整行，两张都关则整个位置不占。
-            waterCard = run {
-                val showWater = waterCardEnabled && waterViewModel != null
-                val showQzxy = qzxyCardEnabled && qzxyViewModel != null
-                when {
-                    !showWater && !showQzxy -> null
-                    showWater && showQzxy -> {
-                        {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Box(Modifier.weight(1f)) {
-                                    WaterCard(
-                                        waterViewModel!!,
-                                        onOpenWater,
-                                        horizontalPadding = 0.dp,
-                                        compact = true,
-                                    ) {
-                                        showWaterEntrySheet = true
-                                    }
-                                }
-                                Box(Modifier.weight(1f)) {
-                                    QzxyCard(
-                                        vm = qzxyViewModel!!,
-                                        onOpen = onOpenQzxy,
-                                        onOpenEntrySheet = { showQzxyEntrySheet = true },
-                                        horizontalPadding = 0.dp,
-                                        compact = true,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    showWater -> {
-                        { WaterCard(waterViewModel!!, onOpenWater) { showWaterEntrySheet = true } }
-                    }
-                    else -> {
-                        {
-                            QzxyCard(
-                                vm = qzxyViewModel!!,
-                                onOpen = onOpenQzxy,
-                                onOpenEntrySheet = { showQzxyEntrySheet = true },
-                            )
-                        }
-                    }
-                }
-            },
-        )
-    }
-
     Scaffold(
         // 顶部 inset 由外层消费（防顶栏双倍空白）；底部导航栏 inset 已由外层底栏
         // 高度提供，内层 contentWindowInsets 归零防底部双倍空白。
@@ -564,6 +480,14 @@ fun TodayScreen(
                 // 用钉住版：今日页的快捷方式会拉起外部应用，过渡期间系统栏瞬时归零的
                 // insets 不落地（2026-09-26 修「顶栏跳动」，见 pinnedStatusBars 的 KDoc）。
                 windowInsets = pinnedStatusBars(),
+                navigationIcon = {
+                    IconButton(onClick = onOpenDrawer) {
+                        Icon(
+                            imageVector = HugeIcons.Menu01,
+                            contentDescription = "打开生活侧栏",
+                        )
+                    }
+                },
                 title = {
                     Column {
                         Text(stringResource(R.string.tab_today))
@@ -770,14 +694,13 @@ fun TodayScreen(
                 ),
         ) {
             when {
-                state.loading -> TodayLoadingContent(bottomDock)
+                state.loading -> TodayLoadingContent()
 
                 !state.inTerm -> TodayEmptyContent(
                     "尚未开学或未配置学期",
                     "先在「课表设置」里填好开学日期与周数，也能手动加课。",
                     actionLabel = "去设置学期",
                     onAction = onOpenTimetableSettings,
-                    bottomDock = bottomDock,
                     dormRepair = dormRepair,
                     onOpenDormRepair = onOpenDormRepair,
                 )
@@ -787,7 +710,6 @@ fun TodayScreen(
                     "课表默认为空，请登录教务系统导入「学期理论课表」，也可手动加课。",
                     actionLabel = "从教务导入",
                     onAction = onOpenJwImport,
-                    bottomDock = bottomDock,
                     dormRepair = dormRepair,
                     onOpenDormRepair = onOpenDormRepair,
                 )
@@ -798,7 +720,6 @@ fun TodayScreen(
                     textbookTitles = textbookTitles,
                     onOpenCourse = { detailCourse = it },
                     onOpenHomeworkTodo = onOpenHomeworkTodo,
-                    bottomDock = bottomDock,
                     dormRepair = dormRepair,
                     onOpenDormRepair = onOpenDormRepair,
                 )
@@ -937,143 +858,39 @@ fun TodayScreen(
         )
     }
 }
-
-/**
- * 底部固定区（DESIGN §3.3）：**钉在滚动区下方**，不随课表滚动。
- *
- * 结构（2026-10-19 起）：**三枚图标入口**（取快递 / U净 / 空调遥控，等宽对称）在上 →
- * **快趣出行码整行卡**（§3.9）→ 生活卡片带恒在最底。三态（加载中/空态/有课态）
- * 共用本组件，位置不随状态漂移；全部关掉时只剩一个空 Column，高度为 0。
- *
- * **服务格并排的取消**（2026-09-24）：此前快趣出行与水宝宝一卡通并成一行两列；
- * 一卡通能力收进生活页后（DESIGN §3.13），今日页不再有一卡通卡，单卡独占一行
- * 反而是唯一形态——顺带把出行卡也改成与开水卡同款的整行卡（副行放得下流程文案，
- * 右侧放「附近单车 ›」的二级入口）。
- *
- * **高度上限**：屏高 45%。图标行 + 快趣卡 + 开水卡在大字体小屏上足以吃掉半屏，
- * 超过上限时 dock 内部可滚——保住课表的可视区，也保证每个入口都还能够到
- * （不设上限的话，超出的部分会被挤出屏幕且无法访问）。
- *
- * **形态**（2026-09-22 二改）：独立描边卡片（`AppCard`，14dp 圆角 + 1dp 描边），
- * 左右外缩进 16dp、与底栏留 12dp。上一版是整宽铺 `surfaceContainerLow` + 顶部 20dp 圆角、
- * 直接坐在屏幕底边上的「工具台」，加了悬浮导航栏之后它读起来像底栏的延长段：
- * 半透明底栏压住卡片下缘，展开/收起的落点也看着落在底栏上。改成卡片后，
- * 自身的折叠动画与底栏形态彼此无关，间距恒定。
- */
-@Composable
-private fun TodayBottomDock(
-    /**
-     * 底部抽屉展开态（DESIGN §3.3）；持久化，进页面时按上次的来。
-     * **null = DataStore 还没读出**，整块不渲染——先按默认值画一帧再纠回来
-     * 会看到「抽屉先展开、再收起」的一闪（2026-09-22 用户反馈）。
-     */
-    dockExpanded: Boolean?,
-    onToggleDock: () -> Unit,
-    /** 图标入口行（2026-10-19：取快递 / U净 / 空调遥控）；恒在快趣卡上方 */
-    entryRow: (@Composable () -> Unit)? = null,
-    /** 快趣出行码整行卡（DESIGN §3.9） */
-    ebikeCard: (@Composable () -> Unit)? = null,
-    /** 生活卡片带：胖乖生活 + 趣智校园（§3.18），各自可关；恒为 dock 最后一项 */
-    waterCard: (@Composable () -> Unit)? = null,
-) {
-    val expanded = dockExpanded ?: return
-    if (entryRow == null && ebikeCard == null && waterCard == null) return
-
-    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
-    val bottomClearance = LocalBottomBarClearance.current
-    // 卡片外形走 AppCard（§3.2 卡片规格唯一出处）；内部内容自己带 16dp 横向内缩，
-    // 所以这里 contentPadding 给 0，不然就是两层内缩叠起来。
-    AppCard(
-        modifier = Modifier
-            .padding(horizontal = 16.dp)
-            // 悬浮底栏开着时，底部让位换成它给的净空（含胶囊高度、离底间距与手势条），
-            // 卡片正好落在胶囊上缘之上；普通形态仍留 12dp 呼吸距离。
-            .padding(bottom = bottomClearance.takeIf { it > 0.dp } ?: 12.dp),
-        contentPadding = PaddingValues(0.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .heightIn(max = maxHeight)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            // 把手恒在：整块内容（快趣出行卡 + 开水卡）都在它下面折叠
-            DockHandle(expanded = expanded, onToggle = onToggleDock)
-            // 只做高度动画，锚点选 **Top**：卡片钉在底部，高度收缩时它的顶边向下走，
-            // 内容锚在顶边于是整块跟着下移——读起来就是「抽屉整体下降」。
-            // 试过的两个版本都栽在这一点上：锚 Bottom（默认）时内容底边固定、只被削掉顶部；
-            // 再叠一层 slide 则是位移叠加（顶边下移 H + 内容自身再移 H = 2H），看上去像瞬间消失。
-            // 缓动统一 tween + FastOutSlowIn（缓入缓出），不用默认 spring——整屏宽的面板弹一下很晃。
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(
-                    animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-                    expandFrom = Alignment.Top,
-                ),
-                exit = shrinkVertically(
-                    animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-                    shrinkTowards = Alignment.Top,
-                ),
-            ) {
-                // 底部留白挂在**被折叠的内容**里，不是挂在滚动容器上：
-                // 挂容器上时收起态也留着这 16dp，卡片比把手高一截，文字看着偏上。
-                Column(Modifier.padding(bottom = 16.dp)) {
-                    // 图标入口行（横内缩由 DockQuickEntries 自带）
-                    if (entryRow != null) {
-                        entryRow()
-                    }
-                    // 快趣出行码整行卡（横内缩在 EbikeCard 自带）
-                    if (ebikeCard != null) {
-                        if (entryRow != null) Spacer(Modifier.height(10.dp))
-                        ebikeCard()
-                    }
-                    if (waterCard != null) {
-                        // 上方有区块时给一段呼吸距离；单独出现时不再顶一截空白
-                        Box(
-                            Modifier.padding(
-                                top = if (ebikeCard != null || entryRow != null) 16.dp else 0.dp,
-                            ),
-                        ) { waterCard() }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /**
  * 今日页居中态（加载/空态）共用外壳：`weight(1f)` 居中区 + 贴底固定区。
  * 抽出统一壳是为了防再犯「Box 少 fillMaxWidth 贴左」的错——居中容器只有一处定义。
  */
 @Composable
 private fun TodayCenteredShell(
-    bottomDock: @Composable () -> Unit,
     /** 顶部常驻内容（今日页的宿舍报修卡）：空态/未开学时也要在，不能只在有课时出现。 */
     topContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     // 顶部/底部的避让由外层刷新容器给（2026-09-23 起），这里不再吃 Scaffold 的 padding
+    val clearance = LocalBottomBarClearance.current
     Column(modifier = Modifier.fillMaxSize()) {
         topContent?.invoke()
         // fillMaxWidth 必须带：Box 默认 wrap 内容、crossAxis 左对齐，
-        // 少了它整个居中态贴左（旧版加载态左偏的根因）
+        // 少了它整个居中态贴左（旧版加载态左偏的根因）。
+        // 底部让开悬浮胶囊：dock 收进侧栏后，居中内容直接贴到窗口底（2026-10-20）
         Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .padding(bottom = clearance),
             contentAlignment = Alignment.Center,
         ) {
             content()
         }
-        bottomDock()
     }
 }
 
 /** 加载态：水滴呼吸居中（DESIGN §3.2），底部固定区照常在位（DESIGN §3.3「加载中不留白屏」）。 */
 @Composable
-private fun TodayLoadingContent(
-    bottomDock: @Composable () -> Unit,
-) {
-    TodayCenteredShell(bottomDock) {
+private fun TodayLoadingContent() {
+    TodayCenteredShell {
         LoadingHint("正在读取本机课表")
     }
 }
@@ -1089,14 +906,13 @@ private fun TodayEmptyContent(
     body: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
-    bottomDock: @Composable () -> Unit,
     dormRepair: DormRepairRecord? = null,
     onOpenDormRepair: () -> Unit = {},
 ) {
     val top: (@Composable () -> Unit)? = dormRepair?.let { record ->
         @Composable { DormRepairCard(record = record, onClick = onOpenDormRepair) }
     }
-    TodayCenteredShell(bottomDock, topContent = top) {
+    TodayCenteredShell(topContent = top) {
         EmptyHint(title, body, actionLabel, onAction)
     }
 }
@@ -1108,15 +924,16 @@ private fun TodayContent(
     textbookTitles: Map<String, List<String>>,
     onOpenCourse: (Course) -> Unit,
     onOpenHomeworkTodo: () -> Unit,
-    bottomDock: @Composable () -> Unit,
     dormRepair: DormRepairRecord? = null,
     onOpenDormRepair: () -> Unit = {},
 ) {
     val sectionColumnWidth = rememberSectionColumnWidth(state.timeline)
+    // dock 收进侧栏后，列表最后一项要自己让开悬浮胶囊（2026-10-20）
+    val clearance = LocalBottomBarClearance.current
     Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(bottom = 16.dp),
+            contentPadding = PaddingValues(bottom = 16.dp + clearance),
         ) {
             // 宿舍报修进度（DESIGN §4.49）：有在途记录（或 3 天内完成）时置顶，
             // 没有就整卡不出现。报修是短时事件，值得占课程区上方这一格。
@@ -1181,7 +998,6 @@ private fun TodayContent(
         }
 
         // 底部固定区（DESIGN §3.3）：恒贴底，不随上面的课表滚动
-        bottomDock()
     }
 }
 
@@ -1576,688 +1392,6 @@ private fun TomorrowBlock(
 }
 
 // monthDayFmt 已收拢为 domain/TodayFormat.kt 的 MONTH_DAY_FORMAT（与调课页共用）
-
-/**
- * 生活卡片带（胖乖 / 趣智校园）的间距规格：整行形态一套、半行形态一套。
- *
- * 半行形态那套是挤出来的。半行卡内容宽 141.6dp（2026-09-28 在 411dp 宽的机器上实测），
- * 四个汉字的标题按 14sp 量是 56dp，右边还要放金额（「¥76.14 ›」量到 52.6dp），
- * 加上图标 20dp 已经 128.6dp，只剩 13dp 给三处间隙。整行那套（图标后 10dp、
- * 标题与余额间 4dp、余额左内缩 12dp）用上去，标题列只剩 49dp，
- * 「胖乖生活」就被截成「胖乖…」——半行卡里每一 dp 都在抢。
- *
- * 改这里之前先量一遍：[HalfCardBalanceMaxWidth] 与这几个数字绑在一起。
- */
-private data class LifeCardSpacing(
-    val contentPadding: PaddingValues,
-    val iconGap: Dp,
-    val titleBalanceGap: Dp,
-    val balanceStartPadding: Dp,
-)
-
-/** 整行形态（另一张卡关掉时独占一行）：2026-09-23 那套间距，不动。 */
-private val FullRowLifeCardSpacing = LifeCardSpacing(
-    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
-    iconGap = 10.dp,
-    titleBalanceGap = 4.dp,
-    balanceStartPadding = 12.dp,
-)
-
-/**
- * 半行形态（两张卡并排）：左右内边距与整行一致（13dp），这样右侧金额的右缘和上方
- * 「附近单车 ›」在同一条竖线上；挤宽度靠图标后的间距、标题与余额之间那点缝，
- * 以及余额热区的左内缩（[HalfCardBalanceMaxWidth]）。
- */
-private val HalfRowLifeCardSpacing = LifeCardSpacing(
-    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
-    iconGap = 8.dp,
-    // 标题与余额之间不留缝（半行卡里每一 dp 都在抢，见 [HalfCardBalanceMaxWidth] 的算式）：
-    // 标题列比标题本身宽，多出来的那点就是两者之间的间隔
-    titleBalanceGap = 0.dp,
-    // 热区左内缩只留 2dp（整行卡是 12dp）：文字位置不受影响，省下的宽度给标题。
-    // 金额本身还有 50dp 宽、36dp 高，点得中
-    balanceStartPadding = 2.dp,
-)
-
-/**
- * 半行卡右侧入口的最大宽度：57dp。
- *
- * Row 先量非 weight 的子项，余额一长，标题就被挤成省略号（标题列是「剩下的」那部分）。
- * 封顶后反过来：余额先截断，标题恒有 56dp 以上——标题是卡片的身份，认不出是哪张卡更糟。
- * 57dp 是算出来的：内容宽 141.6dp（卡 167.6dp − 左右 13dp）− 图标 20dp − 图标后 8dp
- * − 标题 56dp（「胖乖生活」四个汉字按 14sp 量），留 0.6dp 余量。
- * 扣掉左内缩 2dp，右侧文字最多 55dp：「¥76.14 ›」在这台机器上量到 52.6dp 放得下，
- * 再长的金额由 [halfCardAmountText] 去掉箭头（「¥1234.56」约 53dp）也放得下。
- */
-private val HalfCardBalanceMaxWidth = 57.dp
-
-/**
- * 江水生活的三枚图标入口（2026-10-19 自生活页迁入）：取快递 / U净 / 空调遥控。
- *
- * 等宽三列、各自居中——三枚一起构成一行对称的图标入口，落在快趣出行卡上方。
- * 分别对应：取快递弹窗（`ShortcutSheet`）、U净 弹窗（`UjingEntrySheet`）、空调遥控页。
- */
-@Composable
-private fun DockQuickEntries(
-    onPackagePickup: () -> Unit,
-    onUjing: () -> Unit,
-    onAcRemote: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        DockQuickEntry("取快递", HugeIcons.Package01, Modifier.weight(1f), onPackagePickup)
-        DockQuickEntry("U净", HugeIcons.WashingMachine, Modifier.weight(1f), onUjing)
-        DockQuickEntry("空调遥控", HugeIcons.RemoteControl, Modifier.weight(1f), onAcRemote)
-    }
-}
-
-/** 江水生活的一枚图标入口：圆角图标底座 + 单行名称。 */
-@Composable
-private fun DockQuickEntry(
-    label: String,
-    icon: ImageVector,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val primary = MaterialTheme.colorScheme.primary
-    val haptics = rememberAppHaptics()
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClickLabel = label) {
-                haptics.tap()
-                onClick()
-            }
-            .padding(vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(primary.copy(alpha = 0.09f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = primary, modifier = Modifier.size(23.dp))
-        }
-        Spacer(Modifier.height(5.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
- * 快趣出行整行卡（DESIGN §3.9，2026-09-24 由两列服务格改整行，与开水卡同形态）：
- * 标题「快趣出行」+ 副行；**整卡点进快趣出行页**（2026-09-29 结构重构后不再有右侧
- * 「附近单车 ›」二级入口——地图就是那个页面的主体）。
- *
- * 副行在免费时长计时中换成倒计时（[rideSubtitle]），其余随使用方式（[ebikeCardSubtitle]）。
- * 页面与入口卡同名（2026-10-01 用户口径「把骑行改成快趣出行」）：「骑行」这个词留给
- * 骑行状态本身（计时中 / 已骑 / 骑行记录），页面名统一叫快趣出行。
- */
-@Composable
-private fun EbikeCard(
-    onOpen: () -> Unit,
-    /** 进行中的免费时长计时起点（epoch 毫秒，0 = 无计时）。 */
-    rideStartAt: Long = 0L,
-    /** 免费时长提醒开关；关着时不展示倒计时，与骑行页计时条同一口径。 */
-    freeReminderEnabled: Boolean = false,
-    /** 使用方式（DESIGN §3.9 / §4.32）：只改副行常态文案——两档的开车方式不一样。 */
-    useMode: EbikeUseMode = EbikeUseMode.Default,
-) {
-    // 与生活页「问渠 · 志愿服务」同一张入口卡（ui/common/QuickEntryCard，2026-10-13 统一；
-    // 2026-10-19 生活页的 U净 卡换成问渠卡）
-    QuickEntryCard(
-        icon = HugeIcons.ScooterElectric,
-        title = "快趣出行",
-        subtitle = rideSubtitle(rideStartAt, freeReminderEnabled, useMode),
-        onClickLabel = "打开快趣出行",
-        onClick = onOpen,
-        modifier = Modifier.padding(horizontal = 16.dp),
-    )
-}
-
-/** 快趣卡副行的常态文案：两档的开车方式不同（DESIGN §3.9 / §4.32）。 */
-private fun ebikeCardSubtitle(useMode: EbikeUseMode): String = when (useMode) {
-    EbikeUseMode.MiniProgram -> "微信扫一扫骑车"
-    EbikeUseMode.Account -> "本机开锁用车"
-}
-
-/**
- * 快趣卡副行文案（DESIGN §3.9）：免费时长计时中显示「免费剩余 mm:ss」，其余为常态文案。
- *
- * 计时条那条口径照搬骑行页（`RidePanels.kt` 里 `RideCountdown` 那块）：开关关着时只记起点、
- * 不展示倒计时，两处对同一段计时的说法保持一致。每秒刷一次，切走页面或计时结束
- * （起点被清成 0）就停；到点后落回常态文案（文案随使用方式变，见 [ebikeCardSubtitle]）。
- */
-@Composable
-private fun rideSubtitle(
-    rideStartAt: Long,
-    freeReminderEnabled: Boolean,
-    useMode: EbikeUseMode,
-): String {
-    val idle = ebikeCardSubtitle(useMode)
-    val counting = freeReminderEnabled &&
-        EbikeFreeRide.isActive(rideStartAt, System.currentTimeMillis())
-    val text by produceState(
-        initialValue = if (counting) {
-            EbikeFreeRide.countdownText(rideStartAt, System.currentTimeMillis())
-        } else {
-            idle
-        },
-        key1 = rideStartAt,
-        key2 = counting,
-        key3 = idle,
-    ) {
-        // **key 变化会让 producer 重启，但 `initialValue` 只在首次组合时用一次**：
-        // 不在这里把 value 写成 idle，重启后直接 return 会让 State 一直停在首帧那个字符串
-        // （2026-09-29 真机点验抓到：切换使用方式后副行仍显示「微信扫一扫开车」）。
-        if (!counting) {
-            value = idle
-            return@produceState
-        }
-        while (true) {
-            val now = System.currentTimeMillis()
-            if (!EbikeFreeRide.isActive(rideStartAt, now)) break
-            value = EbikeFreeRide.countdownText(rideStartAt, now)
-            delay(1_000L)
-        }
-        value = idle
-    }
-    return text
-}
-
-
-/**
- * 胖乖生活卡（DESIGN §3.3 底部固定区）：**默认常显**，按登录态分两形态——
- * 已登录 = 余额卡形态（[WaterQuickEntry]，点余额弹开水操作面板，点卡片其余位置进开水页）；
- * 未登录 = 未登录态（[WaterLoggedOutCard]，点卡片跳开水页，登录表单就在该页）。
- */
-@Composable
-private fun WaterCard(
-    vm: WaterViewModel,
-    onOpen: () -> Unit,
-    horizontalPadding: Dp = 16.dp,
-    /**
-     * 半行形态（与趣智校园并排时）：间距收紧一档、右侧只留金额（去掉「小票」前缀）。
-     * 标题仍是「胖乖生活」四个字，宽度预算见 [LifeCardSpacing]。
-     */
-    compact: Boolean = false,
-    onOpenEntrySheet: () -> Unit,
-) {
-    val state by vm.uiState.collectAsStateWithLifecycle()
-    if (state.loggedIn) {
-        WaterQuickEntry(vm, onOpen, onOpenEntrySheet, horizontalPadding, compact)
-    } else {
-        WaterLoggedOutCard(onOpen, horizontalPadding, compact)
-    }
-}
-
-/**
- * 趣智校园卡（DESIGN §4.30）：与胖乖生活卡并排的半行卡，点整卡进趣智校园页。
- *
- * 卡上只放三件事：登录态、余额、页名。设备与开阀流程都在页内——
- * 半行宽度放不下设备列表，也不该在这里发起任何蓝牙动作。
- * 卡上的金额走 [cardAmount] 收成两位小数，面板与页面仍是服务端原始值。
- */
-@Composable
-private fun QzxyCard(
-    vm: QzxyViewModel,
-    onOpen: () -> Unit,
-    onOpenEntrySheet: () -> Unit,
-    horizontalPadding: Dp = 16.dp,
-    /**
-     * 半行形态（与胖乖生活并排时）：间距收紧一档、右侧入口封顶，标题仍是「趣智校园」。
-     * 宽度预算见 [LifeCardSpacing] 与 [HalfCardBalanceMaxWidth]。
-     */
-    compact: Boolean = false,
-) {
-    val state by vm.uiState.collectAsStateWithLifecycle()
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    // 登录态直接订阅仓库那条流，而不是只读 ViewModel 的镜像：会话登录可能发生在
-    // 引导窗口或趣智校园页（都是另一份 ViewModel 实例），卡片这里要的是「这个账号
-    // 到底登没登」这个事实，仓库是唯一的真相源
-    val context = LocalContext.current
-    val qzxyRepo = remember(context) { Graph.qzxy(context) }
-    val loggedIn by qzxyRepo.loggedIn.collectAsStateWithLifecycle()
-    val spacing = if (compact) HalfRowLifeCardSpacing else FullRowLifeCardSpacing
-    val sideActionMaxWidth = if (compact) HalfCardBalanceMaxWidth else null
-    AppCardRow(
-        modifier = Modifier
-            .padding(horizontal = horizontalPadding)
-            .heightIn(min = QuickCardMinHeight),
-        onClick = onOpen,
-        onClickLabel = "打开趣智校园开热水页",
-        contentPadding = spacing.contentPadding,
-        // 用水中把整卡点亮（主色描边）：副行那行小字在半行宽度上不够显眼，
-        // 水开着却看不出来是要花钱的。**过期的记账是「待核对」不点亮**——
-        // 水其实已经停了，点亮反而在喊「水开着」
-        highlighted = state.watering?.let { !isQzxyWateringExpired(it.startedAtMillis) } == true,
-    ) {
-        Icon(
-            // 花洒：趣智校园是「洗澡开热水」，不是喝水（2026-09-27 用户拍板）
-            HugeIcons.ShowerHead,
-            contentDescription = null,
-            tint = primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(spacing.iconGap))
-        Column(Modifier.weight(1f)) {
-            WaterCardTitle("趣智校园")
-            QzxyCardSubtitle(state, loggedIn)
-        }
-        Spacer(Modifier.width(spacing.titleBalanceGap))
-        // 右侧余额是面板入口（与胖乖生活卡同口径）：半行宽度放不下第二个按钮，
-        // 而余额本来就是这张卡最想被点的地方
-        when {
-            // 未登录时余额不会有人去拉，那个位置一直挂「读取中…」是假进度；
-            // 换成登录入口，点它开面板
-            !loggedIn -> CardSideActionText(
-                text = "登录 ›",
-                style = MaterialTheme.typography.bodySmall,
-                color = primary,
-                onClickLabel = "登录趣智校园",
-                onClick = onOpenEntrySheet,
-                startPadding = spacing.balanceStartPadding,
-                maxWidth = sideActionMaxWidth,
-            )
-            state.balance != null -> {
-                val balance = state.balance
-                CardSideActionText(
-                    text = if (compact) {
-                        halfCardAmountText(balance?.text)
-                    } else {
-                        "¥${cardAmount(balance?.text)} ›"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = primary,
-                    fontWeight = FontWeight.SemiBold,
-                    onClickLabel = "查看余额与开热水",
-                    onClick = onOpenEntrySheet,
-                    startPadding = spacing.balanceStartPadding,
-                    maxWidth = sideActionMaxWidth,
-                )
-            }
-            state.balanceLoaded -> CardSideActionText(
-                // 半行形态写全「余额暂不可用 ›」会把标题挤没，缩成四个字；
-                // 整行形态没这个问题，文案保持原样
-                text = if (compact) "暂不可用" else "余额暂不可用 ›",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                onClickLabel = "查看余额与开热水",
-                onClick = onOpenEntrySheet,
-                startPadding = spacing.balanceStartPadding,
-                maxWidth = sideActionMaxWidth,
-            )
-            else -> Text(
-                text = if (compact) "读取中…" else "余额读取中…",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/**
- * 趣智卡的副行（DESIGN §3.18）：用水中显示计时，否则显示设备名。
- *
- * 设备名优先用上次用的那台——绑了多台时，挑字母序第一台没有意义。一台都没绑过
- * 才退回「点此选择」。
- */
-@Composable
-private fun QzxyCardSubtitle(state: QzxyUiState, loggedIn: Boolean) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val watering = state.watering
-    val text: String
-    if (watering != null) {
-        text = if (isQzxyWateringExpired(watering.startedAtMillis)) {
-            // 过期的记账是「待核对」（2026-10-09 起不再被静默清掉）：
-            // 设备那次用水可能已结束，点卡进页面对账 / 结算
-            "上次用水待核对"
-        } else {
-            "用水中 ${rememberQzxyWateringClock(watering.startedAtMillis)}"
-        }
-    } else {
-        val lastUsed = state.lastUsedDevice
-        text = when {
-            !loggedIn -> "点此登录"
-            lastUsed != null -> shortDeviceName(lastUsed.name)
-            state.boundDevices.isNotEmpty() -> shortDeviceName(state.boundDevices.first().name)
-            else -> "还没绑定设备 · 点此选择"
-        }
-    }
-    Text(
-        text = text,
-        // 等宽数字：用水中那行每秒刷新，比例数字会让文字左右抽动
-        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
-        color = onSurface.copy(alpha = 0.55f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
-
-/**
- * 卡上金额：**固定两位小数**（四舍五入）。
- *
- * 服务端余额是「3.974」这类原始串（DESIGN §4.30 原本的口径是原样展示），多一位小数，
- * 半行卡上「趣智校园」四个字就放不下。卡上收成两位，点开的余额面板与趣智校园页
- * 仍是原始值——那里不差这点宽度，也不该改账单口径。胖乖的小票余额本来就是两位，不受影响。
- * 解析不出数字（服务端给了别的串）就原样返回，不吞掉。
- */
-private fun cardAmount(raw: String?): String {
-    val trimmed = raw?.trim().orEmpty()
-    return trimmed.toDoubleOrNull()?.let { "%.2f".format(it) } ?: trimmed
-}
-
-/**
- * 半行卡右侧的金额文案：两位小数 + 「›」；金额到三位数（¥100 起）时去掉箭头。
- *
- * 「¥176.14 ›」比右槽宽度（[HalfCardBalanceMaxWidth]）宽，硬放会把标题挤掉，
- * 而把金额截成「¥176.1…」比少一个箭头难看得多——舍箭头保金额。
- * 七个字符（「¥176.14」）是那条界线：短于它连箭头一起放得下。
- */
-private fun halfCardAmountText(raw: String?): String {
-    val amount = "¥${cardAmount(raw)}"
-    return if (amount.length > 6) amount else "$amount ›"
-}
-
-/**
- * 半行卡上的设备名：取最后一段（房号）。
- *
- * 服务端的名字形如「热水表-1栋B-2层-201房」，半行宽度扣掉图标与右侧余额只剩
- * 三四个字的位，整串会被截成「热水表…」——那等于没写。房号是唯一能认出是哪台的
- * 部分，取它。名字里没有分隔符就原样返回。完整名字在趣智校园页的设备行上。
- */
-private fun shortDeviceName(name: String): String {
-    val tail = name.substringAfterLast('-', missingDelimiterValue = name).trim()
-    return tail.ifBlank { name }
-}
-
-/**
- * 底部抽屉的把手（DESIGN §3.3，2026-09-22 加）。快捷方式网格、快趣出行码、
- * 胖乖生活开水**整块**收在它下面，展开态持久化（`DisplayPrefs.todayDockExpanded`，默认展开）。
- *
- * 收起后 dock 只剩这一行（约 40dp）——大字体小屏上几张卡 + 三行图标最容易吃掉半屏，
- * 而这一整块并非每屏都要看。把手恒在：收起态它是「下面还有东西」的提示，也是唯一的
- * 展开入口，不能跟着一起藏。文案「江水生活」固定，右侧「展开 / 收起 + 方向箭头」表达状态。
- */
-@Composable
-private fun DockHandle(
-    expanded: Boolean,
-    onToggle: () -> Unit,
-) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val haptics = rememberAppHaptics()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 左右 10dp + 内层 4dp = 文字离卡边 14dp，与 AppCardDefaults.Padding 同档，
-            // 收起态这行文字才和上方课程卡、作业卡的文字在同一条竖线上
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClickLabel = if (expanded) "收起江水生活" else "展开江水生活") {
-                haptics.tap()
-                onToggle()
-            }
-            .padding(horizontal = 4.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "江水生活",
-            style = MaterialTheme.typography.labelLarge,
-            color = onSurface.copy(alpha = 0.75f),
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = if (expanded) "收起" else "展开",
-            style = MaterialTheme.typography.bodySmall,
-            color = onSurface.copy(alpha = 0.5f),
-        )
-        Spacer(Modifier.width(2.dp))
-        Icon(
-            imageVector = if (expanded) HugeIcons.ChevronUp else HugeIcons.ChevronDown,
-            contentDescription = null,
-            tint = onSurface.copy(alpha = 0.5f),
-            modifier = Modifier.size(16.dp),
-        )
-    }
-}
-
-/**
- * 未登录态开水卡：与已登录卡同款 1dp 描边形态，只交代「未登录 + 点这里去登录」，
- * 不显示设备/解锁按钮——登录表单在开水页（SubpageActivity.WATER），点卡片直达。
- */
-@Composable
-private fun WaterLoggedOutCard(
-    onOpen: () -> Unit,
-    horizontalPadding: Dp = 16.dp,
-    compact: Boolean = false,
-) {
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val spacing = if (compact) HalfRowLifeCardSpacing else FullRowLifeCardSpacing
-    AppCardRow(
-        modifier = Modifier
-            .padding(horizontal = horizontalPadding)
-            .heightIn(min = QuickCardMinHeight),
-        onClick = onOpen,
-        onClickLabel = "去登录胖乖生活",
-        contentPadding = spacing.contentPadding,
-    ) {
-        Icon(
-            HugeIcons.Droplet,
-            contentDescription = null,
-            tint = primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(spacing.iconGap))
-        Column(Modifier.weight(1f)) {
-            Text(
-                // 半行卡也写全名（2026-09-28）：这里右侧没有金额，四个字放得下，
-                // 与已登录卡的标题口径一致
-                text = "胖乖生活 · 未登录",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = if (compact) "点此登录" else "点击去登录，登录后可一键开水、查余额与订单",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/**
- * 已登录的开水卡（2026-09-23 重构）：不再卡内放「开水」按钮——
- * 标题「胖乖生活」+ 副行设备名（同旧卡口径），**小票余额放卡片右侧**，点余额弹出
- * 开水操作面板（[WaterEntrySheet]：余额/积分/开水按钮/流程态/结算明细，
- * 与开水页共享同一 ViewModel）。整卡点击进开水页（选设备、看订单详情）。
- * 流程不在卡内发起，但若弹窗/开水页留下进行中的流程，副行给流程简报——
- * 关闭弹窗不等于丢弃状态，右侧余额仍可点回面板看完整进度。
- */
-@Composable
-private fun WaterQuickEntry(
-    vm: WaterViewModel,
-    onOpen: () -> Unit,
-    onOpenEntrySheet: () -> Unit,
-    horizontalPadding: Dp = 16.dp,
-    compact: Boolean = false,
-) {
-    val state by vm.uiState.collectAsStateWithLifecycle()
-    val flow = state.flow
-    val primary = MaterialTheme.colorScheme.primary
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val haptics = rememberAppHaptics()
-    val spacing = if (compact) HalfRowLifeCardSpacing else FullRowLifeCardSpacing
-    val sideActionMaxWidth = if (compact) HalfCardBalanceMaxWidth else null
-    AppCardRow(
-        modifier = Modifier
-            .padding(horizontal = horizontalPadding)
-            .heightIn(min = QuickCardMinHeight),
-        onClick = onOpen,
-        onClickLabel = "打开胖乖生活开水页",
-        contentPadding = spacing.contentPadding,
-    ) {
-        Icon(
-            HugeIcons.Droplet,
-            contentDescription = null,
-            tint = primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(spacing.iconGap))
-        Column(Modifier.weight(1f)) {
-            WaterCardTitle("胖乖生活")
-            // 副行：Idle = 设备名（异步取的，占位口径见 [waterDeviceLabel]）；
-            // 流程态 = 流程简报（计时/结算文案每秒都在变，不做 Crossfade，会一直闪）。
-            // 简报纯展示不可点——进面板走右侧余额，副行不再嵌套 clickable
-            Text(
-                text = when (flow) {
-                    is UnlockFlowState.Idle -> waterDeviceLabel(state)
-                    is UnlockFlowState.PreChecking -> flow.step
-                    is UnlockFlowState.Working -> "正在出水 ${waterClock(flow.elapsedSeconds)}"
-                    is UnlockFlowState.Success -> "开水成功 · 花费 ¥${calculateActualCost(flow.result)}"
-                    is UnlockFlowState.Failed -> "开水失败 · ${flow.message}"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(spacing.titleBalanceGap))
-        // 右侧小票余额（进入面板的入口，见 [CardSideActionText]）。
-        // 余额没拉过给不可点占位（与生活页一卡通余额卡「读取中…」同口径）
-        when {
-            // balance 是委托属性，smart cast 不可用，取本地快照
-            state.balance != null -> {
-                val balance = state.balance
-                CardSideActionText(
-                    text = if (compact) {
-                        halfCardAmountText(balance?.ticketText)
-                    } else {
-                        "小票 ¥${balance?.ticketText} ›"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = primary,
-                    fontWeight = FontWeight.SemiBold,
-                    onClickLabel = "查看小票与开水",
-                    onClick = onOpenEntrySheet,
-                    startPadding = spacing.balanceStartPadding,
-                    maxWidth = sideActionMaxWidth,
-                )
-            }
-            state.balanceLoaded -> CardSideActionText(
-                // 半行形态写全「余额暂不可用 ›」会把标题挤没，缩成四个字
-                text = if (compact) "暂不可用" else "余额暂不可用 ›",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                onClickLabel = "查看小票与开水",
-                onClick = onOpenEntrySheet,
-                startPadding = spacing.balanceStartPadding,
-                maxWidth = sideActionMaxWidth,
-            )
-            else -> Text(
-                text = if (compact) "读取中…" else "余额读取中…",
-                style = MaterialTheme.typography.bodySmall,
-                color = onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/**
- * 整行卡右侧的二级动作文本（2026-09-24 由开水卡专用泛化，开水卡/快趣出行码卡共用）：
- * 开水卡 = 点它弹开水操作面板，出行卡 = 点它直达附近单车地图。
- *
- * 热区扩大靠 `clip → clickable → padding` 的顺序——padding 在 clickable **之内**，
- * 触达块 = 文字 + 四周内缩（垂直 8dp×2 ≈ 32dp 高满足 M3 最小触达，左侧再扩 12dp），
- * 文字本体位置不变（垂直居中抵消、无 end padding 所以右缘不动）；涟漪被 8dp 圆角收口。
- * 该 clickable 嵌在整卡 clickable 之内，不冒泡触发整卡跳转。
- *
- * [startPadding] 与 [maxWidth] 是给半行卡（两张并排）用的：那边宽度不够，
- * 左侧内缩减到 2dp（文字位置不变，只是热区左缘收窄），整个入口再封顶
- * [HalfCardBalanceMaxWidth]，把宽度让给标题。
- */
-@Composable
-private fun CardSideActionText(
-    text: String,
-    style: TextStyle,
-    color: Color,
-    fontWeight: FontWeight? = null,
-    onClickLabel: String,
-    onClick: () -> Unit,
-    startPadding: Dp = 12.dp,
-    maxWidth: Dp? = null,
-) {
-    val haptics = rememberAppHaptics()
-    Text(
-        text = text,
-        style = style,
-        color = color,
-        fontWeight = fontWeight,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .then(if (maxWidth == null) Modifier else Modifier.widthIn(max = maxWidth))
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClickLabel = onClickLabel) {
-                haptics.tap()
-                onClick()
-            }
-            .padding(start = startPadding, top = 8.dp, bottom = 8.dp),
-    )
-}
-
-private fun waterClock(totalSeconds: Int): String {
-    val m = totalSeconds / 60
-    val s = totalSeconds % 60
-    return "%02d:%02d".format(m, s)
-}
-
-/**
- * 开水卡 Idle 态副行的设备名（2026-09-22 引入，2026-09-23 余额移至右侧后回归副行）：
- * 设备列表是异步取的，没拉过先说「读取设备…」，拉过但没有才说「未选择设备」——
- * 首帧的占位文案不该用一个可能被立刻顶掉的结论。
- *
- * `devices.isEmpty()` 也算未就绪：[WaterUiState] 的 `loadingDevices` 初值是 false，
- * 而 `refreshDevices` 要等协程跑起来才置 true，中间那一帧会落到「未选择设备」。
- * 这张卡只在已登录时出现（未登录走 `WaterLoggedOutCard`），已登录却没有设备列表，
- * 只能是还没拉到。
- */
-private fun waterDeviceLabel(state: WaterUiState): String =
-    state.selectedDevice?.goodsName?.ifBlank { "未命名设备" }
-        ?: if (state.loadingDevices || state.devices.isEmpty()) "读取设备…" else "未选择设备"
-
-/** 开水卡主行文本（与流程简报共用同一套字重与截断口径）。 */
-@Composable
-private fun WaterCardTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodyMedium,
-        fontWeight = FontWeight.SemiBold,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
-
 /**
  * 今日页下拉刷新阈值（2026-09-23）。M3 默认 `PullToRefreshDefaults.PositionalThreshold` 是 80dp，
  * 而 `PullToRefreshModifierNode` 里计入拖动的只有实际位移的一半

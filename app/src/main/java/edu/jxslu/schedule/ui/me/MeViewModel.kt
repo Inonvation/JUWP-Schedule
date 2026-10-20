@@ -447,11 +447,6 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setFloatingNavBar(value) }
     }
 
-    /** 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。 */
-    fun setLifeTabEnabled(value: Boolean) {
-        viewModelScope.launch { repo.setLifeTabEnabled(value) }
-    }
-
     /** 百宝箱开关（DESIGN §4.47）：默认开，关掉后今日页「+」菜单不显示这一行。 */
     fun setToolboxEnabled(value: Boolean) {
         viewModelScope.launch { repo.setToolboxEnabled(value) }

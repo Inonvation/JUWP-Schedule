@@ -21,24 +21,52 @@
 - 悬浮导航栏（DESIGN §4.22）是**真悬浮**：`NavHost` 不吃 Scaffold 的底栏 padding，页面内容铺到
   窗口底、被胶囊压住；页面靠 `ui/common/BottomBarClearance.kt` 的 `LocalBottomBarClearance`
   把滚动内容的最后一项顶出胶囊。新页面加底部内容时**要带上这个净空**，否则最后一项会被胶囊压住；
-  已经带上的有课表网格、今日页 dock、我的页列表、课表页显示设置面板，提示通道 `AppSnackbarHost`
-  在组件内部统一带（调用点不用管）。
+  已经带上的有课表网格、今日页列表、左侧栏内容、设置页列表、课表页显示设置面板，
+  提示通道 `AppSnackbarHost` 在组件内部统一带（调用点不用管）。
   胶囊底色用 `surfaceContainer`（`surface` 与页面底色同色，会读成一条白底栏）；
   选中态只改图标与文字颜色，不加底色块。
 
 ## 启动页
 
-- **启动页**（2026-09-24，DESIGN §3.3）：我的 → 通用 → 启动页，默认今日，选项 = 底栏
-  Tab 集（今日/课表/生活/我的），存 `DisplayPrefs.startPage`（键 `start_page`）。
-  三条别改坏：① **生活页关掉时「生活」不出现在选项里**，且存着的旧值落回今日页
-  （`domain/StartPage.kt` 的 `visiblePages` / `effectivePage`，设置页选中态与
-  `MainActivity.resolveStartRouteBlocking` 共用同一口径；不把存储值改写成今日——
-  生活页开回来旧选择要还在）；② **重启生效**，调用点 `remember { resolveStartRouteBlocking() }`
-  按窗口读死一次（比悬浮导航栏的进程级 `floatingNavBarEffective` 细一档），**不要**让
-  `startDestination` 跟 Flow 变——Compose Navigation 会按
-  `remember(route, startDestination, builder)` 重建整张导航图，用户被弹回起点；
-  ③ `StartPage` 只带显示名，`StartPage → Routes.*` 的映射留在
+- **启动页**（2026-09-24，DESIGN §3.3）：左侧栏 → 设置 → 通用 → 启动页，默认今日，
+  选项 = 底栏 Tab 集（今日 / 课表 / 教务），存 `DisplayPrefs.startPage`（键 `start_page`）。
+  三条别改坏：① 旧版本存下的「生活 / 我的」落回今日页（`domain/StartPage.kt` 的
+  `effectivePage`，设置页选中态与 `MainActivity.resolveStartRouteBlocking` 共用同一口径；
+  不把存储值改写成今日——以后若恢复入口，旧选择还在）；② **重启生效**，调用点
+  `remember { resolveStartRouteBlocking() }` 按窗口读死一次（比悬浮导航栏的进程级
+  `floatingNavBarEffective` 细一档），**不要**让 `startDestination` 跟 Flow 变——
+  Compose Navigation 会按 `remember(route, startDestination, builder)` 重建整张导航图，
+  用户被弹回起点；③ `StartPage` 只带显示名，`StartPage → Routes.*` 的映射留在
   `MainActivity`（路由字符串的唯一来源仍是 `Routes`，别在 domain 里复制字面量）。
+
+## 左侧栏（层叠抽屉，2026-10-20）
+
+- 结构在 `MainActivity` 的 `JuwApp` 里，内容在 `ui/life/SideDrawer.kt`，手势状态在
+  `ui/common/StackedDrawerState.kt`。**层级是「主页面在前、侧栏在后」**：
+  - 侧栏是 `Box` 里的**静态后层**（300dp 宽、`surfaceContainerLow`、不位移）；
+  - 主页面是前层 `Surface`：`translationX = 300dp·p − (1−scale)·宽/2`、`scale = 1 − 0.06·p`、
+    圆角与阴影随 `p` 渐显。**位移补的是缩放绕中心少走的那一半**——少了它页面左缘会离侧栏
+    差一截；改缩放比例时这条式子要一起改；
+  - 根 `Box` 的底色 = 侧栏底色，否则页面缩小后上下露出的留白会是另一种颜色。
+- 手势：`Modifier.draggable`（**不要**换回 `detectHorizontalDragGestures`，会和纵向滚动抢手势）
+  + 20dp 方向锁 + 32dp 落定阈值 + 临界阻尼弹簧（`StiffnessMediumLow`、无回弹、速度按
+  `ω·剩余距离` 封顶）。**`isOpen` 与触感都在动画播完之后才发生**——在松手瞬间翻状态
+  会让用户在页面还没动时先震一下（2026-10-20 用户报）。
+- 左边缘 ~24dp 是系统返回手势区，从那里起手会直接退出应用（模拟器实测）。应用层绕不开，
+  不要把「从屏幕最左起手」写进任何引导文案。
+- 侧栏里的 U净 / 胖乖生活 / 趣智校园**开入口弹窗**（`UjingEntrySheet` / `WaterEntrySheet` /
+  `QzxyEntrySheet`），不直接跳页；弹窗挂在外壳层（侧栏只有 300dp 宽，挂里面会被裁）。
+- 充值：选择弹层选完 → `pendingLifeRecharge` → 导航到隐藏的 `Routes.LIFE`，由生活页原有
+  充值流程接管。**生活页没有底栏入口**，只作为充值宿主存在。
+
+## 设置是独立窗口（2026-10-20）
+
+- `SettingsActivity`（manifest 已注册，竖屏、`adjustResize`），入口是左侧栏左下角齿轮。
+  主窗口**没有**「我的」路由了（`Routes.ME` 已删）——此前它作为隐藏路由时，返回栈 /
+  状态恢复会和侧栏、底栏互相干扰。
+- 设置页里的所有二级入口仍走 `SubpageActivity`，与主窗口同一套。
+- 登录失效通知原本落「我的」，现在 `ROUTE_ME` 直接开 `SubpageScreen.ACCOUNTS`
+  （那才是这类通知要人处理的地方）。
 
 ## 从桌面图标回到 App 要落在离开时那一页
 
@@ -105,7 +133,7 @@
 
 ## 悬浮球（应用内快捷入口）
 
-- **悬浮球**（2026-10-13，DESIGN §3.1，`ui/common/FloatingBall.kt`）：主窗口四个 Tab 的
+- **悬浮球**（2026-10-13，DESIGN §3.1，`ui/common/FloatingBall.kt`）：主窗口三个 Tab 的
   常驻圆形快捷入口。规格与交互见 `design/03a-ui-shell.md` §3.1；这里记实现口径：
   - **渲染点在壳层 `JuwApp` 的内容 `Box` 里、`CompositionLocalProvider` 之后**
     （画在页面之上），但**不是**外层再套一层 `Box`：Scaffold 的底栏画在内容之后，

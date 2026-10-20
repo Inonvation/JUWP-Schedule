@@ -125,7 +125,7 @@ import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.QrCodeScan
 
 /** 充值入口的种类（免责声明放行后决定打开哪个弹层）。 */
-private enum class RechargeKind { Campus, Power }
+enum class RechargeKind { Campus, Power }
 
 /** 校园服务里两个入口弹窗的种类（2026-10-19）。 */
 private enum class LifeServiceSheet { Teaching, Academics }
@@ -185,6 +185,9 @@ fun LifeScreen(
     onOpenSelection: () -> Unit = {},
     /** 学业数据弹窗：实习基地查看 */
     onOpenInternshipBases: () -> Unit = {},
+    /** 侧栏钱包发起充值：进页后自动打开对应充值流程（2026-10-20） */
+    initialRecharge: RechargeKind? = null,
+    onInitialRechargeConsumed: () -> Unit = {},
     viewModel: LifeViewModel = viewModel(factory = LifeViewModel.Factory(LocalContext.current)),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -261,6 +264,13 @@ fun LifeScreen(
         } else {
             disclaimerFor = kind
         }
+    }
+
+    // 侧栏钱包点了「充值 → 一卡通/电费」：进页后直接接上原有流程（含免责声明闸）
+    LaunchedEffect(initialRecharge) {
+        val kind = initialRecharge ?: return@LaunchedEffect
+        onInitialRechargeConsumed()
+        openRecharge(kind)
     }
 
     // 进页刷新一次：电费读数 + 一卡通流水增量同步 + 一卡通余额（开关关时各自短路）。

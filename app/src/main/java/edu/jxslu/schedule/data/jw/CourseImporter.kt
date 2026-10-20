@@ -334,6 +334,12 @@ object JwUrls {
     const val INTERNSHIP_BASES_API = "$XSD_BASE/jsxsd/sxsxgl/sxjd.do"
 
     /**
+     * 实习基地**壳页**（人看的那个；[INTERNSHIP_BASES_API] 是它的数据接口）。
+     * 「网页核对」只能开壳页——把 JSON 接口塞进 WebView 只会是一片空白或裸 JSON。
+     */
+    const val INTERNSHIP_BASES_SHELL = "$XSD_BASE/jsxsd/sxsxgl/sxjdcx.do"
+
+    /**
      * 学籍卡片查看（学籍毕业 → 学籍管理 → 学籍卡片查看）。
      * 正文有「姓名 / 班级 / 学号」明文标签与结构化 form，可正则直读；
      * 个人资料头像不落盘——「我的」账号条只用向量图标。

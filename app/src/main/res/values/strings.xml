@@ -3,8 +3,10 @@
     <string name="app_name">水贝贝</string>
     <string name="tab_today">今日</string>
     <string name="tab_week">课表</string>
+    <string name="tab_jw">教务</string>
     <string name="tab_life">生活</string>
     <string name="tab_me">我的</string>
+    <string name="settings_title">设置</string>
 
     <!-- 课表小组件（DESIGN §3.6）。label 会作为条目名显示在桌面小组件选择器里。
          2026-09-20 起只有一个条目：尺寸拖大拖小自适应（紧凑 / 今日列表 / 本周网格），

@@ -106,29 +106,22 @@
 - 可见星期序列以 `ScheduleCalculator.visibleDays` 为唯一来源、`columnOf` 取列下标；
   不要用 `day - 1` 当列号（隐藏周六但显示周日时会错位）。
 
-## 今日页底部固定区 TodayBottomDock
+## 今日页底部固定区已删除（2026-10-20）
 
-- 趣智校园卡右侧余额点开的是 `ui/qzxy/QzxyEntrySheet.kt`（§3.18）。**关它一律走
-  `rememberSheetDismisser` 的 `dismiss(after)`**（去登录 / 完成结算 / 失败详情里的
-  「去诊断页」各出口），别退回 `onDismiss()` 直接置 false：弹层会从组合里瞬间抽掉，
-  "啪"地消失。状态区那一层 `AnimatedContent` 与用水中徽标的口径见
-  DESIGN §3.18「面板的手感与出口」。面板**没有**「打开趣智校园页」按钮（2026-10-04 删：
-  整卡本体就是趣智页入口，点余额开面板、点卡身开页面），也别再给面板状态区加
-  `heightIn` 下限——待机态内容约 72dp，垫下限会在主动作下方留一截空白
-  （用户报过的「弹窗下方空白过多」根因）。
-- 今日页底部固定区（**三枚图标入口** → **快趣出行码整行卡** → 生活卡片带）是 `TodayBottomDock`，
-  **钉在滚动区下方**、不进 `LazyColumn`；三态（加载/空/有课）共用同一份，别只改一处。
-  **三枚图标入口 2026-10-19 自生活页迁入**（`DockQuickEntries`：取快递 / U净 / 空调遥控，等宽
-  三列、各自居中）：取快递开 `ui/common/ShortcutSheet`（原生活页弹窗）、U净 开
-  `ui/ujing/UjingEntrySheet`（扫码判据同顶栏「+ → 扫一扫」）、空调遥控直达 `AC_REMOTE`。
-  **快捷方式三列网格 2026-10-13 已从今日页移除**（并入「取快递」弹窗）——别按旧描述把它加回来；
-  **U净 整行卡 2026-10-19 随入口一起移除**（今日页只留图标入口）。
-  **水宝宝一卡通卡已于 2026-09-24 自今日页移除**（能力收进生活页，DESIGN §3.13）——
-  别按旧描述把它加回来；出行卡右侧「附近单车 ›」直达 `EBIKE_MAP`，右侧动作文本走
-  `CardSideActionText`（与开水卡右侧余额同一组件）。整块内容可折叠（把手「江水生活」，
-  展开态存 `DisplayPrefs.todayDockExpanded`，默认展开），**折叠动画只做高度、锚点必须选 Top**
-  ——锚 Bottom 或再叠一层 slide 都会变形，两个失败版本记在 DESIGN §3.3，别重复试。
-  改版前先读 DESIGN §3.3。
+- `TodayBottomDock` 与它带的全部卡片（`DockQuickEntries` / `DockEntry` / `EbikeCard` /
+  `WaterCard` / `QzxyCard` / `DockHandle`）**已整体删除**，连带 `todayDockExpanded` 偏好
+  与 `lifeTabEnabled` 开关。入口全部在左侧栏（`.agents/rules/nav-window.md`「左侧栏」），
+  **别按旧描述把 dock 加回来**。
+- 今日页列表最后一项自己让开悬浮胶囊：`LocalBottomBarClearance` 加在 `LazyColumn` 的
+  `contentPadding.bottom`；空态/加载态走 `TodayCenteredShell` 的底部 padding。
+- **趣智校园卡右侧余额点开的是 `ui/qzxy/QzxyEntrySheet.kt`**（§3.18），现在从左侧栏
+  「趣智校园」一行打开。**关它一律走 `rememberSheetDismisser` 的 `dismiss(after)`**
+  （去登录 / 完成结算 / 失败详情里的「去诊断页」各出口），别退回 `onDismiss()` 直接置 false：
+  弹层会从组合里瞬间抽掉，"啪"地消失。面板**没有**「打开趣智校园页」按钮之外的整卡入口
+  （2026-10-04 删：整卡本体就是趣智页入口），也别再给面板状态区加 `heightIn` 下限——
+  待机态内容约 72dp，垫下限会在主动作下方留一截空白（用户报过的「弹窗下方空白过多」根因）。
+- 胖乖 / U净 的入口弹窗同理从侧栏打开（`WaterEntrySheet` / `UjingEntrySheet`），
+  与今日页曾经的口径一致：取快递开 `ui/common/ShortcutSheet`。
 
 ## 课程配色
 

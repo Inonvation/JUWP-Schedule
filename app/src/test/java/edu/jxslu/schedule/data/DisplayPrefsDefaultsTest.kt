@@ -14,11 +14,6 @@ import org.junit.Test
 class DisplayPrefsDefaultsTest {
 
     @Test
-    fun lifeTabIsOnByDefault() {
-        assertTrue("生活页默认开（DESIGN §3.13）", DisplayPrefs().lifeTabEnabled)
-    }
-
-    @Test
     fun existingSwitchesKeepTheirDefaults() {
         val prefs = DisplayPrefs()
         assertFalse("悬浮导航栏默认关", prefs.floatingNavBar)

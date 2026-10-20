@@ -171,8 +171,9 @@ object BalanceAlertReminder {
             if (!powerOn && !yktOn) return
             val credentials = Graph.yktCredentialStore(context).read() ?: return
             val nowMillis = System.currentTimeMillis()
-            // 通知落点：生活页开关关掉时不给 extra（落今日页），免得落在一个不存在的 Tab 上
-            val toLife = prefs.lifeTabEnabled.first()
+            // 通知落点：生活页已收进左侧栏（2026-10-20），不再给 ROUTE_LIFE——
+            // 那会落到一个没有底栏入口的隐藏页。统一落今日页，侧栏就在那儿。
+            val toLife = false
             // 通知总开关只拦「发通知」，不拦核对本身（2026-10-06 收件箱 §4.38）：
             // 状态消解（回升移除消息）与入箱都靠这条核对链，通知全关也得照跑。
             val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -336,7 +337,7 @@ object BalanceAlertReminder {
                 context = context,
                 prefs = prefs,
                 cardFen = cardFen,
-                toLife = prefs.lifeTabEnabled.first(),
+                toLife = false,
                 notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled(),
             )
         }.onFailure { Log.w(TAG, "evaluateYktBalance failed", it) }

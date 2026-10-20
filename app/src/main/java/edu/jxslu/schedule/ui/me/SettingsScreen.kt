@@ -47,14 +47,6 @@ import edu.jxslu.schedule.BuildConfig
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.OnboardingActivity
 import edu.jxslu.schedule.R
-import edu.jxslu.schedule.domain.AccountMask
-import edu.jxslu.schedule.domain.WenquRules
-import edu.jxslu.schedule.domain.capabilities
-import edu.jxslu.schedule.data.session.LoginState
-import edu.jxslu.schedule.data.session.LoginStateRules
-import edu.jxslu.schedule.data.session.LoginTarget
-import edu.jxslu.schedule.data.session.SessionStatus
-import edu.jxslu.schedule.data.session.WebViewCookieBridge
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
@@ -62,10 +54,10 @@ import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberResumeTick
-import edu.jxslu.schedule.ui.common.stateWord
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.BellRing
 import me.rerere.hugeicons.stroke.CalendarSetting01
@@ -77,26 +69,19 @@ import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 
 /**
- * 「我的」= 账号卡 + 六入口（DESIGN §3.3，2026-09-28 二次改版）。
+ * 设置页（DESIGN §3.3）：**两张节卡、六入口**，没有账号卡。
  *
- * 骨架不变，本轮只换两个入口的名字与职责：
- * 「小组件与日历」→「提醒与桌面」（上课提醒自课表 hub 迁入，与小组件、日历同属
- * 「课表数据送到哪里」——通知栏 / 桌面 / 日历）；「扩展服务」→「校园服务」
- * （快捷方式与三个功能开关迁往通用设置，本页只剩要登录的系统）。
+ * 2026-10-20 起它不再是主窗口的隐藏 Tab，而是独立窗口 `SettingsActivity`：
+ * 身份与登录状态统一在左侧栏显示，设置页只留「去哪里配」。
  *
- * 2026-10-07 排版收口：六入口收成两张节卡——「功能」（课表 / 学习 / 校园服务 /
- * 提醒与桌面）在前、「设置」（通用设置 / 关于）下沉，对应「去用 / 去配」两种意图；
- * 「校园服务」副标题按现役功能补全（原「学校系统 · 一卡通 · 胖乖 · 趣智」
- * 漏了后来加入的 U净 / 报修 / 校历）。
+ * - 「功能」：课表 / 学习 / 校园服务 / 提醒与桌面——「去用」；
+ * - 「设置」：通用设置 / 关于——「去配」。
  *
  * 每个分区收进独立汇总二级页（`ui/me/hub/`），根页面只留实时副标题——
  * 课表行锚定当前课表名与周次，学习行带笔记/作业计数，其余行给职责描述。
- * 账号卡数据源 = 水宝宝一卡通凭证（`YktCredentialStore`），遮罩口径在
- * `domain/AccountMask`；眼睛只在内存里切换完整学号，不写存储不进剪贴板。
  *
- * 2026-10-20：卡内四格服务格**并入「账号与登录」二级页**，卡片只留「身份区 + 一行入口」
- * （`4 / 7 已开启`）。四格与账号中心重复，高频功能入口在今日页 / 生活页，账号中心行
- * 点击也能直达服务页。
+ * 进页仍会做一次「班级为空就补抓」的 ProfileSync（闸门在 `ProfileSyncRules`，
+ * 每天最多一次、失败静默）——左侧栏那行身份（姓名 / 班级）靠它填。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,11 +91,9 @@ fun SettingsScreen(
     onOpenLearningHub: () -> Unit = {},
     onOpenWidgetCalendarHub: () -> Unit = {},
     onOpenExtensionServices: () -> Unit = {},
-    /** 问渠 · 志愿服务（DESIGN §3.28）：账号卡班级行那枚工时点进来的落点。 */
-    onOpenWenqu: () -> Unit = {},
     onOpenAbout: () -> Unit = {},
-    /** 账号卡「账号与登录」那一行的落点：全量账号状态与补登入口。 */
-    onOpenAccounts: () -> Unit = {},
+    /** 从侧栏齿轮进来时给返回箭头（2026-10-20 起独立窗口，恒有）。 */
+    onBack: (() -> Unit)? = null,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
@@ -128,7 +111,14 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 windowInsets = WindowInsets.statusBars,
-                title = { Text(stringResource(R.string.tab_me)) },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(HugeIcons.ArrowLeft01, contentDescription = "返回")
+                        }
+                    }
+                },
+                title = { Text(stringResource(R.string.settings_title)) },
             )
         },
     ) { padding ->
@@ -146,126 +136,18 @@ fun SettingsScreen(
                 .padding(bottom = LocalBottomBarClearance.current),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 进页读一次加密凭证（EncryptedSharedPreferences 读取不便宜，别在重组里重复读）；
-            // 组合被另一个 Activity 盖住时**不会重建**，所以用「回到前台」计数当 key：
-            // 从引导页 / 导入页 / 校园卡设置页回来时重读，否则卡片会停在旧状态（2026-09-27）。
-            //
-            // 账户卡**常显**（DESIGN §3.16）：显示条件不再依赖「有没有一卡通凭证」——
-            // 没配一卡通的人同样需要身份区与登录入口。
-            val vault = remember { Graph.credentialVault(context) }
+            // 账号卡已移除（2026-10-20）：身份与登录状态统一在左侧栏显示，设置页只留
+            // 「去哪里配」。姓名/班级的后台补抓保留一次——侧栏那行身份要靠它填。
             val prefsStore = remember { Graph.displayPrefs(context) }
             val resumeTick = rememberResumeTick()
-            val casUsername = remember(resumeTick) { vault.readCas()?.username }
-            val yktUsername = remember(resumeTick) { vault.readYkt()?.username }
-            // 胖乖登录态订阅仓库的流（2026-09-27）：开水页是独立窗口，回来后主窗口不重建
-            // 组合，只在组合期读一次的写法会一直停在旧值（「我的」账户卡说未登录、
-            // 今日页开水卡已是已登录）
-            val qiekjLoggedIn by remember { Graph.qiekj(context).loggedIn }
-                .collectAsStateWithLifecycle()
-            // 趣智校园登录态同样订阅仓库的流（2026-09-27）：它的会话存在本机，
-            // 登录 / 退出在趣智校园页发生，主窗口不重建也得跟着变
-            val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
-                .collectAsStateWithLifecycle()
-            // 问渠 · 志愿服务（DESIGN §3.28）：工时影子跟着仓库的会话流走——它是后台刷的，
-            // 只在组合期读一次的话账号卡那一行会停在进页那一刻的旧值
-            val wenquSession by remember { Graph.wenqu(context).session }
-                .collectAsStateWithLifecycle()
-            // 进页（含从别的窗口回来）时，工时过期才后台刷一次；未登录 / 没过期直接返回。
-            // 失败静默在仓库里（refreshHoursIfStale），卡片保留旧值
-            LaunchedEffect(resumeTick) {
-                Graph.wenqu(context).refreshHoursIfStale()
-            }
-            // 升级用户没存凭证，但 WebView 里可能还有有效会话。只读 CookieManager、不联网，
-            // 不认这一点就会出现「卡上说未登录、点进导入却能用」的自相矛盾。
-            val webSession = remember(resumeTick) { WebViewCookieBridge.hasAnyCookie() }
-            val suspendedTargets by SessionStatus.suspended.collectAsStateWithLifecycle()
-            // U净 / 快趣登录态订阅仓库的流：登录 / 退出在各自页面发生，主窗口不重建也得跟着变
-            val ujingLoggedIn by remember { Graph.ujing(context).loggedIn }
-                .collectAsStateWithLifecycle()
-            val kqcxLoggedIn by remember { Graph.kqcx(context).loggedIn }
-                .collectAsStateWithLifecycle()
-            // 快趣账号只在「账号登录」使用方式下计入（小程序方式没有账号可登，DESIGN §3.9）。
-            // 初值阻塞读一次：总数不该先冒出一个再改口。
-            val ebikeUseMode by prefsStore.ebikeUseMode.collectAsStateWithLifecycle(
-                initialValue = remember { runBlocking { prefsStore.ebikeUseMode.first() } },
-            )
-            val kvcxAccountMode = ebikeUseMode.capabilities().inAppRide
-            val profileName by remember {
-                prefsStore.profileName
-            }.collectAsState(initial = "")
             val profileClass by remember {
                 prefsStore.profileClass
             }.collectAsState(initial = "")
-            // 学籍卡里的学号：引导跳过教务、后来在导入页手登的用户没有凭证，
-            // 身份区就靠它（2026-09-27）
-            val profileStudentId by remember {
-                prefsStore.profileStudentId
-            }.collectAsState(initial = "")
-            // 班级为空就补抓一次（DESIGN §3.3）：闸门在 ProfileSync 内部（班级空 + 今天没
-            // 试过），正常情况下一进页最多一次请求，抓到之后不再请求。失败静默——
-            // 「我的」页不该因为一个锦上添花的字段变成错误态。
-            // 跟着 resumeTick 重跑：从导入页手登回来时也要补一次，否则名字要等下次切页
             LaunchedEffect(resumeTick) {
                 if (profileClass.isBlank()) {
                     runCatching { Graph.profileSync(context).syncOnce() }
                 }
             }
-            val jwState = LoginStateRules.derive(
-                credentialExists = casUsername != null,
-                webSessionExists = webSession,
-                suspended = LoginTarget.Jw in suspendedTargets,
-            )
-            val yktState = LoginStateRules.derive(
-                credentialExists = yktUsername != null,
-                webSessionExists = false,
-                suspended = LoginTarget.Ykt in suspendedTargets,
-            )
-            val qiekjState = LoginStateRules.derive(
-                credentialExists = qiekjLoggedIn,
-                webSessionExists = false,
-                suspended = LoginTarget.Qiekj in suspendedTargets,
-            )
-            // 趣智校园没有「停用」上报（会话串存在本机、失效只能到页面里撞），
-            // 与胖乖生活同一档：只分已登录 / 未登录（DESIGN §3.16 末段）
-            val qzxyState = LoginStateRules.derive(
-                credentialExists = qzxyLoggedIn,
-                webSessionExists = false,
-                suspended = false,
-            )
-            val ujingState = LoginStateRules.derive(ujingLoggedIn, false, false)
-            // 小程序方式下快趣没有账号：固定按未开启算（行仍在账号中心保留）
-            val kvcxState = if (kvcxAccountMode) {
-                LoginStateRules.derive(kqcxLoggedIn, false, false)
-            } else {
-                LoginState.NotLoggedIn
-            }
-            val wenquState = LoginStateRules.derive(
-                credentialExists = wenquSession?.isComplete == true,
-                webSessionExists = false,
-                suspended = false,
-            )
-            // 「n / 总数」只数账号，AI 调课的 API Key 不算（它是可选服务，不是平台账号）
-            val accountStates = buildList {
-                add(jwState)
-                add(yktState)
-                add(qiekjState)
-                add(qzxyState)
-                add(ujingState)
-                add(kvcxState)
-                add(wenquState)
-            }
-            AccountBar(
-                username = casUsername ?: yktUsername ?: profileStudentId,
-                name = profileName,
-                className = profileClass,
-                overallState = LoginStateRules.overall(*accountStates.toTypedArray()),
-                enabledCount = accountStates.count { it == LoginState.LoggedIn },
-                totalCount = accountStates.size,
-                // 问渠工时（DESIGN §3.28）：未登录为 null，班级行不显示这一段
-                wenquHours = wenquSession?.takeIf { it.isComplete }?.let { WenquRules.formatHours(it.hours) },
-                onOpenAccounts = onOpenAccounts,
-                onOpenWenqu = onOpenWenqu,
-            )
 
             // 入口顺序（2026-10-07 重排）：功能入口在前（课表 / 学习 / 校园服务 /
             // 提醒与桌面），配置类下沉（通用设置 / 关于）——两张卡对应「去用 / 去配」
@@ -316,171 +198,6 @@ fun SettingsScreen(
                     onClick = onOpenAbout,
                 )
             }
-        }
-    }
-}
-
-/**
- * 账号卡（DESIGN §3.3）：头像圆标 +「姓名 学号」+ 班级副行 + 一行「账号与登录」入口。
- * 完整学号只存在 [username] 参数（内存）里，切眼睛不触发任何持久化。
- *
- * [name] / [className] 来自教务学籍卡（成绩导入顺带落 DataStore）；缺失时标题退回遮罩
- * 学号（此时学号不再重复跟在旁边），班级缺失则整行副行不显示。姓名与学号都拿不到时按
- * 全部账号合成的一档给词（[overallState]），**不写死「未登录」**。
- *
- * 入口行右侧的「n / 总数 已开启」是全卡唯一的量化状态；点行进账号中心（2026-10-20）。
- */
-@Composable
-private fun AccountBar(
-    username: String,
-    name: String,
-    className: String,
-    /** 全部账号合成的一档，只在姓名与学号都拿不到时当标题用。 */
-    overallState: LoginState,
-    enabledCount: Int,
-    totalCount: Int,
-    /** 问渠工时（已格式化）；null = 未登录 / 无数据，班级行不显示这一段（DESIGN §3.28）。 */
-    wenquHours: String?,
-    onOpenAccounts: () -> Unit,
-    onOpenWenqu: () -> Unit,
-) {
-    var revealed by rememberSaveable { mutableStateOf(false) }
-    val haptics = rememberAppHaptics()
-    val masked = AccountMask.maskStudentId(username).orEmpty()
-    val hasName = name.isNotBlank()
-    // 姓名与学号都没有 = 拿不到身份：标题按三格合成的一档给词，而不是留一片空白。
-    // **不能一律写「未登录」**——只有一份教务网页会话（引导跳过教务、后来在导入页手登）
-    // 或只登了胖乖生活时，那样会与同一张卡上的「● 已登录」并存（2026-09-27 用户报）。
-    val title = name.ifBlank {
-        masked.ifBlank {
-            // 全新安装、什么都没配：用「尚未配置」而不是状态词「未登录」，更像一个入口
-            if (overallState == LoginState.NotLoggedIn) "尚未配置" else overallState.stateWord()
-        }
-    }
-    // 姓名与学号都拿不到 = 还没登录过教务：副行给一句下一步提示，不留空
-    val showSetupHint = name.isBlank() && masked.isBlank()
-    // 学号跟在姓名右侧；姓名缺失时它已经当标题用了，不再重复一遍
-    val idText = if (revealed) username else masked
-    AppCard(
-        // 下边距单独收窄（2026-10-20）：入口行是最后一行，底部 12dp 叠上行内留白太松。
-        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Row(Modifier.fillMaxWidth()) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        // fill = false：姓名短就贴着自己的宽度，学号紧跟着；姓名长才让位给省略号
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .alignByBaseline(),
-                    )
-                    if (hasName && idText.isNotBlank()) {
-                        Text(
-                            text = idText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                            maxLines = 1,
-                            modifier = Modifier
-                                .padding(start = 6.dp)
-                                .alignByBaseline(),
-                        )
-                    }
-                }
-                // 班级行（DESIGN §3.28）：班级 + 问渠志愿工时。**班级先让位**（吃余量、可省略），
-                // 工时优先保完整——它是用户最关心的数；点工时进问渠页
-                if (className.isNotBlank() || wenquHours != null || showSetupHint) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (showSetupHint) {
-                            Text(
-                                text = "登录教务后自动填姓名和班级",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                        } else {
-                            if (className.isNotBlank()) {
-                                Text(
-                                    text = className,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                )
-                            }
-                            if (wenquHours != null) {
-                                Text(
-                                    text = if (className.isNotBlank()) " · 志愿 $wenquHours 工时" else "志愿 $wenquHours 工时",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable(onClickLabel = "查看志愿服务") { onOpenWenqu() }
-                                        .padding(horizontal = 2.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            IconButton(onClick = { revealed = !revealed }) {
-                Icon(
-                    imageVector = if (revealed) HugeIcons.ViewOff else HugeIcons.View,
-                    contentDescription = if (revealed) "隐藏学号" else "显示学号",
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
-            }
-        }
-        // 下方入口行（2026-10-20 用户口径：只压缩这一行，不要并进班级行）。
-        // 分隔线只留上方 8dp；行高 48 → 40dp，文字降一档，视觉高度从 ~140dp 收到 ~120dp。
-        HorizontalDivider(
-            modifier = Modifier.padding(top = 8.dp),
-            color = MaterialTheme.colorScheme.outlineVariant,
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .clickable(onClickLabel = "账号与登录") {
-                    haptics.tap()
-                    onOpenAccounts()
-                }
-                .heightIn(min = 40.dp)
-                .padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "账号与登录",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "$enabledCount / $totalCount 已开启",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                HugeIcons.ArrowRight01,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                modifier = Modifier.size(16.dp),
-            )
         }
     }
 }

@@ -84,12 +84,6 @@ data class DisplayPrefs(
      */
     val floatingNavBar: Boolean = false,
     /**
-     * 生活页（DESIGN §3.13）。全局项，**默认开**：底栏第三项「生活」（课表右侧），
-     * 承载一卡通余额/付款码、寝室电费、充值入口与最近流水。
-     * 关 = 底栏回到 3 项（今日 · 课表 · 我的），二级页入口不受影响。
-     */
-    val lifeTabEnabled: Boolean = true,
-    /**
      * 百宝箱（DESIGN §4.47）。全局项，**默认开**：今日页顶栏「+」下拉里的
      * 「百宝箱」一行（图片水印 · 图片拼接 · 菜鸟批量查）。
      * 关 = 该行从「+」菜单消失，与其余功能开关同一语义（关闭后全部入口隐藏）。
@@ -233,15 +227,6 @@ data class DisplayPrefs(
      * 值仅作历史偏好保留，UI 不再消费。
      */
     val campusCardEnabled: Boolean = false,
-    /**
-     * 今日页底部抽屉是否展开（DESIGN §3.3，2026-09-22 加）：快捷方式网格、快趣出行码、
-     * 胖乖生活开水**整块**折进一行把手之下。
-     *
-     * **默认展开**：与加抽屉之前的表现一致（这些入口常驻可见）——用户开着某个开关
-     * 本就是要用它，默认收起等于把入口藏起来。
-     * 用户点一次收起即记忆，之后进今日页都是收起态。
-     */
-    val todayDockExpanded: Boolean = true,
 )
 
 // 调课自动检测的 DetectSettings / DetectDefaults 与相关键、方法已随功能移除
@@ -406,11 +391,6 @@ class DisplayPrefsStore(private val context: Context) {
     /** 悬浮导航栏（DESIGN §4.22）。默认关：不透明底栏是既有观感，用户显式开启才改。 */
     val floatingNavBar: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_FLOATING_NAV_BAR] ?: false
-    }
-
-    /** 生活页开关（DESIGN §3.13）。默认开：新 Tab 直接可用，嫌底栏挤的人再关。 */
-    val lifeTabEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_LIFE_TAB_ENABLED] ?: true
     }
 
     /** 百宝箱开关（DESIGN §4.47）。默认开：今日页「+」下拉里的图片工具入口。 */
@@ -1479,11 +1459,6 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_CAMPUS_CARD_ENABLED] ?: false
     }.distinctUntilChanged()
 
-    /** 今日页底部抽屉展开态（DESIGN §3.3）。全局项，默认展开。 */
-    val todayDockExpanded: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_TODAY_DOCK_EXPANDED] ?: true
-    }.distinctUntilChanged()
-
     /**
      * 充值免责声明的静默截止时刻（epoch 毫秒，DESIGN §3.13 / §4.19）。0 = 从没勾过。
      *
@@ -1706,10 +1681,6 @@ class DisplayPrefsStore(private val context: Context) {
 
     suspend fun setFloatingNavBar(value: Boolean) {
         context.displayDataStore.edit { it[KEY_FLOATING_NAV_BAR] = value }
-    }
-
-    suspend fun setLifeTabEnabled(value: Boolean) {
-        context.displayDataStore.edit { it[KEY_LIFE_TAB_ENABLED] = value }
     }
 
     suspend fun setToolboxEnabled(value: Boolean) {
@@ -2049,11 +2020,6 @@ class DisplayPrefsStore(private val context: Context) {
         BalanceAlertSource.Ykt -> KEY_YKT_ALERT_LAST_CHECK
     }
 
-    /** 今日页底部抽屉展开态（DESIGN §3.3）。 */
-    suspend fun setTodayDockExpanded(value: Boolean) {
-        context.displayDataStore.edit { it[KEY_TODAY_DOCK_EXPANDED] = value }
-    }
-
     /** 共享单车出码自动存相册开关（DESIGN §3.9）。 */
     suspend fun setEbikeAutoSave(value: Boolean) {
         context.displayDataStore.edit { it[KEY_EBIKE_AUTO_SAVE] = value }
@@ -2326,7 +2292,6 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
         val KEY_THEME_PALETTE = stringPreferencesKey("theme_palette")
         val KEY_FLOATING_NAV_BAR = booleanPreferencesKey("floating_nav_bar")
-        val KEY_LIFE_TAB_ENABLED = booleanPreferencesKey("life_tab_enabled")
         /** 百宝箱（DESIGN §4.47）：缺省 = true（今日页「+」里显示图片工具入口）。 */
         val KEY_TOOLBOX_ENABLED = booleanPreferencesKey("toolbox_enabled")
         // 应用内悬浮球（DESIGN §3.1）：开关 + 归一化位置（缺省 = 右下角，见 floatingBallPosition）
@@ -2415,7 +2380,6 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_POWER_ALERT_NOTIFIED = booleanPreferencesKey("power_alert_notified")
         val KEY_YKT_ALERT_NOTIFIED = booleanPreferencesKey("ykt_alert_notified")
         val KEY_BALANCE_PERIODIC_INTERVAL = intPreferencesKey("balance_periodic_interval")
-        val KEY_TODAY_DOCK_EXPANDED = booleanPreferencesKey("today_dock_expanded")
         val KEY_RECHARGE_DISCLAIMER_SUPPRESS_UNTIL = longPreferencesKey("recharge_disclaimer_suppress_until")
         val KEY_RECHARGE_DISCLAIMER_SEEN_AT = longPreferencesKey("recharge_disclaimer_seen_at")
         // 首启声明的同意记录（DESIGN §3.16）：每份须知各一对「同意过的版本 / 确认时刻」。

@@ -231,7 +231,11 @@ adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 ## 架构（改代码前对齐）
 
 ```
-MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开，DESIGN §3.13）+ 路由 jw_import；
+MainActivity → 底栏今日/课表/教务（2026-10-20 起 3 Tab；生活与我的收进左侧栏）
+               + 层叠左侧栏（StackedDrawerState + ui/life/SideDrawer：身份 / 钱包 / 生活 / 学习 / 工具
+                 / 设置 / 付款码；右滑展开，主页面在前、缩到 94%，侧栏是静态后层，DESIGN §3.1）
+               + 路由 jw_import；SettingsActivity（独立窗口，2026-10-20，不再是隐藏「我的」路由）；
+               JwWebCheckActivity（教务「网页」只读核对：未登录自动回统一认证再重开原页）；
                SubpageActivity 承载二级页（含成绩查询 SCORES、选课 SELECTIONS·SELECTION_WISHES、
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
@@ -244,10 +248,12 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                 （详情弹层入口 · **唯一自动提交路径** · 精确闹钟 4008 + shortService，§4.45），
                §3.28；天气详情 WEATHER + 天气设置 WEATHER_SETTINGS（今日页顶栏那行提示的
                落点与开关，默认关，§3.29）；学生评教走
-               JwImportActivity 的 TeachingEval 模式（§4.44）；百宝箱 TOOLBOX +
+               JwImportActivity 的 TeachingEval 模式（§4.44）；教务 Tab JwHubScreen（§3.26 入口汇总，
+               本学期四行带实时数字：成绩门数/加权 · 考试场次 · 教材本数 · 本周节数）；
+               百宝箱 TOOLBOX +
               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
               菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
-               受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（今日页「江水生活」图标入口，
+               受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（左侧栏「空调遥控」入口，
                寝室美的空调红外，§3.31 / §4.48）；宿舍报修进度 DORM_REPAIR（今日页报修卡 /
                收件箱办结通知的落点，原生只读，§4.49））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
@@ -287,8 +293,8 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
  纯函数；默认开，只适合同页连续滚动的一批截图，§4.47）
  + CainiaoQuery（菜鸟批量查：三方路由链接拼装 · 多单号输入清洗拆分与丢弃计数 ·
  历史编解码，纯函数，§4.47）
- + MideaR05d·MideaAc·AcProtocol（美的空调红外：R05D 默认 / A1 可选 · 48 位帧 ·
- ConsumerIrManager 脉冲序列生成，纯函数，§3.31 / §4.48）
+ + MideaR05d（美的 R05D 空调红外：开关 / 模式 / 温度 / 风速 + 摆风 / 强劲 / ECO ·
+ 48 位帧 · ConsumerIrManager 脉冲序列生成，纯函数，§3.31 / §4.48）
  + DormRepair·DormRepairRules（宿舍报修进度：状态 / 完成判定 / 3 天保留 / 卡片选记录 /
  过渡通知，§4.49）
  + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
@@ -382,10 +388,10 @@ data/weather/    天气（DESIGN §3.29 / §4.46；**Open-Meteo 免 Key 免注�
                  规则见 .agents/rules/weather.md
 data/ir/         空调红外发射（今日页「江水生活」图标入口，DESIGN §4.48）：
                  AcIrBlaster（ConsumerIrManager 薄封装；TRANSMIT_IR 普通权限，无发射器机型
-                 进页只给提示）；协议纯逻辑见 domain/MideaR05d（默认）/ MideaAc（A1），
+                 进页只给提示）；协议纯逻辑见 domain/MideaR05d（只走 R05D），
                  状态见 AcRemotePrefsStore
                  规则见 .agents/rules/ac-remote.md
-ui/today|week|life|me|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|reminder|ai|toolbox
+ui/today|week|life|me|jw|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|reminder|ai|toolbox
 Graph.kt         单例 Repository
 JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```

@@ -477,11 +477,9 @@ class ScheduleRepository(
         val useMode: EbikeUseMode,
     )
 
-    /** 页面外壳类偏好的收拢切片：底栏形态（§4.22）、今日页抽屉（§3.3）、生活页与启动页（§3.13/§3.3）。 */
+    /** 页面外壳类偏好的收拢切片：底栏形态（§4.22）与启动页（§3.3）。 */
     private data class ShellPrefs(
         val floatingNavBar: Boolean,
-        val todayDockExpanded: Boolean,
-        val lifeTabEnabled: Boolean,
         val startPage: StartPage,
         val qzxyCardEnabled: Boolean,
     )
@@ -567,8 +565,6 @@ class ScheduleRepository(
         // 最外层 combine 的第 5 个参数
         combine(
             prefs.floatingNavBar,
-            prefs.todayDockExpanded,
-            prefs.lifeTabEnabled,
             prefs.startPage,
             prefs.qzxyCardEnabled,
             ::ShellPrefs,
@@ -590,8 +586,6 @@ class ScheduleRepository(
             campusCardEnabled = misc.campusCard,
             toolboxEnabled = misc.toolboxEnabled,
             floatingNavBar = shell.floatingNavBar,
-            todayDockExpanded = shell.todayDockExpanded,
-            lifeTabEnabled = shell.lifeTabEnabled,
             startPage = shell.startPage,
             // 遗留单开关也一并透出，与实际存储保持一致，免得读了它的人拿到陈旧值。
             showWeekend = p.showSaturday && p.showSunday,
@@ -661,13 +655,12 @@ class ScheduleRepository(
     val hapticsEnabled: Flow<Boolean> = prefs.hapticsEnabled
 
     /**
-     * 壳层切片（[edu.jxslu.schedule.MainActivity] 的 JuwApp）：底栏生活页开关 + 课表
-     * 背景图五参数，是壳层唯一消费的字段。壳收切片而不是整份 [DisplayPrefs]——
+     * 壳层切片（[edu.jxslu.schedule.MainActivity] 的 JuwApp）：课表背景图五参数，
+     * 是壳层唯一消费的字段。壳收切片而不是整份 [DisplayPrefs]——
      * NavHost 挂在壳里，此前拖一根字号滑杆都会重组整个壳。
      */
     val appShellPrefs: Flow<AppShellPrefs> = displayPrefs.map { p ->
         AppShellPrefs(
-            lifeTabEnabled = p.lifeTabEnabled,
             bgImageName = p.bgImageName,
             bgImageOpacity = p.bgImageOpacity,
             bgImageDim = p.bgImageDim,
@@ -728,8 +721,6 @@ class ScheduleRepository(
     suspend fun setCampusCardEnabled(value: Boolean) = prefs.setCampusCardEnabled(value)
 
     /** 今日页底部抽屉展开态（DESIGN §3.3）。 */
-    suspend fun setTodayDockExpanded(value: Boolean) = prefs.setTodayDockExpanded(value)
-
     suspend fun updateShortcuts(transform: (List<ShortcutItem>) -> List<ShortcutItem>) =
         prefs.updateShortcuts(transform)
 
@@ -847,9 +838,6 @@ class ScheduleRepository(
 
     /** 悬浮导航栏（DESIGN §4.22）：底栏半透明磨砂，课表背景图透到屏幕底部。默认关。 */
     suspend fun setFloatingNavBar(value: Boolean) = prefs.setFloatingNavBar(value)
-
-    /** 生活页开关（DESIGN §3.13）。 */
-    suspend fun setLifeTabEnabled(value: Boolean) = prefs.setLifeTabEnabled(value)
 
     /** 百宝箱开关（DESIGN §4.47）：今日页「+」下拉里的图片工具入口，默认开。 */
     suspend fun setToolboxEnabled(value: Boolean) = prefs.setToolboxEnabled(value)
@@ -2181,12 +2169,11 @@ sealed interface ImportPreview {
 }
 
 /**
- * [ScheduleRepository.appShellPrefs] 的载荷：壳层（底栏生活页开关 + 课表背景图）消费
- * 的字段切片。壳收切片不收整份 [DisplayPrefs]——NavHost 挂在壳里，其他偏好变化
+ * [ScheduleRepository.appShellPrefs] 的载荷：壳层（课表背景图）消费的字段切片。
+ * 壳收切片不收整份 [DisplayPrefs]——NavHost 挂在壳里，其他偏好变化
  * （拖滑杆、改触感）不该重组整个壳。
  */
 data class AppShellPrefs(
-    val lifeTabEnabled: Boolean = true,
     val bgImageName: String? = null,
     val bgImageOpacity: Float = 1f,
     val bgImageDim: Float = 0f,

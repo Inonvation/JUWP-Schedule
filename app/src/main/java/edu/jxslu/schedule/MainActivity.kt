@@ -3,23 +3,33 @@ package edu.jxslu.schedule
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +38,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,10 +74,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.domain.FloatingBall
@@ -77,6 +90,7 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberQuickScan
 import edu.jxslu.schedule.ui.campus.CampusPayResultDialogHost
+import edu.jxslu.schedule.ui.jw.JwHubScreen
 import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.me.hub.UpdateAvailableDialogHost
 import edu.jxslu.schedule.ui.reminder.DormRepairReminder
@@ -90,8 +104,19 @@ import androidx.navigation.compose.rememberNavController
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
-import edu.jxslu.schedule.ui.me.SettingsScreen
+import edu.jxslu.schedule.ui.common.StackedDrawerState
 import edu.jxslu.schedule.ui.life.LifeScreen
+import edu.jxslu.schedule.ui.life.RechargeKind
+import edu.jxslu.schedule.domain.QuickScanTarget
+import edu.jxslu.schedule.domain.quickScanTargetOf
+import edu.jxslu.schedule.ui.common.AppPermissions
+import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
+import edu.jxslu.schedule.ui.life.SideDrawerContent
+import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
+import edu.jxslu.schedule.ui.ujing.UjingEntrySheet
+import edu.jxslu.schedule.ui.water.WaterEntrySheet
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.client.android.Intents
 import edu.jxslu.schedule.ui.theme.JuwTheme
 import edu.jxslu.schedule.ui.theme.semanticColors
 import edu.jxslu.schedule.ui.today.TodayScreen
@@ -107,6 +132,7 @@ import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.ThemePalette
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Calendar01
+import me.rerere.hugeicons.stroke.School01
 import me.rerere.hugeicons.stroke.Settings01
 import me.rerere.hugeicons.stroke.Wallet03
 import me.rerere.hugeicons.HugeIcons
@@ -399,7 +425,7 @@ private fun resolveFloatingNavBarBlocking(): Boolean = startupPrefsBlocking().fl
  */
 private fun resolveStartRouteBlocking(): String = runBlocking {
     val prefs = Graph.repository(Graph.appContext).displayPrefs.first()
-    StartPage.effectivePage(prefs.startPage, prefs.lifeTabEnabled).route()
+    StartPage.effectivePage(prefs.startPage).route()
 }
 
 /**
@@ -453,8 +479,9 @@ private const val FRESH_INSTALL_WINDOW_MS = 60_000L
 private fun StartPage.route(): String = when (this) {
     StartPage.Today -> Routes.TODAY
     StartPage.Week -> Routes.WEEK
-    StartPage.Life -> Routes.LIFE
-    StartPage.Me -> Routes.ME
+    StartPage.Jw -> Routes.JW
+    // 生活 / 我的不再占 Tab：旧选择统一落回今日
+    StartPage.Life, StartPage.Me -> Routes.TODAY
 }
 
 private data class BottomTab(
@@ -518,6 +545,12 @@ private val FloatingBarSideMargin = 56.dp
 
 /** 悬浮胶囊与手势条的间距。 */
 private val FloatingBarBottomMargin = 12.dp
+
+/**
+ * 侧栏展开时主页面的缩放比例（2026-10-20 用户参考的层级效果）。
+ * 0.06 = 缩小到 94%：上下各露出约 3% 的后层，够读出"卡片浮在侧栏之上"，又不至于让字明显变小。
+ */
+private const val CardShrink = 0.06f
 
 /** 底栏图标基准尺寸；选中态在 [FloatingNavBarPill] 里乘 1.18 倍（约 26dp），不改布局。 */
 private val TabIconBaseSize = 22.dp
@@ -759,6 +792,26 @@ internal fun JuwApp(
     val navController = rememberNavController()
     val haptics = rememberAppHaptics()
 
+    // 层叠抽屉（2026-10-20）：主页面在前、侧栏在后。300dp 是页面完全打开时的位移，
+    // 也是侧栏内容的宽度；拖拽 / 吸附 / 返回关闭都在 StackedDrawerState 里。
+    val drawerScope = rememberCoroutineScope()
+    val drawerDensity = LocalDensity.current
+    val drawerMaxOffsetPx = with(drawerDensity) { 300.dp.toPx() }
+    val drawerThresholdPx = with(drawerDensity) { 32.dp.toPx() }
+    val drawerLockPx = with(drawerDensity) { 20.dp.toPx() }
+    val drawer = remember {
+        StackedDrawerState(
+            scope = drawerScope,
+            maxOffsetPx = drawerMaxOffsetPx,
+            dragThresholdPx = drawerThresholdPx,
+            directionLockPx = drawerLockPx,
+            onSettled = { haptics.tap() },
+        )
+    }
+    DrawerBackHandler(drawer)
+    // 从侧栏钱包发起充值：先落一个待办，再进隐藏的 Life 页让原有充值流程接管
+    var pendingLifeRecharge by remember { mutableStateOf<RechargeKind?>(null) }
+
     // 小组件网格区点击 → 切到课表 Tab；余额提醒通知 → 切到生活 Tab（DESIGN §3.6 / §3.10）。
     // 跳转后消费掉 extra，否则每次重组/返回都会把用户弹回那个 Tab。
     //
@@ -767,16 +820,19 @@ internal fun JuwApp(
     // 换成 `val target = when(route){…}` 再判 target 就会编译不过（2026-09-24 实测）。
     val route = pendingRoute?.value
     LaunchedEffect(route) {
-        if (route == ROUTE_WEEK || route == ROUTE_LIFE || route == ROUTE_ME) {
-            val target = if (route == ROUTE_WEEK) Routes.WEEK
-            else if (route == ROUTE_LIFE) Routes.LIFE
-            else Routes.ME
+        if (route == ROUTE_WEEK || route == ROUTE_LIFE) {
+            val target = if (route == ROUTE_WEEK) Routes.WEEK else Routes.LIFE
             navController.navigate(target) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
                 restoreState = true
             }
             pendingRoute.value = null
+        } else if (route == ROUTE_ME) {
+            // 「我的」不再是 Tab（2026-10-20 收进侧栏）：登录失效通知原本落这一页，
+            // 现在直接落「账号与登录」——它才是那类通知真正要人处理的地方。
+            pendingRoute.value = null
+            SubpageActivity.start(context, SubpageScreen.ACCOUNTS)
         } else if (
             route == ROUTE_PAY_CODE || route == ROUTE_POWER_BILL || route == ROUTE_CAMPUS_CARD ||
             route == ROUTE_WATER || route == ROUTE_QZXY ||
@@ -887,6 +943,51 @@ internal fun JuwApp(
         ),
     )
 
+    // ── 侧栏里的三个入口弹窗（2026-10-20）──
+    // 用户口径：U净 / 胖乖生活 / 趣智校园点开的是**原来的弹窗**，不是整页。
+    // 弹窗与今日页卡片共用同一份 ViewModel，面板里开的阀在页面上状态一致。
+    val waterEntryState by waterViewModel.uiState.collectAsStateWithLifecycle()
+    val qzxyEntryState by qzxyViewModel.uiState.collectAsStateWithLifecycle()
+    val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }.collectAsStateWithLifecycle()
+    var showWaterSheet by remember { mutableStateOf(false) }
+    var showQzxySheet by remember { mutableStateOf(false) }
+    var showUjingSheet by remember { mutableStateOf(false) }
+
+    // U净 弹窗的扫码：洗衣机机身码原文交给 U净 页识别（同今日页口径），别家码不跳页
+    val ujingScanLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) {
+            return@rememberLauncherForActivityResult
+        }
+        val target = quickScanTargetOf(result.data?.getStringExtra(Intents.Scan.RESULT))
+        if (target is QuickScanTarget.Washer) {
+            UjingScanHandoff.arm(target.raw)
+            drawer.close()
+            SubpageActivity.start(context, SubpageScreen.UJING)
+        }
+    }
+
+    // 趣智开阀要连蓝牙：缺权限时就地拉起系统授权，授完接着开（同今日页口径）
+    val qzxyPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        if (result.values.all { granted -> granted }) {
+            qzxyViewModel.openValveFromCard()
+        }
+    }
+    val startQzxyValve: () -> Unit = {
+        val missing = AppPermissions.missingBluetoothScan(context)
+        if (missing.isEmpty()) qzxyViewModel.openValveFromCard()
+        else qzxyPermissionLauncher.launch(missing.toTypedArray())
+    }
+
+    // 侧栏行右侧的余额：未登录 / 还没拉到就留空，不占位
+    val waterBalanceText = waterEntryState.balance?.takeIf { waterEntryState.loggedIn }
+        ?.let { "¥${it.ticketText}" }
+    val qzxyBalanceText = qzxyEntryState.balance?.takeIf { qzxyLoggedIn }
+        ?.let { "¥${it.text}" }
+
     // 悬浮导航栏（DESIGN §4.22）：底栏形态是全局项，这里单独订阅一次。
     // 不复用 JuwRoot 那份：它是为了定主题色，作用域在 setContent 最外层，拿不到这里。
     // 壳层只收 [AppShellPrefs] 切片（底栏开关 + 背景图五参数）：NavHost 挂在壳里，
@@ -903,28 +1004,11 @@ internal fun JuwApp(
     // NavHost 的 startDestination 中途变会把用户弹回起点，改完由设置页提示重启生效。
     val startRoute = remember { resolveStartRouteBlocking() }
 
-    // 生活页开关（DESIGN §3.13）：默认开，关掉后底栏回到 3 项。
-    // 未读出（首帧 null）按开处理——宁可先显示再收起，也别让底栏先少一项再补上。
-    val lifeTabEnabled = shellPrefs?.lifeTabEnabled ?: true
-
-    // 底栏四项：今日 · 课表 · 生活 · 我的（生活页在课表右侧）
+    // 底栏三项：今日 · 课表 · 教务（生活/我的已收进侧栏，2026-10-20）
     val tabs = buildList {
         add(BottomTab(Routes.TODAY, R.string.tab_today, HugeIcons.Calendar01))
         add(BottomTab(Routes.WEEK, R.string.tab_week, HugeIcons.Book01))
-        if (lifeTabEnabled) add(BottomTab(Routes.LIFE, R.string.tab_life, HugeIcons.Wallet03))
-        add(BottomTab(Routes.ME, R.string.tab_me, HugeIcons.Settings01))
-    }
-
-    // 在生活页里把开关关掉（设置页是独立窗口，回来时这里才感知到）：退回今日页，
-    // 别停在已经被隐藏的 Tab 上——它连入口都没有了。
-    LaunchedEffect(lifeTabEnabled, currentRoute) {
-        if (!lifeTabEnabled && currentRoute == Routes.LIFE) {
-            navController.navigate(Routes.TODAY) {
-                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                launchSingleTop = true
-                restoreState = true
-            }
-        }
+        add(BottomTab(Routes.JW, R.string.tab_jw, HugeIcons.School01))
     }
 
     // 悬浮形态的底部净空 = 胶囊高 + 离底间距 + 手势条。**解析式算，不去测量**：
@@ -978,8 +1062,118 @@ internal fun JuwApp(
         if (floatingNavBar) FloatingPillHeight + FloatingBarBottomMargin else PlainBottomBarHeight
     // 悬浮球只在主窗口四个 Tab 显示（二级页是独立 Activity 窗口，本就看不到它）
     val floatingBallOnTab = currentRoute == Routes.TODAY || currentRoute == Routes.WEEK ||
-        currentRoute == Routes.LIFE || currentRoute == Routes.ME
+        currentRoute == Routes.LIFE
 
+    // 侧栏里点任何入口都先收侧栏：返回时看到的是页面，而不是还开着的侧栏
+    // （设置 / 扫码 / 充值本来就这么做，这里把其余入口补齐）。
+    val openFromDrawer: (SubpageScreen, String?) -> Unit = { screen, focus ->
+        drawer.close()
+        openSubpage(context, SubpageRequest(screen = screen, focusItemId = focus))
+    }
+
+    // ── 层叠抽屉（2026-10-20 第二版）──
+    // 层级：侧栏是**静态后层**，主页面是前层卡片——展开时卡片右移并微微缩小，
+    // 上下露出后层。draggable + 20dp 方向锁 + 32dp 落定阈值 + 临界阻尼弹簧。
+    Box(
+        Modifier
+            .fillMaxSize()
+            // 后层底色 = 侧栏底色：卡片缩小后露出的上下留白与侧栏是同一层。
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        val cardDragState = rememberDraggableState { delta -> drawer.drag(delta) }
+        val panelDragState = rememberDraggableState { delta -> drawer.drag(delta) }
+        // 底层：侧栏**不动**，只是被上层卡片让开。整块底色与侧栏同色，
+        // 卡片缩小后露出的上下留白读起来是「同一层」，而不是两套颜色。
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(300.dp)
+                .then(
+                    if (drawer.isVisible) {
+                        Modifier.draggable(
+                            orientation = Orientation.Horizontal,
+                            state = panelDragState,
+                            onDragStarted = { drawer.beginDrag() },
+                            onDragStopped = { v -> drawer.settle(v) },
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            SideDrawerContent(
+                onOpenAccounts = { openFromDrawer(SubpageScreen.ACCOUNTS, null) },
+                onOpenPayCode = { openFromDrawer(SubpageScreen.PAY_CODE, null) },
+                onOpenShortcuts = { itemId -> openFromDrawer(SubpageScreen.SHORTCUTS, itemId) },
+                onOpenCainiao = { openFromDrawer(SubpageScreen.TOOLBOX_CAINIAO, null) },
+                // 三个入口开弹窗（2026-10-20 用户口径）；弹窗里有「进页」副行
+                onOpenUjingSheet = { showUjingSheet = true },
+                onOpenAcRemote = { openFromDrawer(SubpageScreen.AC_REMOTE, null) },
+                onOpenRide = { openFromDrawer(SubpageScreen.RIDE, null) },
+                onOpenWaterSheet = { showWaterSheet = true },
+                onOpenQzxySheet = { showQzxySheet = true },
+                waterBalance = waterBalanceText,
+                qzxyBalance = qzxyBalanceText,
+                onOpenWenqu = { openFromDrawer(SubpageScreen.WENQU, null) },
+                onOpenNotes = { openFromDrawer(SubpageScreen.NOTES, null) },
+                onOpenHomework = { openFromDrawer(SubpageScreen.HOMEWORK, null) },
+                onOpenToolbox = { openFromDrawer(SubpageScreen.TOOLBOX, null) },
+                onOpenInbox = { openFromDrawer(SubpageScreen.INBOX, null) },
+                onOpenWeather = { openFromDrawer(SubpageScreen.WEATHER, null) },
+                onOpenStatement = { openFromDrawer(SubpageScreen.CAMPUS_STATEMENT, null) },
+                onOpenPowerBill = { openFromDrawer(SubpageScreen.POWER_BILL, null) },
+                onOpenCampusRecharge = {
+                    drawer.close()
+                    pendingLifeRecharge = RechargeKind.Campus
+                    navController.navigate(Routes.LIFE) { launchSingleTop = true }
+                },
+                onOpenPowerRecharge = {
+                    drawer.close()
+                    pendingLifeRecharge = RechargeKind.Power
+                    navController.navigate(Routes.LIFE) { launchSingleTop = true }
+                },
+                onOpenSettings = {
+                    drawer.close()
+                    SettingsActivity.start(context)
+                },
+                onScan = {
+                    drawer.close()
+                    startBallScan()
+                },
+            )
+        }
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val p = drawer.progress
+                    val eased = FastOutSlowInEasing.transform(abs(p))
+                    // 用户参考的层级：主页面**微微缩小**并右移，上下露出后层；
+                    // 左缘始终贴在侧栏宽度上（缩放绕中心，补回一半的收缩量）。
+                    val scale = 1f - CardShrink * eased
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = drawerMaxOffsetPx * p - (1f - scale) * size.width / 2f
+                    shape = RoundedCornerShape(24.dp * eased)
+                    shadowElevation = (12.dp * eased).toPx()
+                    clip = true
+                }
+                .draggable(
+                    orientation = Orientation.Horizontal,
+                    state = cardDragState,
+                    onDragStarted = { drawer.beginDrag() },
+                    onDragStopped = { v -> drawer.settle(v) },
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    if (drawer.isVisible) drawer.close()
+                },
+            color = MaterialTheme.colorScheme.background,
+        ) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         // 顶部 inset 归零（DESIGN §4.22）：垫了状态栏高度，课表页的背景图就铺不到状态栏。
@@ -1151,6 +1345,12 @@ internal fun JuwApp(
                                 )
                             },
                             qzxyViewModel = qzxyViewModel,
+                            // 左侧栏：汉堡在今日页顶栏，切换开关（2026-10-20）
+                            onOpenDrawer = {
+                                // 用 isVisible 而不是 isOpen：展开动画途中再点一次要能收回，
+                                // isOpen 要等动画播完才翻。
+                                if (drawer.isVisible) drawer.close() else drawer.open()
+                            },
                         )
                     }
                 composable(Routes.WEEK) {
@@ -1170,6 +1370,46 @@ internal fun JuwApp(
                             onOpenCourseHomework = { course ->
                                 SubpageActivity.start(context, SubpageScreen.HOMEWORK_COURSE, courseName = course.name)
                             },
+                        )
+                    }
+                    // 教务 Tab（2026-10-20）：入口汇总；每个入口仍落到原二级页，
+                    // 右侧「网页」打开教务/学工/签章系统的原始页面。
+                    composable(Routes.JW) {
+                        JwHubScreen(
+                            onOpenScores = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SCORES)) },
+                            onOpenExams = { openSubpage(context, SubpageRequest(screen = SubpageScreen.EXAMS)) },
+                            onOpenTextbooks = {
+                                JwWebCheckActivity.start(context, "教材", JwUrls.TEXTBOOK_QUERY)
+                            },
+                            // 与底栏切 Tab 同一套栈语义：不留一条重复的 WEEK 在栈里
+                            onOpenSchedule = {
+                                navController.navigate(Routes.WEEK) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onOpenScholar = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SCHOLAR)) },
+                            onOpenCurriculum = { openSubpage(context, SubpageRequest(screen = SubpageScreen.CURRICULUM)) },
+                            onOpenSelection = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SELECTIONS)) },
+                            onOpenInternship = {
+                                openSubpage(context, SubpageRequest(screen = SubpageScreen.INTERNSHIP_BASES))
+                            },
+                            onOpenTranscript = { openSubpage(context, SubpageRequest(screen = SubpageScreen.TRANSCRIPTS)) },
+                            onOpenStudentInfo = { openSubpage(context, SubpageRequest(screen = SubpageScreen.JW_ACCOUNT)) },
+                            onOpenTeachingCalendar = {
+                                openSubpage(context, SubpageRequest(screen = SubpageScreen.CAMPUS_CALENDAR))
+                            },
+                            onOpenTeachingEval = { JwImportActivity.start(context, JwImportMode.TeachingEval) },
+                            onOpenLeave = { XgFormActivity.start(context, XgUrls.LEAVE) },
+                            onOpenRepair = { XgFormActivity.start(context, XgUrls.REPAIR) },
+                            onOpenCalendar = {
+                                openSubpage(context, SubpageRequest(screen = SubpageScreen.CAMPUS_CALENDAR))
+                            },
+                            onOpenImport = { JwImportActivity.start(context) },
+                            onWebCheck = { title, url -> JwWebCheckActivity.start(context, title, url) },
                         )
                     }
                     // 生活页（DESIGN §3.13）：一卡通余额 / 付款码 / 寝室电费 / 充值入口 / 最近流水。
@@ -1225,39 +1465,69 @@ internal fun JuwApp(
                             onOpenInternshipBases = {
                                 SubpageActivity.start(context, SubpageScreen.INTERNSHIP_BASES)
                             },
-                        )
-                    }
-                composable(Routes.ME) {
-                        SettingsScreen(
-                            onOpenGeneralSettings = {
-                                SubpageActivity.start(context, SubpageScreen.GENERAL_SETTINGS)
-                            },
-                            onOpenTimetableHub = {
-                                SubpageActivity.start(context, SubpageScreen.TIMETABLE_HUB)
-                            },
-                            onOpenLearningHub = {
-                                SubpageActivity.start(context, SubpageScreen.LEARNING_HUB)
-                            },
-                            onOpenWidgetCalendarHub = {
-                                SubpageActivity.start(context, SubpageScreen.WIDGET_CALENDAR_HUB)
-                            },
-                            onOpenExtensionServices = {
-                                SubpageActivity.start(context, SubpageScreen.EXT_SERVICES_HUB)
-                            },
-                            // 问渠 · 志愿服务（DESIGN §3.28）：账号卡那一行的工时点进来的落点
-                            onOpenWenqu = {
-                                SubpageActivity.start(context, SubpageScreen.WENQU)
-                            },
-                            onOpenAbout = {
-                                SubpageActivity.start(context, SubpageScreen.ABOUT)
-                            },
-                            // 账号卡「账号与登录」那一行（2026-10-20）：全量账号状态与补登入口
-                            onOpenAccounts = {
-                                SubpageActivity.start(context, SubpageScreen.ACCOUNTS)
-                            },
+                            initialRecharge = pendingLifeRecharge,
+                            onInitialRechargeConsumed = { pendingLifeRecharge = null },
                         )
                     }
                 }
+            }
+            // 侧栏三个入口弹窗（2026-10-20）：与今日页卡片共用同一份 ViewModel。
+            // 放在外壳层而不是侧栏里——侧栏是 300dp 宽的 Surface，弹层挂在它下面会跟着被裁。
+            if (showWaterSheet) {
+                WaterEntrySheet(
+                    state = waterEntryState,
+                    onUnlock = { waterViewModel.unlock() },
+                    onDismissFlow = { waterViewModel.dismissFlow() },
+                    onToggleUsePoints = { waterViewModel.toggleUsePoints() },
+                    onEndSession = { waterViewModel.endSession() },
+                    onDismiss = { showWaterSheet = false },
+                )
+            }
+            if (showQzxySheet) {
+                QzxyEntrySheet(
+                    state = qzxyEntryState,
+                    loggedIn = qzxyLoggedIn,
+                    onStart = startQzxyValve,
+                    onResend = { qzxyViewModel.resendOpenData() },
+                    onStop = { qzxyViewModel.stopWater() },
+                    onAbandon = { qzxyViewModel.abandonWatering() },
+                    onClearDeviceRecord = { qzxyViewModel.clearDeviceRecord() },
+                    onClearAndOpen = { qzxyViewModel.clearAndOpen() },
+                    onDismissSettlement = { qzxyViewModel.dismissSettlement() },
+                    onOpenDiagnostics = { address ->
+                        drawer.close()
+                        SubpageActivity.start(
+                            context,
+                            SubpageScreen.QZXY_DEBUG,
+                            focusItemId = address,
+                        )
+                    },
+                    onOpenPage = {
+                        drawer.close()
+                        SubpageActivity.start(context, SubpageScreen.QZXY)
+                    },
+                    onDismiss = { showQzxySheet = false },
+                )
+            }
+            if (showUjingSheet) {
+                UjingEntrySheet(
+                    onDismiss = { showUjingSheet = false },
+                    onScan = {
+                        showUjingSheet = false
+                        ujingScanLauncher.launch(
+                            Intent(context, EbikeScanActivity::class.java).apply {
+                                putExtra(Intents.Scan.PROMPT_MESSAGE, "对准洗衣机机身上的二维码")
+                                putExtra(EbikeScanActivity.EXTRA_RESULT_MODE, EbikeScanActivity.MODE_RAW)
+                                putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)
+                            },
+                        )
+                    },
+                    onOpenPage = {
+                        showUjingSheet = false
+                        drawer.close()
+                        SubpageActivity.start(context, SubpageScreen.UJING)
+                    },
+                )
             }
             // 外壳级提示通道（悬浮球「别家码」等播报）：贴底、让开底栏。画在页面之上、
             // 底栏之下——球被 inset 顶在底栏之上，这条提示与它同一带，互不遮挡。
@@ -1285,11 +1555,19 @@ internal fun JuwApp(
             }
         }
     }
+        }
+    }
+}
+
+@Composable
+private fun DrawerBackHandler(drawer: StackedDrawerState) {
+    // 只读布尔量：progress 是 Animatable 的逐帧状态，放进 enabled 会让这里每帧重组。
+    BackHandler(enabled = drawer.isVisible) { drawer.close() }
 }
 
 object Routes {
     const val TODAY = "today"
     const val WEEK = "week"
+    const val JW = "jw"
     const val LIFE = "life"
-    const val ME = "me"
 }

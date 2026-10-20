@@ -219,12 +219,9 @@ fun GeneralSettingsScreen(
             }
 
             SettingsSection(title = "页面与导航") {
-                // 启动页：选项集 = 底栏 Tab 集，生活页关掉时同步少一项（DESIGN §3.3）
-                val startPages = StartPage.visiblePages(state.displayPrefs.lifeTabEnabled)
-                val effectiveStart = StartPage.effectivePage(
-                    state.displayPrefs.startPage,
-                    state.displayPrefs.lifeTabEnabled,
-                )
+                // 启动页：选项集 = 底栏 Tab 集（今日 / 课表 / 教务）
+                val startPages = StartPage.visiblePages()
+                val effectiveStart = StartPage.effectivePage(state.displayPrefs.startPage)
                 SettingChoiceRow(
                     title = "启动页",
                     titleTag = "重启生效",
@@ -240,14 +237,7 @@ fun GeneralSettingsScreen(
                         showNotice("已保存，重启应用后生效")
                     },
                 )
-                SettingSwitchRow(
-                    title = "生活页",
-                    subtitle = "底栏「生活」：一卡通 · 付款码 · 寝室电费",
-                    checked = state.displayPrefs.lifeTabEnabled,
-                    onCheckedChange = viewModel::setLifeTabEnabled,
-                    icon = HugeIcons.Wallet03,
-                )
-                // 悬浮球（DESIGN §3.1）：主窗口四个 Tab 常驻的快捷入口，默认开。
+                // 悬浮球（DESIGN §3.1）：主窗口三个 Tab 常驻的快捷入口，默认开。
                 // 位置在球上长按拖动改，这里只管显隐。
                 SettingSwitchRow(
                     title = "悬浮球",
