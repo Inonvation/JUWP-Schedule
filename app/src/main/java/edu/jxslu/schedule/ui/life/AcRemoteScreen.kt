@@ -21,11 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -33,15 +31,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -49,22 +44,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import edu.jxslu.schedule.domain.AcProtocol
-import edu.jxslu.schedule.domain.MideaAc
+import edu.jxslu.schedule.domain.MideaR05d
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
-import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.MinusSign
 import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.Power
@@ -73,12 +64,11 @@ import me.rerere.hugeicons.stroke.Power
  * 生活页 → 校园服务 → 空调遥控（DESIGN §3.31 / §4.48）。
  *
  * 页面结构（自上而下，全走描边卡）：主控卡（电源圆钮 · 状态行 · 温度 ±）→
- * 模式 / 风速卡 → 协议卡（R05D / A1）→ 附加功能卡（睡眠 / 风向 / 屏显 / 强力 /
- * ECO）→ 定时卡（两行，点开弹层）。附加与定时只有 A1 才有公开编码，R05D 下隐藏。
- * 温度步进支持长按连发；送风档温度置灰（该档没有温度目标）。
+ * 模式 / 风速卡 → 附加功能卡（摆风 / 强劲 / ECO 切换芯片）→ 底部说明。
+ * 只走 R05D；温度步进支持长按连发，送风档温度置灰。关机时附加功能不可用
+ * （原装遥控的摆风 / 强劲键在关机时不响应）。无红外发射器的机型进页只给提示。
  *
- * 每次操作按完整状态发一帧，协议见 [AcProtocol]；状态本机持久化。无红外发射器的
- * 机型进页只给提示；底部一行说明「面板是本机记忆」的口径。
+ * 每次操作按完整状态发一帧，状态本机持久化；扩展键见 [MideaR05d]。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,7 +81,6 @@ fun AcRemoteScreen(
     val snapshot by viewModel.snapshot.collectAsStateWithLifecycle()
     val transmitError by viewModel.transmitError.collectAsStateWithLifecycle()
     val state = snapshot.state
-    var timerTarget by remember { mutableStateOf<TimerKind?>(null) }
 
     Scaffold(
         topBar = {
@@ -150,7 +139,7 @@ fun AcRemoteScreen(
                     Spacer(Modifier.height(18.dp))
                     TemperatureRow(
                         tempC = state.tempC,
-                        enabled = state.mode != MideaAc.Mode.Fan,
+                        enabled = state.mode != MideaR05d.Mode.Fan,
                         onDelta = viewModel::bumpTemp,
                     )
                 }
@@ -183,7 +172,7 @@ fun AcRemoteScreen(
                     ControlLabel("风速")
                     Spacer(Modifier.height(10.dp))
                     ChipRow(
-                        items = MideaAc.Fan.entries,
+                        items = MideaR05d.Fan.entries,
                         selected = state.fan,
                         label = ::fanLabel,
                         onSelect = viewModel::setFan,
@@ -191,110 +180,52 @@ fun AcRemoteScreen(
                 }
             }
 
-            // 协议口径：R05D 国内美的常见；A1 用于部分 OEM / 出口机型
-            ProtocolCard(protocol = snapshot.protocol, onSelect = viewModel::setProtocol)
-
-            if (snapshot.protocol == AcProtocol.A1) {
-                // 附加功能：切换类按钮（协议无状态位，芯片亮 = 本机记的「最近一次」）
-                AppCard {
+            // 附加功能：切换类固定帧（R05D 没有状态位，芯片只记本机最近一次）
+            AppCard {
+                Column {
+                    ControlLabel("附加功能")
+                    Spacer(Modifier.height(10.dp))
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        ToggleChip("睡眠", selected = state.sleep) { viewModel.toggleSleep() }
-                        ToggleChip("风向", selected = snapshot.toggles.swingOn) {
-                            viewModel.toggleSpecial(MideaAc.Toggle.SwingV)
+                        ToggleChip("摆风", snapshot.swingOn, enabled = state.power) {
+                            viewModel.toggleSwing()
                         }
-                        ToggleChip("屏显", selected = snapshot.toggles.lightOn) {
-                            viewModel.toggleSpecial(MideaAc.Toggle.Light)
+                        ToggleChip("强劲", snapshot.turboOn, enabled = state.power) {
+                            viewModel.toggleTurbo()
                         }
-                        ToggleChip("强力", selected = snapshot.toggles.turboOn) {
-                            viewModel.toggleSpecial(MideaAc.Toggle.Turbo)
-                        }
-                        ToggleChip("ECO", selected = snapshot.toggles.ecoOn) {
-                            viewModel.toggleSpecial(MideaAc.Toggle.Eco)
+                        ToggleChip("ECO", snapshot.ecoOn, enabled = state.power) {
+                            viewModel.toggleEco()
                         }
                     }
-                }
-
-                // 定时：两行，点开弹层选预设
-                AppCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp)) {
-                    Column {
-                        TimerRow("定时关机", state.offTimerMinutes) { timerTarget = TimerKind.Off }
-                        AppCardDivider()
-                        TimerRow("定时开机", state.onTimerMinutes) { timerTarget = TimerKind.On }
-                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "摆风 / 强劲 / ECO 是切换指令，芯片亮 = 本机记住的最近一次；关机时不可用。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
-            SettingsNote("面板显示的是本机记住的设置；红外遥控没有回执，可能与空调实际状态不一致。信号弱时对准空调长按电源键，会按当前设定连发几次。")
+            SettingsNote("面板显示的是本机记住的设置；红外遥控没有回执，可能与空调实际状态不一致。摆风 / 强劲 / ECO 重复按会翻转。信号弱时对准空调长按电源键，会按当前设定连发几次。")
             Spacer(Modifier.height(4.dp))
-        }
-    }
-
-    timerTarget?.let { kind ->
-        TimerPickerDialog(
-            title = if (kind == TimerKind.Off) "定时关机" else "定时开机",
-            currentMinutes = if (kind == TimerKind.Off) state.offTimerMinutes else state.onTimerMinutes,
-            onPick = { minutes ->
-                if (kind == TimerKind.Off) viewModel.setOffTimer(minutes) else viewModel.setOnTimer(minutes)
-                timerTarget = null
-            },
-            onDismiss = { timerTarget = null },
-        )
-    }
-}
-
-/** 协议卡：R05D / A1 二选一；切换只改本机口径，不发红外。 */
-@Composable
-private fun ProtocolCard(protocol: AcProtocol, onSelect: (AcProtocol) -> Unit) {
-    AppCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
-        Column {
-            ControlLabel("红外协议")
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ToggleChip("R05D（国内常见）", selected = protocol == AcProtocol.R05D) {
-                    onSelect(AcProtocol.R05D)
-                }
-                ToggleChip("A1（部分机型）", selected = protocol == AcProtocol.A1) {
-                    onSelect(AcProtocol.A1)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = if (protocol == AcProtocol.R05D) {
-                    "开关没反应时切到 A1 试试。R05D 只发开关 / 模式 / 温度 / 风速；切换后按一下电源键生效。"
-                } else {
-                    "A1 额外支持睡眠 / 定时 / 风向 / 屏显 / 强力 / ECO；没反应时换回 R05D。切换后按一下电源键生效。"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
 /** 模式芯片的展示顺序（与美的遥控习惯一致：自动 → 制冷 → 除湿 → 送风 → 制热）。 */
 private val MODE_ORDER = listOf(
-    MideaAc.Mode.Auto,
-    MideaAc.Mode.Cool,
-    MideaAc.Mode.Dry,
-    MideaAc.Mode.Fan,
-    MideaAc.Mode.Heat,
+    MideaR05d.Mode.Auto,
+    MideaR05d.Mode.Cool,
+    MideaR05d.Mode.Dry,
+    MideaR05d.Mode.Fan,
+    MideaR05d.Mode.Heat,
 )
 
-/** 定时预设（分钟）：30 分钟起、30 分钟一档，最多 8 小时，够寝室场景。 */
-private val TIMER_PRESETS = listOf(30, 60, 90, 120, 180, 240, 360, 480)
-
-/** 温度长按连发的起判时长与重复间隔（毫秒）：一组约 190–290ms，间隔留足。 */
+/** 温度长按连发的起判时长与重复间隔（毫秒）：一组约 192ms，间隔留足。 */
 private const val HOLD_START_DELAY_MS = 420L
 private const val HOLD_REPEAT_INTERVAL_MS = 680L
-
-/** 开关机定时的弹层目标。 */
-private enum class TimerKind { On, Off }
 
 /**
  * 电源圆钮：**单击切换开关机，长按不动状态、连发当前帧**（红外单向，面板记的状态
@@ -426,7 +357,12 @@ private fun <T> ChipRow(
 }
 
 @Composable
-private fun ToggleChip(label: String, selected: Boolean, onToggle: () -> Unit) {
+private fun ToggleChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onToggle: () -> Unit,
+) {
     val haptics = rememberAppHaptics()
     FilterChip(
         selected = selected,
@@ -434,41 +370,9 @@ private fun ToggleChip(label: String, selected: Boolean, onToggle: () -> Unit) {
             haptics.tap()
             onToggle()
         },
+        enabled = enabled,
         label = { Text(label, style = MaterialTheme.typography.bodySmall) },
     )
-}
-
-/** 定时行（卡内平铺行口径）：标题 + 当前值 + 右箭头，点开选择弹层。 */
-@Composable
-private fun TimerRow(label: String, minutes: Int?, onClick: () -> Unit) {
-    val haptics = rememberAppHaptics()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClickLabel = label) {
-                haptics.tap()
-                onClick()
-            }
-            .padding(vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge)
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = minutes?.let { "${hoursLabel(it)}后" } ?: "未设置",
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (minutes != null) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(4.dp))
-        Icon(
-            HugeIcons.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp),
-        )
-    }
 }
 
 @Composable
@@ -480,68 +384,17 @@ private fun ControlLabel(text: String) {
     )
 }
 
-/** 定时选择弹层：预设 + 「不定时」，当前值加粗高亮。 */
-@Composable
-private fun TimerPickerDialog(
-    title: String,
-    currentMinutes: Int?,
-    onPick: (Int?) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            DialogWindowFadeEffect()
-            Column {
-                TIMER_PRESETS.forEach { minutes ->
-                    val current = minutes == currentMinutes
-                    TextButton(
-                        onClick = { onPick(minutes) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = hoursLabel(minutes),
-                            color = if (current) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                    }
-                }
-                val none = currentMinutes == null
-                TextButton(
-                    onClick = { onPick(null) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = "不定时",
-                        color = if (none) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = if (none) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
-    )
+private fun modeLabel(mode: MideaR05d.Mode): String = when (mode) {
+    MideaR05d.Mode.Auto -> "自动"
+    MideaR05d.Mode.Cool -> "制冷"
+    MideaR05d.Mode.Dry -> "除湿"
+    MideaR05d.Mode.Fan -> "送风"
+    MideaR05d.Mode.Heat -> "制热"
 }
 
-private fun modeLabel(mode: MideaAc.Mode): String = when (mode) {
-    MideaAc.Mode.Auto -> "自动"
-    MideaAc.Mode.Cool -> "制冷"
-    MideaAc.Mode.Dry -> "除湿"
-    MideaAc.Mode.Fan -> "送风"
-    MideaAc.Mode.Heat -> "制热"
+private fun fanLabel(fan: MideaR05d.Fan): String = when (fan) {
+    MideaR05d.Fan.Auto -> "自动"
+    MideaR05d.Fan.Low -> "低"
+    MideaR05d.Fan.Medium -> "中"
+    MideaR05d.Fan.High -> "高"
 }
-
-private fun fanLabel(fan: MideaAc.Fan): String = when (fan) {
-    MideaAc.Fan.Auto -> "自动"
-    MideaAc.Fan.Low -> "低"
-    MideaAc.Fan.Medium -> "中"
-    MideaAc.Fan.High -> "高"
-}
-
-private fun hoursLabel(minutes: Int): String =
-    if (minutes % 60 == 0) "${minutes / 60}小时" else "${minutes / 60}.5小时"

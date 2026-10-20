@@ -7,8 +7,16 @@ package edu.jxslu.schedule.domain
  * 整帧**原样连发两遍**，校验靠成对的反码，没有额外校验和。
  * 关机不是「电源位」：B=0x7B、C=0xE0 是专用关机帧（实测 `B2 4D 7B 84 E0 1F`）。
  *
- * 波形与 [MideaAc] 同一量级：头 4400/4400、位 mark 550、1/0 间隔 1660/550、
+ * 波形：头 4400/4400、位 mark 550、1/0 间隔 1660/550、
  * 两帧之间 550/5220，末帧 550/8800（约 192ms 一组，仍在小米 HAL 的 400ms 预算内）。
+ *
+ * 扩展键（2026-10-20 加，编码来自第三方《R05d 电控功能说明书》与早期抓码，
+ * **真机未验证**）：
+ * - 摆风：`B2 4D 6B 94 E0 1F`，固定帧发两遍；
+ * - 强劲：`B5 4A F5 0A A2 5D`（A=0xB5），固定帧发两遍，再按一次关闭；
+ * - 经济（ECO）：先发 `B2 4D E0 1F 03 FC`，再发当前状态帧两遍；取消时只发状态帧
+ *   两遍（所以任意普通按键都会取消经济）。
+ * 睡眠 / 屏显没有公开编码，不做；定时（C/D 字节）未做。
  *
  * 依据：
  * - 中文 R05D 解码说明（帧结构 / 温度表 / 模式表）：
@@ -18,6 +26,16 @@ package edu.jxslu.schedule.domain
  * - 可工作的 ESP8266 实现（`poboll/esp-media-ir` 的 `IR_2.ino`）。
  */
 object MideaR05d {
+
+    /** 载波频率（Hz）。 */
+    const val FREQUENCY_HZ = 38_000
+
+    /**
+     * 单次 `transmit` 的时长预算（微秒）。小米 `ir-spi` HAL 的上限落在实测区间
+     * 583 ms（通过）～1166 ms（拒发）之间，取 400 ms 留余量；单组约 192 ms，
+     * ECO 三帧约 286 ms。
+     */
+    const val TRANSMIT_BUDGET_US = 400_000
 
     /** 温度档位（摄氏度）。 */
     const val MIN_TEMP_C = 17
@@ -83,6 +101,31 @@ object MideaR05d {
         return intArrayOf(0xB2, 0x4D, b, b.inv() and 0xFF, c, c.inv() and 0xFF)
     }
 
+    /** 摆风固定帧（A=0xB2、B=0x6B、C=0xE0）。 */
+    fun swingFrame(): IntArray = fixedFrame(0xB2, 0x6B, 0xE0)
+
+    /** 强劲固定帧（A=0xB5、B=0xF5、C=0xA2）；再按一次关闭。 */
+    fun turboFrame(): IntArray = fixedFrame(0xB5, 0xF5, 0xA2)
+
+    /** 经济（ECO）前置帧（A=0xB2、J=0xE0、K=0x03）。 */
+    fun ecoFrame(): IntArray = fixedFrame(0xB2, 0xE0, 0x03)
+
+    /** 三个字节 + 反码，组成一条 6 字节帧。 */
+    private fun fixedFrame(a: Int, b: Int, c: Int): IntArray = intArrayOf(
+        a, a.inv() and 0xFF,
+        b, b.inv() and 0xFF,
+        c, c.inv() and 0xFF,
+    )
+
+    /** 摆风 / 强劲：固定帧按普通帧口径发两遍。 */
+    fun swingPattern(): IntArray = pattern(swingFrame())
+
+    fun turboPattern(): IntArray = pattern(turboFrame())
+
+    /** ECO：经济帧 + 当前状态帧两遍；取消时调用方发普通状态帧即可。 */
+    fun ecoPattern(state: State): IntArray =
+        patternOf(listOf(ecoFrame(), frame(state), frame(state)))
+
     // ---- 波形常量（微秒）----
     const val HEADER_MARK_US = 4_400
     const val HEADER_SPACE_US = 4_400
@@ -92,8 +135,11 @@ object MideaR05d {
     const val SECTION_GAP_US = 5_220
     const val FINAL_GAP_US = 8_800
 
-    /** 一组（两帧原样连发）的脉冲个数：2×(2 头 + 96 位 + 2 尾) = 200。 */
-    const val GROUP_LENGTH = 200
+    /** 单帧的脉冲个数：2 头 + 96 位 + 2 尾 = 100。 */
+    const val FRAME_LENGTH = 100
+
+    /** 一组（两帧原样连发）的脉冲个数：2×100 = 200。 */
+    const val GROUP_LENGTH = 2 * FRAME_LENGTH
 
     /**
      * 6 字节帧 → ConsumerIrManager 的时长序列（微秒，交替通断、以通开头）。
@@ -103,12 +149,27 @@ object MideaR05d {
      */
     fun pattern(frame: IntArray, repeats: Int = 1): IntArray {
         require(repeats >= 1) { "repeats 至少为 1" }
-        val out = IntArray(repeats * GROUP_LENGTH)
+        // 每组两帧、组尾留 [FINAL_GAP_US]；多组时每组都是完整的一组。
+        val group = patternOf(listOf(frame, frame))
+        if (repeats == 1) return group
+        val out = IntArray(repeats * group.size)
+        repeat(repeats) { index -> group.copyInto(out, index * group.size) }
+        return out
+    }
+
+    /**
+     * 任意帧序列 → 时长序列；每帧之间留 [SECTION_GAP_US]，末帧留 [FINAL_GAP_US]。
+     * ECO 的三帧序列走这里（普通一组等价于传两帧相同内容）。
+     */
+    fun patternOf(frames: List<IntArray>): IntArray {
+        require(frames.isNotEmpty()) { "至少一帧" }
+        frames.forEach { require(it.size == 6) { "每帧 6 字节" } }
+        val out = IntArray(frames.size * FRAME_LENGTH)
         var i = 0
         fun put(value: Int) {
             out[i++] = value
         }
-        fun emitFrame() {
+        frames.forEachIndexed { index, frame ->
             put(HEADER_MARK_US)
             put(HEADER_SPACE_US)
             for (byte in frame) {
@@ -118,12 +179,7 @@ object MideaR05d {
                 }
             }
             put(BIT_MARK_US)
-            put(SECTION_GAP_US)
-        }
-        repeat(repeats) {
-            emitFrame()
-            emitFrame()
-            out[i - 1] = FINAL_GAP_US
+            put(if (index == frames.lastIndex) FINAL_GAP_US else SECTION_GAP_US)
         }
         return out
     }

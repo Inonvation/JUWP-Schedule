@@ -1,13 +1,13 @@
 package edu.jxslu.schedule
 
-import edu.jxslu.schedule.domain.MideaAc
 import edu.jxslu.schedule.domain.MideaR05d
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 美的 R05D 协议（DESIGN §4.48）：帧字节、反码对、温度 / 模式 / 风速表与波形。
+ * 美的 R05D 协议（DESIGN §4.48）：帧字节、反码对、温度 / 模式 / 风速表、波形，
+ * 以及摆风 / 强劲 / ECO 三个扩展键的固定帧。
  *
  * 开机 / 关机向量取自实测遥控（自动风 26℃ 制冷 / 关机）：
  * `B2 4D BF 40 D0 2F` / `B2 4D 7B 84 E0 1F`。
@@ -99,7 +99,7 @@ class MideaR05dTest {
         assertEquals(191_600L, MideaR05d.totalMicros(pattern))
         assertTrue(
             "R05D 单组必须留在小米 HAL 的预算内",
-            MideaR05d.totalMicros(pattern) <= MideaAc.TRANSMIT_BUDGET_US,
+            MideaR05d.totalMicros(pattern) <= MideaR05d.TRANSMIT_BUDGET_US,
         )
     }
 
@@ -109,5 +109,49 @@ class MideaR05dTest {
         assertEquals(400, out.size)
         assertEquals(8800, out[199])
         assertEquals(listOf(4400, 4400), out.drop(200).take(2))
+    }
+
+    @Test
+    fun `摆风固定帧`() {
+        assertEquals(
+            listOf(0xB2, 0x4D, 0x6B, 0x94, 0xE0, 0x1F),
+            MideaR05d.swingFrame().toList(),
+        )
+        assertEquals(MideaR05d.GROUP_LENGTH, MideaR05d.swingPattern().size)
+    }
+
+    @Test
+    fun `强劲固定帧`() {
+        assertEquals(
+            listOf(0xB5, 0x4A, 0xF5, 0x0A, 0xA2, 0x5D),
+            MideaR05d.turboFrame().toList(),
+        )
+        assertEquals(MideaR05d.GROUP_LENGTH, MideaR05d.turboPattern().size)
+    }
+
+    @Test
+    fun `ECO 三帧是经济帧加两遍状态帧`() {
+        assertEquals(
+            listOf(0xB2, 0x4D, 0xE0, 0x1F, 0x03, 0xFC),
+            MideaR05d.ecoFrame().toList(),
+        )
+        val out = MideaR05d.ecoPattern(MideaR05d.State(power = true))
+        assertEquals(3 * MideaR05d.FRAME_LENGTH, out.size)
+        assertEquals(5220, out[99])
+        assertEquals(5220, out[199])
+        assertEquals(8800, out[299])
+        val normal = MideaR05d.pattern(frame())
+        assertEquals(normal.copyOfRange(0, 100).toList(), out.copyOfRange(100, 200).toList())
+        assertEquals(normal.copyOfRange(100, 200).toList(), out.copyOfRange(200, 300).toList())
+    }
+
+    @Test
+    fun `ECO 三帧约 286ms 在发射预算内`() {
+        val pattern = MideaR05d.ecoPattern(MideaR05d.State(power = true))
+        assertEquals(285_610L, MideaR05d.totalMicros(pattern))
+        assertTrue(
+            "ECO 三帧必须留在小米 HAL 的预算内",
+            MideaR05d.totalMicros(pattern) <= MideaR05d.TRANSMIT_BUDGET_US,
+        )
     }
 }

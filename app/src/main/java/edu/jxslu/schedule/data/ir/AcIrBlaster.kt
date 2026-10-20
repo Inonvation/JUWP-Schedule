@@ -3,18 +3,17 @@ package edu.jxslu.schedule.data.ir
 import android.content.Context
 import android.hardware.ConsumerIrManager
 import android.util.Log
-import edu.jxslu.schedule.domain.MideaAc
+import edu.jxslu.schedule.domain.MideaR05d
 
 /**
  * 空调红外发射（DESIGN §4.48）：ConsumerIrManager 的薄封装。
  *
  * 平台的红外出口只有一条：`ConsumerIrManager.transmit(载波频率, 时长序列)`，
  * 由系统服务转给红外 HAL；`TRANSMIT_IR` 是普通权限（安装即授予，无运行时申请）。
- * 时长序列由协议层（[MideaAc] / [edu.jxslu.schedule.domain.MideaR05d]）生成，
- * 这里只管发射与「有没有发射器」。
+ * 时长序列由协议层（[MideaR05d]）生成，这里只管发射与「有没有发射器」。
  *
  * 注意 `transmit` 在多数机型上是**同步**的（等整条序列发完才返回，
- * 一组约 190–290 ms，视协议），
+ * 一组约 192 ms，ECO 三帧约 286 ms），
  * 所以调用方必须在后台线程、并串行化调用。
  */
 class AcIrBlaster(context: Context) {
@@ -36,13 +35,13 @@ class AcIrBlaster(context: Context) {
         val current = manager
             ?: return TransmitResult.Failed("本机没有红外服务")
         if (!current.hasIrEmitter()) return TransmitResult.Failed("本机没有红外发射器")
-        val totalUs = MideaAc.totalMicros(pattern)
-        if (totalUs > MideaAc.TRANSMIT_BUDGET_US) {
+        val totalUs = MideaR05d.totalMicros(pattern)
+        if (totalUs > MideaR05d.TRANSMIT_BUDGET_US) {
             // 自己先拦：超预算的序列在小米上是整条丢弃，发出去等于没发。
             Log.w(TAG, "pattern 超预算被拦下: ${totalUs}us")
             return TransmitResult.Failed("发射序列过长（${totalUs / 1000}ms）")
         }
-        return runCatching { current.transmit(MideaAc.FREQUENCY_HZ, pattern) }
+        return runCatching { current.transmit(MideaR05d.FREQUENCY_HZ, pattern) }
             .fold(
                 onSuccess = { TransmitResult.Sent },
                 onFailure = { error ->
