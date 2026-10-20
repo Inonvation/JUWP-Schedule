@@ -157,15 +157,15 @@ class KvcxViewModel(
 
     fun updatePassword(value: String) = _uiState.update { it.copy(password = value.take(64)) }
 
-    /** 登录：失败保留输入（用户改完直接重试），提示经 Snackbar。 */
-    fun login() = viewModelScope.launch {
+    /** 登录：失败保留输入（用户改完直接重试），提示经 Snackbar。[remember] 默认关。 */
+    fun login(remember: Boolean = false) = viewModelScope.launch {
         val s = _uiState.value
         if (s.mobile.length != 11) {
             _uiState.update { it.copy(mobileError = "请输入 11 位手机号") }
             return@launch
         }
         _uiState.update { it.copy(loggingIn = true) }
-        runCatching { session.login(s.mobile, s.password) }
+        runCatching { session.login(s.mobile, s.password, remember) }
             .onSuccess {
                 // 登录态由仓库流回灌（init 里的 collect 会置 loggedIn / accountMobile）
                 notice("登录成功", NoticeTone.Success)

@@ -652,8 +652,8 @@ class WenquViewModel(
         }
     }
 
-    /** 手机号 + 密码登录。 */
-    fun login(phone: String, password: String) {
+    /** 手机号 + 密码登录。[rememberPassword] 默认关：只存 token，不存密码。 */
+    fun login(phone: String, password: String, rememberPassword: Boolean = false) {
         if (!WenquRules.isValidPhone(phone)) {
             _state.update { it.copy(message = "请输入 11 位手机号") }
             return
@@ -665,7 +665,7 @@ class WenquViewModel(
         viewModelScope.launch {
             _state.update { it.copy(busy = true) }
             try {
-                repo.login(phone.trim(), password)
+                repo.login(phone.trim(), password, rememberPassword)
                 _state.update { it.copy(busy = false, message = "登录成功") }
             } catch (e: CancellationException) {
                 throw e
@@ -696,8 +696,13 @@ class WenquViewModel(
         }
     }
 
-    /** 首次设置 / 忘记密码：验证码 + 新密码 → 登录。 */
-    fun setupPassword(phone: String, captcha: String, password: String) {
+    /** 首次设置 / 忘记密码：验证码 + 新密码 → 登录。[rememberPassword] 默认关。 */
+    fun setupPassword(
+        phone: String,
+        captcha: String,
+        password: String,
+        rememberPassword: Boolean = false,
+    ) {
         if (!WenquRules.isValidPhone(phone)) {
             _state.update { it.copy(message = "请输入 11 位手机号") }
             return
@@ -713,7 +718,7 @@ class WenquViewModel(
         viewModelScope.launch {
             _state.update { it.copy(busy = true) }
             try {
-                repo.setupPassword(phone.trim(), captcha.trim(), password)
+                repo.setupPassword(phone.trim(), captcha.trim(), password, rememberPassword)
                 _state.update { it.copy(busy = false, message = "设置成功，已登录") }
             } catch (e: CancellationException) {
                 throw e

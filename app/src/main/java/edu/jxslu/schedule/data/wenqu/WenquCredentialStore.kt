@@ -6,7 +6,8 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * 问渠登录凭证（DESIGN §4.45）。**含密码**——与一卡通 / 快趣同级处理。
+ * 问渠登录凭证（DESIGN §4.45）。**密码可选**——「记住登录」关掉（默认）时只落 token，
+ * 存了密码才能在 JWT 到期前自动续期（见 [WenquSession.canRefresh]）。
  *
  * [expiresAt] 从 JWT 的 `exp` 解析；[hours] / [starLevel] 是**上次成功取到的展示影子**，
  * 用于「我的」页账号卡一行与问渠页首屏，进页后会再刷一次。
@@ -22,7 +23,14 @@ data class WenquSession(
     val hours: Double = 0.0,
     val hoursFetchedAt: Long = 0L,
 ) {
-    val isComplete: Boolean get() = phone.isNotBlank() && password.isNotBlank() && token.isNotBlank()
+    /**
+     * 会话可用的判据：手机号 + token。**密码不是必要条件**——「记住登录」关掉时只存 token
+     * （2026-10-20 用户拍板，默认关），JWT 有效期内照常可用。
+     */
+    val isComplete: Boolean get() = phone.isNotBlank() && token.isNotBlank()
+
+    /** 存了密码才能自动续期；没存密码的会话在 JWT 到期后要求重新登录。 */
+    val canRefresh: Boolean get() = password.isNotBlank()
 }
 
 /**

@@ -15,87 +15,37 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.xg.XgForm
 import edu.jxslu.schedule.data.xg.XgUrls
-import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Calendar03
 import me.rerere.hugeicons.stroke.ClipboardList
-import me.rerere.hugeicons.stroke.CreditCard
-import me.rerere.hugeicons.stroke.Droplet
-import me.rerere.hugeicons.stroke.HeartHandshake
+import me.rerere.hugeicons.stroke.LockPassword
 import me.rerere.hugeicons.stroke.Repair
-import me.rerere.hugeicons.stroke.ScooterElectric
-import me.rerere.hugeicons.stroke.ShowerHead
-import me.rerere.hugeicons.stroke.WashingMachine
 
 /**
  * 我的 → 校园服务（DESIGN §3.3，2026-09-28 自「扩展服务」改名瘦身）。
  *
- * 本页只剩两类**要登录的系统**：学校系统（统一身份认证，账号与内容都在学校服务器上）
- * 与第三方账号（凭证在第三方手里）。节标题即数据去向声明——分开列，用户才知道
- * 哪个能放心填（2026-09-23 改版定下的原则，原样保留）。
- *
- * 本轮迁出的东西：「今日页」节（快捷方式入口 + 快趣出行码开关）整体迁往
- * 通用设置的「功能开关」节，本页不再管「功能是否出现」，只管登录与服务本身。
- *
- * 三方账号行右侧带登录态（实时订阅仓库流）。胖乖 / 趣智被功能开关关掉后，
- * 本页入口**仍然显示**：这里是重新打开服务的入口，否则关掉后唯一入口在
- * 通用设置会造成死路。
+ * 本页只保留**学校系统**（统一身份认证，账号与内容都在学校服务器上）与校历。
+ * 第三方账号 2026-10-20 整体并入「账号与登录」：这里不再维护第二份登录态与入口，
+ * 否则同一个账号在两处各有一套「已登录 / 点击登录」文案，迟早对不上。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExtensionServicesHubScreen(
     onBack: () -> Unit,
-    onOpenCampusCard: () -> Unit,
-    onOpenWater: () -> Unit,
-    /** 趣智校园开热水（DESIGN §4.30）。登录 / 余额 / 账单都在这一页。 */
-    onOpenQzxy: () -> Unit,
-    /** 快趣账号页（DESIGN §4.32）：登录与本机骑行记录，A 档不碰开车还车。 */
-    onOpenKvcx: () -> Unit,
+    /** 账号与登录（2026-10-20）：第三方账号的状态与补登入口统一在那一页。 */
+    onOpenAccounts: () -> Unit,
     /** 校历（DESIGN §4.34）：免登录，图来自仓库镜像 + 内置兜底。 */
     onOpenCampusCalendar: () -> Unit,
-    /** U净 洗衣房（DESIGN §4.37）：空闲看板 · 扫码识别；登录凭据在第三方手里。 */
-    onOpenUjing: () -> Unit,
-    /** 问渠 · 志愿服务（DESIGN §3.28 / §4.45）：手机号 + 密码登录，志愿工时 / 活动报名 / 劳动教育。 */
-    onOpenWenqu: () -> Unit,
     onOpenXgForm: (XgForm) -> Unit,
 ) {
-    val context = LocalContext.current
-    // 三方登录态订阅仓库的流（2026-09-27 口径）：登录 / 退出在任何窗口发生都即时生效
-    val waterLoggedIn by remember { Graph.qiekj(context).loggedIn }
-        .collectAsStateWithLifecycle()
-    val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }
-        .collectAsStateWithLifecycle()
-    val kvcxLoggedIn by remember { Graph.kqcx(context).loggedIn }
-        .collectAsStateWithLifecycle()
-    val ujingLoggedIn by remember { Graph.ujing(context).loggedIn }
-        .collectAsStateWithLifecycle()
-    val wenquLoggedIn by remember { Graph.wenqu(context).loggedIn }
-        .collectAsStateWithLifecycle()
-    // 使用方式（DESIGN §3.9 / §4.32）：**快趣出行账号入口只属于账号登录方式**——
-    // 小程序方式不碰快趣账号，入口留着就是它用不到的功能（切回去入口自然回来）。
-    // 初值阻塞读一次（同 MeViewModel.initialPrefs 模式）：入口行不该先冒出来再消失
-    val ebikePrefs = remember(context) { Graph.displayPrefs(context) }
-    val ebikeUseMode by ebikePrefs.ebikeUseMode.collectAsStateWithLifecycle(
-        initialValue = remember { runBlocking { ebikePrefs.ebikeUseMode.first() } },
-    )
-    // 能力矩阵（DESIGN §3.9）：账号入口只属于 App 内用车那一档
-    val kvcxAccountMode = ebikeUseMode.capabilities().inAppRide
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -141,59 +91,14 @@ fun ExtensionServicesHubScreen(
             }
 
             SettingsSection(
-                title = "第三方账号",
-                subtitle = "凭证存于第三方 · 非学校官方功能",
+                title = "账号",
+                subtitle = "第三方账号的状态与补登入口",
             ) {
                 SettingItem(
-                    title = "水宝宝一卡通",
-                    subtitle = "余额 · 付款码 · 流水 · 充值",
-                    icon = HugeIcons.CreditCard,
-                    onClick = onOpenCampusCard,
-                )
-                SettingItem(
-                    title = "胖乖生活",
-                    subtitle = "开水 · 余额 · 订单",
-                    icon = HugeIcons.Droplet,
-                    value = if (waterLoggedIn) "已登录" else "点击登录",
-                    onClick = onOpenWater,
-                )
-                SettingItem(
-                    title = "趣智校园",
-                    subtitle = "开热水 · 余额 · 账单",
-                    // 花洒：这是「洗澡开热水」，不是喝水（与账户卡那一格同图标）
-                    icon = HugeIcons.ShowerHead,
-                    value = if (qzxyLoggedIn) "已登录" else "点击登录",
-                    onClick = onOpenQzxy,
-                )
-                // 快趣账号页：只在「账号登录」使用方式下出现（见上）。
-                // 小程序方式要改使用方式，去快趣出行页标题栏那枚 chip。
-                // 快趣出行的主页面入口不放这里（2026-10-05 用户口径：多余）——
-                // 今日页快趣卡就是它的门，本页只留账号管理
-                if (kvcxAccountMode) {
-                    SettingItem(
-                        title = "快趣账号",
-                        subtitle = "登录 · 本机骑行记录（开锁 / 还车在快趣出行页）",
-                        icon = HugeIcons.ScooterElectric,
-                        value = if (kvcxLoggedIn) "已登录" else "点击登录",
-                        onClick = onOpenKvcx,
-                    )
-                }
-                // U净（2026-10-01 加入）：美的校园洗衣——空闲看板 / 扫码识别（P1 只读）
-                SettingItem(
-                    title = "U净",
-                    subtitle = "洗衣房空闲 · 扫码识别洗衣机",
-                    icon = HugeIcons.WashingMachine,
-                    value = if (ujingLoggedIn) "已登录" else "点击登录",
-                    onClick = onOpenUjing,
-                )
-                // 问渠（2026-10-08 加入）：学校「问渠」实践教育平台的志愿工时 / 劳动教育
-                // （2026-10-11 起可报名 / 取消报名，见 DESIGN §4.45）
-                SettingItem(
-                    title = "问渠 · 志愿服务",
-                    subtitle = "志愿工时 · 活动报名 · 劳动教育",
-                    icon = HugeIcons.HeartHandshake,
-                    value = if (wenquLoggedIn) "已登录" else "点击登录",
-                    onClick = onOpenWenqu,
+                    title = "账号与登录",
+                    subtitle = "教务 · 一卡通 · 开水 · 洗澡 · 洗衣 · 骑行 · 志愿",
+                    icon = HugeIcons.LockPassword,
+                    onClick = onOpenAccounts,
                 )
             }
         }

@@ -487,6 +487,19 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 清除学籍卡缓存（「清除全部凭证」时用）：姓名 / 班级 / 学号与补抓闸门一起删。
+     * 不清的话，凭证已经清空、账号卡还会显示上一个登录者的姓名与班级。
+     */
+    suspend fun clearProfile() {
+        context.displayDataStore.edit { p ->
+            p.remove(KEY_PROFILE_NAME)
+            p.remove(KEY_PROFILE_CLASS)
+            p.remove(KEY_PROFILE_STUDENT_ID)
+            p.remove(KEY_PROFILE_SYNC_DATE)
+        }
+    }
+
+    /**
      * 「我的」页学籍卡补抓的日期闸门（DESIGN §3.3）。空 = 从没试过。
      *
      * 抓不到时不能每次进页都重试——那是白打教务。与余额提醒的 `balanceAlertCheckMillis`

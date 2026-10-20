@@ -185,20 +185,25 @@ POST /api/volunteer/apply/cancel/{id}   {}（id 走路径）                  �
 
 ## 本地凭证
 
-- 独立文件 **`secure_wenqu`**（`EncryptedSharedPreferences`，**含密码**——与一卡通查询密码、
-  快趣账号密码同级）。**两份备份排除 xml 都要登记**（正式件 + `.fallback`），
+- 独立文件 **`secure_wenqu`**（`EncryptedSharedPreferences`，**密码可选**——「记住登录」
+  默认关（2026-10-20 用户拍板），关掉时只存 token；与一卡通查询密码、快趣账号密码同级）。
+  **两份备份排除 xml 都要登记**（正式件 + `.fallback`），
   漏了会把明文密码带进云备份。
 - 自愈三段照抄 `QzxySessionStore`（create 失败 → 删文件重建 → 退明文空 prefs），
   别省——Keystore 损坏时裸 create 在组合期抛异常 = 启动即循环崩溃。
 - 存了 token 的 `expiresAt`（从 JWT 解）+ 工时影子（`hours` / `hoursFetchedAt`）。
+- **`isComplete` = 手机号 + token**（密码不是必要条件）；`canRefresh` = 密码非空。
+  JWT 快到期时只有 `canRefresh` 才自动重登，否则抛 `WenquSessionExpiredException` 让 UI
+  引导重新登录。`login(phone, password, rememberPassword = false)` 是唯一落盘口；
+  内部续期调用必须显式传 `rememberPassword = true`，否则会把已存的密码擦掉。
 
 ## 页面与展示
 
 - **「我的」页账号卡的班级行**（`SettingsScreen.AccountBar`）：班级 + `· 志愿 N 工时`。
   **班级先让位**（吃余量、可省略），工时优先保完整；点工时进问渠页。
   未登录时这一行照旧只有班级。
-- **校园服务 → 第三方账号**：`问渠 · 志愿服务` 行，`value = 已登录 / 点击登录`，
-  副标题「志愿工时 · 活动报名 · 劳动教育」。
+- **账号与登录 → 生活服务**：`问渠 · 志愿服务` 行（2026-10-20 自校园服务迁入），
+  行尾状态胶囊（已登录 / 登录 / 重新登录），副标题「志愿工时 · 活动报名」。
 - **今日页顶栏「+」→「志愿服务」**也落问渠页（2026-10-08，见 `.agents/rules/today-ui.md`）。
 - 问渠页（`SubpageScreen.WENQU`）已登录时**两块**（2026-10-11 按提案页收口）：
   **工时行**（一行：工时数 + 小时 + 星级 + 右侧「记录 ›」）→ **可报名活动**

@@ -318,20 +318,38 @@ class WenquRepository(
     }
 
     /** 首次设置 / 忘记密码：验证码 + 新密码 → 落盘并进入登录态。 */
-    suspend fun setupPassword(phone: String, captcha: String, password: String): WenquSession =
+    suspend fun setupPassword(
+        phone: String,
+        captcha: String,
+        password: String,
+        rememberPassword: Boolean = false,
+    ): WenquSession =
         loginMutex.withLock {
             withContext(Dispatchers.IO) {
                 api.resetPassword(phone, captcha, password).requireSuccess()
-                persistLogin(phone, password)
+                persistLogin(phone, password, rememberPassword)
             }
         }
 
-    /** 手机号 + 密码登录。 */
-    suspend fun login(phone: String, password: String): WenquSession = loginMutex.withLock {
-        withContext(Dispatchers.IO) { persistLogin(phone, password) }
+    /**
+     * 手机号 + 密码登录。
+     *
+     * [rememberPassword] = false（默认，2026-10-20 用户拍板）时**只存 token、不存密码**：
+     * 会话在 JWT 有效期内照常可用，到期后要求重新登录；自动续期只在存了密码时可用。
+     */
+    suspend fun login(
+        phone: String,
+        password: String,
+        rememberPassword: Boolean = false,
+    ): WenquSession = loginMutex.withLock {
+        withContext(Dispatchers.IO) { persistLogin(phone, password, rememberPassword) }
     }
 
-    private suspend fun persistLogin(phone: String, password: String): WenquSession {
+    private suspend fun persistLogin(
+        phone: String,
+        password: String,
+        rememberPassword: Boolean,
+    ): WenquSession {
         // 换人登录：上一位的缓存一条都不能留（否则新用户会看到别人的记录）
         val previousPhone = store.read()?.phone
         val envelope = api.login(phone, password)
@@ -342,7 +360,8 @@ class WenquRepository(
         if (previousPhone != null && previousPhone != phone) clearCaches()
         val session = WenquSession(
             phone = phone,
-            password = password,
+            // 记住登录关掉时密码不落盘：只剩 token，JWT 到期后要求重新输入
+            password = if (rememberPassword) password else "",
             token = data.token,
             expiresAt = WenquRules.jwtExpiryMillis(data.token),
         )
@@ -979,7 +998,9 @@ class WenquRepository(
             first.requireSuccess()
             return first.data ?: JsonNull
         }
-        val renewed = login(session.phone, session.password)
+        // 没存密码（记住登录关掉）时不能续期，直接让上层引导重新登录
+        if (!session.canRefresh) throw WenquSessionExpiredException("登录已过期，请重新登录")
+        val renewed = login(session.phone, session.password, rememberPassword = true)
         val second = call(renewed.token)
         second.requireSuccess()
         return second.data ?: JsonNull
@@ -990,7 +1011,9 @@ class WenquRepository(
         val session = store.read()?.takeIf { it.isComplete }
             ?: throw WenquSessionExpiredException("未登录")
         if (!WenquRules.needsRefresh(session.expiresAt, now())) return session
-        return login(session.phone, session.password)
+        // 没存密码（记住登录关掉）时不能续期，直接让上层引导重新登录
+        if (!session.canRefresh) throw WenquSessionExpiredException("登录已过期，请重新登录")
+        return login(session.phone, session.password, rememberPassword = true)
     }
 
     /** 平台发码失败是 `status:200` + 这句 msg，翻成人话再抛。 */

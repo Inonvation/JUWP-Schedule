@@ -415,7 +415,7 @@ fun WaterScreen(
 private fun LoginSection(state: WaterUiState, viewModel: WaterViewModel) {
     SettingsSection(
         title = "登录",
-        subtitle = "手机号短信登录；充值与退款都在官方渠道完成。",
+        subtitle = "手机号短信登录；只保存登录状态，不保存密码。充值与退款走官方渠道。",
     ) {
         OutlinedTextField(
             value = state.phone,

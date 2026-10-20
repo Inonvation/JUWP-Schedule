@@ -251,7 +251,7 @@ fun WenquSettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit) {
             SettingsSection(title = "登录", subtitle = "凭证只存本机（加密存储，不进云备份）") {
                 SettingItem(
                     title = "退出登录",
-                    subtitle = "清除本机保存的问渠手机号与密码",
+                    subtitle = "清除本机保存的问渠手机号、密码与会话",
                     icon = HugeIcons.Logout03,
                     onClick = { confirmingLogout = true },
                 )

@@ -16,6 +16,7 @@ import edu.jxslu.schedule.ui.me.ShortcutSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
 import edu.jxslu.schedule.ui.me.WidgetSettingsScreen
 import edu.jxslu.schedule.ui.me.hub.AboutScreen
+import edu.jxslu.schedule.ui.me.hub.AccountsHubScreen
 import edu.jxslu.schedule.ui.me.hub.ExtensionServicesHubScreen
 import edu.jxslu.schedule.ui.me.hub.GeneralSettingsScreen
 import edu.jxslu.schedule.ui.me.hub.LearningHubScreen
@@ -141,6 +142,8 @@ enum class SubpageScreen {
     QUIET_HOURS,
     /** 我的 → 校园服务汇总页（2026-09-28 自「扩展服务」改名瘦身，DESIGN §3.3） */
     EXT_SERVICES_HUB,
+    /** 我的 → 账号与登录（全量账号状态 · 补登入口，2026-10-20，DESIGN §3.3） */
+    ACCOUNTS,
     /** 我的 → 关于页（版本 · 免责 · 仓库 · 权限入口，DESIGN §3.3） */
     ABOUT,
     /** 今日 → 校园卡付款码展示页（DESIGN §3.10；FLAG_SECURE 独立窗口） */
@@ -488,19 +491,31 @@ class SubpageActivity : ComponentActivity() {
                 },
             )
             SubpageScreen.QUIET_HOURS -> QuietHoursScreen(onBack = onBack)
-            SubpageScreen.EXT_SERVICES_HUB -> ExtensionServicesHubScreen(
+            SubpageScreen.ACCOUNTS -> AccountsHubScreen(
                 onBack = onBack,
-                onOpenCampusCard = {
+                onOpenJw = { SubpageActivity.start(this, SubpageScreen.JW_ACCOUNT) },
+                onOpenYkt = {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CARD_SETTINGS)
                 },
-                onOpenWater = { SubpageActivity.start(this, SubpageScreen.WATER) },
+                onOpenQiekj = { SubpageActivity.start(this, SubpageScreen.WATER) },
                 onOpenQzxy = { SubpageActivity.start(this, SubpageScreen.QZXY) },
+                onOpenUjing = { SubpageActivity.start(this, SubpageScreen.UJING) },
                 onOpenKvcx = { SubpageActivity.start(this, SubpageScreen.KVCX) },
+                // 小程序方式下快趣没有账号可登：点行进骑行页切使用方式
+                onOpenRide = { SubpageActivity.start(this, SubpageScreen.RIDE) },
+                onOpenWenqu = { SubpageActivity.start(this, SubpageScreen.WENQU) },
+                onOpenAiSettings = { SubpageActivity.start(this, SubpageScreen.AI_SETTINGS) },
+            )
+            SubpageScreen.EXT_SERVICES_HUB -> ExtensionServicesHubScreen(
+                onBack = onBack,
+                // 第三方账号 2026-10-20 并入「账号与登录」：本页只留学校系统与校历，
+                // 不再维护第二份账号状态与登录入口
+                onOpenAccounts = {
+                    SubpageActivity.start(this, SubpageScreen.ACCOUNTS)
+                },
                 onOpenCampusCalendar = {
                     SubpageActivity.start(this, SubpageScreen.CAMPUS_CALENDAR)
                 },
-                onOpenUjing = { SubpageActivity.start(this, SubpageScreen.UJING) },
-                onOpenWenqu = { SubpageActivity.start(this, SubpageScreen.WENQU) },
                 // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
                 onOpenXgForm = { form -> XgFormActivity.start(this, form) },
             )

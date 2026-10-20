@@ -392,6 +392,12 @@ private fun LoginSection(state: QzxyUiState, viewModel: QzxyViewModel) {
         ) {
             Text(if (state.loggingIn) "登录中…" else "登录")
         }
+        Text(
+            "只保存登录状态，不保存密码。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            modifier = Modifier.padding(top = 4.dp),
+        )
         TextButton(
             onClick = { viewModel.toggleUseSmsLogin() },
             modifier = Modifier.fillMaxWidth(),

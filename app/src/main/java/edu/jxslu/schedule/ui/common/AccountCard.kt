@@ -114,8 +114,8 @@ fun AccountCard(
 /**
  * 登录态 → 颜色。已登录用主色、失效用 error、未登录用灰。
  *
- * `internal` 而非 private：「我的」页账号卡的三格服务入口（`SettingsScreen`）用同一份口径，
- * 两处各写一个 when 迟早会对不上。
+ * `internal` 而非 private：`AccountCard` 自身与「我的」页账号卡的标题兜底（`SettingsScreen`）
+ * 用同一份口径，两处各写一个 when 迟早会对不上。
  */
 @Composable
 internal fun LoginState.tint(): Color = when (this) {

@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -461,6 +462,8 @@ private fun AccountSection(state: KvcxUiState, viewModel: KvcxViewModel) {
 @Composable
 private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
     var showPassword by remember { mutableStateOf(false) }
+    // 记住登录（2026-10-20 用户拍板：默认关）：关掉时凭证不落盘，仅本次进程有效
+    var remember by remember { mutableStateOf(false) }
     // 卡片化（2026-09-29 统一风格）：本页其余区块都是 SettingsSection，登录表单裸在页面
     // 背景上会显得"没装进容器"；它又是本页的主任务，套同一套容器最稳
     SettingsSection(
@@ -499,8 +502,23 @@ private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("记住登录", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "关闭则不保存密码；下次打开需要重新登录",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+            Switch(checked = remember, onCheckedChange = { remember = it })
+        }
+        Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { viewModel.login() },
+            onClick = { viewModel.login(remember) },
             enabled = !state.loggingIn && state.mobile.isNotBlank() && state.password.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
@@ -513,7 +531,7 @@ private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
         Text(
             text = "忘记或不知道密码？在微信里打开「快趣出行」小程序：登录页点「忘记密码」，" +
                 "用手机号 + 短信验证码重设；登录后在「设置 → 修改密码」也能改。" +
-                "密码只保存在本机（加密存储），请妥善保管。",
+                "密码默认不保存；打开「记住登录」后才会加密存在本机，请妥善保管。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             modifier = Modifier.padding(top = 10.dp),

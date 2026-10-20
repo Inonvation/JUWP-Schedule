@@ -236,7 +236,8 @@ MainActivity → 底栏今日/课表/生活/我的（生活页可关，默认开
                笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
                HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
                UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37；
-               调课处置页 SCHEDULE_CHANGES，§4.17；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
+               调课处置页 SCHEDULE_CHANGES，§4.17；账号与登录 ACCOUNTS（全量账号状态与
+               补登入口，2026-10-20），§3.3；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
                培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES，§3.26 / §3.27；问渠 WENQU +
                志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
                 WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交）+ 预报名

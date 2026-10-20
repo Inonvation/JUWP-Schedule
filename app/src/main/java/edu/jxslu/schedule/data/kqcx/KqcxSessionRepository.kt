@@ -57,13 +57,16 @@ class KqcxSessionRepository(
     // ---------- 登录 / 会话 ----------
 
     /**
-     * 账号密码登录：成功后凭证入加密存储、token 入内存、翻转登录态。
+     * 账号密码登录：成功后 token 入内存、翻转登录态。
      * 失败原样抛（[KvcBusinessError] 带服务端文案 / [IOException] 网络），调用方提示。
+     *
+     * [remember] = false（默认，2026-10-20 用户拍板）时**不落凭证**：本次会话有效，
+     * 进程结束后需要重新登录；token 本身从不落盘（见类注释）。
      */
-    suspend fun login(mobile: String, password: String) {
+    suspend fun login(mobile: String, password: String, remember: Boolean = false) {
         val result = client.loginJson(mobile, KqcxAuth.passwordCipher(password))
             .let { KqcxAuth.parseLogin(it) }
-        credentials.saveCredential(mobile, password)
+        if (remember) credentials.saveCredential(mobile, password) else credentials.clear()
         token = result.token
         currentMobile = result.mobile.ifBlank { mobile }
         _loggedIn.value = true

@@ -500,7 +500,7 @@ private fun LoginSection(state: UjingUiState, viewModel: UjingViewModel) {
                 Text(if (state.loggingIn) "登录中…" else "登录")
             }
             Text(
-                "登录凭据仅保存在本机加密存储，不会经过任何第三方服务器。",
+                "登录凭据仅保存在本机加密存储，不会经过任何第三方服务器；只保存登录状态，不保存密码。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )

@@ -39,6 +39,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -535,6 +536,8 @@ private fun LoginContent(state: WenquViewModel.UiState, vm: WenquViewModel) {
     var password by remember { mutableStateOf("") }
     var captcha by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
+    // 记住登录（2026-10-20 用户拍板：默认关）：关掉时只存 token、不存密码
+    var rememberPassword by remember { mutableStateOf(false) }
 
     // 5 分钟重发倒计时（平台实测约 5 分钟一条，见 WenquRules.RESEND_COOLDOWN_MS）
     var resendRemaining by remember { mutableStateOf(0L) }
@@ -592,9 +595,14 @@ private fun LoginContent(state: WenquViewModel.UiState, vm: WenquViewModel) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(10.dp))
+            RememberLoginRow(
+                checked = rememberPassword,
+                onCheckedChange = { rememberPassword = it },
+            )
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = { vm.login(phone, password) },
+                onClick = { vm.login(phone, password, rememberPassword) },
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (state.busy) "登录中…" else "登录") }
@@ -633,9 +641,14 @@ private fun LoginContent(state: WenquViewModel.UiState, vm: WenquViewModel) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(10.dp))
+            RememberLoginRow(
+                checked = rememberPassword,
+                onCheckedChange = { rememberPassword = it },
+            )
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = { vm.setupPassword(phone, captcha, newPassword) },
+                onClick = { vm.setupPassword(phone, captcha, newPassword, rememberPassword) },
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (state.busy) "设置中…" else "设置密码并登录") }
@@ -647,6 +660,28 @@ private fun LoginContent(state: WenquViewModel.UiState, vm: WenquViewModel) {
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
         }
+    }
+}
+
+/**
+ * 「记住登录」开关（2026-10-20）：默认关。关掉时只存 token、不存密码——
+ * JWT 有效期内照常使用，到期后要求重新输入；存了密码才能自动续期。
+ */
+@Composable
+private fun RememberLoginRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("记住登录", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "关闭则不保存密码；登录过期后需要重新输入",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

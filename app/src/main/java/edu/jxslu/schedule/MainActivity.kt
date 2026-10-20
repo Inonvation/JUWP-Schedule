@@ -1251,20 +1251,9 @@ internal fun JuwApp(
                             onOpenAbout = {
                                 SubpageActivity.start(context, SubpageScreen.ABOUT)
                             },
-                            // 账户卡三格的落点（DESIGN §3.16）：教务开原生账户页，与
-                            // 「一卡通」一致，先看账号状态；要导入再从页里进（那里也有入口）
-                            onOpenJwLogin = {
-                                SubpageActivity.start(context, SubpageScreen.JW_ACCOUNT)
-                            },
-                            onOpenCampusCard = {
-                                SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
-                            },
-                            onOpenWater = {
-                                SubpageActivity.start(context, SubpageScreen.WATER)
-                            },
-                            // 趣智校园（DESIGN §4.30）：登录 / 余额 / 账单都在这一页
-                            onOpenQzxy = {
-                                SubpageActivity.start(context, SubpageScreen.QZXY)
+                            // 账号卡「账号与登录」那一行（2026-10-20）：全量账号状态与补登入口
+                            onOpenAccounts = {
+                                SubpageActivity.start(context, SubpageScreen.ACCOUNTS)
                             },
                         )
                     }
