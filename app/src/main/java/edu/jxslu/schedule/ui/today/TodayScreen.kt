@@ -1484,6 +1484,7 @@ private fun ProgressBar(progress: Float) {
  *
  * 2026-09-22 由「居中两行裸文字」改卡片：居中块与下方课程卡的左缘互不相干，
  * 页面顶部看着像一句留言而不是一屏内容。现在与课程行同宽同左缘，图标交代语义。
+ * 2026-10-20 收成单行：标题 + 右侧「共 N 节」，不再占两行高度。
  */
 @Composable
 private fun DoneBlock(state: TodayState) {
@@ -1491,7 +1492,6 @@ private fun DoneBlock(state: TodayState) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     AppCardRow(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
     ) {
         Icon(
             imageVector = if (state.todayAllDone) {
@@ -1504,19 +1504,22 @@ private fun DoneBlock(state: TodayState) {
             modifier = Modifier.size(22.dp),
         )
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = if (state.todayAllDone) "今天的课都上完了" else "今天没有课",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (state.todayAllDone) {
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = if (state.todayAllDone) "今天的课都上完了" else "今天没有课",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
+                text = "共 ${state.todayTotal} 节",
+                style = MaterialTheme.typography.labelMedium,
+                color = onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
             )
-            if (state.todayAllDone) {
-                Text(
-                    text = "今天共 ${state.todayTotal} 节",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = onSurface.copy(alpha = 0.55f),
-                )
-            }
         }
     }
 }

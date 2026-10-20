@@ -33,8 +33,9 @@
   `TodayCenteredShell` 的 `topContent` 显示——不能只在有课时才出现。
 - 可见性由 `DormRepairRules.cardRecord` 决定：有在途优先（最新提交），没有在途才显示
   3 天内已完成且未被用户隐藏的；完成 3 天后自动不渲染（快照仍保留，收件箱可回查）。
-- 卡片只展示状态 / 宿舍 · 故障 / 当前节点或完成时间；姓名、学号等个人字段解析层已丢弃，
-  **不要**为了「信息更全」把它们加回卡片。
+- 卡片只展示状态 / 宿舍 · 故障 / 当前节点或完成时间，**两行**：第一行「宿舍报修 · 状态 · 当前进度」
+  （当前节点 / 完成时间 / 提交时间跟在状态后面同一行），第二行「宿舍 · 故障」；姓名、学号等个人字段
+  解析层已丢弃，**不要**为了「信息更全」把它们加回卡片。
 - 数据源：`Graph.dormRepairStore(context).snapshot`（进程级单例）。自动检查在
   `MainActivity.onResume` → `DormRepairReminder.checkOnAppOpen`：30 分钟内不重复请求，
   自动 CAS 登录最多 12 小时一次；今日页下拉刷新顺带 `Graph.dormRepairSync(context).refresh()`，
