@@ -15,6 +15,8 @@ import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.repo.PendingLaunch
 import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.data.repo.ScheduleSync
+import edu.jxslu.schedule.domain.AiSchedulePrompt
+import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.ScheduleDiff
 import edu.jxslu.schedule.subpageLaunchIntent
 
@@ -61,6 +63,9 @@ object ScheduleAlertReminder {
         when (val result = Graph.scheduleSync(context).check()) {
             is ScheduleSync.CheckResult.Ok -> {
                 if (result.repeated || result.changes.isEmpty()) return
+                // 展示单位是「一次调课」：单周调课在教务课表里是两行，按组计数
+                // 才是用户看到的条数（与处置页、收件箱同一口径）
+                val groups = ScheduleDiff.group(result.changes)
                 // 免扰时段（DESIGN §3.7）：调课差异是事实型通知（eventAt=null），
                 // 拦下入队待时段结束后补发。入箱在 ScheduleSync 内已完成
                 val held = QuietHoursGate.intercept(
@@ -70,9 +75,9 @@ object ScheduleAlertReminder {
                         notificationId = NOTIFICATION_ID,
                         channelId = CHANNEL_ID,
                         category = NotificationCompat.CATEGORY_REMINDER,
-                        title = if (result.changes.size == 1) "课程安排有变动"
-                        else "有 ${result.changes.size} 处课程变动",
-                        text = changesText(result.changes),
+                        title = if (groups.size == 1) "课程安排有变动"
+                        else "有 ${groups.size} 处课程变动",
+                        text = changesText(groups),
                         enqueuedAt = System.currentTimeMillis(),
                         launch = PendingLaunch(
                             kind = PendingLaunch.Kind.SUBPAGE,
@@ -82,47 +87,63 @@ object ScheduleAlertReminder {
                         ),
                     ),
                 )
-                if (!held) post(context, result.changes)
+                if (!held) post(context, groups)
             }
             else -> Unit // Skipped / Failed 一律静默，失败闸门不落时刻
         }
     }
 
     /** 通知正文（拦截入队与即时发送共用；超出 [MAX_LINES] 折叠）。 */
-    private fun changesText(changes: List<ScheduleDiff.Change>): String {
-        val lines = changes.take(MAX_LINES).map { change ->
-            val course = change.new ?: change.old
-            val prefix = when (change.kind) {
-                ScheduleDiff.ChangeKind.MODIFIED -> "调整"
-                ScheduleDiff.ChangeKind.ADDED -> "新增"
-                ScheduleDiff.ChangeKind.REMOVED -> "删除"
-            }
-            buildString {
-                append(prefix).append('：').append(course?.name.orEmpty())
-                if (change.kind == ScheduleDiff.ChangeKind.MODIFIED) {
-                    val o = change.old ?: return@buildString
-                    append("（原 周").append(o.day).append(" 第")
-                        .append(o.startSection).append('-').append(o.endSection).append("节）")
-                } else if (course != null) {
-                    append("（周").append(course.day).append(" 第")
-                        .append(course.startSection).append('-').append(course.endSection).append("节）")
+    private fun changesText(groups: List<ScheduleDiff.ChangeGroup>): String {
+        val lines = groups.take(MAX_LINES).map { group ->
+            val move = group.move
+            if (move != null) {
+                // 与处置页「调课」卡同口径：只讲让出周次 → 目标块
+                buildString {
+                    append("调课：").append(move.to.name).append("（")
+                    append(AiSchedulePrompt.weeksLabel(move.from.weeks)).append(' ')
+                    append(slotText(move.from))
+                    append(" → ")
+                    append(AiSchedulePrompt.weeksLabel(move.to.weeks)).append(' ')
+                    append(slotText(move.to))
+                    append('）')
+                }
+            } else {
+                val change = group.anchor
+                val course = change.new ?: change.old
+                val prefix = when (change.kind) {
+                    ScheduleDiff.ChangeKind.MODIFIED -> "调整"
+                    ScheduleDiff.ChangeKind.ADDED -> "新增"
+                    ScheduleDiff.ChangeKind.REMOVED -> "删除"
+                }
+                buildString {
+                    append(prefix).append('：').append(course?.name.orEmpty())
+                    if (change.kind == ScheduleDiff.ChangeKind.MODIFIED) {
+                        val o = change.old ?: return@buildString
+                        append("（原 ").append(slotText(o)).append('）')
+                    } else if (course != null) {
+                        append("（").append(slotText(course)).append('）')
+                    }
                 }
             }
         }
-        val rest = changes.size - lines.size
+        val rest = groups.size - lines.size
         return buildString {
             append(lines.joinToString("\n"))
-            if (rest > 0) append("\n等 $rest 条")
+            if (rest > 0) append("\n等 $rest 处")
         }
     }
 
-    /** 通知：正文列「调整/新增/删除：课程 摘要」，超出 [MAX_LINES] 折叠。点击落处置页。 */
-    private fun post(context: Context, changes: List<ScheduleDiff.Change>) {
-        val text = changesText(changes)
+    private fun slotText(course: Course): String =
+        AiSchedulePrompt.weekdayLabel(course.day) + AiSchedulePrompt.sectionLabel(course)
+
+    /** 通知：正文列「调课/调整/新增/删除：课程 摘要」，超出 [MAX_LINES] 折叠。点击落处置页。 */
+    private fun post(context: Context, groups: List<ScheduleDiff.ChangeGroup>) {
+        val text = changesText(groups)
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
-            .setContentTitle(if (changes.size == 1) "课程安排有变动" else "有 ${changes.size} 处课程变动")
+            .setContentTitle(if (groups.size == 1) "课程安排有变动" else "有 ${groups.size} 处课程变动")
             .setContentText(text.lines().firstOrNull().orEmpty())
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)

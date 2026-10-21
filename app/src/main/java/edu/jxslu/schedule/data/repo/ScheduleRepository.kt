@@ -1490,6 +1490,11 @@ class ScheduleRepository(
         val applied: Int,
         val skipped: Int,
         val entries: List<AppliedEntry> = emptyList(),
+        /**
+         * 实际落库的改动下标（对应传入的 `changes`）。一次单周调课在库里是「缩周 + 插行」
+         * 两条，[applied] 记 2；处置页按「组」汇报时用本集合判断整组是否全部生效。
+         */
+        val appliedIndexes: Set<Int> = emptySet(),
     )
 
     /**
@@ -1594,6 +1599,7 @@ class ScheduleRepository(
         var applied = 0
         var skipped = 0
         val entries = mutableListOf<AppliedEntry>()
+        val appliedIndexes = mutableSetOf<Int>()
         acceptedIndexes.sorted().forEach { index ->
             val change = changes.getOrNull(index) ?: run { skipped++; return@forEach }
             when (change.kind) {
@@ -1605,6 +1611,7 @@ class ScheduleRepository(
                     db.courseDao().deleteByIds(listOf(target.id))
                     current = current.filterNot { it.id == target.id }
                     applied++
+                    appliedIndexes += index
                     entries += AppliedEntry(
                         kind = edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.REMOVED,
                         before = target,
@@ -1623,6 +1630,7 @@ class ScheduleRepository(
                     db.courseDao().upsert(CourseEntity.fromDomain(merged).copy(timetableId = ttId))
                     current = current.map { if (it.id == target.id) merged else it }
                     applied++
+                    appliedIndexes += index
                     entries += AppliedEntry(
                         kind = edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.MODIFIED,
                         before = target,
@@ -1644,6 +1652,7 @@ class ScheduleRepository(
                         val id = db.courseDao().upsert(CourseEntity.fromDomain(colored).copy(timetableId = ttId))
                         current = current + colored.copy(id = id)
                         applied++
+                        appliedIndexes += index
                         entries += AppliedEntry(
                             kind = edu.jxslu.schedule.domain.ScheduleDiff.ChangeKind.ADDED,
                             after = colored.copy(id = id),
@@ -1652,7 +1661,12 @@ class ScheduleRepository(
                 }
             }
         }
-        ApplyReport(applied = applied, skipped = skipped, entries = entries) to ttId
+        ApplyReport(
+            applied = applied,
+            skipped = skipped,
+            entries = entries,
+            appliedIndexes = appliedIndexes,
+        ) to ttId
     }
 
     /**

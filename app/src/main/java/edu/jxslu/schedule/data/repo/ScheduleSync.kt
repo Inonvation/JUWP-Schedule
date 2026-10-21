@@ -281,7 +281,7 @@ class ScheduleSync(
             kind = InboxKind.SCHEDULE_CHANGE,
             dedupeKey = InboxKeys.SCHEDULE_PREFIX + fingerprint,
             title = "课程安排有变动",
-            body = "教务课表检测到 ${changes.size} 处差异，逐条确认后合并或忽略。",
+            body = "教务课表检测到 ${ScheduleDiff.group(changes).size} 处差异，逐项确认后合并或忽略。",
             route = SubpageScreen.SCHEDULE_CHANGES.name,
         )
         return CheckResult.Ok(term = term, changes = changes, repeated = false)

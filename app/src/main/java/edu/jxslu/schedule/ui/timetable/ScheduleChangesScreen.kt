@@ -49,7 +49,7 @@ import edu.jxslu.schedule.domain.SchedulePendingChanges
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
-import edu.jxslu.schedule.ui.common.ScheduleChangeCard
+import edu.jxslu.schedule.ui.common.ScheduleChangeGroupCard
 import edu.jxslu.schedule.ui.common.WheelValueDialog
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
@@ -59,7 +59,8 @@ import kotlinx.coroutines.launch
 
 /**
  * 调课处置页（DESIGN §4.17，2026-10-04 重立）：教务课表与基线比对出的差异在这里
- * 逐条处置——勾选合并入当前课表，或忽略本轮。
+ * 按组处置（2026-10-21：单周调课的两行合成一张「调课」卡，组内仍逐条落库）——
+ * 勾选合并入当前课表，或忽略本轮。
  *
  * 数据源是检查链落的「待处置缓存」（`SchedulePendingChanges`）：进页不重新抓教务，
  * 看到的就是通知里那份差异；顶栏「重新检查」才 force 再查一次（结果更新缓存）。
@@ -107,10 +108,35 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
     val conflicts = remember(changes, currentCourses) {
         changes.map { ScheduleDiff.isConflicted(it, currentCourses) }
     }
-    // 默认勾选 = 全部非冲突条目；用户手动改动后以手动为准（pending 变了重置）
+    // 展示按「一次调课」分组：单周调课在教务课表里是两行（原行减一周 + 新行只含目标周），
+    // 逐条展示会把一次调课报成两条。勾选仍落到组内每个条目，写库路径不变。
+    val groups = remember(changes) { ScheduleDiff.group(changes) }
+    val groupConflicts = remember(groups, conflicts) {
+        groups.map { group -> group.indexes.any { conflicts[it] } }
+    }
+    val groupConflictTexts = remember(groups, conflicts) {
+        groups.map { group ->
+            // 调课组里只有新增占冲突（重复）时不能说「覆盖你的修改」
+            val overwrite = group.indexes.any {
+                changes[it].kind != ScheduleDiff.ChangeKind.ADDED && conflicts[it]
+            }
+            if (overwrite) "与你修改过的课冲突，采纳会覆盖你的修改"
+            else "与你课表里已有的同一节课重复，合并时会跳过"
+        }
+    }
+    // 默认勾选 = 全部非冲突的组；用户手动改动后以手动为准（pending 变了重置）
     var selected by remember(pending) { mutableStateOf<Set<Int>?>(null) }
     val effectiveSelection: Set<Int> = selected
-        ?: changes.indices.filterNot { conflicts[it] }.toSet()
+        ?: groups.filterIndexed { index, _ -> !groupConflicts[index] }
+            .flatMap { it.indexes }
+            .toSet()
+    val selectedGroups = groups.count { group -> group.indexes.all { it in effectiveSelection } }
+
+    fun toggleGroup(group: ScheduleDiff.ChangeGroup, checked: Boolean) {
+        selected = effectiveSelection.toMutableSet().apply {
+            group.indexes.forEach { index -> if (checked) add(index) else remove(index) }
+        }
+    }
 
     var busy by remember { mutableStateOf(false) }
     var confirmingIgnore by remember { mutableStateOf(false) }
@@ -123,7 +149,8 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
             busy = false
             val message = when (val r = result.getOrNull()) {
                 is ScheduleSync.CheckResult.Ok ->
-                    if (r.changes.isEmpty()) "已检查：暂无新的调课差异" else "发现 ${r.changes.size} 处差异"
+                    if (r.changes.isEmpty()) "已检查：暂无新的调课差异"
+                    else "发现 ${ScheduleDiff.group(r.changes).size} 处差异"
                 is ScheduleSync.CheckResult.Failed -> r.reason
                 else -> "检查被跳过（提醒开关未开启或间隔未到）"
             }
@@ -153,8 +180,18 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
             Graph.inboxRepository(context).markKindRead(InboxKind.SCHEDULE_CHANGE)
             busy = false
             haptics.success()
-            val detail = if (report.skipped > 0) "，${report.skipped} 条与你的修改冲突被跳过" else ""
-            snackbar.showNotice("已合并 ${report.applied} 处变动$detail")
+            // 回执按「组」统计：一次调课落库是两行，但对用户仍是 1 处变动
+            val acceptedGroups = groups.count { group -> group.indexes.all { it in accepted } }
+            val appliedGroups = groups.count { group ->
+                group.indexes.all { it in accepted && it in report.appliedIndexes }
+            }
+            val skippedGroups = acceptedGroups - appliedGroups
+            val detail = if (skippedGroups > 0) {
+                "，$skippedGroups 处未完整应用（与你的修改冲突或已有同一节课）"
+            } else {
+                ""
+            }
+            snackbar.showNotice("已合并 $appliedGroups 处变动$detail")
         }
     }
 
@@ -243,8 +280,8 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                 else -> {
                     Text(
                     buildString {
-                        append("教务课表与你的课表存在 ${changes.size} 处差异")
-                        conflicts.count { it }.takeIf { it > 0 }?.let {
+                        append("教务课表与你的课表存在 ${groups.size} 处差异")
+                        groupConflicts.count { it }.takeIf { it > 0 }?.let {
                             append("，其中 ${it} 处与你修改过的课相关")
                         }
                         append("。勾选要合并进当前课表的变动：")
@@ -273,29 +310,16 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                         .padding(horizontal = 22.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    changes.forEachIndexed { index, change ->
-                        ScheduleChangeCard(
-                            change = change,
-                            conflicted = conflicts[index],
-                            // ADDED 的「冲突」是重复（合并会跳过），不会覆盖任何东西——
-                            // 用 REMOVED/MODIFIED 那句「覆盖你的修改」会误导
-                            conflictText = if (change.kind == ScheduleDiff.ChangeKind.ADDED) {
-                                "与你课表里已有的同一节课重复，合并时会跳过"
-                            } else {
-                                "与你修改过的课冲突，采纳会覆盖你的修改"
-                            },
-                            checked = index in effectiveSelection,
-                            onCheckedChange = { checked ->
-                                selected = effectiveSelection.toMutableSet().apply {
-                                    if (checked) add(index) else remove(index)
-                                }
-                            },
+                    groups.forEachIndexed { index, group ->
+                        val checked = group.indexes.all { it in effectiveSelection }
+                        ScheduleChangeGroupCard(
+                            group = group,
+                            conflicted = groupConflicts[index],
+                            conflictText = groupConflictTexts[index],
+                            checked = checked,
+                            onCheckedChange = { value -> toggleGroup(group, value) },
                             // 整卡可点切换勾选（与勾选框同一状态，勾选框自身不冒泡）
-                            onRowToggle = {
-                                selected = effectiveSelection.toMutableSet().apply {
-                                    if (!add(index)) remove(index)
-                                }
-                            },
+                            onRowToggle = { toggleGroup(group, !checked) },
                         )
                     }
                     Spacer(Modifier.padding(bottom = 8.dp))
@@ -315,7 +339,7 @@ fun ScheduleChangesScreen(onBack: () -> Unit) {
                             .weight(1f)
                             .heightIn(min = 44.dp),
                     ) {
-                        Text("合并所选（${effectiveSelection.size}）", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("合并所选（$selectedGroups）", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     TextButton(
                         onClick = { confirmingIgnore = true },
@@ -411,5 +435,8 @@ private fun AlertSwitchRow(
     }
 }
 
-/** 一条差异的卡片已抽到 [edu.jxslu.schedule.ui.common.ScheduleChangeCard] 共用（2026-10-06）。 */
+/**
+ * 差异卡片已抽到 `ui/common`：普通差异 [edu.jxslu.schedule.ui.common.ScheduleChangeCard]
+ * （2026-10-06），单周调课 [edu.jxslu.schedule.ui.common.ScheduleChangeGroupCard]（2026-10-21）。
+ */
 

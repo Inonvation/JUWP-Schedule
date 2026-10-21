@@ -41,6 +41,29 @@ object ScheduleDiff {
     )
 
     /**
+     * 一组差异（处置页 / 通知的展示单位，2026-10-21）：普通差异自成一组；
+     * 教务表达的「某一周调课」把「原块去掉那一周」（MODIFIED）与「新块只含目标周」
+     * （ADDED）合成一组，展示为一张「调课」卡。
+     *
+     * [indexes] 是组内条目在 [detect] 返回的扁平列表里的下标：勾选与合并仍按它，
+     * 写库路径完全不变（一次调课 = 原行缩周 + 插入新行两条）。
+     */
+    data class ChangeGroup(
+        val indexes: List<Int>,
+        val changes: List<Change>,
+        /** 非空 = 一次单周调课：`from` 只含让出的周次，`to` 是教务给的目标块。 */
+        val move: Move? = null,
+    ) {
+        val anchor: Change get() = changes.first()
+    }
+
+    /**
+     * 一次「某一周调课」的两端。[from] 是从原条目切出来的**让出周次**（不是整行），
+     * 与教务通知里的「原上课周次」同口径；[to] 是教务新增的目标块。
+     */
+    data class Move(val from: Course, val to: Course)
+
+    /**
      * 教务指纹：全部教务字段的稳定序列。**改任何参与字段都会换指纹**，所以它既是
      * 「条目相等」判据，也是已阅指纹的组成单元。
      */
@@ -108,6 +131,73 @@ object ScheduleDiff {
             ),
         )
     }
+
+    /**
+     * 按「一次调课」重新分组（2026-10-21，处置页 / 通知的展示单位）。[detect] 的输出是
+     * **行级**差异：单周调课在教务课表里天然是两行（原行减一周 + 新行只含目标周），
+     * 逐条展示会把 3 次调课报成 6 条（用户实报）。这里只在展示层合并，写库仍逐条。
+     *
+     * 配对条件（宁可拆开也不冒充调课）：
+     * - 锚点必须是**纯周次收缩**：除 weeks 外全部教务字段一致，且只少不多——
+     *   否则（换天 / 换教室 / 换教师）合并会把这门课其余周次的变动藏掉；
+     * - 目标块同 [identity]、周数相等。目标周次可以在原周次之外（第 8 周调到第 12 周），
+     *   也可以与原行重叠（第 8 周调到第 9 周，而第 9 周本来就有课）——两种都是教务的合法写法；
+     * - 候选唯一才配；多个候选时只有「同教室」唯一才配，平手不配。
+     */
+    fun group(changes: List<Change>): List<ChangeGroup> {
+        val paired = mutableMapOf<Int, Int>()
+        val consumed = BooleanArray(changes.size)
+        val addedIndexes = changes.indices.filter { changes[it].kind == ChangeKind.ADDED }
+        changes.forEachIndexed { index, change ->
+            if (change.kind != ChangeKind.MODIFIED) return@forEachIndexed
+            val old = change.old ?: return@forEachIndexed
+            val kept = change.new ?: return@forEachIndexed
+            if (!sameExceptWeeks(old, kept)) return@forEachIndexed
+            val vacated = old.weeks - kept.weeks
+            if (vacated.isEmpty() || kept.weeks.any { it !in old.weeks }) return@forEachIndexed
+            val candidates = addedIndexes.filter { candidate ->
+                if (consumed[candidate]) return@filter false
+                val added = changes[candidate].new ?: return@filter false
+                identity(added) == identity(old) && added.weeks.size == vacated.size
+            }
+            val picked = when (candidates.size) {
+                0 -> null
+                1 -> candidates.single()
+                else -> candidates.filter { changes[it].new?.position == old.position }.singleOrNull()
+            }
+            if (picked != null) {
+                consumed[picked] = true
+                paired[index] = picked
+            }
+        }
+        val groups = mutableListOf<ChangeGroup>()
+        changes.forEachIndexed { index, change ->
+            if (consumed[index]) return@forEachIndexed
+            val mate = paired[index]
+            if (mate == null) {
+                groups += ChangeGroup(indexes = listOf(index), changes = listOf(change))
+                return@forEachIndexed
+            }
+            val old = change.old!!
+            val kept = change.new!!
+            groups += ChangeGroup(
+                indexes = listOf(index, mate),
+                changes = listOf(change, changes[mate]),
+                move = Move(from = old.copy(weeks = old.weeks - kept.weeks), to = changes[mate].new!!),
+            )
+        }
+        return groups
+    }
+
+    /** 除周次外的教务字段是否完全一致（[group] 的「纯周次收缩」判据）。 */
+    private fun sameExceptWeeks(a: Course, b: Course): Boolean =
+        a.name == b.name &&
+            a.teacher == b.teacher &&
+            a.position == b.position &&
+            a.day == b.day &&
+            a.startSection == b.startSection &&
+            a.endSection == b.endSection &&
+            a.kind == b.kind
 
     /**
      * 同槽位候选：`day + startSection + endSection` 完全一致 = 这块课的时间位置没动，

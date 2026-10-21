@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.domain.Course
@@ -103,6 +104,71 @@ fun ScheduleChangeCard(
     }
 }
 
+/**
+ * 一**组**差异的卡片（2026-10-21）：处置页按 [ScheduleDiff.group] 的结果渲染。
+ * 单周调课显示为一张「调课」卡——原 / 新两行只列**让出周次**与目标块，与教务通知
+ * 「原上课周次 / 新上课周次」同口径；普通差异原样委托 [ScheduleChangeCard]。
+ */
+@Composable
+fun ScheduleChangeGroupCard(
+    group: ScheduleDiff.ChangeGroup,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    conflicted: Boolean = false,
+    conflictText: String = "与你修改过的课冲突，采纳会覆盖你的修改",
+    onRowToggle: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val move = group.move
+    if (move == null) {
+        ScheduleChangeCard(
+            change = group.anchor,
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            conflicted = conflicted,
+            conflictText = conflictText,
+            onRowToggle = onRowToggle,
+            modifier = modifier,
+        )
+        return
+    }
+    AppCard(modifier = modifier.fillMaxWidth(), onClick = onRowToggle) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ChangeBadge("调课", MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = move.to.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.size(6.dp))
+                // 周次放最前：一眼对上通知的「原上课周次 / 新上课周次」
+                MoveDetail("原", move.from)
+                MoveDetail("新", move.to)
+                if (conflicted) {
+                    Spacer(Modifier.size(6.dp))
+                    Text(
+                        conflictText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
+            }
+            Checkbox(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = CheckboxDefaults.colors(
+                    disabledCheckedColor = MaterialTheme.colorScheme.outlineVariant,
+                ),
+            )
+        }
+    }
+}
+
 @Composable
 private fun KindBadge(kind: ScheduleDiff.ChangeKind) {
     val (text, color) = when (kind) {
@@ -110,10 +176,34 @@ private fun KindBadge(kind: ScheduleDiff.ChangeKind) {
         ScheduleDiff.ChangeKind.ADDED -> "新增" to MaterialTheme.semanticColors.success
         ScheduleDiff.ChangeKind.REMOVED -> "删除" to MaterialTheme.colorScheme.error
     }
+    ChangeBadge(text, color)
+}
+
+@Composable
+private fun ChangeBadge(text: String, color: Color) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelSmall,
         color = color,
+    )
+}
+
+/** 调课的一端：周次 · 星期节次 · 地点 · 教师（周次在前的口径只此一份）。 */
+@Composable
+private fun MoveDetail(label: String, course: Course) {
+    Text(
+        text = buildString {
+            append(label).append('：')
+            append(weeksText(course.weeks))
+            append(" · 周").append(dayName(course.day))
+            append(" 第${course.startSection}-${course.endSection}节")
+            if (course.position.isNotBlank()) append(" · ").append(course.position)
+            if (course.teacher.isNotBlank()) append(" · ").append(course.teacher)
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 

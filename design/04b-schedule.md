@@ -358,6 +358,18 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   冲突判定：REMOVED/MODIFIED 在当前课表找不到指纹一致条目（用户改过）、ADDED 在当前
   课表已有**同一课块（`mergeKey`）且周次有交集**的条目（合并会跳过；同门课的其他时段
   不算冲突）——冲突条目默认不勾，采纳与否由用户逐条决定。
+- **展示分组**（2026-10-21，`ScheduleDiff.group`）：处置页 / 通知 / 收件箱的计数单位是
+  **「一次调课」**，不是行级 Change。单周调课在教务课表里天然是两行（原块减一周 + 新块
+  只含目标周），只按行展示会把 3 次调课报成 6 条（用户实报）。分组规则：
+  「纯周次收缩」的 MODIFIED（除 weeks 外全部教务字段一致、只少不多——换天 / 换教室 /
+  换教师不合并，否则会藏掉整门课其余周次的变动）+ 同课、周数相等、未被占用的 ADDED。
+  候选唯一直接配；多个候选只有「同教室」唯一才配，平手不配。目标周次可以在原周次之外
+  （第 8 周 → 第 12 周），也可以与原行重叠（第 8 周 → 第 9 周，而第 9 周本来有课）。
+  组内仍是扁平 Change：勾选整组 = 全选组内下标，合并仍走 `applyChangeSet` 逐条落库，
+  一次调课在库里仍是「原行缩周 + 插入新行」两行；「已合并 N 处」按组计
+  （`ApplyReport.appliedIndexes` 判断整组是否全部生效）。差异指纹仍按扁平 Change 计算，
+  升级不会把同一批差异再提醒一次；卡片「调课」只列让出周次与目标块，与教务通知
+  「原上课周次 / 新上课周次」同口径。
 - **周期检查**（`ScheduleSync.check` 搭 `ScoreAlertReminder` 周期任务**第四路**，检查间隔独立
   设置（`schedule_alert_interval_hours`，默认 24h——每次核对抓两张整页 HTML，低频起步），
   周期任务按四链最小档叫醒、各路用自己的间隔闸门，不新开 WorkManager 任务——这是与
@@ -372,8 +384,8 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   新有的（0 → N）是正常新增，照报。
 - **重复打扰双闸**：差异指纹（`fingerprintOf`）与「已阅指纹」相同（用户忽略过）或与
   「待处置缓存」指纹相同（已提醒未处置）都不再发通知；教务再出新差异指纹才变。
-- **处置**（`ScheduleChangesScreen`）：读待处置缓存（进页不重抓），逐条勾选 →
-  `applyScheduleChanges` 事务内逐条删/改/增（指纹匹配不上就跳过不硬套；新增按「同一
+- **处置**（`ScheduleChangesScreen`）：读待处置缓存（进页不重抓），按组勾选（组内逐条
+  落库）→ `applyScheduleChanges` 事务内逐条删/改/增（指纹匹配不上就跳过不硬套；新增按「同一
   `mergeKey` 且周次有交集」防重，周次不相交的同槽位课块是补课 / 回课时换教室，另插一行；
   修改保留原行 id/配色/备注）→ 基线推进为「旧基线 + 已应用的改动」→ 本次完整差异
   记已阅 → 清缓存。未勾的差异客观上仍存在，下次检查以剩余差异重新报出。「忽略全部」=
@@ -381,7 +393,8 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
 - **通知**：channel `schedule_alert`、id/tag/requestCode 1011/`schedule_alert`/3011（与选课的
   1010/3010 错开——requestCode 撞了会互相改写落点），点通知落处置页。**绝不写库**——后台静默改课表是红线，差异的每一条都要用户勾选确认。
 
-单测：`ScheduleDiffTest`（配对/冲突/指纹/**基线推进**）、`ScheduleSyncTermFromHtmlTest`（学期抽取）、
+单测：`ScheduleDiffTest`（配对/冲突/指纹/**基线推进**）、`ScheduleDiffGroupTest`（展示分组：
+三条通知分三组 / 候选歧义不配 / 纯收缩 / 换教室不合并）、`ScheduleSyncTermFromHtmlTest`（学期抽取）、
 `ScheduleSyncFetchGuardsTest`（实验页学期互校 / 整类课「有 → 零」闸门）、
 两页解析器的「一格多课块全取 + 去重 + 单双周标注」契约用例（`QiangzhiScheduleParserTest` / `SyjxScheduleParserTest`）。
 
