@@ -61,69 +61,30 @@ import edu.jxslu.schedule.ui.me.MeViewModel
 import edu.jxslu.schedule.ui.theme.paletteSwatch
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.Blur
 import me.rerere.hugeicons.stroke.ColorPicker
-import me.rerere.hugeicons.stroke.Droplet
-import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.Home01
 import me.rerere.hugeicons.stroke.Palette
-import me.rerere.hugeicons.stroke.ScooterElectric
-import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.SwatchBook
-import me.rerere.hugeicons.stroke.SunCloud01
 import me.rerere.hugeicons.stroke.TextFont
-import me.rerere.hugeicons.stroke.Toolbox
 import me.rerere.hugeicons.stroke.Vibrate
 import me.rerere.hugeicons.stroke.Wallet01
-import me.rerere.hugeicons.stroke.Wallet03
 
 /**
- * 我的 → 通用设置（DESIGN §3.3，2026-09-28 二次改版）。
+ * 设置 → 应用 → 外观与交互（DESIGN §3.3）。
  *
- * 全局观感项 + **功能开关**。主题等读写全部走 [MeViewModel]（与旧「我的」共用
- * 一个 VM，改主题立即生效，返回主界面无需刷新）。
- *
- * 「功能开关」（本轮新增）：把散在各处的「功能在 App 内是否出现」收成一处——
- * 快捷方式入口 + 快趣出行码 / 胖乖生活 / 趣智校园三个卡片开关。开关语义 =
- * 关闭后该功能的**今日页卡片与校园服务页入口一起隐藏**；「账号与登录」里那一行
- * **保留**（账号管理不受功能开关影响，否则关掉后无法退出登录；2026-10-20 口径）。
- * DataStore 同一键，与原各处开关零迁移。胖乖 / 趣智
- * 页尾部的同名开关随之移除（一个偏好只留一处管理入口）。
- *
- * 「主题配色」（DESIGN §3.3）：内置六套配色的色卡弹层，动态取色开着（默认）时
- * 置灰——Material You 优先，选中的配色只有在关掉动态取色后才生效；选中即写偏好，
- * 弹层开着也能看到身后的页面实时换色。
- *
- * 悬浮导航栏与启动页**重启生效**（MainActivity 在首帧前把形态读死，DESIGN §4.22），
- * 标题旁常挂 [SettingsTag]（本轮改版：说明文字容易被扫视漏掉），切完当场提示。
- * 成绩查询 2026-09-24 挪入「学习」页（DESIGN §3.11）。
- *
- * 2026-10-07 排版收口：三节制——「观感与布局」（悬浮导航栏自单行「布局」节并入）、
- * 「页面与导航」、「功能」（原「功能开关」，AI 调课服务入口自单行「AI」节并入）。
- * 「通知强提醒」开关迁往「提醒与桌面」hub（提醒发出方式的开关，语义属那一页），
- * 本页不再出现通知类条目。
- *
- * 启动页（DESIGN §3.3）同口径重启生效；选项集跟随底栏 Tab——生活页关掉时
- * 「生活」那一项不列（`StartPage.visiblePages`），选中态显示的是**实际生效页**
- * （`StartPage.effectivePage`），与启动落点同一个口径。
+ * 原「通用设置」的观感与布局、页面与导航两节；功能开关拆到
+ * [FeatureSettingsScreen]。主题读写仍走 [MeViewModel]，改完立即生效。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GeneralSettingsScreen(
+fun AppearanceSettingsScreen(
     onBack: () -> Unit,
-    /** 功能开关节 → 快捷方式编辑页（原扩展服务入口迁入）。 */
-    onOpenShortcuts: () -> Unit,
-    /** AI 服务配置页（DESIGN §4.39）：地址 · 模型 · API Key · 教师名脱敏。 */
-    onOpenAiSettings: () -> Unit,
-    /** 天气设置页（DESIGN §3.29）：今日页顶栏提示开关，默认关。 */
-    onOpenWeatherSettings: () -> Unit,
     viewModel: MeViewModel = viewModel(
         factory = MeViewModel.Factory(Graph.repository(LocalContext.current)),
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    // 悬浮球开关（DESIGN §3.1）：独立单流（combine 已满员），单独收一次
     val floatingBallEnabled by viewModel.floatingBallEnabled.collectAsStateWithLifecycle()
     val haptics = rememberAppHaptics()
     val snackbar = remember { SnackbarHostState() }
@@ -138,7 +99,7 @@ fun GeneralSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("通用设置") },
+                title = { Text("外观与交互") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -156,9 +117,7 @@ fun GeneralSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 观感与布局（2026-10-07 并节）：悬浮导航栏也是观感项（底栏形态），
-            // 「布局」单行节没必要单独立卡
-            SettingsSection(title = "观感与布局") {
+            SettingsSection(title = "主题与字体") {
                 SettingChoiceRow(
                     title = "外观主题",
                     icon = HugeIcons.Palette,
@@ -169,7 +128,6 @@ fun GeneralSettingsScreen(
                         viewModel.setThemeMode(ThemeMode.entries[index])
                     },
                 )
-                // 主题配色：动态取色开着时被 Material You 盖住，置灰并说明原因
                 SettingItem(
                     title = "主题配色",
                     subtitle = if (state.displayPrefs.dynamicColor) {
@@ -195,8 +153,6 @@ fun GeneralSettingsScreen(
                     onCheckedChange = viewModel::setDynamicColor,
                     icon = HugeIcons.ColorPicker,
                 )
-                // 字体缩放锁定（默认开）：App 内字号不随系统「字体大小」缩放。
-                // 即时生效（Compose 根覆盖 LocalDensity），不用挂「重启生效」tag
                 SettingSwitchRow(
                     title = "固定字体大小",
                     subtitle = "不随系统字体缩放；关闭后跟随系统",
@@ -204,7 +160,9 @@ fun GeneralSettingsScreen(
                     onCheckedChange = viewModel::setFontScaleLocked,
                     icon = HugeIcons.TextFont,
                 )
-                // 悬浮导航栏自「布局」节并入（2026-10-07）：同一份观感语言
+            }
+
+            SettingsSection(title = "导航与悬浮") {
                 SettingSwitchRow(
                     title = "悬浮导航栏",
                     titleTag = "重启生效",
@@ -216,10 +174,6 @@ fun GeneralSettingsScreen(
                     },
                     icon = HugeIcons.Blur,
                 )
-            }
-
-            SettingsSection(title = "页面与导航") {
-                // 启动页：选项集 = 底栏 Tab 集（今日 / 课表 / 教务）
                 val startPages = StartPage.visiblePages()
                 val effectiveStart = StartPage.effectivePage(state.displayPrefs.startPage)
                 SettingChoiceRow(
@@ -228,8 +182,6 @@ fun GeneralSettingsScreen(
                     subtitle = "打开应用时先显示这一页",
                     icon = HugeIcons.Home01,
                     options = startPages.map { it.label },
-                    // 显示实际生效页而不是存储值：生活页关着时选中态落在今日页，
-                    // 与下次启动的落点一致，不会出现「这里写着生活、打开却在今日」
                     selectedIndex = startPages.indexOf(effectiveStart),
                     onSelect = { index ->
                         haptics.toggle()
@@ -237,75 +189,12 @@ fun GeneralSettingsScreen(
                         showNotice("已保存，重启应用后生效")
                     },
                 )
-                // 悬浮球（DESIGN §3.1）：主窗口三个 Tab 常驻的快捷入口，默认开。
-                // 位置在球上长按拖动改，这里只管显隐。
                 SettingSwitchRow(
                     title = "悬浮球",
                     subtitle = "常驻快捷入口：付款码 · 扫一扫，可拖动",
                     checked = floatingBallEnabled,
                     onCheckedChange = viewModel::setFloatingBallEnabled,
                     icon = HugeIcons.Wallet01,
-                )
-            }
-
-            // AI 调课服务（DESIGN §4.39，2026-10-06）：地址 / 模型 / API Key / 教师名脱敏。
-            // 配置项多，收进独立二级页；API Key 落加密存储不进 DataStore。
-            // 2026-10-07 自「AI」单行节并入「功能」：入口行与快捷方式行同构
-            // （节副标题只约束三个开关行：开关语义 = 关闭即全入口隐藏）
-            SettingsSection(
-                title = "功能",
-                subtitle = "开关关闭后，该功能的全部入口与卡片一起隐藏",
-            ) {
-                SettingItem(
-                    title = "AI 调课服务",
-                    subtitle = "服务地址 · 模型 · API Key · 教师名脱敏",
-                    icon = HugeIcons.AiBrain01,
-                    onClick = onOpenAiSettings,
-                )
-                // 天气（DESIGN §3.29，2026-10-11）：今日页顶栏那行提示的总开关默认关，
-                // 配置收在独立页（开关 · 查看详情 · 数据来源）
-                SettingItem(
-                    title = "天气",
-                    subtitle = "今日页顶栏天气提示 · 数据来自 Open-Meteo",
-                    icon = HugeIcons.SunCloud01,
-                    onClick = onOpenWeatherSettings,
-                )
-                // 快捷方式不是单个开关：条目编辑页里有「在今日页显示」总开关，
-                // 这里给入口行而不是开关行，编辑与显隐管理都在那一页
-                SettingItem(
-                    title = "快捷方式",
-                    subtitle = "编辑今日页快捷入口 · 预设与自定义",
-                    icon = HugeIcons.Flash,
-                    onClick = onOpenShortcuts,
-                )
-                // 百宝箱（DESIGN §4.47）：今日页「+」下拉里的图片工具，默认开
-                SettingSwitchRow(
-                    title = "百宝箱",
-                    subtitle = "今日页「+」里的工具：水印 · 拼接 · 菜鸟批量查",
-                    checked = state.displayPrefs.toolboxEnabled,
-                    onCheckedChange = viewModel::setToolboxEnabled,
-                    icon = HugeIcons.Toolbox,
-                )
-                SettingSwitchRow(
-                    title = "快趣出行码",
-                    subtitle = "今日页快趣出行卡（二维码 / 计时）· 非学校官方功能",
-                    checked = state.displayPrefs.ebikeCardEnabled,
-                    onCheckedChange = viewModel::setEbikeCardEnabled,
-                    icon = HugeIcons.ScooterElectric,
-                )
-                SettingSwitchRow(
-                    title = "胖乖生活",
-                    subtitle = "今日页开水卡 · 我的页账号卡入口",
-                    checked = state.displayPrefs.waterCardEnabled,
-                    onCheckedChange = viewModel::setWaterCardEnabled,
-                    icon = HugeIcons.Droplet,
-                )
-                SettingSwitchRow(
-                    title = "趣智校园",
-                    subtitle = "今日页趣智卡 · 我的页账号卡入口",
-                    checked = state.displayPrefs.qzxyCardEnabled,
-                    onCheckedChange = viewModel::setQzxyCardEnabled,
-                    icon = HugeIcons.ShowerHead,
                 )
             }
         }
@@ -324,11 +213,7 @@ fun GeneralSettingsScreen(
     }
 }
 
-/**
- * 主题配色色卡弹层（DESIGN §3.3）：每个配色一行——四个色点（主色 / 容器 / 次要 / 底色，
- * 取浅色系）+ 名称 + 选中勾。选中只写偏好不关弹层，方便连续试色；
- * 身后页面实时换色，弹层自身也跟着换（同一主题根）。
- */
+/** 主题配色色卡弹层：选中只写偏好不关弹层，方便连续试色。 */
 @Composable
 private fun PalettePickerSheet(
     selected: ThemePalette,

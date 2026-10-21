@@ -34,7 +34,7 @@ import me.rerere.hugeicons.stroke.Cloudy
 import me.rerere.hugeicons.stroke.SunCloud01
 
 /**
- * 我的 → 通用设置 → 功能 → 天气（DESIGN §3.29）。
+ * 设置 → 功能 → 天气（DESIGN §3.29）。
  *
  * **默认关**：关着时今日页顶栏不占位、一次网络请求都不发；开启后顶栏日期下面出现
  * 一行 emoji + 一句话，点那行进天气详情页。

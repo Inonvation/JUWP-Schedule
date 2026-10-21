@@ -289,7 +289,7 @@ internal const val ROUTE_QZXY_START = "qzxy_start"
 /**
  * 主题首帧快照（进程级，2026-09-28）。
  *
- * DataStore 第一份数据必然晚于任何窗口的首帧，而「通用设置」这类二级页每次打开都是
+ * DataStore 第一份数据必然晚于任何窗口的首帧，而「外观与交互」这类二级页每次打开都是
  * 新建的独立窗口、都要过一次空窗期。没有快照时首帧只能按默认值渲染——用户会看到
  * 「先闪一下默认主题、再跳成自己选的配色」（2026-09-28 用户反馈）。动态取色开关与
  * 深浅模式同理，一并快照。做法与 [floatingNavBarEffective] 同源：首次同步读一份真值，
@@ -400,14 +400,14 @@ private fun ProvideFixedFontScale(locked: Boolean, content: @Composable () -> Un
  * 首帧前同步读 DataStore 一次并缓存为进程常量：悬浮/普通两套底栏的
  * Scaffold 几何完全不同，跟着 Flow 在启动中变会让用户先看到普通底栏
  * 再跳成悬浮（2026-09-24 用户反馈的割裂感）。因此形态**重启生效**：
- * 运行中切开关只写偏好，当前会话不再改 UI，通用设置页会提示重启。
+ * 运行中切开关只写偏好，当前会话不再改 UI，「外观与交互」页会提示重启。
  */
 private var floatingNavBarEffective: Boolean? = null
 
 private fun resolveFloatingNavBarBlocking(): Boolean = startupPrefsBlocking().floatingNavBar
 
 /**
- * 解析启动页（通用设置 → 启动页，DESIGN §3.3）。
+ * 解析启动页（设置 → 应用 → 外观与交互 → 启动页，DESIGN §3.3）。
  *
  * 调用点用 `remember {}` 把它按**窗口**读死一次（不是进程级 var）：`NavHost` 的
  * `startDestination` 跟着 Flow 中途变，Compose Navigation 会重建整张导航图
@@ -927,8 +927,8 @@ internal fun JuwApp(
         factory = WaterViewModel.Factory(Graph.qiekj(context)),
     )
 
-    // 趣智校园 ViewModel 挂 Activity 作用域（DESIGN §4.30）：今日页半行卡与趣智校园页
-    // 各自持有实例，这份供今日页卡片显示登录态与余额。
+    // 趣智校园 ViewModel 挂 Activity 作用域（DESIGN §4.30）：侧栏趣智入口与趣智校园页
+    // 各自持有实例，这份供侧栏入口显示登录态与余额。
     val qzxyViewModel: QzxyViewModel = viewModel(
         viewModelStoreOwner = context as ComponentActivity,
         factory = QzxyViewModel.Factory(
@@ -945,7 +945,7 @@ internal fun JuwApp(
 
     // ── 侧栏里的三个入口弹窗（2026-10-20）──
     // 用户口径：U净 / 胖乖生活 / 趣智校园点开的是**原来的弹窗**，不是整页。
-    // 弹窗与今日页卡片共用同一份 ViewModel，面板里开的阀在页面上状态一致。
+    // 弹窗与趣智校园页共用同一份 ViewModel，面板里开的阀在页面上状态一致。
     val waterEntryState by waterViewModel.uiState.collectAsStateWithLifecycle()
     val qzxyEntryState by qzxyViewModel.uiState.collectAsStateWithLifecycle()
     val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }.collectAsStateWithLifecycle()
@@ -1064,8 +1064,8 @@ internal fun JuwApp(
     val floatingBallOnTab = currentRoute == Routes.TODAY || currentRoute == Routes.WEEK ||
         currentRoute == Routes.LIFE
 
-    // 侧栏里点任何入口都先收侧栏：返回时看到的是页面，而不是还开着的侧栏
-    // （设置 / 扫码 / 充值本来就这么做，这里把其余入口补齐）。
+    // 侧栏里点普通入口先收侧栏：返回时看到的是页面，而不是还开着的侧栏。
+    // 设置例外：设置窗口直接覆盖，退出后侧栏仍保持展开。
     val openFromDrawer: (SubpageScreen, String?) -> Unit = { screen, focus ->
         drawer.close()
         openSubpage(context, SubpageRequest(screen = screen, focusItemId = focus))
@@ -1135,7 +1135,6 @@ internal fun JuwApp(
                     navController.navigate(Routes.LIFE) { launchSingleTop = true }
                 },
                 onOpenSettings = {
-                    drawer.close()
                     SettingsActivity.start(context)
                 },
                 onScan = {
@@ -1268,7 +1267,7 @@ internal fun JuwApp(
                             // 胖乖生活卡常显（未登录给未登录态，显示设置可关，DESIGN §3.3）；
                             // 登录态由 WaterViewModel 自带，外层不再按登录与否隐藏整卡
                             onOpenWater = { SubpageActivity.start(context, SubpageScreen.WATER) },
-                            // 快趣出行（DESIGN §3.9）：今日页卡片直达「骑行」页。
+                            // 快趣出行（DESIGN §3.9）：今日页已不展示卡片；入口在左侧栏。
                             // 2026-09-29 结构重构后两档共用同一个页面（地图 + 抽屉三态），
                             // 不再按使用方式路由到两个页面，也不再需要「选车回传」那条通道
                             onOpenEbike = { SubpageActivity.start(context, SubpageScreen.RIDE) },
@@ -1314,7 +1313,7 @@ internal fun JuwApp(
                                 SubpageActivity.start(context, SubpageScreen.INBOX)
                             },
                             // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合，
-                            // 「+」菜单里那一行的总开关在通用设置（默认开）
+                            // 「+」菜单里那一行的总开关在「设置 → 功能」（默认开）
                             onOpenToolbox = {
                                 SubpageActivity.start(context, SubpageScreen.TOOLBOX)
                             },
@@ -1474,7 +1473,7 @@ internal fun JuwApp(
                     }
                 }
             }
-            // 侧栏三个入口弹窗（2026-10-20）：与今日页卡片共用同一份 ViewModel。
+            // 侧栏三个入口弹窗（2026-10-20）：与对应页面共用同一份 ViewModel。
             // 放在外壳层而不是侧栏里——侧栏是 300dp 宽的 Surface，弹层挂在它下面会跟着被裁。
             if (showWaterSheet) {
                 WaterEntrySheet(

@@ -243,7 +243,7 @@ private fun openNotificationSettings(context: Context) {
         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
     try {
         // 二级页窗口拉系统设置也走 startActivityOutsideApp：抑制右推入过渡，
-        // 不然从设置回来时本页会凭空重放一次入场动画（同 AboutScreen 的理由）
+        // 不然从设置回来时本页会凭空重放一次入场动画（同关于页的理由）
         context.startActivityOutsideApp(intent)
     } catch (_: Exception) {
         runCatching {

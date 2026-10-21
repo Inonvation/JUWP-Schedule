@@ -15,12 +15,13 @@ import edu.jxslu.schedule.ui.me.ReminderSettingsScreen
 import edu.jxslu.schedule.ui.me.ShortcutSettingsScreen
 import edu.jxslu.schedule.ui.me.TimetableSettingsScreen
 import edu.jxslu.schedule.ui.me.WidgetSettingsScreen
-import edu.jxslu.schedule.ui.me.hub.AboutScreen
+import edu.jxslu.schedule.ui.me.hub.AboutUpdateScreen
 import edu.jxslu.schedule.ui.me.hub.AccountsHubScreen
-import edu.jxslu.schedule.ui.me.hub.ExtensionServicesHubScreen
-import edu.jxslu.schedule.ui.me.hub.GeneralSettingsScreen
-import edu.jxslu.schedule.ui.me.hub.LearningHubScreen
+import edu.jxslu.schedule.ui.me.hub.AppearanceSettingsScreen
+import edu.jxslu.schedule.ui.me.hub.FeatureSettingsScreen
+import edu.jxslu.schedule.ui.me.hub.PermissionsStorageScreen
 import edu.jxslu.schedule.ui.me.hub.QuietHoursScreen
+import edu.jxslu.schedule.ui.me.hub.TermsDeclarationsScreen
 import edu.jxslu.schedule.ui.me.hub.TimetableHubScreen
 import edu.jxslu.schedule.ui.me.hub.WidgetCalendarHubScreen
 import edu.jxslu.schedule.ui.campus.CampusCalendarScreen
@@ -44,7 +45,6 @@ import edu.jxslu.schedule.ui.internship.InternshipBasesScreen
 import edu.jxslu.schedule.ui.jw.StudentInfoScreen
 import edu.jxslu.schedule.ui.jw.TeachingCalendarScreen
 import edu.jxslu.schedule.ui.jw.TextbookScreen
-import edu.jxslu.schedule.ui.jwvw.JwImportMode
 import edu.jxslu.schedule.ui.notes.NoteCourseScreen
 import edu.jxslu.schedule.ui.notes.NoteDetailScreen
 import edu.jxslu.schedule.ui.notes.NoteLibraryScreen
@@ -142,22 +142,24 @@ enum class SubpageScreen {
     CAMPUS_CARD_SETTINGS,
     /** 我的 → 教务账户（原生信息页，DESIGN §3.3；不再一点就开导入 WebView） */
     JW_ACCOUNT,
-    /** 我的 → 通用设置汇总页（主题 · 触感 · 布局 · 权限入口，DESIGN §3.3） */
-    GENERAL_SETTINGS,
-    /** 我的 → 课表汇总页（配置 · 使用 · 数据，DESIGN §3.3） */
+    /** 设置 → 应用 → 外观与交互（主题 · 字体 · 导航 · 悬浮球，DESIGN §3.3） */
+    APPEARANCE_SETTINGS,
+    /** 设置 → 应用 → 功能（AI 调课 · 天气 · 快捷方式 · 百宝箱，DESIGN §3.3） */
+    FEATURE_SETTINGS,
+    /** 设置 → 课表（配置 · 使用 · 数据，DESIGN §3.3） */
     TIMETABLE_HUB,
-    /** 我的 → 学习汇总页（笔记·课件 / 作业，DESIGN §3.3） */
-    LEARNING_HUB,
-    /** 我的 → 提醒与桌面汇总页（2026-09-28 自「小组件与日历」改名，DESIGN §3.3） */
+    /** 设置 → 通知 → 提醒与桌面（DESIGN §3.3） */
     WIDGET_CALENDAR_HUB,
     /** 提醒与桌面 → 免扰时段（预置夜间/午休 · 可编辑，时段内通知推迟补发，DESIGN §3.7，2026-10-07） */
     QUIET_HOURS,
-    /** 我的 → 校园服务汇总页（2026-09-28 自「扩展服务」改名瘦身，DESIGN §3.3） */
-    EXT_SERVICES_HUB,
     /** 我的 → 账号与登录（全量账号状态 · 补登入口，2026-10-20，DESIGN §3.3） */
     ACCOUNTS,
-    /** 我的 → 关于页（版本 · 免责 · 仓库 · 权限入口，DESIGN §3.3） */
-    ABOUT,
+    /** 设置 → 关于 → 权限与存储（权限 · 缓存 · 诊断日志，DESIGN §3.3） */
+    PERMISSIONS_STORAGE,
+    /** 设置 → 关于 → 关于与更新（版本 · 更新 · 开源，DESIGN §3.3） */
+    ABOUT_UPDATE,
+    /** 设置 → 关于 → 条款与声明（用户须知 · 免责 · 充值风险，DESIGN §3.3） */
+    TERMS_DECLARATIONS,
     /** 今日 → 校园卡付款码展示页（DESIGN §3.10；FLAG_SECURE 独立窗口） */
     PAY_CODE,
     /** 付款码/设置 → 消费流水（月汇总 + 分页列表，DESIGN §4.19 B4） */
@@ -403,27 +405,8 @@ class SubpageActivity : ComponentActivity() {
                 onOpenPayCode = { SubpageActivity.start(this, SubpageScreen.PAY_CODE) },
             )
             SubpageScreen.JW_ACCOUNT -> JwAccountScreen(onBack = onBack)
-            SubpageScreen.LEARNING_HUB -> LearningHubScreen(
-                onBack = onBack,
-                onOpenNotes = { SubpageActivity.start(this, SubpageScreen.NOTES) },
-                onOpenHomework = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
-                onOpenScores = { SubpageActivity.start(this, SubpageScreen.SCORES) },
-                onOpenScholar = { SubpageActivity.start(this, SubpageScreen.SCHOLAR) },
-                onOpenCurriculum = { SubpageActivity.start(this, SubpageScreen.CURRICULUM) },
-                onOpenExam = { SubpageActivity.start(this, SubpageScreen.EXAMS) },
-                onOpenSelection = { SubpageActivity.start(this, SubpageScreen.SELECTIONS) },
-                // 学生评教（DESIGN §4.44）：复用教务 WebView 窗口的 TeachingEval 模式，
-                // 自动登录后直达评教平台；评教操作由用户在平台页面上自己完成
-                onOpenTeachingEval = {
-                    JwImportActivity.start(this, JwImportMode.TeachingEval)
-                },
-                onOpenInternshipBases = {
-                    SubpageActivity.start(this, SubpageScreen.INTERNSHIP_BASES)
-                },
-            )
             SubpageScreen.TIMETABLE_HUB -> TimetableHubScreen(
                 onBack = onBack,
-                onOpenJwImport = { JwImportActivity.start(this) },
                 onOpenTimetableManage = {
                     SubpageActivity.start(this, SubpageScreen.TIMETABLE_MANAGE)
                 },
@@ -454,13 +437,13 @@ class SubpageActivity : ComponentActivity() {
                     onBack = onBack,
                     initialWeek = focusItemId?.toIntOrNull(),
                 )
-            SubpageScreen.GENERAL_SETTINGS -> GeneralSettingsScreen(
+            SubpageScreen.APPEARANCE_SETTINGS -> AppearanceSettingsScreen(
                 onBack = onBack,
-                // 功能开关节 → 快捷方式编辑页（2026-09-28 自扩展服务迁入）
+            )
+            SubpageScreen.FEATURE_SETTINGS -> FeatureSettingsScreen(
+                onBack = onBack,
                 onOpenShortcuts = { SubpageActivity.start(this, SubpageScreen.SHORTCUTS) },
-                // AI 调课服务配置（DESIGN §4.39）
                 onOpenAiSettings = { SubpageActivity.start(this, SubpageScreen.AI_SETTINGS) },
-                // 天气设置（DESIGN §3.29，2026-10-11）：开关 + 查看详情入口
                 onOpenWeatherSettings = {
                     SubpageActivity.start(this, SubpageScreen.WEATHER_SETTINGS)
                 },
@@ -522,25 +505,14 @@ class SubpageActivity : ComponentActivity() {
                 onOpenWenqu = { SubpageActivity.start(this, SubpageScreen.WENQU) },
                 onOpenAiSettings = { SubpageActivity.start(this, SubpageScreen.AI_SETTINGS) },
             )
-            SubpageScreen.EXT_SERVICES_HUB -> ExtensionServicesHubScreen(
-                onBack = onBack,
-                // 第三方账号 2026-10-20 并入「账号与登录」：本页只留学校系统与校历，
-                // 不再维护第二份账号状态与登录入口
-                onOpenAccounts = {
-                    SubpageActivity.start(this, SubpageScreen.ACCOUNTS)
-                },
-                onOpenCampusCalendar = {
-                    SubpageActivity.start(this, SubpageScreen.CAMPUS_CALENDAR)
-                },
-                // 学工表单走独立窗口（DESIGN §3.15）：页里有统一认证表单，需要锁竖屏
-                onOpenXgForm = { form -> XgFormActivity.start(this, form) },
-            )
-            SubpageScreen.ABOUT -> AboutScreen(
+            SubpageScreen.PERMISSIONS_STORAGE -> PermissionsStorageScreen(
                 onBack = onBack,
                 onOpenPermissionSettings = {
                     SubpageActivity.start(this, SubpageScreen.PERMISSION_SETTINGS)
                 },
             )
+            SubpageScreen.ABOUT_UPDATE -> AboutUpdateScreen(onBack = onBack)
+            SubpageScreen.TERMS_DECLARATIONS -> TermsDeclarationsScreen(onBack = onBack)
             SubpageScreen.PAY_CODE -> PayCodeScreen(
                 onBack = onBack,
                 onOpenStatement = { SubpageActivity.start(this, SubpageScreen.CAMPUS_STATEMENT) },

@@ -1,7 +1,6 @@
 package edu.jxslu.schedule.ui.me.hub
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,7 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -40,12 +37,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.SettingsTag
 import edu.jxslu.schedule.ui.me.MeViewModel
-import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.Alert02
@@ -53,14 +48,13 @@ import me.rerere.hugeicons.stroke.CalendarSync
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.Database
 import me.rerere.hugeicons.stroke.GridView
-import me.rerere.hugeicons.stroke.Import
 
 /**
  * 我的 → 课表（DESIGN §3.3，2026-09-28 二次改版）：hero 卡 + 配置 → 使用 → 数据。
  *
  * hero 卡（本轮新增）：当前课表名 + 学期起止 + 周数 + 课程数，视觉语言复用
  * 今日页焦点卡（主色 8% 底 + 左缘 3dp 主色竖条）——进页先确认「我在改哪张表」，
- * 再动手配置。「从教务导入」升为主色按钮 CTA：开学第一周的最高频动作。
+ * 再动手配置。从教务导入统一走教务 Tab，本页不再重复放置入口。
  *
  * 上课提醒 2026-09-28 迁往「提醒与桌面」hub（与小组件、日历同属
  * 「课表数据送到哪里」）。成绩查询 2026-09-24 挪进学习页。
@@ -72,7 +66,6 @@ import me.rerere.hugeicons.stroke.Import
 @Composable
 fun TimetableHubScreen(
     onBack: () -> Unit,
-    onOpenJwImport: () -> Unit,
     onOpenTimetableManage: () -> Unit,
     onOpenTimetableSettings: () -> Unit,
     onOpenDataSettings: () -> Unit,
@@ -86,16 +79,12 @@ fun TimetableHubScreen(
 ) {
     val context = LocalContext.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val snackbar = remember { SnackbarHostState() }
 
     // 调课检测（DESIGN §4.17 重立）：入口行脚注显示待处置差异数——
     // 通知错过的话，这里是唯一常驻入口
     val pendingChanges by remember { Graph.displayPrefs(context) }.schedulePendingChanges
         .collectAsStateWithLifecycle(initialValue = null)
     val pendingCount = pendingChanges?.changes?.size ?: 0
-
-    // 本页有「教务导入」入口，导入窗口 finish 后落回的就是这一页
-    JwImportOutcomeEffect(snackbar)
 
     Scaffold(
         topBar = {
@@ -108,7 +97,6 @@ fun TimetableHubScreen(
                 },
             )
         },
-        snackbarHost = { AppSnackbarHost(snackbar) },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -118,7 +106,7 @@ fun TimetableHubScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            TimetableHero(state = state, onOpenJwImport = onOpenJwImport)
+            TimetableHero(state = state)
 
             // 配置与数据（2026-10-07 并节）：都是「管这张课表」的动作，单行节没必要单独立卡
             SettingsSection(title = "配置与数据") {
@@ -169,12 +157,12 @@ fun TimetableHubScreen(
 }
 
 /**
- * 课表 hub 的 hero 卡：当前课表名 + 学期起止 + 课程数，「从教务导入」主按钮。
+ * 课表 hub 的 hero 卡：当前课表名 + 学期起止 + 课程数。
  * 视觉 = 今日页焦点卡同语言（主色 8% 底 + 左缘 3dp 竖条 + 14dp 圆角），
  * 提示条消失后仍是「哪张课表在生效」的常驻确认位。
  */
 @Composable
-private fun TimetableHero(state: edu.jxslu.schedule.ui.me.MeUiState, onOpenJwImport: () -> Unit) {
+private fun TimetableHero(state: edu.jxslu.schedule.ui.me.MeUiState) {
     val primary = MaterialTheme.colorScheme.primary
     val semester = state.configSemester
     val week = state.configWeek
@@ -232,28 +220,6 @@ private fun TimetableHero(state: edu.jxslu.schedule.ui.me.MeUiState, onOpenJwImp
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 modifier = Modifier.padding(top = 2.dp),
             )
-            Row(
-                modifier = Modifier
-                    .padding(top = 11.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(primary)
-                    .clickable(onClickLabel = "从教务导入课表") { onOpenJwImport() }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                Icon(
-                    HugeIcons.Import,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "从教务导入",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
         }
     }
 }
