@@ -15,11 +15,10 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/today.jpg" width="31%" alt="今日页：当天课程、作业进度与生活快捷入口">
-  <img src="screenshots/week.jpg" width="31%" alt="课表页：一周课程网格">
-  <img src="screenshots/life.jpg" width="31%" alt="生活页：一卡通与寝室电费">
+  <img src="screenshots/today.jpg" width="45%" alt="今日页：当天课程、作业进度与生活快捷入口">
+  <img src="screenshots/week.jpg" width="45%" alt="课表页：一周课程网格">
   <br>
-  <sub>今日 · 课表 · 生活 —— 截图中的教师名与寝室房号已打码</sub>
+  <sub>今日 · 课表 · 教务 —— 生活与我的入口收进左侧栏；截图中的教师名与寝室房号已打码</sub>
 </p>
 
 > **非学校官方应用**，学生自用学习项目，详见文末[免责声明](#-免责声明)。

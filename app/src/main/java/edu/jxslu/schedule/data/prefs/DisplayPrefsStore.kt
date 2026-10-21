@@ -91,8 +91,8 @@ data class DisplayPrefs(
     val toolboxEnabled: Boolean = true,
     /**
      * 启动页（DESIGN §3.1 / §3.3）。全局项，**默认 [StartPage.Today]**：主窗口每次
-     * 新建时落的那个 Tab。生活页关掉时「生活」这一项在设置里同步消失，存着的旧值
-     * 由 [StartPage.effectivePage] 落回今日页（不写回存储，生活页开回来时旧选择还在）。
+     * 新建时落的那个 Tab。旧版「生活 / 我的」不再是 Tab，存着的旧值由
+     * [StartPage.effectivePage] 落回今日页（不写回存储）。
      * 生效时机同悬浮导航栏：启动期读死，**重启应用后生效**（理由见 DESIGN §3.3）。
      */
     val startPage: StartPage = StartPage.Today,
@@ -389,7 +389,7 @@ class DisplayPrefsStore(private val context: Context) {
         p[KEY_TOOLBOX_ENABLED] ?: true
     }
 
-    /** 应用内悬浮球开关（DESIGN §3.1）。全局项，**默认开**：主窗口四个 Tab 常驻的快捷入口。 */
+    /** 应用内悬浮球开关（DESIGN §3.1）。全局项，**默认开**：主窗口三个 Tab 常驻的快捷入口。 */
     val floatingBallEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_FLOATING_BALL_ENABLED] ?: true
     }.distinctUntilChanged()

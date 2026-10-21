@@ -362,7 +362,7 @@ private fun AmountStep(
  *
  * 三件事：说清「在哪付、付完做什么」；给一个**重开支付页**的兜底（链接是农行侧一次性
  * 会话，重开走 VM 现取新链接）；支付完成后点「检查到账」——从内嵌页回到本页也会
- * 自动查一次（`LifeScreen` 的 resume 计数）。
+ * 自动查一次（`RechargeHost` 的 resume 计数）。
  *
  * 手机号 / 短信验证码 / 支付密码不经过本 App：这一页只有状态与按钮，没有任何输入框
  * （口径见 DESIGN §4.24）。
@@ -597,7 +597,7 @@ private fun AcceptedStep(
         // 2026-09-29 事故（三笔「支付成功」的订单永远没入账）后，扣款与入账分开报：
         // 入账位有结论就说结论，还在处理就如实说「处理中」，失败就明说找管理员。
         PowerEntryState.ENTERED -> EntryLine("电量已入账。")
-        PowerEntryState.PENDING -> EntryLine("电量入账处理中——稍后在生活页刷新电费卡或到「缴费账单」核对。")
+        PowerEntryState.PENDING -> EntryLine("电量入账处理中——稍后在左侧栏钱包查看电费，或到「缴费账单」核对。")
         PowerEntryState.FAILED -> Text(
             text = "扣款已成功，但电量入账失败——请联系缴费平台管理员处理。",
             style = MaterialTheme.typography.bodySmall,
@@ -605,7 +605,7 @@ private fun AcceptedStep(
         )
         // 入账位没查到：维持原口径的通用提示
         null -> Text(
-            text = "电费读数可能有几分钟延迟；稍后在生活页点电费卡刷新即可看到最新剩余电量。",
+            text = "电费读数可能有几分钟延迟；稍后重新展开左侧栏即可看到最新剩余电量。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         )

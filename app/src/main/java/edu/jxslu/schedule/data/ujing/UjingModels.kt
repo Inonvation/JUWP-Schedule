@@ -230,19 +230,31 @@ data class UjingStoreListData(val storeList: List<UjingStore> = emptyList())
 data class UjingStore(
     @Serializable(LenientStringSerializer::class) val id: String? = null,
     val name: String = "",
+    /**
+     * 门店内按设备类型的统计（2026-10-21）：`stores/near` 自带 `category / num / access`，
+     * `category == 1` 是洗衣机；`num` 总数、`access` 空闲数。`devices/reserve` 在本校
+     * 已被服务端关闭（回 1614「暂不支持预约，请扫码洗衣」），看板改从这里取聚合。
+     */
+    val storeInfo: List<UjingStoreInfo> = emptyList(),
 ) {
     /** 完整可用的一条门店（id 与名称都有）。 */
     val isComplete: Boolean get() = !id.isNullOrBlank() && name.isNotBlank()
 }
 
+@Serializable
+data class UjingStoreInfo(
+    @Serializable(LenientIntSerializer::class) val category: Int = 0,
+    @Serializable(LenientIntSerializer::class) val num: Int = 0,
+    @Serializable(LenientIntSerializer::class) val access: Int = 0,
+)
+
 // ── 空闲看板 ──
 
-@Serializable
-data class UjingReserveData(val devices: List<UjingReserveDevice> = emptyList())
-
-@Serializable
-data class UjingReserveDevice(val device: UjingDeviceGroup? = null)
-
+/**
+ * 某洗衣房按设备类型的聚合数据（2026-10-22 起由 `stores/near?keyword=<店名>` 的
+ * `storeInfo[]` 拼出：category 1 洗衣机 / 2 烘干机；`devices/reserve` 已被服务端
+ * 关闭（1614），不再调用）。
+ */
 @Serializable
 data class UjingDeviceGroup(
     val deviceTypeName: String = "",

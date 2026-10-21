@@ -48,16 +48,19 @@ class UjingApiParseTest {
     // ---- 业务 DTO ----
 
     @Test
-    fun deviceGroupsReadStringOrNumberStats() {
+    fun storeInfoReadsWasherCounts() {
+        // 2026-10-21：devices/reserve 在本校被关闭（1614），看板改从 stores/near 的
+        // storeInfo[] 取 category==1 的 num / access；数值可能是字符串。
         val env = envelope(
-            """{"code":0,"data":{"devices":[{"device":{"deviceTypeName":"滚筒洗衣机","free":"2","total":4,"waitTime":"15"}}]}}""",
+            """{"code":0,"data":{"storeList":[{"id":"s1","name":"3 舍","storeInfo":[
+                {"category":"1","num":"4","access":2},
+                {"category":2,"num":1,"access":0}
+            ]}]}}""",
         )
-        val groups = env.decodeData<UjingReserveData>()!!.devices.mapNotNull { it.device }
-        assertEquals(1, groups.size)
-        assertEquals("滚筒洗衣机", groups[0].deviceTypeName)
-        assertEquals(2, groups[0].free)
-        assertEquals(4, groups[0].total)
-        assertEquals(15, groups[0].waitTime)
+        val store = env.decodeData<UjingStoreListData>()!!.storeList.first()
+        val washers = store.storeInfo.filter { it.category == 1 }
+        assertEquals(4, washers.sumOf { it.num })
+        assertEquals(2, washers.sumOf { it.access })
     }
 
     @Test

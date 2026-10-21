@@ -30,7 +30,7 @@ import kotlin.math.ceil
  * 充值免责声明（2026-09-29 用户要求，DESIGN §3.13 / §4.19）。
  *
  * **电费与一卡通的每个充值入口**在打开充值弹层前都要过这一道（入口清单见
- * `LifeScreen` / `CampusCardSettingsScreen` 的接线）：点「继续充值」才放行；
+ * `RechargeHost` / `CampusCardSettingsScreen` 的接线）：点「继续充值」才放行；
  * 「不同意并取消支付」= 明示不接受协议，本次充值就地作罢、绝不进充值流程
  * （2026-09-30 用户要求：不同意就取消支付）。勾选「一周内不再提醒」后静默 7 天
  * （窗口口径单一来源 `domain/RechargeDisclaimer`，两种充值共用一份）。

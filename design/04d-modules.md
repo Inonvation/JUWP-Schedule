@@ -321,10 +321,12 @@ JS + 实测样本建，**第一次真实提交才能完全校准**——联调�
 时效（2026-09-30 核）：至少 4 个独立项目近期活跃，端点自 2024 年未变。
 
 **网关与指纹**：`https://phoenix.ujing.online/api/v1`，壳 `{code, message, data}`（`code == 0`
-成功；`401 / -99` = 会话过期）。三组指纹（2026-10-21 修正）：取码 / 登录 `ZI`（2.4.3）；
-门店查询 `stores/near` / `devices/reserve` 用 `ZA`（2.4.18，不带 weex / UA）；业务
-（扫码 / 套餐 / 订单）`BI`（2.4.2）+ `weex-version: 1.1.30`。**门店查询发成 BI 组会回 401**，
-仓库按会话过期清 token——看板空、刷新无效即此坑。**无客户端签名**（无需逆向任何加密函数）。
+成功；`401 / -99` = 会话过期）。三组指纹（2026-10-22 修正）：取码 / 登录 `ZI`（2.4.3）；
+门店查询 `stores/near`（含看板 `keyword`）用 `ZA`（2.4.18，不带 weex / UA）；业务
+（扫码 / 套餐 / 订单）`BI`（2.4.2）+ `weex-version: 1.1.30`。
+**`devices/reserve` 已关闭**：本校服务端对 ZA / BI 都回 `1614「暂不支持预约，请扫码洗衣」`；
+看板改从 `stores/near?keyword=<店名>` 的 `storeInfo[]` 取（category 1 洗衣机 / 2 烘干机，
+`access` 空闲、`num` 总数）。**无客户端签名**（无需逆向任何加密函数）。
 服务端对 code 宽容（ZA/BA 亦被验证可用）。收紧校验时先动 `UjingApiConfig`（重新抓包对齐）。
 
 **模块落位**：
@@ -355,7 +357,8 @@ data/ujing/UjingRepository.kt    编排：登录 / 看板 / 扫码 / 套餐 / �
 data/ujing/UjingDraftStore.kt    扫码下单草稿（**进程内，故意不落盘**）：主页与下单页两个
                                  独立窗口之间的扫码结果与所选档位交接；submit → 主页取走执行
 data/ujing/UjingHistoryStore.kt  历史账单（prefs JSON ≤50 笔 + StateFlow，upsert 纯函数可 JVM 测）
-ui/ujing/UjingScreen|ViewModel   主页与状态：看板并发限 4（Semaphore）、60s 冷却双保险、
+ui/ujing/UjingScreen|ViewModel   主页与状态：看板逐店 `stores/near?keyword=店名`（无并发闸）、
+                                 60s 冷却双保险、
                                  使用须知窗口（3 秒锁 + 一周静默）、订单卡（本地秒级倒计时 +
                                  页面可见 15s 轮询）、扫码成功开草稿发导航事件；
                                  **下单 / 支付的执行点在这里**（下单页交回选择后走同一条链；
@@ -372,8 +375,8 @@ ui/reminder/UjingDoneReminder    洗衣完成提醒：setAlarmClock 单点 + Wor
                                  Receiver/Worker 类名纪律与选课提醒同款
 ```
 
-**端点（P1+P2 用到）**：`captcha` → `login`（→ JWT）→ `stores/near`（经度拼写是 **`lont`**）
-→ `devices/reserve?storeId=` → `devices/scanWasherCode`（**二维码原文直传**）→
+**端点（P1+P2 用到）**：`captcha` → `login`（→ JWT）→ `stores/near`（经度拼写是 **`lont`**；
+看板用 `keyword=<店名>` + `storeInfo[]`）→ `devices/scanWasherCode`（**二维码原文直传**）→
 `app/washer/devices/program/info?deviceId=`（storeId / 套餐 / 下单开关由服务端动态下发，
 声明开关有 `isWashTemperatureEnable` / `isForceDetergent` / `isForceDisinfectant`）→
 `orders/create`（body：type / deviceTypeId / deviceId / deviceWashModelId / storeId 为基础
@@ -413,7 +416,13 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 10 秒节流）；④ **烘干机**：`UjingState.isDryer`（type==2 为准，deviceTypeId / 机型名兜底）判定，
 下单页标题「烘干时长」、档位以时长为主，**水温 / 投放整块不出**。收口：⑤ `detail.statusRemark`
 存进快照、展示走 `UjingState.statusLabel`（服务端文案优先、本地表兜底）；⑥ 进页对表改静默；
-⑦ `devices/reserve` 也整包落盘（`ujing_debug/devices_reserve_<storeId>.json`，debug 专用）。
+⑦ `devices/reserve` 也整包落盘（debug 专用）。
+
+**2026-10-22 看板数据源切换**：`devices/reserve` 在本校被服务端关闭——ZA / BI 两组都回
+`1614「暂不支持预约，请扫码洗衣」`（同一 token 调 `stores/near` 正常，排除会话问题）。
+看板与侧栏 U净 行改逐店 `stores/near?keyword=<店名>`，从 `storeInfo[]` 取 category 1/2 的
+`access/num`；不能用不带 keyword 的附近列表（只回最近几十家，13 栋被截在 2km 列表外）。
+行失败时把 `error.message` 显示出来。
 单测：`UjingStateTest` 20 例 + `UjingOrderStateTest` 8 例，在 HEAD（2.9.0）干净副本上
 `testDebugUnitTest` + `assembleDebug` 通过（全量 1918 例 0 失败）。
 

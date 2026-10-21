@@ -104,7 +104,7 @@ import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
 import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
 import edu.jxslu.schedule.ui.common.StackedDrawerState
-import edu.jxslu.schedule.ui.life.LifeScreen
+import edu.jxslu.schedule.ui.life.RechargeHost
 import edu.jxslu.schedule.ui.life.RechargeKind
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeUseMode
@@ -444,8 +444,8 @@ private fun resolveFloatingNavBarBlocking(): Boolean = startupPrefsBlocking().fl
  * 缓存会让「重开窗口生效」退化成「重启生效」。DataStore 首读后全走内存缓存，
  * 这里的成本只剩内存读。
  *
- * 生活页关掉时落回今日页：那一项在设置里已经不显示（§3.13），再落在没有入口的
- * Tab 上用户连怎么返回都找不到。判据与设置页选中态共用 [StartPage.effectivePage]。
+ * 旧版「生活 / 我的」启动页选择落回今日页：那两个 Tab 已删除（设置里也不显示），
+ * 再落在没有入口的 Tab 上用户连怎么返回都找不到。判据与设置页选中态共用 [StartPage.effectivePage]。
  */
 private fun resolveStartRouteBlocking(): String = runBlocking {
     val prefs = Graph.repository(Graph.appContext).displayPrefs.first()
@@ -836,8 +836,9 @@ internal fun JuwApp(
         )
     }
     DrawerBackHandler(drawer)
-    // 从侧栏钱包发起充值：先落一个待办，再进隐藏的 Life 页让原有充值流程接管
-    var pendingLifeRecharge by remember { mutableStateOf<RechargeKind?>(null) }
+    // 从侧栏钱包发起充值：不再是「跳一个页面」，只落一个待办，壳层 RechargeHost
+    // 直接弹对应充值弹层；弹层关掉就结束，不离开当前 Tab。
+    var pendingRecharge by remember { mutableStateOf<RechargeKind?>(null) }
 
     // 小组件网格区点击 → 切到课表 Tab；余额提醒通知 → 切到生活 Tab（DESIGN §3.6 / §3.10）。
     // 跳转后消费掉 extra，否则每次重组/返回都会把用户弹回那个 Tab。
@@ -848,7 +849,9 @@ internal fun JuwApp(
     val route = pendingRoute?.value
     LaunchedEffect(route) {
         if (route == ROUTE_WEEK || route == ROUTE_LIFE) {
-            val target = if (route == ROUTE_WEEK) Routes.WEEK else Routes.LIFE
+            // 旧版余额通知 PendingIntent 里的 ROUTE_LIFE 还会在升级后触发一次；
+            // 生活页已删除，统一落回今日页，别再找不存在的路由。
+            val target = if (route == ROUTE_WEEK) Routes.WEEK else Routes.TODAY
             navController.navigate(target) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
@@ -925,8 +928,8 @@ internal fun JuwApp(
     }
 
     // 「支付成功」弹窗（DESIGN §3.10）：付款码页检测到扣款会自行退出，结果经
-    // PayCodeResultBus 落到这里（取值即消费）。挂在根层、四个 Tab 之上——
-    // 今日页「+ → 付款码」与生活页付款码条两条出码路径共用这一个宿主
+    // PayCodeResultBus 落到这里（取值即消费）。挂在根层、所有 Tab 之上——
+    // 今日页「+ → 付款码」与侧栏付款码两条出码路径共用这一个宿主
     // （此前只有生活页自己弹，从今日页出码付款后没人消费结果，弹窗会一直挂着、
     // 直到下次打开生活页才迟到弹出；2026-10-07 补齐）。校园卡设置页是独立窗口，
     // 那份宿主在那边的页面里。
@@ -1076,7 +1079,7 @@ internal fun JuwApp(
         .collectAsStateWithLifecycle(initialValue = null)
 
     // 悬浮导航栏：只用启动期冻结的那份（见 floatingNavBarEffective 的 KDoc）。
-    // shellPrefs 流仍订阅着背景图/生活页开关等运行时可变项，别顺手把这里改回它。
+    // shellPrefs 流仍订阅着背景图/底栏开关等运行时可变项，别顺手把这里改回它。
     val floatingNavBar = floatingNavBarEffective ?: resolveFloatingNavBarBlocking()
         .also { floatingNavBarEffective = it }
 
@@ -1140,14 +1143,15 @@ internal fun JuwApp(
     }
     val bottomReserveDp = navBarInsetDp +
         if (floatingNavBar) FloatingPillHeight + FloatingBarBottomMargin else PlainBottomBarHeight
-    // 悬浮球只在主窗口四个 Tab 显示（二级页是独立 Activity 窗口，本就看不到它）
+    // 悬浮球只在主窗口三个 Tab 显示（二级页是独立 Activity 窗口，本就看不到它；
+    // 充值页是从侧栏临时推入的隐藏路由，不算 Tab，不挂球）
     val floatingBallOnTab = currentRoute == Routes.TODAY || currentRoute == Routes.WEEK ||
-        currentRoute == Routes.LIFE
+        currentRoute == Routes.JW
 
     // 侧栏里点普通入口**不收侧栏**（2026-10-21 用户口径，与设置同一个姿势）：
     // 二级页是独立窗口，直接盖在侧栏上；返回时侧栏还开着，用户接着点下一项。
     // 此前先 close() 再起窗口，收起动画与窗口推入叠在一起，观感很别扭。
-    // 例外只有两类「动作」而不是「入口」：扫一扫、充值（后者要导航到隐藏的 Life 页）。
+    // 例外只有两类「动作」而不是「入口」：扫一扫、充值（充值不走窗口，直接由壳层 RechargeHost 弹弹层）。
     val openFromDrawer: (SubpageScreen, String?) -> Unit = { screen, focus ->
         openSubpage(context, SubpageRequest(screen = screen, focusItemId = focus))
     }
@@ -1214,14 +1218,12 @@ internal fun JuwApp(
                 onOpenStatement = { openFromDrawer(SubpageScreen.CAMPUS_STATEMENT, null) },
                 onOpenPowerBill = { openFromDrawer(SubpageScreen.POWER_BILL, null) },
                 onOpenCampusRecharge = {
-                    drawer.close()
-                    pendingLifeRecharge = RechargeKind.Campus
-                    navController.navigate(Routes.LIFE) { launchSingleTop = true }
+                    // 弹层直接盖在侧栏上，侧栏保持展开（2026-10-22 用户口径）：
+                    // 关掉弹层后还在原处，不用重新滑开侧栏。
+                    pendingRecharge = RechargeKind.Campus
                 },
                 onOpenPowerRecharge = {
-                    drawer.close()
-                    pendingLifeRecharge = RechargeKind.Power
-                    navController.navigate(Routes.LIFE) { launchSingleTop = true }
+                    pendingRecharge = RechargeKind.Power
                 },
                 onOpenSettings = {
                     SettingsActivity.start(context)
@@ -1331,8 +1333,8 @@ internal fun JuwApp(
             ) {
                 NavHost(
                     navController = navController,
-                    // 启动页（DESIGN §3.3）：默认今日，可在「我的 → 通用 → 启动页」改，
-                    // 生活页关掉时那项不可选、落点由 resolveStartRouteBlocking 兜回今日。
+                    // 启动页（DESIGN §3.3）：默认今日，可在「我的 → 通用 → 启动页」改；
+                    // 旧版生活 / 我的选择落点由 resolveStartRouteBlocking 兜回今日。
                     startDestination = startRoute,
                     // 悬浮形态：内容铺到窗口底，被胶囊压住一部分——留出底栏槽位的话，
                     // 内容会在胶囊上方被截断，看着仍是「一条白色底栏 + 一个胶囊」。
@@ -1503,63 +1505,6 @@ internal fun JuwApp(
                             onOpenImport = { JwImportActivity.start(context) },
                         )
                     }
-                    // 生活页（DESIGN §3.13）：一卡通余额 / 付款码 / 寝室电费 / 充值入口 / 最近流水。
-                    // 三个出口都是二级页（独立窗口，返回语义清晰）：消费流水、全屏付款码、一卡通设置
-                    composable(Routes.LIFE) {
-                        LifeScreen(
-                            onOpenStatement = {
-                                SubpageActivity.start(context, SubpageScreen.CAMPUS_STATEMENT)
-                            },
-                            onOpenPowerBill = {
-                                SubpageActivity.start(context, SubpageScreen.POWER_BILL)
-                            },
-                            onOpenPayCode = {
-                                SubpageActivity.start(context, SubpageScreen.PAY_CODE)
-                            },
-                            onOpenCampusSettings = {
-                                SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
-                            },
-                            // 校园服务（2026-10-19）：考试安排 / 成绩查询两格直达；
-                            // 教务服务 / 学业数据两格各自弹入口弹窗
-                            onOpenWenqu = {
-                                SubpageActivity.start(context, SubpageScreen.WENQU)
-                            },
-                            onOpenScores = {
-                                SubpageActivity.start(context, SubpageScreen.SCORES)
-                            },
-                            onOpenExam = {
-                                SubpageActivity.start(context, SubpageScreen.EXAMS)
-                            },
-                            // 教务服务弹窗：学生评教 / 宿舍报修 / 请假 / 校历
-                            onOpenTeachingEval = {
-                                JwImportActivity.start(context, JwImportMode.TeachingEval)
-                            },
-                            onOpenDormRepair = {
-                                XgFormActivity.start(context, XgUrls.REPAIR)
-                            },
-                            onOpenLeave = {
-                                XgFormActivity.start(context, XgUrls.LEAVE)
-                            },
-                            onOpenCalendar = {
-                                SubpageActivity.start(context, SubpageScreen.CAMPUS_CALENDAR)
-                            },
-                            // 学业数据弹窗：我的 → 学习「学业数据」全部入口 + 实习基地查看
-                            onOpenScholar = {
-                                SubpageActivity.start(context, SubpageScreen.SCHOLAR)
-                            },
-                            onOpenCurriculum = {
-                                SubpageActivity.start(context, SubpageScreen.CURRICULUM)
-                            },
-                            onOpenSelection = {
-                                SubpageActivity.start(context, SubpageScreen.SELECTIONS)
-                            },
-                            onOpenInternshipBases = {
-                                SubpageActivity.start(context, SubpageScreen.INTERNSHIP_BASES)
-                            },
-                            initialRecharge = pendingLifeRecharge,
-                            onInitialRechargeConsumed = { pendingLifeRecharge = null },
-                        )
-                    }
                 }
             }
             // 侧栏三个入口弹窗（2026-10-20）：与对应页面共用同一份 ViewModel。
@@ -1620,6 +1565,18 @@ internal fun JuwApp(
                     },
                 )
             }
+            // 充值宿主（2026-10-22）：侧栏点「充值」直接在这里弹一卡通 / 电费弹层，
+            // 不跳页面。宿主常驻，弹层/到账弹窗/银行回跳都归它管。
+            RechargeHost(
+                pending = pendingRecharge,
+                onConsumed = { pendingRecharge = null },
+                onOpenPayCode = { SubpageActivity.start(context, SubpageScreen.PAY_CODE) },
+                onOpenCampusSettings = {
+                    SubpageActivity.start(context, SubpageScreen.CAMPUS_CARD_SETTINGS)
+                },
+                snackbar = shellSnackbar,
+                scope = shellScope,
+            )
             // 外壳级提示通道（悬浮球「别家码」等播报）：贴底、让开底栏。画在页面之上、
             // 底栏之下——球被 inset 顶在底栏之上，这条提示与它同一带，互不遮挡。
             AppSnackbarHost(
@@ -1628,7 +1585,7 @@ internal fun JuwApp(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = bottomReserveDp),
             )
-            // 应用内悬浮球（DESIGN §3.1）：主窗口四个 Tab 常驻。显示设置面板打开时
+            // 应用内悬浮球（DESIGN §3.1）：主窗口三个 Tab 常驻。显示设置面板打开时
             // （bottomBarVisible 为 false）一并收起，免得压在面板上。
             // 单击在「预报名执行期间」（DESIGN §4.45，2026-10-21）临时变为弹出抢活动仪表板
             // （通知之外的进程内重开入口），其余时间仍是付款码；双击扫一扫不受影响。
@@ -1670,5 +1627,4 @@ object Routes {
     const val TODAY = "today"
     const val WEEK = "week"
     const val JW = "jw"
-    const val LIFE = "life"
 }

@@ -57,13 +57,16 @@
 
 - 网关 `https://phoenix.ujing.online/api/v1`，壳 `{code, message, data}`，`code == 0` 成功；
   `401 / -99` = 会话过期（`UjingSessionExpiredException`）。
-- **三组「客户端指纹」**（2026-10-21 修正）：取码/登录 `ZI`（2.4.3）；门店查询
-  `stores/near` / `devices/reserve` 用 `ZA`（2.4.18，**不带 weex / UA**）；业务
+- **三组「客户端指纹」**（2026-10-22 修正）：取码/登录 `ZI`（2.4.3）；门店查询
+  `stores/near`（含看板的 `keyword` 搜索）用 `ZA`（2.4.18，**不带 weex / UA**）；业务
   （扫码 / 套餐 / 订单）`BI`（2.4.2）+ `weex-version: 1.1.30`。
-  **看板取不到数先查这一组**：此前门店查询跟 BI 一起发，`devices/reserve` 回 401，
-  仓库按会话过期清了 token，重登后再 401——现象就是「看板一直空、刷新无效」。
-  **没有客户端签名**（无需逆向任何加密函数）。服务端对 code 宽容（ZA/BA 亦可用），
-  但门店查询组用 ZA 是社区实测定论（liteU / DUT-Ujing，2026-09-30）。
+  **`devices/reserve` 已停止使用**：本校服务端对 ZA / BI 两组都回
+  `code=1614「暂不支持预约，请扫码洗衣」`（2026-10-22 实测，不是 token 问题）。
+  旧「洗衣房空闲」看板改从 `stores/near?keyword=<店名>` 的 `storeInfo[]` 取：
+  `category 1` 洗衣机 / `2` 烘干机，`access` 空闲、`num` 总数。
+  **没有客户端签名**（无需逆向任何加密函数）。服务端对 code 宽容（ZA/BA 亦可用）。
+- 看板按**店名 keyword** 查，不要拉不带 keyword 的附近列表：后者只回最近的几十家，
+  「13 栋」这类店会被截在 2km 列表外（实测 53 家只到 0.59km）。
 - 服务端收紧校验时**先改 `UjingApiConfig`**（版本号 / UA / 头组合），改前重新抓包对齐。
 - 注意平台把经度拼成 **`lont`**；`devices/scanWasherCode` 必须传**二维码原始内容**（勿预提取 uuid）。
 
@@ -128,6 +131,12 @@
   `handleFailure` 发、别再叠一条。
 - **看板每行两条**：`UjingBoardRow` 的 `line`（洗衣机）与 `dryerLine`（烘干机），同由
   `UjingState.boardLine` / `dryerLine` 聚合（共用 `lineFor`）；UI 出「烘干机 空闲 N/M」。
+- **看板数据源（2026-10-22 改）**：`UjingRepository.storeCounts(店名)` 逐店调
+  `stores/near?keyword=<店名>`，从 `storeInfo[]` 按 category 1/2 拼洗衣机 / 烘干机组；
+  **别再回到 `devices/reserve`**（1614）或**不带 keyword 的附近列表**（截断到最近几十家）。
+  单店失败只影响那一行；`UjingBoardRow.error` 会把失败原因显示出来，不再只写「获取失败」。
+- **侧栏 U净 状态**：`loadUjingFreeText` 与看板同源（逐店 `storeCounts` → `boardLine`
+  只数洗衣机）；未登录 / 无收藏 / 全失败时不显示。
 - **今日页 U净 弹窗显示洗涤状态**（2026-10-19 自生活页迁入，`ui/ujing/UjingEntrySheet`）：
   弹窗只读 `Graph.ujing().orderState`；**订单对表在打开弹窗那一下做**（`TodayScreen` 的点击处，
   10 秒节流，见 `UJING_ORDER_REFRESH_TTL_MILLIS`——快照只在 U净 页轮询，不这样拿到的是下单时的
@@ -139,9 +148,6 @@
   `statusText(status)`**（订单卡与今日页弹窗两处都改了）。
 - **进页对表走静默**：`loggedIn` 收集器里那次 `refreshOrder` 用 `silent = true`（进页补数据不该
   把订单卡按钮闪成加载圈）。
-- **协议样本采集**：除 `program/info` 外，`devices/reserve` 也整包落盘
-  （`filesDir/ujing_debug/devices_reserve_<storeId>.json`，debug 专用、一店一份）——「烘干机在线
-  状态」到底能显示什么，只能靠它答（看板只映射了 `deviceTypeName/free/total/waitTime`）。
 
 ## 烘干机（2026-10-16，改前重读）
 

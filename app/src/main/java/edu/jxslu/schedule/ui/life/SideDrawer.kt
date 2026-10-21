@@ -55,9 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -81,16 +79,12 @@ import edu.jxslu.schedule.data.ujing.UjingHouseStore
 import edu.jxslu.schedule.data.ujing.UjingRepository
 import edu.jxslu.schedule.domain.AccountMask
 import edu.jxslu.schedule.domain.ShortcutSettings
-import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.campus.CampusCardViewModel
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.common.ShortcutSheet
 import edu.jxslu.schedule.ui.common.rememberResumeTick
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
@@ -118,9 +112,13 @@ private enum class WalletDetail { Campus, Power }
 /** 侧栏 U净 行右侧空闲状态的刷新节流：空闲看板本身约 30 秒滞后，刷更勤没意义。 */
 private const val UJING_FREE_REFRESH_TTL_MILLIS = 30_000L
 
+/** 侧栏寝室电费读数的刷新节流（2026-10-22：旧生活页删除后，侧栏是它的唯一展示位）。 */
+private const val DRAWER_POWER_REFRESH_TTL_MILLIS = 60_000L
+
 /**
  * 拉收藏洗衣房的洗衣机空闲聚合（侧栏 U净 行右侧的展示数）。
- * 多店求和（free / total），文案语义与 U净 页看板同源（[UjingState.BoardLine]）。
+ * 多店求和（free / total），数据源与 U净 页看板同源：`stores/near?keyword=<店名>`
+ * 的门店统计（`devices/reserve` 在本校已被服务端关闭）。
  * 未登录 / 没收藏店 / 没有任何成功数据 → null：右侧不显示状态，整行点击直接进页。
  */
 private suspend fun loadUjingFreeText(
@@ -130,20 +128,14 @@ private suspend fun loadUjingFreeText(
     if (!repo.loggedIn.value) return null
     val houses = houseStore.list()
     if (houses.isEmpty()) return null
-    // 并发上限与 U净 页看板同口径（4）：侧栏展开时一次拉全量收藏店
-    val lines = coroutineScope {
-        houses.map { house ->
-            async {
-                runCatching { repo.devicesReserve(house.storeId) }
-                    .getOrNull()
-                    ?.let { groups -> repo.boardLine(groups) }
-            }
-        }.awaitAll()
+    val lines = houses.mapNotNull { house ->
+        runCatching { repo.storeCounts(house.name) }
+            .getOrNull()
+            ?.let { groups -> repo.boardLine(groups) }
     }
-    val valid = lines.filterNotNull()
-    val free = valid.sumOf { it.free }
-    val total = valid.sumOf { it.total }
-    if (valid.isEmpty() || total <= 0) return null
+    val free = lines.sumOf { it.free }
+    val total = lines.sumOf { it.total }
+    if (lines.isEmpty() || total <= 0) return null
     return if (free > 0) "空闲 $free/$total" else "暂无空闲"
 }
 
@@ -291,6 +283,17 @@ fun SideDrawerContent(
             loadUjingFreeText(ujingRepo, ujingHouseStore)
         }
         ujingFreeLoading = false
+    }
+
+    // 寝室电费读数：旧生活页删除后，侧栏是它唯一的常驻展示位——展开侧栏时静默刷一轮
+    // （60 秒节流；仓库还有 120 秒缓存，切来切去不会真的重复打平台）。
+    var powerRefreshedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(drawerVisible, resumeTick) {
+        if (!drawerVisible) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        if (now - powerRefreshedAt < DRAWER_POWER_REFRESH_TTL_MILLIS) return@LaunchedEffect
+        powerRefreshedAt = now
+        lifeVm.refreshPower(force = false)
     }
 
     var showShortcutSheet by remember { mutableStateOf(false) }
@@ -839,6 +842,14 @@ private fun WalletDetailSheet(
                 DetailRow("房间", powerRoom ?: "—")
                 DetailRow("更新时间", formatTime(powerAt))
             }
+            // 旧「生活」页的钱包说明随页面删除后挪到这里：详情弹层是余额/电费的
+            // 唯一常驻落点，这两句用户要求保留的口径不能丢。
+            Text(
+                text = if (isCampus) BALANCE_NOTE else ELECTRICITY_NOTE,
+                style = MaterialTheme.typography.bodySmall,
+                color = muted,
+                modifier = Modifier.padding(top = 6.dp),
+            )
             Row(
                 modifier = Modifier.padding(top = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1002,17 +1013,6 @@ private fun DrawerRow(
         targetValue = if (pressed) 0.985f else 1f,
         label = "drawerRowPress",
     )
-    // 右侧状态若自带动作（开入口弹窗），给一层常驻的极浅胶囊 + 按下加深：
-    // 它和「行本体进页」是两套动作，只靠箭头颜色区分不够看（2026-10-21）。
-    val trailingInteraction = remember { MutableInteractionSource() }
-    val trailingPressed by trailingInteraction.collectIsPressedAsState()
-    val trailingPill by animateColorAsState(
-        targetValue = MaterialTheme.colorScheme.primary.copy(
-            alpha = if (trailingPressed) 0.10f else 0.05f,
-        ),
-        animationSpec = tween(140),
-        label = "drawerTrailingPill",
-    )
     // 高亮过渡与 AppCard.highlighted 同一族（180ms）：描边色 / 底色 / 描边宽三处一起动
     val borderColor by animateColorAsState(
         targetValue = if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
@@ -1123,20 +1123,8 @@ private fun DrawerRow(
         if (onTrailingClick != null) {
             Row(
                 modifier = Modifier
-                    // 胶囊用绘制而不是 padding：加布局内边距会把金额推离右缘，
-                    // 各行金额就不再对齐了。
-                    .drawBehind {
-                        drawRoundRect(
-                            color = trailingPill,
-                            topLeft = Offset(-8.dp.toPx(), -1.dp.toPx()),
-                            size = Size(size.width + 16.dp.toPx(), size.height + 2.dp.toPx()),
-                            cornerRadius = CornerRadius(10.dp.toPx()),
-                        )
-                    }
                     .clip(RoundedCornerShape(8.dp))
                     .clickable(
-                        interactionSource = trailingInteraction,
-                        indication = LocalIndication.current,
                         onClickLabel = "$label 余额与入口",
                         onClick = onTrailingClick,
                     )
@@ -1220,3 +1208,10 @@ private fun PaymentCodeEntry(onClick: () -> Unit) {
         )
     }
 }
+
+/** 一卡通余额说明（钱包详情弹层，2026-09-24 口径；旧生活页删掉后挪到侧栏）。 */
+private const val BALANCE_NOTE =
+    "一卡通余额与流水都来自一卡通平台，服务端落账有延迟，刚发生的消费或充值可能暂时不计入。"
+
+/** 电费说明（钱包详情弹层，2026-09-24 用户给的原话；只有这一处口径）。 */
+private const val ELECTRICITY_NOTE = "受服务器影响，实际费用可能有延迟，电费不足时请及时缴费"

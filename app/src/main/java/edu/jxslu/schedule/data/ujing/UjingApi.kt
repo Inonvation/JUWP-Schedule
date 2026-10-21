@@ -82,28 +82,25 @@ class UjingApi private constructor(private val http: OkHttpClient) {
     )
 
     /** 附近洗衣房（注意平台把经度拼成 `lont`，照抄协议事实）。 */
-    suspend fun storesNear(token: String, lat: Double, lng: Double): UjingEnvelope = request(
+    suspend fun storesNear(
+        token: String,
+        lat: Double,
+        lng: Double,
+        keyword: String? = null,
+    ): UjingEnvelope = request(
         method = "GET",
         path = "stores/near",
         identity = Identity.Query,
         token = token,
-        query = mapOf(
-            "lat" to lat.toString(),
-            "lont" to lng.toString(),
-            "scope" to "2000",
-            "page" to "1",
-            "size" to "100",
-            "mode" to "BA",
-        ),
-    )
-
-    /** 店内设备统计（看板一行一次调用）。 */
-    suspend fun devicesReserve(token: String, storeId: String): UjingEnvelope = request(
-        method = "GET",
-        path = "devices/reserve",
-        identity = Identity.Query,
-        token = token,
-        query = mapOf("storeId" to storeId),
+        query = buildMap {
+            put("lat", lat.toString())
+            put("lont", lng.toString())
+            put("scope", "2000")
+            put("page", "1")
+            put("size", "100")
+            put("mode", "BA")
+            if (!keyword.isNullOrBlank()) put("keyword", keyword)
+        },
     )
 
     // ── 订单链（P2） ──

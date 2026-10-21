@@ -21,10 +21,7 @@ import edu.jxslu.schedule.data.ujing.UjingWashModel
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.reminder.UjingDoneReminder
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,18 +32,18 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /**
  * 看板一行：[line] 是洗衣机聚合，[dryerLine] 是烘干机聚合（各自为 null = 该店没有这类
- * 设备）；[failed] = 该店拉取失败。
+ * 设备）；[failed] = 该店拉取失败，[error] 是失败原因（2026-10-21 起显示在行里，
+ * 不再只写一句「获取失败」）。
  */
 data class UjingBoardRow(
     val house: UjingHouse,
     val line: UjingState.BoardLine?,
     val failed: Boolean,
     val dryerLine: UjingState.BoardLine? = null,
+    val error: String? = null,
 )
 
 /**
@@ -277,8 +274,10 @@ class UjingViewModel(
     // ── 空闲看板 ──
 
     /**
-     * 拉取全部收藏店的空闲数据（并发，上限 [BOARD_CONCURRENCY] 收在 OkHttp 连接池
-     * 可承受的范围）。单店失败只让那一行显示失败，不打断整板。
+     * 拉取全部收藏店的空闲数据（2026-10-22 定稿）：`devices/reserve` 在本校被服务端
+     * 关闭（回 1614「暂不支持预约，请扫码洗衣」），改走 `stores/near?keyword=<店名>`
+     * 的 `storeInfo[]`——一店一条，按店名精确命中，不受附近列表截断影响。
+     * 单店失败只让那一行显示失败原因，不打断整板。
      */
     fun refreshBoard() {
         val houses = houseStore.list()
@@ -289,27 +288,27 @@ class UjingViewModel(
         }
         _uiState.update { it.copy(boardRefreshing = true) }
         viewModelScope.launch {
-            val limiter = Semaphore(BOARD_CONCURRENCY)
-            val rows = coroutineScope {
-                houses.map { house ->
-                    async {
-                        runCatching { limiter.withPermit { repo.devicesReserve(house.storeId) } }
-                            .fold(
-                                onSuccess = { groups ->
-                                    UjingBoardRow(
-                                        house = house,
-                                        line = repo.boardLine(groups),
-                                        failed = false,
-                                        dryerLine = repo.dryerLine(groups),
-                                    )
-                                },
-                                onFailure = { error ->
-                                    handleFailure(error)
-                                    UjingBoardRow(house, line = null, failed = true)
-                                },
+            val rows = houses.map { house ->
+                runCatching { repo.storeCounts(house.name) }
+                    .fold(
+                        onSuccess = { groups ->
+                            UjingBoardRow(
+                                house = house,
+                                line = repo.boardLine(groups),
+                                failed = false,
+                                dryerLine = repo.dryerLine(groups),
                             )
-                    }
-                }.awaitAll()
+                        },
+                        onFailure = { error ->
+                            handleFailure(error)
+                            UjingBoardRow(
+                                house = house,
+                                line = null,
+                                failed = true,
+                                error = error.message?.takeIf { it.isNotBlank() } ?: "未知错误",
+                            )
+                        },
+                    )
             }
             _uiState.update { it.copy(board = rows, boardRefreshing = false) }
         }
@@ -727,9 +726,6 @@ class UjingViewModel(
          * 登录流程正常在几分钟内走完；留太久的话，用户在别处登录也会被推进一次识别。
          */
         const val PENDING_SCAN_TTL_MILLIS = 10L * 60 * 1000
-
-        /** 看板并发上限。 */
-        const val BOARD_CONCURRENCY = 4
 
         /** 订单进行中且页面可见时的轮询间隔（离开页面即停，无后台轮询）。 */
         const val ORDER_POLL_INTERVAL_MILLIS = 15_000L

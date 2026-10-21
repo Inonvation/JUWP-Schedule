@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * 付款码页检测到扣款后会**自动退出**，结果要落在退出后的页面上——消费方是
  * `CampusPayResultDialogHost`（2026-10-07 起收敛为两个挂点：MainActivity 根层
- * 覆盖四个 Tab，校园卡设置页独立窗口自挂一份；不再由生活页 / 设置页各自自持）。
+ * 覆盖三个 Tab，校园卡设置页独立窗口自挂一份；不在页面内各自自持）。
  * 付款码页与落点分属不同 Activity，没有共同的 CompositionLocal，
  * 用一个进程内单例转发。
  *

@@ -302,8 +302,8 @@ private fun UsageEmptyHint(hasReading: Boolean) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            text = "用电量由本机记录的读数差分推算：打开生活页、点电费卡刷新、" +
-                "下拉刷新本页都会记一条。攒够两条才会出现曲线。",
+            text = "用电量由本机记录的读数差分推算：从左侧栏进充值、下拉刷新本页都会记一条。" +
+                "攒够两条才会出现曲线。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             textAlign = TextAlign.Center,

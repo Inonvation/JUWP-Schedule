@@ -453,9 +453,8 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
     }
 
     /**
-     * 启动页（DESIGN §3.3）：写入用户的选择本身——生活页关着时也不把它改写成今日，
-     * 生活页开回来旧选择还在（生效页由 `StartPage.effectivePage` 算）。
-     * 重启应用后生效，调用点负责提示。
+     * 启动页（DESIGN §3.3）：写入用户的选择本身——旧版「生活 / 我的」的值不在这里改写，
+     * 生效页由 `StartPage.effectivePage` 落回今日。重启应用后生效，调用点负责提示。
      */
     fun setStartPage(page: StartPage) {
         viewModelScope.launch { repo.setStartPage(page) }

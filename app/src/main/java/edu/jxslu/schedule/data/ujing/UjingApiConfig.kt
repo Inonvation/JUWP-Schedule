@@ -19,12 +19,12 @@ object UjingApiConfig {
     const val UA_ACCOUNT = "U jing/2.4.3 (iPhone; iOS 17.3; Scale/3.00)"
 
     /**
-     * 门店查询（`stores/near` / `devices/reserve`，鉴权后）。
+     * 门店查询（`stores/near`，鉴权后；含看板的 `keyword` 搜索）。
      *
-     * 2026-10-21 修看板取不到数：这两个接口**不属于**扫码下单那组业务指纹。
-     * 社区实测（liteU / DUT-Ujing，2026-09-30）用的是 `ZA` + `2.4.18`；
-     * 此前跟 `BI` + `2.4.2` 一起发，`devices/reserve` 回 401，仓库按会话过期清了 token，
-     * 于是看板与侧栏状态一直取不到（重登后再次 401，像"刷新无效"）。
+     * 2026-10-22 实测：本校服务端对 `devices/reserve` 的 ZA / BI 两组都回
+     * `code=1614「暂不支持预约，请扫码洗衣」`——旧空闲看板接口已关闭，不是 token 问题。
+     * 看板改从 `stores/near?keyword=<店名>` 的 `storeInfo[]` 取（`category 1/2` +
+     * `access/num`），ZA 组实测可用。
      * 业务请求（扫码 / 套餐 / 订单）仍走下面的 BI 组。
      */
     const val APP_CODE_QUERY = "ZA"
@@ -38,6 +38,13 @@ object UjingApiConfig {
 
     /** 未授权位置占位（官方客户端未定位时也发这个值）。 */
     const val USER_GEO_UNKNOWN = "-180.000000,-180.000000"
+
+    /**
+     * 校区坐标（WGS84，与天气 / 单车同一落点）：`stores/near` 的空闲聚合按位置查，
+     * 看板不额外申请定位权限，固定用校区中心。`scope = 2000` 覆盖全校门店。
+     */
+    const val CAMPUS_LAT = 28.688320
+    const val CAMPUS_LNG = 116.028466
 
     const val MOBILE_BRAND = "apple"
     const val MOBILE_MODEL = "iPhone14,5"

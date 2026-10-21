@@ -28,7 +28,7 @@
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 / 自动还车 | `.agents/rules/ebike.md` |
-| 生活页 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
+| 充值弹层 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
 | 宿舍空调遥控（今日页 · 江水生活，红外） | `.agents/rules/ac-remote.md` |
 | 天气（今日页顶栏提示 · 天气页） | `.agents/rules/weather.md` |
 | 百宝箱（图片水印 / 拼接 / 菜鸟批量查） | `.agents/rules/toolbox.md` |

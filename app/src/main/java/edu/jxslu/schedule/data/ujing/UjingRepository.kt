@@ -142,22 +142,6 @@ class UjingRepository(
     }
 
     /**
-     * debug 专用：把 `devices/reserve` 的原始响应整包落盘，一店一份（成功与失败都写）。
-     * 补的样本用途：看板只映射了 `device{deviceTypeName,free,total,waitTime}`——`total`
-     * 含不含离线设备、有没有 online / offline 之类的字段，只有原始响应能答；
-     * 失败时的 `code` / `message` 则用来区分「会话过期」与「指纹组不对」。
-     * 响应体不含凭证（token 在请求头），落盘失败静默；release 恒不落盘。
-     */
-    private fun dumpDevicesReserve(storeId: String, envelope: UjingEnvelope) {
-        val dir = debugDumpDir ?: return
-        runCatching {
-            dir.mkdirs()
-            val safe = storeId.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            File(dir, "devices_reserve_$safe.json").writeText(QiekjJson.json.encodeToString(envelope))
-        }
-    }
-
-    /**
      * debug 专用：把 `devices/scanWasherCode` 的**二维码原文与响应**整包落盘，一个码型一份。
      *
      * 补的样本有两处用处：
@@ -196,15 +180,47 @@ class UjingRepository(
             envelope.decodeData<UjingStoreListData>()?.storeList.orEmpty().filter { it.isComplete }
         }
 
-    /** 一家洗衣房的设备统计（看板一行一次调用，并发聚合由调用方编排）。 */
-    suspend fun devicesReserve(storeId: String): List<UjingDeviceGroup> =
+    /**
+     * 一家收藏洗衣房的设备统计（2026-10-22 定稿）。
+     *
+     * 数据源：`stores/near?keyword=<店名>` 的 `storeInfo[]`——`category == 1` 洗衣机、
+     * 2 烘干机，`access` 空闲、`num` 总数。**不能用不带 keyword 的附近列表**：它只回最近
+     * 的几十家，13 栋这类店会被截在 2km 列表外；带 keyword 能直接命中。
+     *
+     * `devices/reserve` 不再使用：本校服务端对 ZA / BI 两组都回
+     * `code=1614「暂不支持预约，请扫码洗衣」`（2026-10-22 实测），不是 token 问题。
+     */
+    suspend fun storeCounts(storeName: String): List<UjingDeviceGroup> =
         withContext(Dispatchers.IO) {
-            val envelope = api.devicesReserve(requireSession().token, storeId)
-            // 先落盘再判成功：失败时的 code / message 同样是「看板为什么空」的证据
-            // （2026-10-21 修 ZA/BI 指纹组时就是靠这类样本定位的）。
-            dumpDevicesReserve(storeId, envelope)
+            if (storeName.isBlank()) return@withContext emptyList()
+            val envelope = api.storesNear(
+                requireSession().token,
+                UjingApiConfig.CAMPUS_LAT,
+                UjingApiConfig.CAMPUS_LNG,
+                keyword = storeName,
+            )
             envelope.requireSuccess()
-            envelope.decodeData<UjingReserveData>()?.devices.orEmpty().mapNotNull { it.device }
+            val stores = envelope.decodeData<UjingStoreListData>()?.storeList.orEmpty()
+            val store = stores.firstOrNull { it.name == storeName }
+                ?: stores.firstOrNull { it.name.contains(storeName) }
+                ?: stores.firstOrNull()
+                ?: return@withContext emptyList()
+            buildList {
+                listOf(1 to "洗衣机", 2 to "烘干机").forEach { (category, label) ->
+                    val items = store.storeInfo.filter { it.category == category }
+                    val total = items.sumOf { it.num }
+                    if (total > 0) {
+                        add(
+                            UjingDeviceGroup(
+                                deviceTypeName = label,
+                                free = items.sumOf { it.access },
+                                total = total,
+                                waitTime = 0,
+                            ),
+                        )
+                    }
+                }
+            }
         }
 
     /** 设备统计 → 看板行（domain 纯逻辑）；没有洗衣机类型时返回 null。 */

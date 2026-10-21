@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * 启动自动检查 → 主界面弹窗的通道（DESIGN §3.3，2026-10-08）。
  *
  * 冷启动检查链（`JuwApplication`）发现新版本时 [publish]；宿主
- * [UpdateAvailableDialogHost] 挂在 MainActivity 根层（四个 Tab 之上）。
+ * [UpdateAvailableDialogHost] 挂在 MainActivity 根层（三个 Tab 之上）。
  *
  * 只存内存：进程被杀就丢——下次冷启动会重新检查，不值得落盘。
  * **与 `PayCodeResultBus` 的「取值即消费」不同：这里在用户关掉弹窗时

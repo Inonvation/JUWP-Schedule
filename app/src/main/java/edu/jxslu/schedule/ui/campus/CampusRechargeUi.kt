@@ -365,7 +365,7 @@ fun CampusPaymentDialog(
  * 订阅 [PayCodeResultBus]（取值即消费），弹 [CampusPaymentDialog]。
  *
  * 挂点两处，覆盖全部出码入口：
- * - `MainActivity` 根层（四个 Tab 之上）：今日页「+ → 付款码」与生活页付款码条两条路径
+ * - `MainActivity` 根层（四个 Tab 之上）：今日页「+ → 付款码」与侧栏付款码两条路径
  *   共用这一个宿主——此前只有生活页自己弹，从今日页出码付款后没人消费结果，
  *   弹窗会一直挂着、直到下次打开生活页才迟到弹出；
  * - `CampusCardSettingsScreen`（独立 Activity，「我的 → 校园卡」出码）。

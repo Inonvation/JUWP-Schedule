@@ -321,7 +321,7 @@ fun CampusCardSettingsScreen(
                         )
                         Text(
                             if (enabled) {
-                                "生活页可用付款码、钱包与电费"
+                                "左侧栏钱包可用付款码与电费，充值也从侧栏发起"
                             } else {
                                 "在下方填入学号与查询密码，保存并验证成功后即开启"
                             },
@@ -647,7 +647,7 @@ fun CampusCardSettingsScreen(
             text = {
                 DialogWindowFadeEffect()
                 Text(
-                    "将清除已保存的学号密码，生活页的付款码与钱包回到未开启状态，寝室电费与余额提醒也会一并关闭" +
+                    "将清除已保存的学号密码，左侧栏的付款码与钱包回到未开启状态，寝室电费与余额提醒也会一并关闭" +
                         "（它们都要用这份凭证）；重新开启时需要重新输入并验证。",
                 )
             },
@@ -1174,7 +1174,7 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         }
         credentialStore.save(user, pwd)
         prefs.setCampusCardEnabled(true)
-        return NoticeFeedback("已开启，生活页已可使用付款码、钱包与电费", NoticeTone.Success)
+        return NoticeFeedback("已开启，左侧栏已可使用付款码、钱包与电费", NoticeTone.Success)
     }
 
     /**

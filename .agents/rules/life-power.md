@@ -1,6 +1,6 @@
-# 生活页 · 校园卡 · 电费 · 胖乖生活
+# 充值弹层 · 校园卡 · 电费 · 胖乖生活
 
-作用域：改生活页、一卡通付款码与流水、寝室电费读写与充值、余额提醒、胖乖生活（开水 / 余额 / 订单）时读。规格见 DESIGN §3.13 / §4.19 / §4.24。
+作用域：改充值弹层、一卡通付款码与流水、寝室电费读写与充值、余额提醒、胖乖生活（开水 / 余额 / 订单）时读。规格见 DESIGN §3.13 / §4.19 / §4.24。
 （空调遥控入口 2026-10-19 已迁到今日页「江水生活」，见 `.agents/rules/ac-remote.md`，规格 §3.31 / §4.48。）
 
 ## 胖乖（P4）开水
@@ -128,7 +128,7 @@
   `QiekjModelsTest` 的「会话结束判定只认 status5」「手动结束_read到账单才结算」「远程结束_
   不支持机型不发注定被拒的请求」钉住口径。
 - **服务端账单历史**（2026-10-14，`order/list`，**待真机验证**）：开水页「历史订单」弹层分两段
-  （沿用生活页「流水两段」约定）——**本地快照**（最多 20 笔、含支付构成）+ **服务端账单**
+  （沿用消费流水页的两段约定）——**本地快照**（最多 20 笔、含支付构成）+ **服务端账单**
   （`QiekjRepository.serverOrders()`，账号全部订单，进弹层按需拉一次；点单笔走
   `serverOrderDetail()` = `order/detail { orderId = ServerOrderItem.id }`）。列表行展示
   `createTime / machineName(shopName) / markPrice`——**字段口径无样本**（`markPrice` 是标价，
@@ -138,99 +138,38 @@
   token 只存内存不落盘；付款码不进日志/剪贴板/相册；凭证交互照 `TweakDetectScreen`（开启先真实验证、关闭即清除）
   调用链（11 步顺序不可乱）见 DESIGN §4.10
 
-## 生活页（一卡通 · 寝室电费）
+## 充值（一卡通 · 寝室电费）
 
-- 底栏第三项「生活」，开关 `DisplayPrefs.lifeTabEnabled` **默认开**（我的 → 通用 → 生活页）；
-  关掉后底栏回到 3 项，页内关掉时自动退回今日页。今日页的一卡通卡入口已移除，见 `today-ui.md`。
-- **样式（2026-10-13 改版；2026-10-19 换四格与整行卡）**：钱包 hero 卡 → 校园服务四格 →
-  问渠整行卡 → 最近流水（分两段）。改版式之前先读 DESIGN §3.13 的 2026-10-13 / 2026-10-19 段。
-  - **钱包 hero 卡**：一卡通余额主视觉（大字）+ 副行「电子账户 / 寝室电费」+ 三枚胶囊按钮
-    **充值 / 付款码 / 账单**（`WalletHeroCard`）。**跟随主题配色**（2026-10-20 改：浅色
-    `primary`/`onPrimary`，深色 `primaryContainer`/`onPrimaryContainer`；动态取色开着时跟壁纸，
-    关掉时跟所选内置配色。2026-10-13 的「固定品牌青」已废止）。三枚胶囊里**付款码实心**、
-    充值 / 账单描边。**充值**开底部选择弹窗
-    （一排两个：一卡通 / 电费，`RechargeChoiceSheet`），选完才过免责声明闸；**付款码**进
-    `PAY_CODE`；**账单**进一卡通消费流水页（**电费不设按钮入口**，电费账单仍走流水段出口）。
-    原「付款码条」整条已删。
-  - **校园服务四格**（2026-10-19）：**考试安排 / 成绩查询 / 教务服务 / 学业数据**
-    （`CampusServicesCard`）。考试安排 → `EXAMS`、成绩查询 → `SCORES`；教务服务 →
-    `ServiceEntriesSheet` 弹窗（学生评教 / 宿舍报修 / 请假 / 校历，分别落
-    `JwImportMode.TeachingEval` / `XgUrls.REPAIR` / `XgUrls.LEAVE` / `CAMPUS_CALENDAR`）；
-    学业数据 → 同款弹窗（学业完成情况 / 培养方案 / 选课（beta）/ 实习基地查看；成绩查询、
-    考试安排已在四格，不重复）。弹窗行先播退场动画再跳转
-    （`rememberSheetDismisser`）。
-  - **问渠整行卡**（2026-10-19 由四格一格升级）：复用 `ui/common/QuickEntryCard`——与今日页
-    「快趣出行」同一张入口卡，整卡进 `WENQU`。
-  - **取快递 / U净 / 空调遥控已移出本页**（2026-10-19）：入口在今日页「江水生活」的三枚
-    图标里（见 `.agents/rules/today-ui.md`）。`ShortcutSheet` 收进 `ui/common`、
-    `UjingEntrySheet` 收进 `ui/ujing`，本页不再持有这两个弹层与扫码链路。
-- **本页关掉了触底回弹**（`CompositionLocalProvider(LocalOverscrollConfiguration provides null)`，
-  2026-10-13）：本页是 `Column + verticalScroll` 的长内容（非懒加载），拖到头之后系统把整块
-  做拉伸、那一帧重栅格化，表现成「上拉到底再下拉会弹动卡顿」——与当时天气页同一个 bug
-  （见 `.agents/rules/weather.md`）。展示型页面的边到边回弹没有信息量，**别删这个 provider**。
-- **码不预取，且只有一处出码**：生活页只放钱包卡上那一枚「付款码」按钮，点了进全屏
-  `PayCodeScreen`；
-  取码、`FLAG_SECURE`、亮度拉满、`startPayWatch` 的「扫码后自动退出」全在那一页。
-  **别再往生活页内嵌码位**——2026-09-23 到 2026-09-26 之间那套内嵌卡（`CodeSlots` +
-  码位骨架 + 三枚等宽按钮）已删，未取码时要占约 280dp 的空框与置灰按钮，展示的却是
-  「还没有出示」。扣款结果仍经 `PayCodeResultBus` 交宿主 `CampusPayResultDialogHost` 弹
-  「支付成功」——宿主挂 `MainActivity` 根层（四个 Tab 之上）+ 校园卡设置页两处（2026-10-07
-  收敛；**别再改回各页自持**：今日页「+ → 付款码」出码的路径会漏弹、结果挂到下次打开
-  生活页才迟到弹出）；弹窗以金额大字（`AmountHeroText`）为主（见 `ui-common.md`）；
-  命中那一刻在 `PayCodeViewModel` 里**直接震一次**（不挂开关——即时操作反馈，不是打扰型
-  提醒；放页面层会被 STARTED 闸门挂起、晚到亮屏才响），那条链路别断。
-- **付款成功后余额自动刷新**（2026-10-09 用户报「弹了支付成功，一卡通余额不会立即更新，还得手动刷新」）：宿主收到这笔消费时（`CampusPayResultDialogHost` 里调 `CampusBalanceSync.refreshAfterPayment(context)`）做一次**进程级、单次**强拉——作废 `YktRepository` 的正式卡余额缓存，`Graph.appScope` 拉一次 `queryCard` 写回缓存并推桌面小组件，成功后 `CampusBalanceSync.revision` 自增；生活页 / 校园卡设置页的 `CampusCardViewModel` 订阅 revision 用 `force = false` 重建快照（吃刚写入的缓存，**零额外请求**）。**别改成各 VM 各自 force 强拉**：付款码页 + 生活页 + 设置页三处的 VM 可能同时活着，一次消费会打 4–6 条；触发点放宿主而不是 `PayCodeViewModel` 检测那一刻——宿主消费结果时用户刚回到页面前，离看余额最近。电子账户缓存不动（刷卡只动正式卡）；失败静默不重试（卡片维持旧值，下次进页 / 手动刷新照旧是新值）。同一份余额还会交给 `BalanceAlertReminder.evaluateYktBalance` 当场评估一次余额提醒（付款把余额刷低不必等下一个检查档；开关关 / 免扰 / 「偏低只提醒一次」规则都在提醒侧，零额外请求）。
+> **2026-10-22：旧「生活」页与 `Routes.LIFE` 已删除。** 侧栏钱包「充值」→ 选择弹层
+> （一卡通 / 电费）→ 壳层 `RechargeHost`（`ui/life/RechargeHost.kt`）直接弹对应充值弹层，
+> 没有充值页面。下面关于钱包 hero 卡 / 校园服务 / 最近流水的段落是**历史规格**，只用于
+> 回查，不要据此恢复页面；一卡通付款码 / 余额 / 充值弹层本身的口径仍然有效。
+
+- **入口与宿主**：`SideDrawer` 的充值选择弹层选完 → `pendingRecharge` → `RechargeHost`
+  弹 `RechargeSheet`（一卡通）或 `PowerRechargeSheet`（电费）；关掉弹层回当前 Tab。
+  没有 `lifeTabEnabled` 开关，也没有底栏「生活」项。
+- **样式（历史，2026-10-13 / 2026-10-19）**：钱包 hero 卡 → 校园服务四格 → 问渠整行卡 →
+  最近流水。相关组件 `WalletHeroCard` / `CampusServicesCard` / `FeedSectionsCard` 已随
+  页面删除；这些入口现在分别在侧栏、教务 Tab、流水二级页。
+- **免责声明**：每个充值入口（侧栏选择后的两个弹层、电费弹层「去充值电子账户」、
+  我的 → 校园卡页「充值」）打开前都过 `RechargeDisclaimerDialog`；静默窗口在 DataStore
+  首帧到达后才判（2026-10-22 修，此前初值 0 每次都弹）。
+- **码不预取，且只有一处出码**：付款码页 `PayCodeScreen` 是唯一码位；扣款结果经
+  `PayCodeResultBus` 交 `CampusPayResultDialogHost`（MainActivity 根层 + 校园卡设置页）。
+- **付款成功后余额自动刷新**：宿主收到消费时 `CampusBalanceSync.refreshAfterPayment`
+  进程级单次强拉；各页 `CampusCardViewModel` 订阅 `revision` 用 `force = false` 重建。
 - **余额快照统一出口、连点去重与失败态**（2026-10-09）：`CampusCardViewModel` 的四类快照写入（进页与手动刷新 / 开启验证 / 到账判定 / 电子账户到账补刷）统一走 `applySnapshot()`——写 `_balance` 的同时顺手推桌面小组件（零额外请求；此前只有付款码页在推，充值到账 / 手动刷新要等 2 小时闸门才上小组件）。`CampusCardViewModel.refreshBalance` 与 `PayCodeViewModel.loadBalance` 有「取数中忽略重复触发」闸，连点不叠请求别删；付款码页余额行的「获取中 / 暂不可用」两态由 `PayCodeViewModel.balanceLoaded` 区分（失败转「余额暂不可用（点击重试）」，与设置页 2026-10-07 的口径对齐）。
-- **钱包 hero 卡的口径**（2026-10-13 起，取代旧的两栏卡）：
-  - **取数时刻在卡片右上角**（`walletTimeText(balance.fetchedAtMs)` →「更新于 22:56」）；
-    有「正在查询余额…」「有充值正在确认到账…」时让位给状态文案（状态更急）。
-  - 卡头右侧的**圆圈问号是「钱包说明」弹窗**（余额 + 电费两段口径，2026-09-24 用户要求）——
-    **别删**（hero 化时误删过一次，2026-10-13 补回）。
-  - 刷新入口 = **整页下拉**（唯一）。旧两栏卡的「点栏刷新余额 / 电费」随卡片重构去掉了，
-    2026-10-13 用户确认不再要——别照旧描述加回来。
-- **流水卡按来源分两段**（`domain/LifeFeed.sections`，每段 `SECTION_LIMIT = 2` 条），
-  段标题右侧各接自己的出口（一卡通 → `CAMPUS_STATEMENT`，电费 → `POWER_BILL`）。
-  **别再退回混排**：混在一起挂两个出口，用户点之前看不出会跳去哪。
-  **段标题无底色、记录行规格与消费流水页 / 缴费账单页一致**（2026-10-14 整块重排）：标题下
-  一道整宽细线、记录之间内缩细线（`FEED_ROW_DIVIDER_INSET` = 44dp）；记录行 = 标题
-  `bodyMedium` Medium、副标题 `bodySmall` 0.55、金额 `bodyLarge` SemiBold + `¥`。改这块的
-  行距 / 字号时**三处一起对齐**（`LifeScreen.FeedRow`、`StatementScreen.TurnoverRow`、
-  `PowerBillScreen.BillRow`），别只动生活页。
-- **流水区分段先骨架再数据**：两个来源都异步，进页第一帧两段都是空的。两段各自的 loading
-  （`LifeUiState.campusFeedLoading` / `powerFeedLoading`，2026-09-26 由整卡一个 `feedLoading`
-  拆开——用户报「加载太慢」，根因是本地一卡通陪电费的网络请求一起挂骨架）都从 **true** 起，
-  未就绪的那段渲染两条 `FeedRowSkeleton`（行盒走 `lineHeightDp`，与 `FeedRow` 对齐；文字条
-  本身取行盒 62% 居中，见 `ui-common.md`）。一卡通就绪 = Room 流首帧；电费就绪 = 流水链路
-  跑完一次（**失败也算**，否则会一直挂骨架）。**别用 `PowerCardState.loading` 判电费段**：
-  它只管读数那一段，流水是它之后才发的请求。
-- **电费段有落盘种子（2026-09-26）**：进页读数链 = 登录→项目详情→读表 串行三条、流水与它
-  并行（2026-09-30 起；此前四条全串行），冷启动
-  手机网上要好几秒，此前这段时间电费段只能挂骨架（用户报「一打开一直是骨架屏，手动一刷新
-  反而秒出」——刷新快是因为那时 token 已经热了）。上次成功流水落 `PowerHistoryCache`
-  （filesDir JSON），`LifeViewModel` init 在 IO 线程读出先顶上、刷新到货原地替换；链路已
-  跑完（含没开凭证的短路）就不用旧数据盖新的；空结果不落盘（宁旧勿空）。**电费段骨架只在
-  真·首次启动出现**；种子只当首屏数据，§4.24 节流口径不变。
-- **电费读数有首屏种子（2026-09-27）**：钱包卡的**电费栏**是页面上最后一处会从
-  「—／读取中…」起步的地方（用户报「首次进入生活页电费余额还是很慢，手动下拉就秒出」，
-  下拉快同样是 token 热）。种子不另建文件：读 Room `power_readings` 最新一条
-  （`PowerReadingStore.latest()`）→ `PowerModels.snapshotSeedOf` 拼展示快照，`LifeViewModel`
-  init 在 IO 线程填入。四条钉子：① **卡上已经有数就不填**（真读数、刷新失败保留的上次读数
-  都不许被旧种子盖掉）；② 凭证没开直接跳过；③ 房号取读数的 `roomName`，**`roomId` 是平台
-  数字 id（形如 `14600`），显示出来是一串数字**，只能当去重键与统计分组键；④ 单价未知
-  （库里的 0）不折算，副行给「上次读数」。种子只是展示影子快照，不写回仓库缓存，
-  `snapshot()` 的落库点仍只有一处。
-- **下拉刷新三路并发、登录只登一次（2026-09-30）**：用户报「下拉刷新要刷新很久」——指示器
-  等的原是两条全串行链的较慢者（电费读数：登录→详情→读表；一卡通余额：键盘→OAuth→
-  queryCard→scene=recharge）+ 650ms 最短驻留。收口三处：`refreshPower` 里电费流水与读数
+- **进页取数三路并发、登录只登一次（2026-09-30）**：充值前要等两条链（电费读数：登录→
+  详情→读表；一卡通余额：键盘→OAuth→queryCard→scene=recharge）。收口三处：`refreshPower` 里电费流水与读数
   **并行**；`fetchBalance` 里正式卡与电子账户两问**并行**；`YktRepository` / `PowerRepository`
   的登录互斥锁内**复用**等锁期间别路登好的 token（并发冷启动两平台各只真登一次；401 重登
   传 `staleToken` 只挡刚试废的那个）。**公开的 `login` / `loginForToken` 仍是强制真登录**：
   设置页「保存并开启」要验用户现输的密码，别给它加复用。改这三处前先读 DESIGN §3.13
   「三路并发、登录只登一次」。
-- **取数失败的提示走 `NetworkHint`（2026-09-27）**：电费读数失败时，网络类异常
-  （`PowerException.Network`）不再报「网络不给力」，改说下一步做什么——开着 VPN/代理
-  就关掉它，没开就换一条网络（关掉校园网 Wi-Fi 用手机流量）。**卡副行只有一行、约十来个
-  字宽，这里必须用 `NetworkHint.briefOf`**；账单页的提示块整行会折行，用 `of`（带原因）。
+- **取数失败的提示走 `NetworkHint`（2026-09-27）**：电费充值读表失败时，网络类异常
+  （`PowerException.Network`）改说下一步做什么——开着 VPN/代理就关掉它，没开就换一条
+  网络（关掉校园网 Wi-Fi 用手机流量）。弹层里空间窄用 `NetworkHint.briefOf`；
+  账单页的提示块整行会折行，用 `of`（带原因）。
   凭证错、平台结构变化照旧报原文，别拿网络建议把真原因盖掉。
 - **等数据的地方不许先渲染空态文案再跳**：骨架高度要跟成品一致，文字行高一律走
   `ui/common/TextMetrics.kt` 的 `lineHeightDp`（从样式换算，跟随系统字体缩放），
@@ -242,11 +181,11 @@
   必须读 body 的 `code` 才能触发重登。
 - **未设置寝室不是错误，是「待用户设置」的状态**（2026-10-08，DESIGN §4.24）：
   `singleFeeitem.sceneinfo` 为空 = 未确认寝室——**这是官方 H5 自己的判据**（`if (t.sceneinfo)`），
-  仓库抛 `PowerException.RoomNotBound`；生活页电费栏转「未设置寝室，点此设置」CTA
+  仓库抛 `PowerException.RoomNotBound`；充值弹层 / 房间选择器转「未设置寝室，点此设置」
   （值「—」、旧读数房号 / 时刻一并隐藏、充值闸门改道选择器），出口直通选择器弹层。
   **别把它并进普通错误文案**；也别拿 `view:"choose"` 当判据（已绑定账号同样是 choose，
   它是页面模板类型），`bindStatus` 只作旁证。
-- **寝室选择 / 绑定链路**（弹层两处宿主：生活页 CTA、「我的 → 校园卡」的「寝室电费房间」行，
+- **寝室选择 / 绑定链路**（弹层宿主：侧栏充值 / 充值页的电费入口、「我的 → 校园卡」的「寝室电费房间」行，
   也是改绑入口）：`getThirdData type=select&level=N` 逐级取 校区/楼栋/房间（候选 >12 带本地
   搜索过滤、单选项自动推进）→ 房间选定后 `type=IEC` **读表预览**（**不落库**——预览的可能
   不是本人房间，`power_readings` 落库仍只有 `snapshot()` 一处）→ 二次确认弹窗 → 写一次。
@@ -320,8 +259,7 @@
 - **电费充值的密码步没有输入框**（2026-09-24 用户拍板）：6 格点阵就是输入位，键盘仍是
   系统的（透明 `BasicTextField` 垫在点阵下面，点阵不拦触摸）。进步自动聚焦、失败自动清空、
   受理后自动收键盘。别把 `OutlinedTextField` 加回来——用户明确否掉了那个矩形框。
-- **充值免责声明先过一道**（2026-09-29 用户要求，DESIGN §4.24）：**每个充值入口**（生活页
-  钱包卡两格、电费弹层「去充值电子账户 ›」、我的 → 校园卡页「充值」）打开弹层前都过
+- **充值免责声明先过一道**（2026-09-29 用户要求，DESIGN §4.24）：**每个充值入口**（侧栏充值选择、电费弹层「去充值电子账户 ›」、我的 → 校园卡页「充值」）打开弹层前都过
   `ui/common/RechargeDisclaimerDialog`，五条声明 + 「一周内不再提醒」。**首次（从未确认过）
   锁 5 秒**（按钮置灰、返回/遮罩无效、确认键倒数），确认（继续或取消）落
   `recharge_disclaimer_seen_at` 后任何一次弹出立即可关；勾选静默 7 天
@@ -337,7 +275,7 @@
   取不到标识（读数没回来 / 没有可充值的卡）就不显示数字，宁缺勿错。
 - **余额提醒**（2026-09-24，DESIGN §3.13「余额提醒」）：设置项在「我的 → 校园卡」页
   （寝室电费 10–80 元 / 一卡通余额 10–50 元，步长 5）。口径单一来源 `domain/BalanceAlert.kt`：
-  电费「元」= 剩余电量 × 单价（**唯一换算处**，生活页电费卡也走它，别再内联乘一次）、
+  电费「元」= 剩余电量 × 单价（**唯一换算处**，电费充值弹层也走它，别再内联乘一次）、
   阈值是**严格小于**、档位表/夹取/文案都在这里。调度在 `ui/reminder/BalanceAlertReminder.kt`：
   检查间隔按设置档位（2026-10-07 起小时级：两链**各自独立**，默认 6h、档位
   3/6/8/10/12/24/48，`domain/BalanceAlert` 的间隔口径）+ 冷启动补查 + 设置变更后立即评估；
@@ -348,8 +286,7 @@
   即置位，回升随收件箱状态消解一并清除；改设置（开关/阈值/间隔）清标记重新评估。
   四条不许动：**失败不重试**（防撞风控）、一卡通只算**正式卡余额**（不含电子账户）、
   `balance_alert_periodic` / `BalanceAlertCheckWorker` 的名字（`KEEP` 下改名 = 周期兜底永久消失）、
-  通知 id/tag 与落点（电费 1005 / 一卡通 1006，`EXTRA_ROUTE=ROUTE_LIFE` 落生活页；
-  生活页开关关掉时不带 extra 落今日页）。关凭证时两个开关一并回落（都靠那份凭证）。
+  通知 id/tag 与落点（电费 1005 / 一卡通 1006；2026-10-20 起不带 extra，落今日页 / 左侧栏）。关凭证时两个开关一并回落（都靠那份凭证）。
   **PendingIntent requestCode（3005/3006）与通知 id 分离**：骑行提醒的通知 id 也是
   1005/1006，两边落点 intent 都指向 MainActivity 无 action，filterEquals 相同——
   requestCode 撞了会被 `FLAG_UPDATE_CURRENT` 改写落点（2026-09-24 修的真 bug）。

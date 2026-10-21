@@ -279,7 +279,7 @@ fun WenquPreregDashboardHost() {
         // 折叠胶囊（2026-10-21 补）：面板被关掉 / 还没弹出时，屏幕顶部中央显示一枚
         // 「抢报中」胶囊，单击重开面板。**不依赖悬浮球**——问渠页等二级页是独立窗口，
         // 悬浮球按既有口径只在主窗口，但 Host 挂在两边的根组合上，胶囊全窗口可见；
-        // 主窗口里它也是悬浮球之外的第二入口（球在四个 Tab 才显示）。
+        // 主窗口里它也是悬浮球之外的第二入口（球在三个 Tab 才显示）。
         DashCollapsedPill(
             state = state,
             onClick = { WenquPreregDashboardHost.reopen() },

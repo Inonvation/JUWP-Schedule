@@ -64,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -634,7 +635,10 @@ private fun BoardHouseRow(row: UjingBoardRow, onRemove: () -> Unit) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(row.house.name, style = MaterialTheme.typography.bodyLarge)
             if (row.failed) {
-                BoardSubtitle("获取失败，点「刷新」重试", highlight = false)
+                BoardSubtitle(
+                    row.error?.let { "获取失败：$it" } ?: "获取失败，点「刷新」重试",
+                    highlight = false,
+                )
             } else {
                 row.line?.let { DeviceLine(label = "洗衣机", line = it) }
                 row.dryerLine?.let { DeviceLine(label = "烘干机", line = it) }
@@ -704,6 +708,9 @@ private fun BoardSubtitle(text: String, highlight: Boolean) {
         } else {
             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
         },
+        // 失败原因可能是一段服务端文案，最多三行，别把看板撑开
+        maxLines = 3,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 

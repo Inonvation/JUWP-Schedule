@@ -237,9 +237,9 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
 
             SettingsSection(title = "校园卡", subtitle = "数据与点击") {
                 Spacer(Modifier.height(4.dp))
-                Bullet("余额只算正式卡（食堂 / 门禁）；电子账户余额不上卡片，在付款码页与生活页看。")
+                Bullet("余额只算正式卡（食堂 / 门禁）；电子账户余额不上卡片，在付款码页与左侧栏钱包看。")
                 Bullet("点小组件任意位置 = 打开全屏付款码页：防截屏、亮度拉满、扫码后自动退出。")
-                Bullet("余额更新：打开 App 生活页或付款码页即时更新；后台约每 2 小时一次；" +
+                Bullet("余额更新：打开 App、进付款码页或从左侧栏进充值页即时更新；后台约每 2 小时一次；" +
                     "取数失败保留上次余额与更新时刻，不会清空。")
                 Bullet("未开启凭证时显示引导文案，点击前往「我的 → 校园卡」。")
                 HideBalanceSwitch(
@@ -258,7 +258,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Bullet("副行显示最近一次读数：剩余电量（度）+ 按单价折合金额。卡片窄到 2 格时" +
                     "只留「电费 23.7 度 · ¥14.69」，单价括号省掉。")
-                Bullet("更新时机：打开生活页 / 充值 / 每日余额检查后同步；小组件自身不联网取数" +
+                Bullet("更新时机：进充值页 / 侧栏钱包刷新 / 每日余额检查后同步；小组件自身不联网取数" +
                     "（读数密度 = 打开 App 的密度）。")
                 Bullet("点副行 = 打开「缴费账单 · 用电统计」；点卡片其余位置 = 出示付款码。")
                 Bullet("还没有读数时显示引导；凭证关闭时一并回落，不残留旧数字。")
@@ -305,7 +305,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
             SettingsSection(title = "说明") {
                 Spacer(Modifier.height(6.dp))
                 Bullet("四个条目各自独立添加，可以同时上桌面。")
-                Bullet("课表与「今日」页一致，余额与生活页钱包卡一致。")
+                Bullet("课表与「今日」页一致，余额与左侧栏钱包卡一致。")
                 Bullet("跟随系统深浅色；校园卡余额与电费不在渲染时联网。")
                 Bullet("「还有 N 分钟」按刷新时刻计算，两次刷新之间不会跳动。")
                 Spacer(Modifier.height(6.dp))

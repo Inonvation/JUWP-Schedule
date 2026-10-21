@@ -170,7 +170,7 @@ enum class SubpageScreen {
     PAY_CODE,
     /** 付款码/设置 → 消费流水（月汇总 + 分页列表，DESIGN §4.19 B4） */
     CAMPUS_STATEMENT,
-    /** 生活页 → 缴费账单（寝室电费充值/退款，按月汇总 + 明细，DESIGN §3.13） */
+    /** 侧栏钱包 / 充值 → 缴费账单（寝室电费充值/退款，按月汇总 + 明细，DESIGN §3.13） */
     POWER_BILL,
     /** 我的 → 笔记·课件库（按课程分组，DESIGN §3.11） */
     NOTES,
@@ -241,7 +241,7 @@ enum class SubpageScreen {
     TOOLBOX_STITCH,
     /** 百宝箱 → 菜鸟批量查（多单号一次送菜鸟查件，DESIGN §4.47） */
     TOOLBOX_CAINIAO,
-    /** 生活页 → 校园服务 → 空调遥控（寝室美的空调红外，DESIGN §3.31 / §4.48，2026-10-16） */
+    /** 今日页「江水生活」/ 侧栏 → 空调遥控（寝室美的空调红外，DESIGN §3.31 / §4.48，2026-10-16） */
     AC_REMOTE,
 }
 
@@ -370,7 +370,7 @@ class SubpageActivity : ComponentActivity() {
                 onOpenRecords = { SubpageActivity.start(this, SubpageScreen.WENQU_RECORDS) },
             )
             SubpageScreen.WENQU_GRAB -> WenquGrabScreen(onBack = onBack)
-            // 生活页 → 校园服务 → 空调遥控（2026-10-16）：寝室美的空调，红外发射
+            // 今日页「江水生活」/ 侧栏 → 空调遥控（2026-10-16）：寝室美的空调，红外发射
             SubpageScreen.AC_REMOTE -> AcRemoteScreen(onBack = onBack)
             SubpageScreen.QZXY -> QzxyScreen(
                 onBack = onBack,
@@ -469,7 +469,7 @@ class SubpageActivity : ComponentActivity() {
                 onOpenWeather = { SubpageActivity.start(this, SubpageScreen.WEATHER) },
             )
             // 百宝箱（DESIGN §4.47）：工具列表页 → 各工具独立窗口，与其它二级页同规格。
-            // 菜鸟批量查 2026-10-13 移出百宝箱（入口改在生活页「取快递」弹窗），
+            // 菜鸟批量查 2026-10-13 移出百宝箱（入口改在侧栏「取快递」弹窗），
             // 但 TOOLBOX_CAINIAO 路由保留（仍从那里进）
             SubpageScreen.TOOLBOX -> ToolboxScreen(
                 onBack = onBack,
