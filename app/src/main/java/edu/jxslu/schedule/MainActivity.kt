@@ -551,6 +551,9 @@ private val FloatingBarBottomMargin = 12.dp
  */
 private const val CardShrink = 0.06f
 
+/** 侧栏展开时余额静默刷新的节流窗口：用户反复开关侧栏不会连发两轮请求。 */
+private const val SIDE_BALANCE_REFRESH_TTL_MILLIS = 60_000L
+
 /** 底栏图标基准尺寸；选中态在 [FloatingNavBarPill] 里乘 1.18 倍（约 26dp），不改布局。 */
 private val TabIconBaseSize = 22.dp
 
@@ -981,7 +984,19 @@ internal fun JuwApp(
         else qzxyPermissionLauncher.launch(missing.toTypedArray())
     }
 
-    // 侧栏行右侧的余额：未登录 / 还没拉到就留空，不占位
+    // 侧栏行右侧的余额：未登录 / 还没拉到就留空，不占位。
+    // 侧栏展开时静默刷一轮（节流 60 秒）：行现在直接进页，余额平时只在这看一眼，
+    // 进程存续期只靠初始化那一次会越放越旧。节流值放外侧：LaunchedEffect 重启
+    // （drawer 翻转）时读的是上一轮的时刻。
+    var sideBalanceRefreshedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(drawer.isVisible) {
+        if (!drawer.isVisible) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        if (now - sideBalanceRefreshedAt < SIDE_BALANCE_REFRESH_TTL_MILLIS) return@LaunchedEffect
+        sideBalanceRefreshedAt = now
+        if (waterEntryState.loggedIn) waterViewModel.refreshBalance()
+        if (qzxyLoggedIn) qzxyViewModel.refreshAccount()
+    }
     val waterBalanceText = waterEntryState.balance?.takeIf { waterEntryState.loggedIn }
         ?.let { "¥${it.ticketText}" }
     val qzxyBalanceText = qzxyEntryState.balance?.takeIf { qzxyLoggedIn }
@@ -1109,14 +1124,20 @@ internal fun JuwApp(
                 onOpenPayCode = { openFromDrawer(SubpageScreen.PAY_CODE, null) },
                 onOpenShortcuts = { itemId -> openFromDrawer(SubpageScreen.SHORTCUTS, itemId) },
                 onOpenCainiao = { openFromDrawer(SubpageScreen.TOOLBOX_CAINIAO, null) },
-                // 三个入口开弹窗（2026-10-20 用户口径）；弹窗里有「进页」副行
+                // 三张卡（2026-10-21 用户口径）：行本体直接进二级页；右侧状态 / 余额才开弹窗。
+                // 弹窗挂在外壳层（侧栏 300dp 宽会被裁），所以进页与开弹窗是两条回调
+                onOpenUjing = { openFromDrawer(SubpageScreen.UJING, null) },
                 onOpenUjingSheet = { showUjingSheet = true },
                 onOpenAcRemote = { openFromDrawer(SubpageScreen.AC_REMOTE, null) },
                 onOpenRide = { openFromDrawer(SubpageScreen.RIDE, null) },
+                onOpenWater = { openFromDrawer(SubpageScreen.WATER, null) },
                 onOpenWaterSheet = { showWaterSheet = true },
+                onOpenQzxy = { openFromDrawer(SubpageScreen.QZXY, null) },
                 onOpenQzxySheet = { showQzxySheet = true },
                 waterBalance = waterBalanceText,
                 qzxyBalance = qzxyBalanceText,
+                // U净 空闲摘要的拉取闸：侧栏可见才发请求（与余额刷新同一口径）
+                drawerVisible = drawer.isVisible,
                 onOpenWenqu = { openFromDrawer(SubpageScreen.WENQU, null) },
                 onOpenNotes = { openFromDrawer(SubpageScreen.NOTES, null) },
                 onOpenHomework = { openFromDrawer(SubpageScreen.HOMEWORK, null) },

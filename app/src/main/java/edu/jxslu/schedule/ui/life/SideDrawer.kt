@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,14 +62,22 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.ujing.UjingHouseStore
+import edu.jxslu.schedule.data.ujing.UjingRepository
 import edu.jxslu.schedule.domain.AccountMask
 import edu.jxslu.schedule.domain.ShortcutSettings
+import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.campus.CampusCardViewModel
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.common.ShortcutSheet
 import edu.jxslu.schedule.ui.common.rememberResumeTick
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bolt
 import me.rerere.hugeicons.stroke.Book01
@@ -90,6 +100,38 @@ import java.util.Locale
 
 private enum class WalletDetail { Campus, Power }
 
+/** 侧栏 U净 行右侧空闲状态的刷新节流：空闲看板本身约 30 秒滞后，刷更勤没意义。 */
+private const val UJING_FREE_REFRESH_TTL_MILLIS = 30_000L
+
+/**
+ * 拉收藏洗衣房的洗衣机空闲聚合（侧栏 U净 行右侧的展示数）。
+ * 多店求和（free / total），文案语义与 U净 页看板同源（[UjingState.BoardLine]）。
+ * 未登录 / 没收藏店 / 没有任何成功数据 → null：右侧不显示状态，整行点击直接进页。
+ */
+private suspend fun loadUjingFreeText(
+    repo: UjingRepository,
+    houseStore: UjingHouseStore,
+): String? {
+    if (!repo.loggedIn.value) return null
+    val houses = houseStore.list()
+    if (houses.isEmpty()) return null
+    // 并发上限与 U净 页看板同口径（4）：侧栏展开时一次拉全量收藏店
+    val lines = coroutineScope {
+        houses.map { house ->
+            async {
+                runCatching { repo.devicesReserve(house.storeId) }
+                    .getOrNull()
+                    ?.let { groups -> repo.boardLine(groups) }
+            }
+        }.awaitAll()
+    }
+    val valid = lines.filterNotNull()
+    val free = valid.sumOf { it.free }
+    val total = valid.sumOf { it.total }
+    if (valid.isEmpty() || total <= 0) return null
+    return if (free > 0) "空闲 $free/$total" else "暂无空闲"
+}
+
 /**
  * 左侧栏内容（2026-10-20 第二轮）。
  *
@@ -108,18 +150,23 @@ fun SideDrawerContent(
     onOpenPayCode: () -> Unit,
     onOpenShortcuts: (String?) -> Unit,
     onOpenCainiao: () -> Unit,
-    /** U净：点开的是入口弹窗（在案订单 + 扫码 + 进页），不直接跳页。 */
+    /** U净：整行进二级页；右侧空闲状态点开的是入口弹窗（在案订单 + 扫码 + 概览）。 */
+    onOpenUjing: () -> Unit,
     onOpenUjingSheet: () -> Unit,
     onOpenAcRemote: () -> Unit,
     onOpenRide: () -> Unit,
-    /** 胖乖开水：入口弹窗（余额 / 积分 / 开水 / 结算）。 */
+    /** 胖乖生活：整行进二级页；右侧余额点开的是入口弹窗（余额 / 积分 / 开水 / 结算）。 */
+    onOpenWater: () -> Unit,
     onOpenWaterSheet: () -> Unit,
-    /** 趣智校园：入口弹窗（余额 / 设备 / 用水状态 / 结算）。 */
+    /** 趣智校园：整行进二级页；右侧余额点开的是入口弹窗（余额 / 设备 / 用水状态 / 结算）。 */
+    onOpenQzxy: () -> Unit,
     onOpenQzxySheet: () -> Unit,
     /** 胖乖小票余额文案（null = 不显示）。 */
     waterBalance: String?,
     /** 趣智余额文案（null = 不显示）。 */
     qzxyBalance: String?,
+    /** 侧栏当前是否可见（U净 空闲摘要只在可见时拉，不空发请求）。 */
+    drawerVisible: Boolean,
     onOpenWenqu: () -> Unit,
     onOpenNotes: () -> Unit,
     onOpenHomework: () -> Unit,
@@ -179,6 +226,35 @@ fun SideDrawerContent(
         else -> "—"
     }
 
+    // U净 行右侧的空闲摘要（2026-10-21）：侧栏**展开时**拉一次收藏店聚合，带 30 秒节流
+    // （与空闲看板「云端数据约 30 秒滞后」同频，刷更勤没有意义）。未登录 / 无收藏店
+    // 直接置 null：不显示状态、整行点击只进页，右侧弹窗入口随之隐藏。
+    // **判据是 drawerVisible 不是组合存活**：侧栏是常驻组合（被上层盖住不离树），
+    // 冷启动就发请求等于「没人看的查询打扰第三方接口」——与 MainActivity 余额刷新
+    // 同一道闸（drawer.isVisible）。
+    val ujingRepo = remember { Graph.ujing(context) }
+    val ujingHouseStore = remember { Graph.ujingHouses(context) }
+    val ujingLoggedIn by ujingRepo.loggedIn.collectAsStateWithLifecycle()
+    var ujingFreeText by remember { mutableStateOf<String?>(null) }
+    var ujingFreeLoading by remember { mutableStateOf(false) }
+    var ujingFreeRefreshedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(ujingLoggedIn, resumeTick, drawerVisible) {
+        if (!drawerVisible) return@LaunchedEffect
+        if (!ujingLoggedIn) {
+            ujingFreeText = null
+            return@LaunchedEffect
+        }
+        val now = System.currentTimeMillis()
+        // 节流窗口内不重拉（resumeTick 驱动的回来刷新也走同一道闸）
+        if (now - ujingFreeRefreshedAt < UJING_FREE_REFRESH_TTL_MILLIS) return@LaunchedEffect
+        ujingFreeRefreshedAt = now
+        ujingFreeLoading = true
+        ujingFreeText = withContext(Dispatchers.IO) {
+            loadUjingFreeText(ujingRepo, ujingHouseStore)
+        }
+        ujingFreeLoading = false
+    }
+
     var showShortcutSheet by remember { mutableStateOf(false) }
     var showRechargeChoice by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<WalletDetail?>(null) }
@@ -218,21 +294,38 @@ fun SideDrawerContent(
                 )
 
                 DrawerSection("生活") {
-                    DrawerRow("取快递", HugeIcons.Package01) { showShortcutSheet = true }
-                    DrawerRow("U净", HugeIcons.WashingMachine, onClick = onOpenUjingSheet)
+                    DrawerRow(
+                        label = "取快递",
+                        icon = HugeIcons.Package01,
+                        onClick = { showShortcutSheet = true },
+                    )
                     DrawerRow("空调遥控", HugeIcons.RemoteControl, onClick = onOpenAcRemote)
                     DrawerRow("快趣出行", HugeIcons.ScooterElectric, onClick = onOpenRide)
+                    // 三张卡（2026-10-21 用户口径）：**行本体直接进二级页**，右侧状态 / 余额
+                    // 才开原来的入口弹窗——「看状态」与「进页操作」是两个动作，不再让
+                    // 整行都落在弹窗上。U净 无登录 / 无收藏店时右侧没有状态可点，
+                    // 弹窗入口随行内隐藏；数据侧同样等有数据才拉（见 ujingFreeText）。
                     DrawerRow(
                         label = "胖乖生活",
                         icon = HugeIcons.Wallet01,
                         trailing = waterBalance,
-                        onClick = onOpenWaterSheet,
+                        onClick = onOpenWater,
+                        onTrailingClick = onOpenWaterSheet,
                     )
                     DrawerRow(
                         label = "趣智校园",
                         icon = HugeIcons.ShowerHead,
                         trailing = qzxyBalance,
-                        onClick = onOpenQzxySheet,
+                        onClick = onOpenQzxy,
+                        onTrailingClick = onOpenQzxySheet,
+                    )
+                    DrawerRow(
+                        label = "U净",
+                        icon = HugeIcons.WashingMachine,
+                        trailing = ujingFreeText,
+                        trailingLoading = ujingFreeLoading,
+                        onClick = onOpenUjing,
+                        onTrailingClick = onOpenUjingSheet,
                     )
                     DrawerRow("问渠 · 志愿服务", HugeIcons.HeartHandshake, onClick = onOpenWenqu)
                 }
@@ -732,13 +825,28 @@ private fun DrawerSection(title: String, content: @Composable ColumnScope.() -> 
     Column(content = content)
 }
 
+/**
+ * 侧栏一行入口（2026-10-21 双命中区）：
+ * - **行本体**（图标 + 名称 + 空白）→ [onClick]，进对应二级页；
+ * - **右侧状态 / 余额**（[trailing]，有 [onTrailingClick] 才可点）→ 开入口弹窗。
+ *   命中区加大（垂直 24dp + 水平 8dp），别让状态文案小到点不准；
+ * - 状态字号从 labelSmall 提到 **titleSmall + SemiBold + 主色**：余额 / 空闲数是
+ *   这行最该被看到的信息，也是可点的目标，视觉上要立得住；
+ * - 最右一枚箭头（[trailing] 为 null 的行也带）统一「往右还有一层」的指向；
+ *   侧栏宽 300dp，箭头与状态一起给右侧留出稳定收边。
+ */
 @Composable
 private fun DrawerRow(
     label: String,
     icon: ImageVector,
     trailing: String? = null,
+    trailingLoading: Boolean = false,
     onClick: () -> Unit,
+    onTrailingClick: (() -> Unit)? = null,
 ) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val muted = onSurface.copy(alpha = 0.78f)
+    val trailingMuted = onSurface.copy(alpha = 0.55f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -752,7 +860,7 @@ private fun DrawerRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+            tint = muted,
             modifier = Modifier.size(22.dp),
         )
         Spacer(Modifier.width(16.dp))
@@ -763,11 +871,55 @@ private fun DrawerRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (trailing != null) {
-            Text(
-                text = trailing,
-                style = MaterialTheme.typography.labelSmall,
+        if (trailingLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 1.5.dp,
                 color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (trailing != null) {
+            if (onTrailingClick != null) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClickLabel = "$label 状态", onClick = onTrailingClick)
+                        .padding(horizontal = 8.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = trailing,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Icon(
+                        imageVector = HugeIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            } else {
+                Text(
+                    text = trailing,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        // 尾箭头只在「没有自己的状态弹窗」的行上出现一次：可点状态的行把箭头
+        // 合进状态区（见上），其余行统一收边（AccountRow / 电费行同款口径）
+        if (onTrailingClick == null) {
+            Icon(
+                imageVector = HugeIcons.ChevronRight,
+                contentDescription = null,
+                tint = onSurface.copy(alpha = 0.3f),
+                modifier = Modifier.size(16.dp),
             )
         }
     }
