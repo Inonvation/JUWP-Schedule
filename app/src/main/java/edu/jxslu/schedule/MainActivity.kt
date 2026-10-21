@@ -129,6 +129,7 @@ import edu.jxslu.schedule.domain.FontScalePolicy
 import edu.jxslu.schedule.domain.StartPage
 import edu.jxslu.schedule.domain.ThemeMode
 import edu.jxslu.schedule.domain.ThemePalette
+import edu.jxslu.schedule.domain.WenquRules
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.School01
@@ -988,6 +989,13 @@ internal fun JuwApp(
     // 侧栏展开时静默刷一轮（节流 60 秒）：行现在直接进页，余额平时只在这看一眼，
     // 进程存续期只靠初始化那一次会越放越旧。节流值放外侧：LaunchedEffect 重启
     // （drawer 翻转）时读的是上一轮的时刻。
+    // 问渠工时（2026-10-21）：侧栏问渠行右侧的展示数。工时影子在会话里（登录 / 续期 /
+    // 问渠页、「我的」页刷新都会写回），这里只订阅流；侧栏展开时的静默补刷走同一道闸
+    // （TTL 30 分钟由仓库 hoursStale 判，过期才发请求）。
+    val wenquRepo = remember { Graph.wenqu(context) }
+    val wenquSession by wenquRepo.session.collectAsStateWithLifecycle()
+    val wenquHoursText = wenquSession?.takeIf { it.hours > 0.0 }
+        ?.let { "${WenquRules.formatHours(it.hours)} 工时" }
     var sideBalanceRefreshedAt by remember { mutableStateOf(0L) }
     LaunchedEffect(drawer.isVisible) {
         if (!drawer.isVisible) return@LaunchedEffect
@@ -996,6 +1004,7 @@ internal fun JuwApp(
         sideBalanceRefreshedAt = now
         if (waterEntryState.loggedIn) waterViewModel.refreshBalance()
         if (qzxyLoggedIn) qzxyViewModel.refreshAccount()
+        wenquRepo.refreshHoursIfStale()
     }
     val waterBalanceText = waterEntryState.balance?.takeIf { waterEntryState.loggedIn }
         ?.let { "¥${it.ticketText}" }
@@ -1136,6 +1145,7 @@ internal fun JuwApp(
                 onOpenQzxySheet = { showQzxySheet = true },
                 waterBalance = waterBalanceText,
                 qzxyBalance = qzxyBalanceText,
+                wenquHours = wenquHoursText,
                 // U净 空闲摘要的拉取闸：侧栏可见才发请求（与余额刷新同一口径）
                 drawerVisible = drawer.isVisible,
                 onOpenWenqu = { openFromDrawer(SubpageScreen.WENQU, null) },

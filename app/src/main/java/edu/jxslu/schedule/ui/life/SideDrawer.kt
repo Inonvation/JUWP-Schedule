@@ -168,6 +168,8 @@ fun SideDrawerContent(
     waterBalance: String?,
     /** 趣智余额文案（null = 不显示）。 */
     qzxyBalance: String?,
+    /** 问渠总工时文案（如「12.5 工时」；null = 未登录 / 还没取到，不显示）。 */
+    wenquHours: String?,
     /** 侧栏当前是否可见（U净 空闲摘要只在可见时拉，不空发请求）。 */
     drawerVisible: Boolean,
     onOpenWenqu: () -> Unit,
@@ -339,6 +341,7 @@ fun SideDrawerContent(
                     DrawerRow(
                         label = "问渠 · 志愿服务",
                         brandIcon = R.drawable.ic_brand_wenqu,
+                        trailing = wenquHours,
                         onClick = onOpenWenqu,
                     )
                 }
