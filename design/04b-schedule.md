@@ -7,7 +7,7 @@
 ### 4.11 调课（快捷操作，2026-09-18，参考拾光）
 
 需求：同学临时换课/停课/补课（「周三的课这周挪到周五」），不必去改那门课的周次再另建一条。
-参考拾光「我的-通用设置-快捷操作-调课」：**选「被调整日期」→「调整到日期」+ 模式 + 两侧预览 + 保存**。
+参考拾光「设置-快捷操作-调课」：**选「被调整日期」→「调整到日期」+ 模式 + 两侧预览 + 保存**。
 
 与拾光一致的部分：按**日期**操作（不是按课块拖拽），用户只看得到「哪天上什么课」；
 三种模式；多周课拆行（见下）。
@@ -187,7 +187,7 @@ Description = `教师：xxx`，Location = 教室；含逗号/引号的字段按 
 | 周网格 | `ui/widget/WidgetModel.kt` 的纯函数 builder（`buildWeekModel`）：列取 `ScheduleCalculator.visibleDays`、行取小节号、重叠同列只画一门、高亮列按「今天还有课 → 今天；否则明天」 |
 | 边界计算 | `domain/TodayBoundary.kt` 的 `nextTodayBoundaryMinutes()`（纯 JVM，单测钉死） |
 | 格式化 | `domain/TodayFormat.kt`（由 `TodayScreen.kt` 提出，`compactPosition` 一并下移）；校园卡 / 电费数字与时刻在 `ui/widget/LifeWidgetModels.kt` 的 `LifeWidgetFormat`（Locale.US） |
-| 配色 | 复用 `ui/common/CourseUi.kt` 的 `courseColor()`（16 色粉彩）；进度条为 12 段分色（Glance 无 `fillMaxWidth(fraction)`）；胶囊/强调色（合并卡按钮、开水两卡胶囊与「用水中」大字）跟随「我的 → 通用设置」所选**主题配色**的浅色主色（`widgetAccentColor`，2026-09-28；此前固定品牌青 `#0F7C7C`），切换配色即时重渲染 |
+| 配色 | 复用 `ui/common/CourseUi.kt` 的 `courseColor()`（16 色粉彩）；进度条为 12 段分色（Glance 无 `fillMaxWidth(fraction)`）；胶囊/强调色（合并卡按钮、开水两卡胶囊与「用水中」大字）跟随「设置 → 应用 → 外观与交互」所选**主题配色**的浅色主色（`widgetAccentColor`，2026-09-28；此前固定品牌青 `#0F7C7C`），切换配色即时重渲染 |
 | 数据读取 | `Graph.repository(appContext)` + `repo.ensureDefaults()`，全部 applicationContext，无跨进程 |
 | 添加 | `AppWidgetManager.requestPinAppWidget`（API 26+）；不支持时降级为桌面长按引导 |
 | 点击 | 课表：整卡 → 今日页、4×4 网格区 → 课表页；校园卡 → 付款码页（未开凭证 → 校园卡设置页）；电费 → 用电统计页；胖乖开水 / 趣智开水：胶囊「去开水」→ 页面并自动开水（`water_start` / `qzxy_start` + `WaterAutoStart` 一次性令牌）、整卡其余 → 页面（route extra 共 `pay_code` / `power_bill` / `campus_card` / `water` / `qzxy` / `water_start` / `qzxy_start`，消费后起 `SubpageActivity`） |
@@ -425,7 +425,7 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   `coerceLead`（1~5 吸附）、`isActive`（有效期；起点 0 = 无计时）、
   `NotificationIds`（三条通知 id 与两个 channel id，**不与上课 / 作业提醒撞号**，单测锁住）、
   `COUNTDOWN_TITLE` / `COUNTDOWN_TEXT` / `LEAD_TITLE` / `leadText` / `END_TITLE` / `END_TEXT`（文案）。
-- `data/prefs`：`ebikeCardEnabled`（今日页卡开关，默认开）、`ebikeUseMode`
+- `data/prefs`：`ebikeUseMode`
   （使用方式，**默认小程序方式**；§3.9）、`ebikeAutoSave`
   （生成即存相册，**默认关**，用户拍板）、`ebikeRecentIds`（JSON 列表）经
   `ScheduleRepository.displayPrefs` 既有合并链透出；`ebikeBurnAfterScan`（扫完即焚，
@@ -975,7 +975,7 @@ X0 文档（本节 + §3.11 + §3.1/§3.3/§3.7 同步）→ X1 数据层（Room
 | 背景层 | 由 JuwApp 铺在**外层 Scaffold 之下**（content 的第一个子节点），按 `currentRoute == WEEK` 只画课表 Tab。它铺满整个窗口，因此状态栏与底栏之下都是这张图 |
 | 状态栏可读性 | 背景层顶部叠一层随主题的垂直渐变（`background` 60% → 透明，高 = 状态栏 + 40dp）。状态栏图标色由系统按深浅主题定，亮/暗图上都可能失去对比，这条是兜底 |
 | 课表页底色 | WeekScreen 的 Scaffold `containerColor = Color.Transparent`（其余两页保持不透明底，所以图不会漏到今日/我的） |
-| 悬浮导航栏（`DisplayPrefs.floatingNavBar`，默认关，**重启生效**） | 底栏换成**悬浮胶囊**（2026-09-22 用户按参考形态指定）：全圆角（`RoundedCornerShape(percent = 50)`）+ 阴影 8dp + 半透明 `surfaceContainer 82%`，两侧留 56dp、离手势条 12dp。选中态三重信号（2026-09-22 用户追加：原先只靠颜色，切页辨识度不够）：淡主色底块（`primary 12%`）+ 图标微放大（22dp × 1.18 ≈ 26dp，`graphicsLayer` 缩放不改布局）+ 颜色加深（`onSurfaceVariant` → `onSurface`），全部 180ms 渐变与页面转场同频。底色必须用 `surfaceContainer` 而不是 `surface`：后者与页面底色几乎同色，胶囊会读成「一条白色底栏」。**生效时机（2026-09-24 用户拍板）**：MainActivity 组合首帧前同步读一次 DataStore，把形态冻结进进程级 `floatingNavBarEffective`；运行中切开关只写偏好、当次会话不改 UI，通用设置页弹「已保存，重启应用后生效」。根因是悬浮/普通两套 Scaffold 几何完全不同（NavHost 是否吃底栏 padding、净空口径、底栏槽位高度），跟着 Flow 中途切换必然出现「普通底栏 → 跳悬浮」或反向的启动割裂，除非给两套几何都做瞬时过渡动画，代价不值 |
+| 悬浮导航栏（`DisplayPrefs.floatingNavBar`，默认关，**重启生效**） | 底栏换成**悬浮胶囊**（2026-09-22 用户按参考形态指定）：全圆角（`RoundedCornerShape(percent = 50)`）+ 阴影 8dp + 半透明 `surfaceContainer 82%`，两侧留 56dp、离手势条 12dp。选中态三重信号（2026-09-22 用户追加：原先只靠颜色，切页辨识度不够）：淡主色底块（`primary 12%`）+ 图标微放大（22dp × 1.18 ≈ 26dp，`graphicsLayer` 缩放不改布局）+ 颜色加深（`onSurfaceVariant` → `onSurface`），全部 180ms 渐变与页面转场同频。底色必须用 `surfaceContainer` 而不是 `surface`：后者与页面底色几乎同色，胶囊会读成「一条白色底栏」。**生效时机（2026-09-24 用户拍板）**：MainActivity 组合首帧前同步读一次 DataStore，把形态冻结进进程级 `floatingNavBarEffective`；运行中切开关只写偏好、当次会话不改 UI，「外观与交互」页弹「已保存，重启应用后生效」。根因是悬浮/普通两套 Scaffold 几何完全不同（NavHost 是否吃底栏 padding、净空口径、底栏槽位高度），跟着 Flow 中途切换必然出现「普通底栏 → 跳悬浮」或反向的启动割裂，除非给两套几何都做瞬时过渡动画，代价不值 |
 | 页面底部净空 | 悬浮形态下 `NavHost` **不再吃 Scaffold 的底栏 padding**，页面内容一直铺到窗口底、被胶囊压住一部分（真悬浮）；`LocalBottomBarClearance`（`ui/common`）带着净空值下发，页面的滚动内容把最后一项顶到胶囊上方。数值是解析式算的（胶囊 64dp + 12dp + 手势条），不测量组件——测量要等首帧，页面会先摆一次再往上跳 |
 | 净空的消费方 | 课表网格与今日页 dock 自己加；**提示通道 `AppSnackbarHost` 在组件内统一加**（净空之上再叠 16dp 固定间距，见 §3.2）（页面底边就是窗口底之后，Snackbar 会落到胶囊与手势条底下，不能让每个调用点自己记着）。课表页的显示设置面板走**另一条路**：打开期间把底栏整个收起（`LocalBottomBarVisibleRequest`，见 §3.1），面板铺到屏幕底。新增贴住底边的表面时先确认它归这一栏里的哪一种 |
 | 今日页 dock | 同时改成独立卡片（§3.3）：不再贴屏幕底边，与底栏留 12dp，折叠动画与底栏形态解耦 |

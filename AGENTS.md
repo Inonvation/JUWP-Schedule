@@ -258,7 +258,7 @@ MainActivity → 底栏今日/课表/教务（2026-10-20 起 3 Tab；生活与�
                百宝箱 TOOLBOX +
               图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
               菜鸟批量查 TOOLBOX_CAINIAO（今日页「+」入口，
-               受通用设置开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（左侧栏「空调遥控」入口，
+               受「设置 → 功能」开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（左侧栏「空调遥控」入口，
                寝室美的空调红外，§3.31 / §4.48）；宿舍报修进度 DORM_REPAIR（今日页报修卡 /
                收件箱办结通知的落点，原生只读，§4.49））
 domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）

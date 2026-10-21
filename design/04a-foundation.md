@@ -336,7 +336,7 @@ WebView 对它退默认 980px 桌面宽度 + `loadWithOverviewMode` 缩放到屏
 | 重算时机 | `DOMContentLoaded` / `load` / `pageshow` / **`resize`** 四条都挂同一个处理函数（存 `window.__juwViewportApply`）：首测 0×0、转屏后 980 不再等于屏宽，都靠 `resize` 补算。双指缩放不改窗口宽度 → content 逐字相同 → 幂等早退，不跟缩放打架 |
 | `JwWebFit.DESKTOP_REVERT_JS` | 撤销：自己新建的整节点删掉，页面自己那份把 content 还回去。**必须同时 `disconnect()` 自愈观察者并摘掉上面四条监听**——尤其 `resize`：**还原视口这一步本身就派发 resize**，不摘的话刚还原就被压回 980（2026-10-08 在真机 WebView 里用 CDP 跑这两个脚本时踩到） |
 | `JwWebFit.fitScript(url, desktop)` | 唯一判据入口：登录 / SSO 页 → 只给 `LOGIN_FIT_JS`（**绝不覆盖**，它本来就是 980 口径，而自动填表与会话链挂在这几页的 DOM 上）；课表页 → 课表适配 + 覆盖；其余（主页 / 选课中心 / 成绩 / 评教平台）→ 覆盖；`desktop=false` 时与引入前逐字一致 |
-| 开关 | 窗口顶栏 `JwDesktopModeChip`（文字胶囊，开=「电脑版」/ 关=「手机版」，48dp 命中区），偏好 `jw_desktop_mode` **默认开**、独立单流（§3.3 通用设置不加入口——效果就在眼前） |
+| 开关 | 窗口顶栏 `JwDesktopModeChip`（文字胶囊，开=「电脑版」/ 关=「手机版」，48dp 命中区），偏好 `jw_desktop_mode` **默认开**、独立单流（§3.3 设置不加入口——效果就在眼前） |
 | 切换语义 | **当场重注入、不重载页面**：实测改 meta viewport 会触发 Blink 重新布局（`iw=412 → 980`），重载只会白等一次网络、还会把选课中心 iframe 里的列表与筛选状态清掉 |
 
 **选课中心不用单独处理**：它是壳页 + 三个 `width="100%"` 的 iframe（`scripts/out/xsxk_c_new_xsxkzx_*.html`），

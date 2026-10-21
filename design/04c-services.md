@@ -708,7 +708,7 @@ App 不需要读密码、不需要伪造登录请求、更不需要新增凭证�
 | `data/xg/XgUrls.kt` | 表单清单（`XgForm`：id / 标题 / 副标题 / `pageEnc` / `appId` 与直达地址）、地址常量、纯判定（域归属、表单页、统一认证接入点、直达闸门、状态条分档）。不依赖 android.* |
 | `ui/campus/XgFormScreen.kt` | WebView 窗口：状态条 + 进度 + 文件选择 + 返回键接管 |
 | `XgFormActivity.kt` + manifest | 独立窗口，按表单标识分发、锁竖屏（理由同 §4.4 / §3.14） |
-| `ui/me/hub/ExtensionServicesHubScreen.kt` | 入口：「学校系统」分组，按 `XgUrls.FORMS` 渲染（图标映射留在 UI 层，data 层不带 Compose 类型） |
+| `ui/jw/JwHubScreen.kt` | 入口：「学工与校历」分组，请假 / 宿舍报修按 `XgUrls` 直达（图标映射留在 UI 层，data 层不带 Compose 类型） |
 
 **风险，如实记下**：
 
