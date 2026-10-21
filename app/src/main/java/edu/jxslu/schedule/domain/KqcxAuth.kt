@@ -360,12 +360,17 @@ object KqcxAuth {
                 else -> "卡券"
             }
 
+        /** 「每次前 15 分钟免费」；`freeTime` 缺 / 为 0 时不显示。 */
+        val freeTimeText: String?
+            get() = freeMinutes?.takeIf { it > 0 }?.let { "每次前 $it 分钟免费" }
+
+        /** 「有效期至 2026-10-31」（只取日期段）；没有到期时间时为空。 */
+        val expiryText: String?
+            get() = endAt?.trim()?.takeIf { it.isNotEmpty() }?.let { "有效期至 ${it.split(" ").first()}" }
+
         /** 副行：「每次前 15 分钟免费 · 有效期至 2026-10-31」；两项都可能缺。 */
         val detailText: String
-            get() = listOfNotNull(
-                freeMinutes?.takeIf { it > 0 }?.let { "每次前 $it 分钟免费" },
-                endAt?.trim()?.takeIf { it.isNotEmpty() }?.let { "有效期至 ${it.split(" ").first()}" },
-            ).joinToString(" · ")
+            get() = listOfNotNull(freeTimeText, expiryText).joinToString(" · ")
     }
 
     fun parseCoupons(jsonText: String): List<AssetCoupon> {

@@ -298,6 +298,9 @@ class EbikeAutoReturnTest {
             KqcxAuth.UnpayState.Settled
 
         override suspend fun ringFindCar() = Unit
+
+        override suspend fun queryCoupons(): List<KqcxAuth.AssetCoupon> =
+            throw UnsupportedOperationException("自动还车用不到")
     }
 
     private data class Attempt(

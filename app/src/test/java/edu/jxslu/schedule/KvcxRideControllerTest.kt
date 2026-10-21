@@ -18,6 +18,7 @@ import edu.jxslu.schedule.ui.ebike.unlockCooldownSecondsLeft
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Assert.assertEquals
@@ -160,6 +161,17 @@ class KvcxRideControllerTest {
 
         override suspend fun ringFindCar() {
             ringCalls++
+        }
+
+        /** 骑行卡券（开锁前「有没有可用卡」检查用）：默认没有卡，测试按需给。 */
+        var coupons: List<KqcxAuth.AssetCoupon> = emptyList()
+        var couponCalls = 0
+        var couponError: Throwable? = null
+
+        override suspend fun queryCoupons(): List<KqcxAuth.AssetCoupon> {
+            couponCalls++
+            couponError?.let { throw it }
+            return coupons
         }
     }
 
@@ -1356,6 +1368,65 @@ class KvcxRideControllerTest {
         // 快趣没给时长：不编一个 0 出来
         assertNull(rideElapsedSeconds(ride(totalDateSeconds = null), 0L, 0L))
     }
+
+    // ---------- 开锁前的骑行卡检查（2026-10-22） ----------
+
+    @Test
+    fun `有可用卡时卡券快照缓存十分钟`() {
+        val session = FakeSession()
+        session.coupons = listOf(card(remain = 5))
+        val kvcx = controller(session)
+        val now = 1_000_000L
+
+        assertEquals(1, runBlocking { kvcx.rideCardCoupons(now) }?.size)
+        assertEquals(1, session.couponCalls)
+        // 10 分钟内复用同一份快照
+        runBlocking { kvcx.rideCardCoupons(now + 9 * 60_000) }
+        assertEquals(1, session.couponCalls)
+        // 超过 10 分钟才重查
+        runBlocking { kvcx.rideCardCoupons(now + 11 * 60_000) }
+        assertEquals(2, session.couponCalls)
+    }
+
+    @Test
+    fun `没有可用卡时一分钟后就重查`() {
+        // 没有卡的结论缓存太久会误报（用户可能刚去小程序买了卡）
+        val session = FakeSession()
+        session.coupons = listOf(card(remain = 0))
+        val kvcx = controller(session)
+        val now = 1_000_000L
+
+        runBlocking { kvcx.rideCardCoupons(now) }
+        runBlocking { kvcx.rideCardCoupons(now + 30_000) }
+        assertEquals(1, session.couponCalls)
+        runBlocking { kvcx.rideCardCoupons(now + 61_000) }
+        assertEquals(2, session.couponCalls)
+    }
+
+    @Test
+    fun `卡券查询失败返回 null 且下次仍会重试`() {
+        val session = FakeSession()
+        session.couponError = IOException("断网")
+        val kvcx = controller(session)
+
+        assertNull(runBlocking { kvcx.rideCardCoupons(1_000_000L) })
+        assertEquals(1, session.couponCalls)
+
+        session.couponError = null
+        session.coupons = listOf(card())
+        assertNotNull(runBlocking { kvcx.rideCardCoupons(1_001_000L) })
+        assertEquals(2, session.couponCalls)
+    }
+
+    private fun card(
+        remain: Long? = 5L,
+        endAt: String? = "2099-12-31 23:59:59",
+    ) = KqcxAuth.AssetCoupon(
+        deviceType = 2,
+        remainFrequency = remain,
+        freeMinutes = 15L,
+        endAt = endAt,
+    )
 }
 
 /** 测试用的订单（默认：校园车 + 已骑 1 分钟 + 1.50 元 + 未锁 + 85% 电）。 */

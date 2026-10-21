@@ -363,6 +363,16 @@ class KqcxSessionRepository(
     }
 
     /**
+     * 骑行卡券（2026-10-22）：开锁前「有没有可用卡」的判据来源，只读、单接口。
+     * 与 [queryAssets] 里的卡券那一支同源（`queryUserCoupon`）；不并行拉余额 / 会员，
+     * 因为这条只在开锁前跑一次。
+     */
+    override suspend fun queryCoupons(): List<KqcxAuth.AssetCoupon> {
+        ensureSession()
+        return server { KqcxAuth.parseCoupons(client.userCouponJson(requireToken())) }
+    }
+
+    /**
      * 按车号查单车（2026-09-30）：附近列表里没有目标车时的兜底（官方 `loadOneCar` 同款）。
      * token 允许空——这个读接口不需要凭证（与 [queryZones] 同口径），小程序方式也能用
      * 「按车号定位」。**不抛错**：服务端业务错误（车已出租 / 维修 / 不存在）与网络失败

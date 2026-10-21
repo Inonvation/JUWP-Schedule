@@ -147,4 +147,11 @@ interface KvcxRideSession {
      * 不属于写操作四道闸的对象，但仍走动作的 single-flight。
      */
     suspend fun ringFindCar()
+
+    /**
+     * 查用户持有的骑行卡券（只读，`queryUserCoupon` 单接口，不拉余额 / 会员那两条）。
+     * 用途只有一处：开锁前判断「有没有可用骑行卡」（[edu.jxslu.schedule.domain.EbikeRideCard]）。
+     * 失败原样抛错，调用方按"不确定"处理（**不弹提醒**，宁可不打扰也不误报）。
+     */
+    suspend fun queryCoupons(): List<KqcxAuth.AssetCoupon>
 }

@@ -78,6 +78,7 @@ import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
+import edu.jxslu.schedule.domain.EbikeRideCard
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.capabilities
@@ -164,6 +165,8 @@ fun RideScreen(
     val kvcxLoggedIn by viewModel.kvcx.loggedIn.collectAsStateWithLifecycle()
     val useMode by viewModel.useMode.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    /** 开锁前骑行卡提醒的「今日不再提醒」日期读在这里（行为判定读原始值，不读页面快照）。 */
+    val cardPrefs = remember(context) { Graph.displayPrefs(context) }
     val scheme = MaterialTheme.colorScheme
     val semantic = MaterialTheme.semanticColors
     val haptics = rememberAppHaptics()
@@ -214,6 +217,13 @@ fun RideScreen(
      * 就会让开关弹窗重组整页——见 [KvcxConfirmHost] 的注释。
      */
     val pendingAction = remember { mutableStateOf<Pair<KvcxAction, String?>?>(null) }
+    /**
+     * 待确认的「没有可用骑行卡」提醒（2026-10-22，**独立于上面的二次确认闸**）。
+     *
+     * 与 `pendingAction` 一样是裸 state 对象、读在 [UnlockCardGateHost] 里：读在本函数体
+     * 会让开关弹窗重组整页（连带地图）。
+     */
+    val cardGate = remember { mutableStateOf<UnlockCardGate?>(null) }
     /**
      * 扫码识别出的车**确认可用**后的自动开锁请求（车号）：事件流写入、下面那条 keyed effect 执行。
      *
@@ -341,28 +351,80 @@ fun RideScreen(
             showNotice(scope, snackbar, "没有定位权限，快趣无法校验位置", NoticeTone.Warning)
         }
     }
+    /**
+     * 真正发开锁指令（四道闸都过完之后）：[KvcxAction.UNLOCK] 两段式建单、
+     * [KvcxAction.DIRECT_UNLOCK] 完整开锁。其它动作到不了这里。
+     */
+    val performUnlockNow: (KvcxAction, String) -> Unit = { action, carNum ->
+        when (action) {
+            KvcxAction.UNLOCK -> viewModel.kvcx.unlock(carNum, sendUnlock = false)
+            KvcxAction.DIRECT_UNLOCK -> viewModel.kvcx.unlock(carNum, sendUnlock = true)
+            else -> Unit
+        }
+    }
+    /**
+     * 开锁前查一次骑行卡（[EbikeRideCard]）：要提醒就返回正文，否则 null。
+     *
+     * **今日不再提醒先挡在查询之前**；查询失败 / 超时（`rideCardCoupons` 返回 null）一律
+     * 按"不确定"放行——读接口不该把用户挡在车外。有可用卡时 `warningText` 返回 null。
+     */
+    suspend fun unlockCardWarning(): String? {
+        val now = System.currentTimeMillis()
+        val muted = runCatching { cardPrefs.ebikeNoCardNoticeDate.first() }.getOrDefault("")
+        if (muted.isNotEmpty() && muted == EbikeRideCard.dayKey(now)) return null
+        val coupons = viewModel.kvcx.rideCardCoupons(now) ?: return null
+        return EbikeRideCard.warningText(coupons, now)
+    }
+    /**
+     * 卡券闸 + 真正开锁：**独立于二次确认闸**（2026-10-22 用户口径）。
+     *
+     * 调用点只有两处：用户关掉「开锁前确认」时的直发路径，以及既有确认弹窗点确认之后。
+     * 卡券快照在进页时已预热（`warmRideCard`），这里通常直接读缓存、不增加等待；
+     * 缓存过期时最多等 [RIDE_CARD_WAIT_MS]。没有可用卡时再弹一次「确认要开车吗」，
+     * 确认后才真正建单。
+     */
+    val gateThenUnlock: (KvcxAction, String) -> Unit = { action, carNum ->
+        scope.launch {
+            val warning = unlockCardWarning()
+            if (warning != null) {
+                cardGate.value = UnlockCardGate(action, carNum, warning)
+            } else {
+                performUnlockNow(action, carNum)
+            }
+        }
+    }
     val requestKvcxAction: (KvcxAction, String?) -> Unit = { action, carNum ->
         haptics.tap()
-        if (!BikeLocator.hasPermission(context)) {
-            locationPermissionLauncher.launch(AppPermissions.location.toTypedArray())
-            showNotice(scope, snackbar, "本机用车需要定位权限（快趣按位置校验）", NoticeTone.Warning)
-        } else if (action == KvcxAction.LOCK) {
-            // 临时锁车免二次确认：订单与计费继续、随时可再解锁
-            viewModel.cancelQueriesForRideAction()
-            viewModel.kvcx.tempLock()
-        } else if (action == KvcxAction.RESUME) {
-            viewModel.cancelQueriesForRideAction()
-            viewModel.kvcx.resumeRide()
-        } else if (action == KvcxAction.UNLOCK && !prefs.unlockConfirm) {
-            // 用户在开锁弹窗勾过「不再提醒」（或关了设置里的开关）：直接发指令。
-            // 这是四道闸里唯一允许用户自己关的一道，定位前置照旧在前面挡着；
-            // 免确认的后果（按一下就开始计费）在勾选那一刻已经写明。
-            carNum?.let {
-                viewModel.cancelQueriesForRideAction()
-                viewModel.kvcx.unlock(it)
+        when {
+            !BikeLocator.hasPermission(context) -> {
+                locationPermissionLauncher.launch(AppPermissions.location.toTypedArray())
+                showNotice(scope, snackbar, "本机用车需要定位权限（快趣按位置校验）", NoticeTone.Warning)
             }
-        } else {
-            pendingAction.value = action to carNum
+            // 临时锁车免二次确认：订单与计费继续、随时可再解锁
+            action == KvcxAction.LOCK -> {
+                viewModel.cancelQueriesForRideAction()
+                viewModel.kvcx.tempLock()
+            }
+            action == KvcxAction.RESUME -> {
+                viewModel.cancelQueriesForRideAction()
+                viewModel.kvcx.resumeRide()
+            }
+            // 开锁 / 完整开锁：原有二次确认闸不变（含设置里关掉确认后的直发），
+            // 出来之后再走独立的卡券闸（见 [gateThenUnlock]）
+            action == KvcxAction.UNLOCK || action == KvcxAction.DIRECT_UNLOCK -> {
+                carNum?.let { car ->
+                    if (action == KvcxAction.UNLOCK && !prefs.unlockConfirm) {
+                        // 用户在开锁弹窗勾过「不再提醒」（或关了设置里的开关）：直接发指令。
+                        // 这是四道闸里唯一允许用户自己关的一道，定位前置照旧在前面挡着；
+                        // 免确认的后果（按一下就开始计费）在勾选那一刻已经写明。
+                        viewModel.cancelQueriesForRideAction()
+                        gateThenUnlock(action, car)
+                    } else {
+                        pendingAction.value = action to car
+                    }
+                }
+            }
+            else -> pendingAction.value = action to carNum
         }
     }
     val withNotificationPermission = rememberNotificationPermissionGate()
@@ -468,6 +530,12 @@ fun RideScreen(
         val carNum = autoUnlockRequest ?: return@LaunchedEffect
         autoUnlockRequest = null
         if (caps.directUnlock) requestKvcxAction(KvcxAction.DIRECT_UNLOCK, carNum)
+    }
+    // 开锁前卡券检查的**预热**（2026-10-22）：账号方式、已登录且当前没有在案订单时，
+    // 进页顺手查一次卡券（控制器内 10 分钟缓存），点「开启」时就不必再等一个往返。
+    // 只读、由用户打开页面驱动，不轮询；小程序方式 / 骑行中不查。
+    LaunchedEffect(caps.directUnlock) {
+        if (caps.directUnlock) viewModel.kvcx.warmRideCard()
     }
     LaunchedEffect(Unit) {
         ebikeViewModel.events.collect { event ->
@@ -1072,13 +1140,37 @@ fun RideScreen(
         ride = ride,
         kvcx = viewModel.kvcx,
         onActionStart = viewModel::cancelQueriesForRideAction,
+        // 开锁 / 完整开锁在确认之后还要过独立的卡券闸（见 gateThenUnlock）
+        onUnlockConfirmed = gateThenUnlock,
         scope = scope,
         snackbar = snackbar,
         haptics = haptics,
         context = context,
     )
-}
 
+    // 开锁前的「没有可用骑行卡」提醒（独立于上面的确认闸，2026-10-22）：
+    // 确认后把「今日不再提醒」落盘（只在勾选时写）并继续走原有开锁路径。
+    UnlockCardGateHost(
+        pending = cardGate,
+        onConfirm = { skipToday ->
+            cardGate.value?.let { gate ->
+                cardGate.value = null
+                haptics.tap()
+                if (skipToday) {
+                    scope.launch {
+                        runCatching {
+                            cardPrefs.setEbikeNoCardNoticeDate(
+                                EbikeRideCard.dayKey(System.currentTimeMillis()),
+                            )
+                        }
+                    }
+                }
+                performUnlockNow(gate.action, gate.carNum)
+            }
+        },
+        onDismiss = { cardGate.value = null },
+    )
+}
 /**
  * 用车确认弹窗的宿主：**「待确认动作」这个状态由它自己读**，页面函数体只负责写。
  *
@@ -1094,6 +1186,8 @@ private fun KvcxConfirmHost(
     ride: KqcxAuth.Ride?,
     kvcx: KvcxRideController,
     onActionStart: () -> Unit,
+    /** 开锁 / 完整开锁确认之后的路（页面里是「卡券闸 → 真正发指令」的组合，见 gateThenUnlock）。 */
+    onUnlockConfirmed: (KvcxAction, String) -> Unit,
     scope: CoroutineScope,
     snackbar: SnackbarHostState,
     haptics: AppHaptics,
@@ -1132,9 +1226,9 @@ private fun KvcxConfirmHost(
                 }
             }
             when (action) {
-                KvcxAction.UNLOCK -> carNum?.let { kvcx.unlock(it, sendUnlock = false) }
-                // 扫车身码自动开锁：建单 + 立即发票（完整开锁）
-                KvcxAction.DIRECT_UNLOCK -> carNum?.let { kvcx.unlock(it, sendUnlock = true) }
+                // 开锁 / 完整开锁确认后仍要过独立的卡券闸（没有可用卡时再提醒一次）
+                KvcxAction.UNLOCK, KvcxAction.DIRECT_UNLOCK ->
+                    carNum?.let { onUnlockConfirmed(action, it) }
                 KvcxAction.RETRY_UNLOCK -> kvcx.retryUnlock()
                 KvcxAction.RESUME -> kvcx.resumeRide()
                 KvcxAction.LOCK -> kvcx.tempLock()
@@ -1146,6 +1240,67 @@ private fun KvcxConfirmHost(
         onDismiss = { pending.value = null },
         // 还车是花钱那一刻：确认键用错误色，与其它动作的主色区分开
         danger = action == KvcxAction.RETURN,
+    )
+}
+
+/** 待确认的「没有可用骑行卡」提醒：动作、车号与正文（口径在 [EbikeRideCard]）。 */
+private data class UnlockCardGate(
+    val action: KvcxAction,
+    val carNum: String,
+    val message: String,
+)
+
+/**
+ * 「没有可用骑行卡」提醒的宿主（2026-10-22，用户要求）。
+ *
+ * **独立于开锁二次确认**：有可用卡时根本不出现；没有卡才在开锁前多一道确认。
+ * 勾选「今日不再提醒」并在本弹窗点「继续开车」才落盘当天日期——**取消不记**
+ * （用户没开车，下次仍该看到）；勾选状态不跨弹窗记忆（每次打开都从没勾开始，
+ * 与开锁弹窗里的「以后开锁不再确认」同一口径）。
+ *
+ * 状态读取收在这里（与 [KvcxConfirmHost] 同理）：读在页面函数体里会让弹窗开关
+ * 重组整页（连带地图与车辆列表）。
+ */
+@Composable
+private fun UnlockCardGateHost(
+    pending: MutableState<UnlockCardGate?>,
+    onConfirm: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val gate by pending
+    val current = gate ?: return
+    // 勾选不记忆：每次打开都从"没勾"开始——勾选是这一次的明确决定
+    var skipToday by remember(current) { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("没有可用的骑行卡") },
+        text = {
+            // 弹窗过渡落在内容槽第一行（见 ui-common.md）
+            DialogWindowFadeEffect()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(text = current.message, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { skipToday = !skipToday },
+                ) {
+                    Checkbox(checked = skipToday, onCheckedChange = { skipToday = it })
+                    Text("今日不再提醒", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(skipToday) }) { Text("继续开车") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
     )
 }
 

@@ -1,9 +1,11 @@
 package edu.jxslu.schedule.ui.today
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -12,7 +14,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -33,12 +39,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.data.qiekj.QiekjWateringSession
 import edu.jxslu.schedule.data.ujing.UjingOrderSnapshot
@@ -48,6 +58,7 @@ import edu.jxslu.schedule.domain.QzxyWatering
 import edu.jxslu.schedule.domain.QzxyWateringFormat
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.common.AppCard
+import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.ebike.KvcxRideState
@@ -277,6 +288,14 @@ private fun BrandIcon(resId: Int) {
  *
  * [pulsing] = 圆点是否呼吸（默认是）：「待核对」这类**已结束待处理**的行不呼吸——
  * 呼吸的含义是「正在进行中」，结束时呼吸反而是误导。
+ *
+ * [highlighted] = 行级高亮描边（2026-10-22）：快趣骑行**未锁车**时整行点亮，与临时锁车
+ * 做区分。口径与 `AppCard.highlighted` 同族（主色 1.5dp 描边 + 浅主色底，180ms 过渡），
+ * 但这是卡内的一行、不能换成 `AppCard`（会变成气泡套气泡）。
+ *
+ * 点击反馈（2026-10-22 用户报「矩形的丑陋灰色背景边框」）：不再用默认灰色涟漪——
+ * 圆角裁切 + 按下时浅主色底、0.985 轻微回缩（与侧栏行 / 扫一扫同族），松手回弹。
+ * [contentInset] 是行内左右留白，有描边时内容不贴线；默认 0 = 与卡内其它行对齐。
  */
 @Composable
 private fun ActiveRow(
@@ -287,23 +306,61 @@ private fun ActiveRow(
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
     pulsing: Boolean = true,
+    highlighted: Boolean = false,
+    contentInset: Dp = 0.dp,
 ) {
     val haptics = rememberAppHaptics()
+    val scheme = MaterialTheme.colorScheme
+    val rowShape = RoundedCornerShape(12.dp)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.985f else 1f,
+        label = "serviceRowPress",
+    )
+    // 高亮与按压都走同一族过渡（180ms，与 AppCard.highlighted 同档）
+    val borderColor by animateColorAsState(
+        targetValue = if (highlighted) scheme.primary else Color.Transparent,
+        animationSpec = tween(AppCardDefaults.HighlightTransitionMillis),
+        label = "serviceRowBorder",
+    )
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            highlighted -> scheme.primary.copy(alpha = 0.06f)
+            pressed -> scheme.primary.copy(alpha = 0.05f)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(AppCardDefaults.HighlightTransitionMillis),
+        label = "serviceRowContainer",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .clip(rowShape)
+            .background(containerColor)
+            .border(AppCardDefaults.HighlightedBorderWidth, borderColor, rowShape)
             .then(
                 if (onClick != null) {
-                    Modifier.clickable(onClickLabel = onClickLabel ?: title) {
-                        haptics.tap()
-                        onClick()
-                    }
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        // 默认涟漪是灰色矩形（用户报的就是它）；按下感由上面的底色 + 回缩表达
+                        indication = null,
+                        onClickLabel = onClickLabel ?: title,
+                        onClick = {
+                            haptics.tap()
+                            onClick()
+                        },
+                    )
                 } else {
                     Modifier
                 },
             )
-            .padding(vertical = 8.dp),
+            .heightIn(min = 52.dp)
+            .padding(horizontal = contentInset, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (pulsing) {
@@ -371,6 +428,10 @@ private fun KvcxActiveRow(
         title = "快趣骑行",
         onClick = onOpen,
         onClickLabel = "查看骑行详情",
+        // 未锁车 = 正在骑（2026-10-22）：主色描边把「骑行中」与临时锁车区分开；
+        // 锁状态未知按「未锁」以外的状态处理（只有明确未锁才点亮）
+        highlighted = ride.locked == false,
+        contentInset = 8.dp,
         subtitle = buildString {
             append(ride.carNum)
             elapsed?.let { append(" · 已骑 ").append(KqcxAuth.formatRideDuration(it)) }

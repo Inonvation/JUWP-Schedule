@@ -333,8 +333,10 @@ private val RECORD_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern(
  * 充值、退押、买卡都走微信收银台（App 不做支付，DESIGN §4.32 红线），所以这里只有"看"——
  * 区标题下一行就把出路说清，别让人在这张卡里找充值按钮。进页自动查一次，失败保留
  * 已有内容、只给一行说明与「刷新」出路（不打扰：资产不是本页的主任务）。
- * 余额行 2026-10-07 排版统一：金额是这一节的主角，用 titleMedium 加重大字呈现
- * （原先是 SettingItem 把金额塞进标题位，与副行「充值余额与赠送余额」大小倒挂）。
+ *
+ * **主次（2026-10-22 用户口径）**：骑行卡的**剩余次数与有效期**是主角（次数 titleLarge
+ * + Bold、有效期 bodyLarge + SemiBold）；充值 / 赠送余额退成一行 bodySmall 的次要信息。
+ * 顺序也照这个主次排（卡券 → 会员 → 余额），别再让余额大字压在上面。
  */
 @Composable
 private fun AssetsSection(state: KvcxUiState, onRefresh: () -> Unit) {
@@ -354,23 +356,26 @@ private fun AssetsSection(state: KvcxUiState, onRefresh: () -> Unit) {
 
             else -> {
                 val assets = state.assets
-                // 余额行：充值 + 赠送（官方钱包页同两项；缺数据不显示成 ¥0）
-                assets.balance?.displayText?.let { balance ->
-                    Column(Modifier.padding(vertical = 6.dp)) {
-                        Text(
-                            text = balance,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "充值余额与赠送余额",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        )
-                    }
+                if (assets.coupons.isEmpty()) {
+                    Text(
+                        text = "当前没有骑行卡；开锁骑行会直接按快趣规则计费。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(vertical = 6.dp),
+                    )
+                } else {
+                    assets.coupons.forEach { coupon -> AssetCouponRow(coupon) }
                 }
-                assets.coupons.forEach { coupon -> AssetCouponRow(coupon) }
                 assets.members.forEach { member -> AssetMemberRow(member) }
+                // 余额退为次要信息：一行小字，不与骑行卡抢主次
+                assets.balance?.displayText?.let { balance ->
+                    Text(
+                        text = "余额 · $balance",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
         }
         TextButton(onClick = onRefresh, enabled = !state.assetsLoading) {
@@ -379,24 +384,64 @@ private fun AssetsSection(state: KvcxUiState, onRefresh: () -> Unit) {
     }
 }
 
-/** 一张骑行卡券：标题（次数 / 无限 + 车型）+ 副行（免费时长与有效期）。 */
+/** 「临近到期」的提示窗口：3 天。只在卡片列表里做颜色与文案提示，不弹窗。 */
+private const val CARD_EXPIRY_SOON_MS = 3L * 24 * 60 * 60 * 1000
+
+/**
+ * 一张骑行卡券（2026-10-22 主次调整）：**剩余次数**用 titleLarge + Bold 当主角；
+ * **有效期**升到 bodyLarge + SemiBold（过期 / 3 天内到期再给错误 / 警告色）；
+ * 免费时长是补充说明，留在 labelSmall。次数未知时照 [KqcxAuth.AssetCoupon.titleText]
+ * 的口径（「骑行卡券」），不编数字。
+ */
 @Composable
 private fun AssetCouponRow(coupon: KqcxAuth.AssetCoupon) {
+    val now = System.currentTimeMillis()
+    val endAt = remember(coupon.endAt) { EbikeCardExpiry.parseEndAt(coupon.endAt) }
+    val expired = endAt != null && endAt <= now
+    val expiringSoon = endAt != null && !expired && endAt - now <= CARD_EXPIRY_SOON_MS
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 8.dp),
     ) {
-        Text(
-            text = "${coupon.titleText} · ${coupon.deviceLabel}",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-        )
-        if (coupon.detailText.isNotBlank()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = coupon.detailText,
+                text = coupon.titleText,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = coupon.deviceLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        coupon.expiryText?.let { expiry ->
+            Text(
+                text = buildString {
+                    append(expiry)
+                    when {
+                        expired -> append(" · 已过期")
+                        endAt != null && expiringSoon ->
+                            append(" · ").append(EbikeCardExpiry.remainingText(endAt, now))
+                    }
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = when {
+                    expired -> MaterialTheme.colorScheme.error
+                    expiringSoon -> MaterialTheme.semanticColors.warning
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        coupon.freeTimeText?.let { free ->
+            Text(
+                text = free,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 modifier = Modifier.padding(top = 2.dp),
             )
         }

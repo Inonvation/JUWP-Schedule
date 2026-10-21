@@ -24,6 +24,7 @@ import edu.jxslu.schedule.domain.EbikeAutoReturn
 import edu.jxslu.schedule.domain.EbikeCardExpiry
 import edu.jxslu.schedule.domain.EbikeFreeRide
 import edu.jxslu.schedule.domain.EbikeQr
+import edu.jxslu.schedule.domain.EbikeRideCard
 import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.FirstRunNotice
 import edu.jxslu.schedule.domain.FloatingBall
@@ -1249,6 +1250,15 @@ class DisplayPrefsStore(private val context: Context) {
     }
 
     /**
+     * 开锁前「没有可用骑行卡」提醒的**今日静音键**（YYYY-MM-DD，本地日历日）。
+     * 空串 = 今天没勾过；与当天 [EbikeRideCard.dayKey] 相等就跳过提醒，跨天自然失效。
+     * 与上面那条「同一张卡只提醒一次」的去重集合互不相干：那条按卡、这条按天。
+     */
+    val ebikeNoCardNoticeDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_EBIKE_NO_CARD_NOTICE_DATE] ?: ""
+    }
+
+    /**
      * 用车满 15 分钟自动还车开关（DESIGN §3.9，2026-10-10）。**默认关**：
      * 它会替用户执行有计费后果的写动作（自动还车），只能显式开启。
      */
@@ -1870,6 +1880,20 @@ class DisplayPrefsStore(private val context: Context) {
         }
     }
 
+    /**
+     * 记下「没有可用骑行卡」提醒的今日静音日期（见 [ebikeNoCardNoticeDate]）。
+     * 传空串 = 清除（回到提醒状态）。
+     */
+    suspend fun setEbikeNoCardNoticeDate(dayKey: String) {
+        context.displayDataStore.edit { p ->
+            if (dayKey.isBlank()) {
+                p.remove(KEY_EBIKE_NO_CARD_NOTICE_DATE)
+            } else {
+                p[KEY_EBIKE_NO_CARD_NOTICE_DATE] = dayKey
+            }
+        }
+    }
+
     suspend fun setReminderLeadMinutes(value: Int) {
         context.displayDataStore.edit {
             it[KEY_REMINDER_LEAD] = ReminderDefaults.coerceLead(value)
@@ -2315,6 +2339,9 @@ class DisplayPrefsStore(private val context: Context) {
 
         /** 骑行卡券到期提醒的「已提醒键」集合（DESIGN §4.32，键见 [EbikeCardExpiry.dedupKey]）。 */
         val KEY_EBIKE_CARD_EXPIRY_NOTIFIED = stringSetPreferencesKey("ebike_card_expiry_notified")
+
+        /** 开锁前「没有可用骑行卡」提醒的今日静音键（YYYY-MM-DD，见 [ebikeNoCardNoticeDate]）。 */
+        val KEY_EBIKE_NO_CARD_NOTICE_DATE = stringPreferencesKey("ebike_no_card_notice_date")
 
         // 「精确倒计时」已删（2026-09-30）：开关与校准标记两键
         // （ebike_precise_countdown_enabled / ebike_precise_calibrated_at）随之停用，

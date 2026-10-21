@@ -15,6 +15,7 @@ import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.data.kqcx.LockOutcome
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.data.kqcx.UnlockOutcome
+import edu.jxslu.schedule.domain.EbikeRideCard
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.KvcBusinessError
 import edu.jxslu.schedule.domain.KvcProtocolException
@@ -23,6 +24,8 @@ import edu.jxslu.schedule.ui.common.rememberResumedNow
 import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
@@ -70,6 +74,19 @@ internal fun unlockCooldownSecondsLeft(until: Long, now: Long): Int {
  */
 internal const val UNLOCK_SYNC_ATTEMPTS = 5
 internal const val UNLOCK_SYNC_INTERVAL_MS = 1_500L
+
+/**
+ * 开锁前「有没有可用骑行卡」的检查（2026-10-22）：卡券快照的缓存口径。
+ *
+ * - **有可用卡**的快照缓存 10 分钟：卡不会几分钟内突然失效，开锁前不必每次都往返一次；
+ * - **没有可用卡**（无卡 / 已过期 / 次数用完）只缓存 60 秒：用户很可能在这段时间里去小程序
+ *   买了卡，缓存太久会在下一次开锁时误报「没有卡」；
+ * - [RIDE_CARD_WAIT_MS] 是开锁时等这次查询的上限：超时就按「不确定」放行（不弹提醒），
+ *   不能因为一次读接口把用户挡在车外。
+ */
+internal const val RIDE_CARD_CACHE_TTL_MS = 10 * 60 * 1000L
+internal const val RIDE_CARD_RECHECK_MS = 60_000L
+internal const val RIDE_CARD_WAIT_MS = 2_500L
 
 /** 快趣用车动作（DESIGN §4.32，B/C 档）：同一时刻只允许一个在跑。 */
 enum class KvcxAction {
@@ -361,6 +378,92 @@ class KvcxRideController internal constructor(
      * 的旧包覆盖新包——那会让已骑时长回退、电量跳回旧值。
      */
     private var readSeq = 0L
+
+    // ── 开锁前的「有没有可用骑行卡」检查（2026-10-22）──
+
+    /** 最近一次卡券快照（进程内）与获取时刻；null = 还没查过或上次失败。 */
+    private var cardCoupons: List<KqcxAuth.AssetCoupon>? = null
+    private var cardFetchedAt = 0L
+
+    /** 卡券查询单飞：并发调用共享同一次结果（与 token 重登同一手法）。 */
+    private var cardJob: Deferred<List<KqcxAuth.AssetCoupon>?>? = null
+
+    /**
+     * 预热卡券快照（进骑行页 / 抢在开锁确认弹窗之前）。**只在已登录时发**；
+     * 缓存新鲜就什么都不做。这是用户打开页面驱动的一次只读查询，不轮询。
+     */
+    fun warmRideCard(now: Long = System.currentTimeMillis()) {
+        val session = session ?: return
+        if (!session.loggedIn.value) return
+        if (isCardFresh(now)) return
+        ensureCardJob(now)
+    }
+
+    /**
+     * 取卡券快照给「无可用骑行卡」提醒用（[EbikeRideCard]）。缓存新鲜直接返回；
+     * 否则发起（或复用）一次查询，最多等 [RIDE_CARD_WAIT_MS]——超时返回上一次的快照
+     * （可能 null），调用方据此跳过提醒。**查询失败返回 null**：不确定就不打扰，
+     * 绝不因为一次读失败把用户挡在车外。
+     */
+    suspend fun rideCardCoupons(now: Long = System.currentTimeMillis()): List<KqcxAuth.AssetCoupon>? {
+        if (isCardFresh(now)) return cardCoupons
+        val job = ensureCardJob(now) ?: return cardCoupons
+        return withTimeoutOrNull(RIDE_CARD_WAIT_MS) { job.await() } ?: cardCoupons
+    }
+
+    /**
+     * 缓存是否还新鲜：**有可用卡**按 [RIDE_CARD_CACHE_TTL_MS]，没有可用卡按
+     * [RIDE_CARD_RECHECK_MS]——用户可能刚去小程序买了卡，没有卡的结论不该缓存太久。
+     */
+    private fun isCardFresh(now: Long): Boolean {
+        val cached = cardCoupons ?: return false
+        val age = now - cardFetchedAt
+        if (age < 0L) return false
+        val ttl = if (EbikeRideCard.hasUsableCard(cached, now)) {
+            RIDE_CARD_CACHE_TTL_MS
+        } else {
+            RIDE_CARD_RECHECK_MS
+        }
+        return age <= ttl
+    }
+
+    private fun ensureCardJob(
+        fetchedAt: Long = System.currentTimeMillis(),
+    ): Deferred<List<KqcxAuth.AssetCoupon>?>? {
+        cardJob?.takeIf { it.isActive }?.let { return it }
+        val session = session ?: return null
+        val job = scope.async {
+            val result = try {
+                session.queryCoupons()
+            } catch (error: CancellationException) {
+                throw error // 取消穿透：作用域撤销不是查询失败
+            } catch (_: Throwable) {
+                null
+            }
+            if (result != null) {
+                cardCoupons = result
+                cardFetchedAt = fetchedAt
+            }
+            result
+        }
+        cardJob = job
+        return job
+    }
+
+    init {
+        // 退出登录 / 换账号：卡券快照属于上一个账号，不能带进下一次开锁检查。
+        // 在飞的查询也一并作废——它回来时不能再把上一个账号的卡写进缓存。
+        scope.launch {
+            session?.loggedIn?.collect { loggedIn ->
+                if (!loggedIn) {
+                    cardJob?.cancel()
+                    cardJob = null
+                    cardCoupons = null
+                    cardFetchedAt = 0L
+                }
+            }
+        }
+    }
 
     /**
      * 查一次骑行状态。[quiet] = 失败完全静默（进页 / 回页那条路：页面主职责不是它，
