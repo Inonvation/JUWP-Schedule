@@ -1074,12 +1074,24 @@ UI 规格见 §3.28。
 **预报名（准点自动抢，2026-10-16；用户拍板）**：用户口径——平台**写接口会提前约 10 秒
 放行**（活动写着 12:00 开始报名，11:59:50 就能抢），手点抢不过；要「选好活动、到点全自动」。
 **全 App 唯一允许自动提交的路径**，只对用户点名的单条活动生效。分层：
-`ui/wenqu/WenquPreregReminder.kt`（落盘 + 精确闹钟 4008 + 兜底 Work + 通知 1017 / 落点 3016）+
+`ui/wenqu/WenquPreregReminder.kt`（落盘 + 精确闹钟 4008 + 兜底 Work + 通知 1017 / 落点 3016 /
+重试 action 3017；进度与结果通知点击 = 打开 App 直弹仪表板）+
 `WenquPreregRunner.kt`（执行器：T−60s 预热与并发校对 → T−15s 起串行试发，结果不明才只读核对
 （「尚未开始」确定没落库，不核对；核对单独用 2 秒短超时）；≤30 发 / 每发间隔 1 秒 /
 ≤150 秒 / 开始后 ≤90 秒三闸收工；
-平台话术分类 `WenquRules.classifyPreregReject`）+
-`WenquPreregService.kt`（`shortService` 短时前台服务——精确闹钟触发属官方豁免，同骑行那条链）+
+**收工终检**（2026-10-21：触顶后最后一次 10 秒耐心核对，把「某发超时但其实已落库」捞回来——
+2026-10-19 用户实测「报上了却被报没抢到」的修复）；**手动报名互锁**（每轮试发前查
+`appliedInIndex`，App 内手动报名成功即停）；**重试轮**（用户点重试 = 前台重拉服务，
+5 发 / 30 秒独立预算）；
+**仪表板状态 `dash` StateFlow**（阶段 / 次数 / 最近话术 / 终态文案，通知与面板同源）；
+平台话术分类 `WenquRules.classifyPreregReject`（2026-10-21 扩面：重复报名 / 无法重复 / 已参加、
+未到报名））+
+`WenquPreregService.kt`（`shortService` 短时前台服务——精确闹钟触发属官方豁免，同骑行那条链；
+中断时把面板置「被系统中断」终态）+
+`WenquPreregDashboard.kt`（**前台仪表板**，2026-10-21：`WenquAppForeground` started 计数判前台
+（不引 lifecycle-process）；`WenquPreregDashboardHost` 挂 `JuwRoot` 与 `SettingsActivity`，
+执行期间任何界面自动弹，用户关掉后不再自动弹，重开 = 通知点击 / **悬浮球单击**（预报名期间，
+平时仍付款码）/ 蹲点页已预报名行；操作 = 取消（二次确认）· 手动报名 · 重试）+
 `data/wenqu/WenquServerClock.kt`（`Date` 头时钟偏移，试发窗口按服务器钟折算）。
 入口在详情弹层（`applyBlockReason == APPLY_NOT_STARTED` 才给按钮 + `WenquPreregConfirmDialog`
 二次确认；已排上显示「已预报名」状态行可取消）。**写请求不自动重发**：网络类失败只读核对后

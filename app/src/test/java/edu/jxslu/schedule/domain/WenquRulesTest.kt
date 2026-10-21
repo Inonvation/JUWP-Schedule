@@ -962,6 +962,19 @@ class WenquRulesTest {
             WenquRules.PreregRejectKind.AlreadyApplied,
             WenquRules.classifyPreregReject("您已报名该活动"),
         )
+        // 2026-10-21 扩面：重复报名的实测话术（用户手动报名时平台回的原文）
+        assertEquals(
+            WenquRules.PreregRejectKind.AlreadyApplied,
+            WenquRules.classifyPreregReject("已报名该活动，无法重复报名"),
+        )
+        assertEquals(
+            WenquRules.PreregRejectKind.AlreadyApplied,
+            WenquRules.classifyPreregReject("请勿重复报名"),
+        )
+        assertEquals(
+            WenquRules.PreregRejectKind.NotStarted,
+            WenquRules.classifyPreregReject("报名未到时间，未到报名时刻"),
+        )
         assertEquals(WenquRules.PreregRejectKind.Full, WenquRules.classifyPreregReject("名额已满"))
         assertEquals(
             WenquRules.PreregRejectKind.Blocked,

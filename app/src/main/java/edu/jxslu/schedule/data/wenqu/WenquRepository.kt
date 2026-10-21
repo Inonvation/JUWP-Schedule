@@ -234,6 +234,13 @@ class WenquRepository(
     private val preregCheckApi: WenquApi =
         WenquApi.create(WenquRules.PREREG_CHECK_TIMEOUT_S, withServerClock = true)
 
+    /**
+     * 预报名**收工终检**专用 API（[WenquRules.PREREG_FINAL_CHECK_TIMEOUT_S] 秒，2026-10-21）：
+     * 触顶后的最后一次核对没有时序压力，耐心档把「某发超时但其实已落库」的响应熬回来。
+     */
+    private val preregFinalCheckApi: WenquApi =
+        WenquApi.create(WenquRules.PREREG_FINAL_CHECK_TIMEOUT_S, withServerClock = true)
+
     // ---- 进程内缓存（DESIGN §4.45「进页不重复取数」）------------------------------
     // 「我的记录 / 星级」只有一个资源，键用常量；活动列表按关键词缓存（换关键词 = 换一份）。
 
@@ -269,6 +276,17 @@ class WenquRepository(
      * 再按 [WenquRules.indexLoadPlan] 决定要不要增量同步。过期或没抓过回 null。
      */
     fun cachedIndex(): WenquActivityIndex? = indexCache.get(INDEX_KEY, now())
+
+    /**
+     * 某活动此刻在本进程的索引快照里是不是「已报名」（**零请求**，2026-10-21）。
+     *
+     * 给预报名执行器做**手动报名 × 自动抢互锁**：用户在 App 里手动报名成功会走
+     * [patchAfterApply] 把索引那条就地置「已报名」，执行器每轮试发前查这里，
+     * 为真即停——脚本不该对着自己人再抢。快照没有这条 / 没建过索引回 false
+     * （互锁是「锦上添花」的旁路，权威值仍在平台：真报上了平台回「已报名」话术）。
+     */
+    fun appliedInIndex(activityId: Long): Boolean =
+        indexCache.get(INDEX_KEY, now())?.items?.any { it.id == activityId && it.applied } == true
 
     /** 作废快照（退登等）：下次进页整份重抓。 */
     fun invalidateIndex() {
@@ -867,6 +885,31 @@ class WenquRepository(
     suspend fun preregAppliedNow(id: Long): WenquPreregCheck = withContext(Dispatchers.IO) {
         try {
             val detail = fetchDetailUncached(id, preregCheckApi)
+            when {
+                detail == null -> WenquPreregCheck.Unknown
+                detail.applied -> {
+                    patchAfterApply(id)
+                    WenquPreregCheck.Applied
+                }
+
+                else -> WenquPreregCheck.NotApplied
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            WenquPreregCheck.Unknown
+        }
+    }
+
+    /**
+     * 预报名**收工终检**（2026-10-21）：与 [preregAppliedNow] 同判定、
+     * 走 [WenquRules.PREREG_FINAL_CHECK_TIMEOUT_S] 秒耐心档——触顶收工前不再有
+     * 「赶下一发」的时序压力，多熬几秒把高峰期的慢响应等回来，
+     * 别让「某发超时但其实已落库」被误报成没抢到（2026-10-19 用户实测）。
+     */
+    suspend fun preregAppliedNowSlow(id: Long): WenquPreregCheck = withContext(Dispatchers.IO) {
+        try {
+            val detail = fetchDetailUncached(id, preregFinalCheckApi)
             when {
                 detail == null -> WenquPreregCheck.Unknown
                 detail.applied -> {

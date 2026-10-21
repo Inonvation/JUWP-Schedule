@@ -526,14 +526,64 @@ POST /api/volunteer/apply/cancel/{id}   {}（id 走路径）                  �
 - **只读核对单独用 2 秒超时**（`PREREG_CHECK_TIMEOUT_S` / `preregCheckApi`，2026-10-19）：
   写请求超时后核对与写走同一条拥堵链路，挂 5 秒等于把下一发推后 3 秒；2 秒拿不到就交给
   下一发——下一发若已报上，平台回「已报名」，同样按成功收尾。
+- **收工终检（2026-10-21）**：触顶收工前（非成功、非明确终结、发过试发）补最后一次**耐心**
+  核对 `preregAppliedNowSlow`（`PREREG_FINAL_CHECK_TIMEOUT_S = 10` 秒，`preregFinalCheckApi`）
+  ——终检没有「赶下一发」的时序压力，多熬几秒把高峰期的慢响应等回来。
+  **背景**：2026-10-19 用户实测「脚本报没抢到，手动报名时平台回『已报名该活动，无法重复报名』」
+  ——某发超时但服务端已落库，旧版触顶后没人回头看一眼，把已报上的误报成没抢到。
+  终检三出口：Applied → 改报「报名成功」并注明救回；NotApplied → 确认没抢到；
+  Unknown → 如实说「未能确认，请进详情页核对」，**不把不确定说成确定**。
+- **手动报名 × 自动抢互锁（2026-10-21）**：执行器每轮试发前查 `WenquRepository.appliedInIndex(id)`
+  （零请求读快照；用户在 App 内手动报名成功会经 `patchAfterApply` 就地置「已报名」），
+  为真即按成功收工——脚本不对自己人抢。快照没有这条回 false：互锁是旁路，
+  权威判定仍在平台（真报上了平台回「已报名」话术）。
+- **拒绝话术分类扩面（2026-10-21）**：`classifyPreregReject` 的 AlreadyApplied 补
+  `重复报名` / `无法重复` / `已参加`，NotStarted 补 `未到报名`——依据是用户实测的
+  「已报名该活动，无法重复报名」原文（反编译产物核对：该话术是**服务端**的，
+  小程序前端全文无此字样，App 按子串分类正确）。
 - **不要用快照的 `balance_num` 提前判「名额已满」**：活动还没开放报名时平台可能把剩余名额写成 0，
   提前 abort 等于把还能抢的活动直接判死。到点真发，第一发回「名额已满」再按终结收工。
-- 通知（channel `wenqu_prereg` / id **1017** / 落点 requestCode **3016**）：执行中常驻进度
-  （静默，服务持有；结束时结果就地替换、`STOP_FOREGROUND_DETACH` 保留，空跑则摘掉）；
-  结果「报名成功 / 没抢到 / 未执行」**直接震动、不过免扰时段**（同名额空出提醒口径）。
-  日志只有纯数字（attempts / elapsedMs / serverLateMs / offsetMs），供演练调参。
+- 通知（channel `wenqu_prereg` / id **1017** / 落点 requestCode **3016**；重试 action 的
+  PendingIntent requestCode **3017**）：执行中常驻进度（静默，服务持有；结束时结果就地替换、
+  `STOP_FOREGROUND_DETACH` 保留，空跑则摘掉），**点击 = 打开 App 并直接弹仪表板**
+  （`WenquPreregDashboardActivityJump.intent`：直指 MainActivity 的 NEW_TASK|CLEAR_TOP 跳板，
+  不附 screen extra）；结果「报名成功 / 没抢到 / 未执行」**直接震动、不过免扰时段**
+  （同名额空出提醒口径），「没抢到」的结果带一枚**重试** action（`startRetry`：
+  前台重拉服务跑重试轮）。日志只有纯数字（attempts / elapsedMs / serverLateMs / offsetMs /
+  recovered），供演练调参。
 - **幂等与并发**：进程内 `AtomicBoolean` + 落盘双闸；用户取消（落盘被清）中途收手、不打扰；
   执行器提前太多被拉起（兜底 Work 早跑）直接空跑交还闹钟。
+
+**重试轮（2026-10-21）**：
+
+- 入口两处：仪表板终态失败的「重试（5 发）」按钮、结果通知的「重试」action，
+  都走 `WenquPreregReminder.startRetry`（**前台**启动前台服务合规）+ `EXTRA_RETRY`。
+- 预算独立：`PREREG_RETRY_MAX_ATTEMPTS = 5` 发、`PREREG_RETRY_RUN_MS = 30` 秒——
+  主轮是「准点」的，重试轮是「事后补救」，名额可能已被抢空，不值得再花 30 发 / 150 秒。
+- 复用同一执行器 / 幂等闸 / 通知链路（`running` AtomicBoolean 挡并发），收工同样走终检。
+- 服务中断（`onTimeout` / 异常销毁）时若仪表板还在跑，`markInterrupted` 置
+  「被系统中断」终态——面板看到实情，不是永远的「抢报中」。
+
+**前台仪表板（2026-10-21）**：
+
+- 状态单一数据源 = `WenquPreregRunner.dash`（`StateFlow<WenquPreregDashState>`，执行器唯一写方，
+  `updateDash` 是同模块写口）：阶段（校对 / 等待 / 试发 / 终检 / 终态）· 已发次数 ·
+  最近平台话术 · 终态文案。**通知与面板各读一份，终态文案只写一次**——
+  结果通知与面板结果页天然同源。终态落盘 5 分钟后自动归 Idle（期间用户又排新的一轮则不动）。
+- 前台判定 = `WenquAppForeground`（`Application.ActivityLifecycleCallbacks` 按 **started**
+  计数，JuwApplication 冷启动 `install` 一次；**不引 lifecycle-process**，AndroidX 版本边界
+  卡得紧，不为一个布尔值加依赖。用 started 不用 resumed：弹窗不改 resumed 计数）。
+- 弹层 = `WenquPreregDashboardHost`（Compose Dialog，复用 `DialogWindowFadeEffect`），
+  挂在 `JuwRoot` 与 `SettingsActivity` 各一份——执行期间**任何界面**都弹。
+  自动弹：起跑时在前台 / 后台起跑后回前台（沿 false→true）。
+  **用户关掉后本轮不再自动弹**（执行照常，进度走通知）。
+- 重开入口三处：① 进度 / 结果通知点击；② **悬浮球单击**——平时=付款码不变，
+  预报名执行期间临时变为弹仪表板（`WenquPreregRunner.dash.isRunning` 判据，
+  双击扫一扫不受影响）；③ 蹲点页「已预报名」行。
+- 操作：**取消**（面板内二次确认 → `WenquPreregReminder.cancel`，执行器 `stillArmed`
+  自查收手；面板如实提示「正在提交的那一发可能已落库，详情页会显示已报名」）、
+  **手动报名**（`repo.applyActivity` 共享 30 秒客户端；成功 / 平台「已报名」话术都回填
+  「最近返回」并点亮互锁）、**重试**（见上）。
 
 ## 红线
 

@@ -19,11 +19,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.R
-import edu.jxslu.schedule.SubpageRequest
-import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.wenqu.WenquActivity
 import edu.jxslu.schedule.domain.WenquRules
-import edu.jxslu.schedule.subpageLaunchIntent
 import edu.jxslu.schedule.ui.reminder.ReminderVibration
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
@@ -67,8 +64,10 @@ object WenquPreregReminder {
     /** 通知点击落点。落点 requestCode 既有 0 / 3005–3015，预报名取 3016。 */
     private const val CONTENT_REQUEST_CODE = 3016
 
-    private const val CHANNEL_ID = "wenqu_prereg"
+    /** 重试 action 的 PendingIntent requestCode（服务侧，避开既有 0 / 3005–3016）。 */
+    private const val RETRY_REQUEST_CODE = 3017
 
+    private const val CHANNEL_ID = "wenqu_prereg"
     /**
      * 固定通知 id：1013 新增活动 / 1015 每周提醒 / 1016 名额空出；预报名取 1017。
      *
@@ -173,6 +172,17 @@ object WenquPreregReminder {
         context.startForegroundService(Intent(context, WenquPreregService::class.java))
     }.onFailure { Log.w(TAG, "start service failed", it) }.isSuccess
 
+    /**
+     * 起服务跑**重试轮**（2026-10-21）：仪表板「重试」按钮与结果通知共用这一条。
+     * 调用方都在前台（面板按钮）或经通知点击（先弹回 App），前台启动前台服务合规。
+     */
+    fun startRetry(context: Context): Boolean = runCatching {
+        context.startForegroundService(
+            Intent(context, WenquPreregService::class.java)
+                .putExtra(WenquPreregService.EXTRA_RETRY, true),
+        )
+    }.onFailure { Log.w(TAG, "start retry failed", it) }.isSuccess
+
     /** 兜底 Work（幂等）：闹钟到点起前台服务失败时由 Receiver 排上。 */
     fun enqueueFallback(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(
@@ -193,7 +203,14 @@ object WenquPreregReminder {
 
     // ---- 通知 -----------------------------------------------------------------
 
-    /** 执行中的常驻进度通知（静默；服务结束时由服务决定摘掉还是保留）。 */
+    /**
+     * 执行中的常驻进度通知（静默；服务结束时由服务决定摘掉还是保留）。
+     *
+     * 点击 = 打开 App 并**直接弹出抢活动仪表板**：落点 Intent 直指 MainActivity
+     * （[WenquPreregDashboardActivityJump.intent]）并带 [EXTRA_DASH_REOPEN]，
+     * MainActivity 在 onCreate / onNewIntent 读到后调 `WenquPreregDashboardHost.reopen`
+     * ——关过面板的用户靠它找回来，不被「dismissed 不再自动弹」挡住。
+     */
     fun buildProgressNotification(context: Context, text: String): Notification {
         ensureChannel(context)
         return NotificationCompat.Builder(context, CHANNEL_ID)
@@ -205,6 +222,7 @@ object WenquPreregReminder {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
+            .setContentIntent(dashboardPendingIntent(context))
             .build()
     }
 
@@ -217,23 +235,45 @@ object WenquPreregReminder {
         }.onFailure { Log.w(TAG, "progress notify failed", it) }
     }
 
-    /** 结果通知（报名成功 / 没抢到 / 没执行）：直接震动、不过免扰（同名额空出提醒口径）。 */
+    /**
+     * 结果通知（报名成功 / 没抢到 / 没执行）：直接震动、不过免扰（同名额空出提醒口径）。
+     *
+     * 没抢到的结果带一枚**重试** action（2026-10-21）：点击走前台重拉执行器跑重试轮
+     * （预算 5 发 / 30 秒）；通知落点也换成「打开仪表板」——用户要看的就是结果与后续操作。
+     */
     fun postResult(context: Context, title: String, text: String, vibrate: Boolean = true) {
         ensureChannel(context)
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
-            .setContentIntent(contentPendingIntent(context))
-            .build()
+            .setContentIntent(dashboardPendingIntent(context))
+        if (title.startsWith("没抢到")) {
+            builder.addAction(
+                0,
+                "重试",
+                // **必须是 getForegroundService**：点 action 时 App 多半在后台，
+                // getService 拉起的普通 service 启动里调 startForeground 会被
+                // `ForegroundServiceStartNotAllowedException` 打掉（后台 FGS 限制）；
+                // getForegroundService 声明了 FGS 启动意图，用户交互（点通知 action）
+                // 属于允许的后台启动场景。
+                PendingIntent.getForegroundService(
+                    context,
+                    RETRY_REQUEST_CODE,
+                    Intent(context, WenquPreregService::class.java)
+                        .putExtra(WenquPreregService.EXTRA_RETRY, true),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+        }
         if (vibrate) ReminderVibration.vibrate(context)
         runCatching {
             // 无 tag：与 startForeground 的通知键对齐（见 NOTIFICATION_ID 注释）
             NotificationManagerCompat.from(context)
-                .notify(NOTIFICATION_ID, notification)
+                .notify(NOTIFICATION_ID, builder.build())
         }.onFailure { Log.w(TAG, "result notify failed", it) }
     }
 
@@ -252,11 +292,14 @@ object WenquPreregReminder {
         manager.createNotificationChannel(channel)
     }
 
-    private fun contentPendingIntent(context: Context): PendingIntent = PendingIntent.getActivity(
+    /**
+     * 「打开仪表板」落点（2026-10-21）：拉起主窗口 + 附「重开面板」标记（结果通知与进度
+     * 通知都用它；面板关过的用户从通知点进来不受「不再自动弹」限制）。
+     */
+    private fun dashboardPendingIntent(context: Context): PendingIntent = PendingIntent.getActivity(
         context,
         CONTENT_REQUEST_CODE,
-        subpageLaunchIntent(context, SubpageRequest(SubpageScreen.WENQU))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        WenquPreregDashboardActivityJump.intent(context),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 

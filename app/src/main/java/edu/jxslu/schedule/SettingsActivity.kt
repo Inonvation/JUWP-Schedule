@@ -28,6 +28,9 @@ class SettingsActivity : ComponentActivity() {
         enablePredictiveBackTransitions()
         setContent {
             JuwTheme {
+                // 预报名仪表板（DESIGN §4.45，2026-10-21）：设置是独立窗口，也要能弹
+                // ——执行期间用户停在设置页时同样看得见进度与操作。
+                edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost()
                 SettingsScreen(
                     onOpenAppearanceSettings = {
                         SubpageActivity.start(this, SubpageScreen.APPEARANCE_SETTINGS)

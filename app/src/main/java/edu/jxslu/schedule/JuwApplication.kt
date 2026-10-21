@@ -40,6 +40,8 @@ class JuwApplication : Application() {
         super.onCreate()
         // 进程级 context 注入（Graph.appContext）：后台协程落盘等场景免持 Activity 引用
         Graph.contextProvider = { this }
+        // 预报名仪表板的前台判定（DESIGN §4.45，2026-10-21）：started 计数，进程内只装一次
+        edu.jxslu.schedule.ui.wenqu.WenquAppForeground.install(this)
         // 崩溃留痕（2026-10-02，体检第三批）：JVM 级未捕获异常 + appScope 协程异常都落
         // filesDir/crash/（只写本机不上传）。「我的 → 关于」有导出入口；没有它，用户报
         // 「闪退了」时手上什么都没有。必须在任何 appScope.launch 之前装。

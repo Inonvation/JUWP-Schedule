@@ -975,6 +975,24 @@ object WenquRules {
     /** 另一个收闸：报名开始后最多再试这么久（迟到启动 / 时间被改早时兜底）。 */
     const val PREREG_END_AFTER_MS: Long = 90_000L
 
+    /**
+     * 仪表板「重试」轮的独立预算（2026-10-21）：结果通知点进来或面板上点重试时，
+     * 前台重新拉起执行器再试一小段。主轮是「准点」的，重试轮是「事后补救」的——
+     * 名额可能已被抢空，不值得再花 30 发 / 150 秒；5 发 × 1 秒 ≈ 30 秒预算，够平台
+     * 回一句明确话术（已满 / 已报上 / 仍拥堵），也远在 shortService 额度内。
+     */
+    const val PREREG_RETRY_MAX_ATTEMPTS: Int = 5
+
+    const val PREREG_RETRY_RUN_MS: Long = 30_000L
+
+    /**
+     * **收工终检**的只读核对超时（秒，2026-10-21）：主轮 / 重试轮触顶后的最后一次核对。
+     * 与试发途中的核对（[PREREG_CHECK_TIMEOUT_S] = 2 秒，赶下一发）不同，终检不再有时序
+     * 压力——平台高峰常把响应拖过 2 秒，而那正是「某发超时但其实已落库」的现场，
+     * 挂 10 秒把这一个来回熬住，别让「报上了」被误报成「没抢到」。
+     */
+    const val PREREG_FINAL_CHECK_TIMEOUT_S: Long = 10L
+
     /** 预报名闹钟的触发时刻（= 报名开始前 [PREREG_LEAD_MS]）。 */
     fun preregAlarmAt(opensAt: Long): Long = opensAt - PREREG_LEAD_MS
 
@@ -1023,9 +1041,13 @@ object WenquRules {
         val text = msg.orEmpty()
         if (text.isBlank()) return PreregRejectKind.Unknown
         return when {
-            text.contains("已报名") || text.contains("已经报名") || text.contains("请勿重复") ->
+            // 「已报名该活动，无法重复报名」是实测的重复报名话术（2026-10-21 用户报）；
+            // 已报名 / 重复报名 / 无法重复 / 已参加都是同一语义：这一发或此前某发已生效。
+            text.contains("已报名") || text.contains("已经报名") || text.contains("重复报名") ||
+                text.contains("请勿重复") || text.contains("无法重复") || text.contains("已参加") ->
                 PreregRejectKind.AlreadyApplied
-            text.contains("尚未开始") || text.contains("未开始") || text.contains("还没开始") ->
+            text.contains("尚未开始") || text.contains("未开始") || text.contains("还没开始") ||
+                text.contains("未到报名") ->
                 PreregRejectKind.NotStarted
             text.contains("已满") || text.contains("报满") || text.contains("名额不足") ->
                 PreregRejectKind.Full

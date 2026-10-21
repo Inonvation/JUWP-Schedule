@@ -195,6 +195,14 @@ class MainActivity : ComponentActivity() {
             pendingRoute.value = intent?.getStringExtra(EXTRA_ROUTE)
             pendingSubpages.value = SubpageRequest.from(intent)?.let { listOf(it) } ?: emptyList()
         }
+        // 预报名仪表板重开（DESIGN §4.45，2026-10-21）：预报名/结果通知的落点带这个 extra，
+        // 读到就请求弹面板（突破「用户关过不再自动弹」；没在跑时 reopen 是无害空操作）。
+        if (intent?.getBooleanExtra(
+                edu.jxslu.schedule.ui.wenqu.EXTRA_DASH_REOPEN, false,
+            ) == true
+        ) {
+            edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost.reopen()
+        }
         enableEdgeToEdge()
         // 首次配置引导（DESIGN §3.16）：只服务新安装——老用户没有 onboarding_seen 键，
         // 不弹引导，只在「我的」页显示登录状态卡。阻塞读一次，与 resolveStartRouteBlocking
@@ -222,6 +230,14 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // 预报名仪表板重开（DESIGN §4.45，2026-10-21）：通知落点带这个 extra 就请求弹面板
+        // ——进程活着但用户关过面板时，自动弹的「回前台」路径不会触发，靠这里补。
+        if (intent.getBooleanExtra(
+                edu.jxslu.schedule.ui.wenqu.EXTRA_DASH_REOPEN, false,
+            )
+        ) {
+            edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost.reopen()
+        }
         // 通知跳板：带二级页定位参数
         val subpage = SubpageRequest.from(intent)
         if (subpage != null) {
@@ -364,6 +380,9 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
         // 字体缩放锁定（「固定字体大小」，默认开）：全 App 唯一的字形缩放覆盖点。
         // 立即生效：开关一动，displayPrefs 发射，这里跟着重组
         ProvideFixedFontScale(locked = fontScaleLocked) {
+            // 预报名仪表板（DESIGN §4.45，2026-10-21）：执行期间在主窗口任何界面上弹。
+            // 与内容同级（在 content 外层），弹层压在页面之上；设置窗口另挂一份。
+            edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost()
             content()
         }
     }
@@ -1572,11 +1591,21 @@ internal fun JuwApp(
             )
             // 应用内悬浮球（DESIGN §3.1）：主窗口四个 Tab 常驻。显示设置面板打开时
             // （bottomBarVisible 为 false）一并收起，免得压在面板上。
+            // 单击在「预报名执行期间」（DESIGN §4.45，2026-10-21）临时变为弹出抢活动仪表板
+            // （通知之外的进程内重开入口），其余时间仍是付款码；双击扫一扫不受影响。
             if (floatingBallEnabled && floatingBallOnTab && bottomBarVisible) {
+                val preregRunning by edu.jxslu.schedule.ui.wenqu.WenquPreregRunner.dash
+                    .collectAsStateWithLifecycle()
                 FloatingBallOverlay(
                     position = floatingBallPosition,
-                    // 单击 → 付款码页（独立窗口）
-                    onTap = { openSubpage(context, SubpageRequest(screen = SubpageScreen.PAY_CODE)) },
+                    // 单击 → 付款码页（独立窗口）；预报名执行中 → 抢活动仪表板
+                    onTap = {
+                        if (preregRunning.isRunning) {
+                            edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost.reopen()
+                        } else {
+                            openSubpage(context, SubpageRequest(screen = SubpageScreen.PAY_CODE))
+                        }
+                    },
                     // 双击 → 扫一扫（车码 / 机身码 / 别家码三档分流，见 startBallScan）
                     onDoubleTap = startBallScan,
                     onPositionChange = { pos ->
