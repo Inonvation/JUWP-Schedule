@@ -181,15 +181,6 @@ data class DisplayPrefs(
     val bgImageBlur: Float = 0f,
     /** 背景图缩放方式（填充 / 适应 / 平铺）。 */
     val bgImageScale: BgScale = BgScale.Fill,
-    /** 今日页开水卡片显示开关（DESIGN §3.3 底部固定区）。默认开；关 = 不展示（含未登录态）。 */
-    val waterCardEnabled: Boolean = true,
-    /**
-     * 今日页趣智校园卡片显示开关（DESIGN §4.30）。**默认开**。
-     * 与开水卡并排占一行：开 = 两卡各半行；关 = 胖乖生活独占整行（回到加本卡之前的样子）。
-     */
-    val qzxyCardEnabled: Boolean = true,
-    /** 今日页共享单车卡显示开关（DESIGN §3.9）。默认开（用户要求入口常驻）。 */
-    val ebikeCardEnabled: Boolean = true,
     /**
      * 快趣出行的使用方式（DESIGN §3.9 / §4.32）。**默认微信小程序方式**：
      * 账号登录方式要凭证、有计费后果与支付分授权门槛，只能由用户显式选择；
@@ -1343,24 +1334,6 @@ class DisplayPrefsStore(private val context: Context) {
     }.distinctUntilChanged()
 
     /**
-     * 今日页开水卡片开关（DESIGN §3.3 底部固定区）。全局项，默认开：
-     * 卡片含未登录态（登录引导入口），关掉 = 用户明确不要这个常驻位。
-     */
-    val waterCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_WATER_CARD_ENABLED] ?: true
-    }.distinctUntilChanged()
-
-    /** 今日页趣智校园卡片开关（DESIGN §4.30）。全局项，默认开。 */
-    val qzxyCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_QZXY_CARD_ENABLED] ?: true
-    }.distinctUntilChanged()
-
-    /** 今日页共享单车卡开关（DESIGN §3.9）。全局项，默认开。 */
-    val ebikeCardEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
-        p[KEY_EBIKE_CARD_ENABLED] ?: true
-    }.distinctUntilChanged()
-
-    /**
      * 今日页顶栏天气提示开关（DESIGN §3.29）。全局项，**默认关**：
      * 关着时一次网络请求都不发（取数调用点先判这个开关）。
      */
@@ -1907,21 +1880,6 @@ class DisplayPrefsStore(private val context: Context) {
         context.displayDataStore.edit { it[KEY_SHORTCUTS_ENABLED] = value }
     }
 
-    /** 今日页开水卡片开关（DESIGN §3.3）。 */
-    suspend fun setWaterCardEnabled(value: Boolean) {
-        context.displayDataStore.edit { it[KEY_WATER_CARD_ENABLED] = value }
-    }
-
-    /** 今日页趣智校园卡片开关（DESIGN §4.30）。 */
-    suspend fun setQzxyCardEnabled(value: Boolean) {
-        context.displayDataStore.edit { it[KEY_QZXY_CARD_ENABLED] = value }
-    }
-
-    /** 今日页共享单车卡开关（DESIGN §3.9）。 */
-    suspend fun setEbikeCardEnabled(value: Boolean) {
-        context.displayDataStore.edit { it[KEY_EBIKE_CARD_ENABLED] = value }
-    }
-
     suspend fun setWeatherEnabled(value: Boolean) {
         context.displayDataStore.edit { it[KEY_WEATHER_ENABLED] = value }
     }
@@ -2367,9 +2325,6 @@ class DisplayPrefsStore(private val context: Context) {
         val KEY_PREFS_MIGRATED = booleanPreferencesKey("timetable_prefs_migrated")
         val KEY_WIDGET_SETUP_SEEN = booleanPreferencesKey("widget_setup_seen")
         val KEY_SHORTCUTS_ENABLED = booleanPreferencesKey("shortcuts_enabled")
-        val KEY_WATER_CARD_ENABLED = booleanPreferencesKey("water_card_enabled")
-        val KEY_QZXY_CARD_ENABLED = booleanPreferencesKey("qzxy_card_enabled")
-        val KEY_EBIKE_CARD_ENABLED = booleanPreferencesKey("ebike_card_enabled")
         val KEY_WEATHER_ENABLED = booleanPreferencesKey("weather_enabled")
         val KEY_EBIKE_USE_MODE = stringPreferencesKey("ebike_use_mode")
         val KEY_EBIKE_AUTO_SAVE = booleanPreferencesKey("ebike_auto_save")

@@ -465,12 +465,10 @@ class ScheduleRepository(
         val dynamicColor: Boolean,
         val haptics: Boolean,
         val waterDouble: Boolean,
-        val waterCard: Boolean,
     )
 
     /** 共享单车相关偏好的收拢切片（DESIGN §3.9；combine 参数上限的同款处理）。 */
     private data class EbikePrefs(
-        val cardEnabled: Boolean,
         val autoSave: Boolean,
         val recentIds: List<String>,
         /** 使用方式（§3.9 / §4.32）：小程序方式 / 账号登录，能力的唯一判据。 */
@@ -481,7 +479,6 @@ class ScheduleRepository(
     private data class ShellPrefs(
         val floatingNavBar: Boolean,
         val startPage: StartPage,
-        val qzxyCardEnabled: Boolean,
     )
 
     /** 杂项单值的收拢切片：校园卡开关 + 字体缩放锁定 + 百宝箱开关（combine 参数上限的同款处理）。 */
@@ -541,13 +538,11 @@ class ScheduleRepository(
             prefs.dynamicColor,
             prefs.hapticsEnabled,
             prefs.waterRequireDoubleClick,
-            prefs.waterCardEnabled,
-        ) { theme, dynamicColor, haptics, waterDouble, waterCard ->
-            GlobalPrefs(theme, dynamicColor, haptics, waterDouble, waterCard)
+        ) { theme, dynamicColor, haptics, waterDouble ->
+            GlobalPrefs(theme, dynamicColor, haptics, waterDouble)
         },
         // 共享单车切片（DESIGN §3.9）：三个流合成一层，再并入最外层 combine
         combine(
-            prefs.ebikeCardEnabled,
             prefs.ebikeAutoSave,
             prefs.ebikeRecentIds,
             prefs.ebikeUseMode,
@@ -566,7 +561,6 @@ class ScheduleRepository(
         combine(
             prefs.floatingNavBar,
             prefs.startPage,
-            prefs.qzxyCardEnabled,
             ::ShellPrefs,
         ),
     ) { global, ebike, misc, p, shell ->
@@ -577,9 +571,6 @@ class ScheduleRepository(
             hapticsEnabled = global.haptics,
             fontScaleLocked = misc.fontScaleLocked,
             waterRequireDoubleClick = global.waterDouble,
-            waterCardEnabled = global.waterCard,
-            qzxyCardEnabled = shell.qzxyCardEnabled,
-            ebikeCardEnabled = ebike.cardEnabled,
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
             ebikeUseMode = ebike.useMode,
@@ -677,14 +668,14 @@ class ScheduleRepository(
     /**
      * 今日页顶栏天气提示开关（DESIGN §3.29）。**默认关**，单独一条流——
      * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型；
-     * 消费方是通用设置页与今日页 ViewModel，各自 collect 即可。
+     * 消费方是功能页与今日页 ViewModel，各自 collect 即可。
      */
     val weatherEnabled: Flow<Boolean> = prefs.weatherEnabled
 
     /**
      * 应用内悬浮球（DESIGN §3.1）：开关 + 归一化位置。**独立单流**——
      * `baseDisplayPrefs` 的 combine 已满员（AGENTS.md 口径），不进合并模型；
-     * 消费方 = 外壳（`MainActivity.JuwApp`）与通用设置页，各自 collect。
+     * 消费方 = 外壳（`MainActivity.JuwApp`）与外观与交互页，各自 collect。
      */
     val floatingBallEnabled: Flow<Boolean> = prefs.floatingBallEnabled
 
@@ -697,15 +688,6 @@ class ScheduleRepository(
 
     // 快捷方式（DESIGN §4.16）：开关与条目列表统一走 store 的 updateShortcuts
     suspend fun setShortcutsEnabled(value: Boolean) = prefs.setShortcutsEnabled(value)
-
-    /** 今日页开水卡片开关（DESIGN §3.3 底部固定区）。 */
-    suspend fun setWaterCardEnabled(value: Boolean) = prefs.setWaterCardEnabled(value)
-
-    /** 今日页趣智校园卡片开关（DESIGN §4.30）。 */
-    suspend fun setQzxyCardEnabled(value: Boolean) = prefs.setQzxyCardEnabled(value)
-
-    /** 今日页共享单车卡开关（DESIGN §3.9）。 */
-    suspend fun setEbikeCardEnabled(value: Boolean) = prefs.setEbikeCardEnabled(value)
 
     /** 今日页顶栏天气提示开关（DESIGN §3.29）。 */
     suspend fun setWeatherEnabled(value: Boolean) = prefs.setWeatherEnabled(value)

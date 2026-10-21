@@ -268,9 +268,6 @@ fun TodayScreen(
     // 挂在课名右边（2026-10-08 收口，不再另起一行）；单独订阅不掺课表状态（与 homework
     // 同纪律）；空映射 = 无教材数据，卡片不占位
     val textbookTitles by viewModel.textbookTitles.collectAsStateWithLifecycle()
-    val waterCardEnabled by viewModel.waterCardEnabled.collectAsStateWithLifecycle()
-    val qzxyCardEnabled by viewModel.qzxyCardEnabled.collectAsStateWithLifecycle()
-    val ebikeCardEnabled by viewModel.ebikeCardEnabled.collectAsStateWithLifecycle()
     // 趣智用水对账（DESIGN §3.18）：今日页可见（含开水面板打开）期间把本地记账与
     // 设备核对——自动关停后自动结算 / 记账切「待核对」。页面侧（SubpageActivity）
     // 有自己的同款驱动，repeatOnLifecycle(RESUMED) 保证同一时刻只有前台那个在跑
@@ -624,7 +621,7 @@ fun TodayScreen(
                                 },
                             )
                             // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合
-                            // （水印 / 拼接 / 菜鸟批量查）；总开关在 通用设置 → 功能，
+                            // （水印 / 拼接 / 菜鸟批量查）；总开关在 设置 → 功能，
                             // 关掉时整行不出现
                             // （「志愿服务」一行 2026-10-13 删除：问渠已进生活页「校园服务」）
                             if (toolboxEnabled) {

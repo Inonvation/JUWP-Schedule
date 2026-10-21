@@ -289,7 +289,6 @@ fun QzxyScreen(
                     DiagnosticEntry(onOpen = { onOpenDiagnostics(state.selected?.address) })
                 }
                 WateringSettingSection(state = state, viewModel = viewModel)
-                DisplaySettingSection()
                 Disclaimer()
             }
         }
@@ -312,7 +311,7 @@ fun QzxyScreen(
             text = {
                 DialogWindowFadeEffect()
                 Text(
-                    "将清除本机保存的趣智校园会话，今日页卡片回到未登录态。" +
+                    "将清除本机保存的趣智校园会话，侧栏入口回到未登录态。" +
                         "如果水还在流，退出前先点「结束用水」结算。",
                 )
             },
@@ -1373,17 +1372,6 @@ private fun WateringSettingSection(state: QzxyUiState, viewModel: QzxyViewModel)
             onCheckedChange = viewModel::setAutoSettleEnabled,
         )
     }
-}
-
-@Composable
-private fun DisplaySettingSection() {
-    // 2026-09-28：卡片显隐开关收进「我的 → 通用设置 → 功能开关」（功能可见性
-    // 一处管理）。2026-10-07 排版统一：原先是一条不可点的假设置行，现在降成
-    // 页尾说明（FooterDisclaimer 形态），不再伪装成可交互项。
-    FooterDisclaimer(
-        title = "在今日页显示趣智校园卡片",
-        body = "开关在「我的 → 通用设置 → 功能」；关掉后今日页与「我的」账号卡同步隐藏。",
-    )
 }
 
 @Composable

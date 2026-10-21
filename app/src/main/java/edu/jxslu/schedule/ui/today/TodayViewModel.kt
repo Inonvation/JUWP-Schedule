@@ -240,36 +240,10 @@ class TodayViewModel(
     )
 
     /**
-     * 卡片开关的首帧初值。这三个开关独立于 [ready] 门闸（那管的是 Room 派生状态），
-     * DataStore 的真值必然晚于首帧：初值写 true 的话，关过卡的用户冷启动会先渲染出
-     * 卡片、真值到达后再消失（跳一下，2026-09-28 通用设置页同款反馈）。
-     * 构造时阻塞读一次真值当初值，与 MainActivity 启动链的 runBlocking 读同一模式。
+     * 卡片开关的首帧初值。开关独立于 [ready] 门闸（那管的是 Room 派生状态），
+     * DataStore 的真值必然晚于首帧；构造时阻塞读一次真值当初值。
      */
     private val initialPrefs: DisplayPrefs = runBlocking { repo.displayPrefs.first() }
-
-    /**
-     * 今日页开水卡片开关（DESIGN §3.3 底部固定区）。与 [shortcuts] 同理单独订阅：
-     * 纯设置值，改动不应触发今日页课表状态重算。
-     */
-    val waterCardEnabled: StateFlow<Boolean> = repo.displayPrefs
-        .map { it.waterCardEnabled }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialPrefs.waterCardEnabled)
-
-    /**
-     * 今日页趣智校园卡片开关（DESIGN §4.30）。与 [waterCardEnabled] 同口径：
-     * 纯设置值单独订阅，不掺进课表状态。关掉后胖乖生活卡独占整行。
-     */
-    val qzxyCardEnabled: StateFlow<Boolean> = repo.displayPrefs
-        .map { it.qzxyCardEnabled }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialPrefs.qzxyCardEnabled)
-
-    /**
-     * 今日页共享单车卡开关（DESIGN §3.9）。与 [waterCardEnabled] 同口径：
-     * 纯设置值单独订阅，不掺进课表状态。
-     */
-    val ebikeCardEnabled: StateFlow<Boolean> = repo.displayPrefs
-        .map { it.ebikeCardEnabled }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialPrefs.ebikeCardEnabled)
 
     /**
      * 今日页校园卡付款码卡开关（DESIGN §3.10）。默认关（涉及凭证与资金），
