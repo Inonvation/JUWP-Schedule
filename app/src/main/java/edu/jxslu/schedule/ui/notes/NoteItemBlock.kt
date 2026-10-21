@@ -89,12 +89,12 @@ internal fun NoteItemBlock(
                     haptics.tap()
                     onEdit()
                 },
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier.size(40.dp),
             ) {
                 Icon(
                     imageVector = HugeIcons.PencilEdit02,
                     contentDescription = "编辑笔记",
-                    modifier = Modifier.size(17.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

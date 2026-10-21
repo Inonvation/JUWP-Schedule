@@ -240,8 +240,8 @@ fun MarkdownToolbar(
 /**
  * 编辑器底栏（2026-10-21）：附件条 + 格式工具条，固定在键盘上缘。
  *
- * 放在 `Scaffold(bottomBar = …)` 里并 `imePadding()`；不要再塞回正文的
- * `verticalScroll`，否则长文写到下半段时工具条在键盘后面（旧版就是这个毛病）。
+ * 放在 `Scaffold(bottomBar = …)` 里，底部取 `safeDrawing`（键盘 + 手势条并集）；
+ * 不要再塞回正文的 `verticalScroll`，否则长文写到下半段时工具条在键盘后面（旧版就是这个毛病）。
  */
 @Composable
 fun MarkdownEditorBottomBar(

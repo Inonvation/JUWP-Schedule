@@ -137,6 +137,8 @@ fun HomeworkDetailScreen(
     val dueDate: LocalDate? = if (dueEpochDay == NO_DUE) null else LocalDate.ofEpochDay(dueEpochDay)
     var done by rememberSaveable { mutableStateOf(false) }
     var loadedFromDb by rememberSaveable { mutableStateOf(false) }
+    // 「保存并继续新建」后与路由里的旧 homeworkId 脱钩：进程回收再恢复时不能把旧条目重新灌进来
+    var detached by rememberSaveable { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(homeworkId == 0L) }
     var viewer by remember { mutableStateOf<String?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -161,6 +163,10 @@ fun HomeworkDetailScreen(
     }
 
     LaunchedEffect(homeworkId) {
+        if (detached) {
+            loaded = true
+            return@LaunchedEffect
+        }
         if (homeworkId > 0) {
             val item = repo.homework(homeworkId)
             if (item != null) {
@@ -209,25 +215,37 @@ fun HomeworkDetailScreen(
         busy = true
         scope.launch {
             try {
-                val id = repo.save(
-                    base.copy(
-                        detail = newDetail,
-                        dueDate = due,
-                        done = done,
-                    ),
-                )
+                // 已有作业只写正文：截止/完成可能正在被自动保存，整行 upsert 会把它们覆盖回旧值。
+                // 恢复后的「新建后已首存」行（original 为空、savedId > 0）仍走整行写，把本地截止/完成一并落库。
+                val persisted = original != null && base.id > 0
+                val id = if (persisted) {
+                    repo.setDetail(base.id, newDetail)
+                    base.id
+                } else {
+                    repo.save(
+                        base.copy(
+                            detail = newDetail,
+                            dueDate = due,
+                            done = done,
+                            doneAt = if (done) now else null,
+                        ),
+                    )
+                }
                 val removed = imageRefs(base.detail) - imageRefs(newDetail)
                 if (removed.isNotEmpty()) {
                     val referenced = store.referencedNames(noteRepo.allBodies() + repo.allDetails())
                     store.deleteIfUnreferenced(removed, referenced)
                 }
                 // 回写基线与首存 id/创建时间（与笔记详情同口径）：保存后若留在本页再存，
-                // 走更新同一行而不是拿 original==null / savedId==0 再插一条
-                original = base.copy(
+                // 走更新同一行而不是拿 original==null / savedId==0 再插一条。
+                // 已有作业以「保存完成时的 original」为基线，保留期间自动保存的截止/完成。
+                val latest = if (persisted) (original ?: base) else base
+                original = latest.copy(
                     id = if (base.id > 0) base.id else id,
                     detail = newDetail,
-                    dueDate = due,
-                    done = done,
+                    dueDate = if (persisted) latest.dueDate else due,
+                    done = if (persisted) latest.done else done,
+                    doneAt = if (persisted) latest.doneAt else if (done) now else null,
                     createdAt = if (base.id > 0 && base.createdAt > 0) base.createdAt else now,
                     updatedAt = now,
                 )
@@ -257,6 +275,7 @@ fun HomeworkDetailScreen(
         dueEpochDay = NO_DUE
         done = false
         editing = true
+        detached = true
         focusTick++
     }
 
@@ -600,6 +619,10 @@ private fun HomeworkMetaEditor(
 ) {
     val today = LocalDate.now()
     val nextSunday = today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
+    val isCustom = dueDate != null &&
+        dueDate != today &&
+        dueDate != today.plusDays(1) &&
+        dueDate != nextSunday
     val haptics = rememberAppHaptics()
     Column(
         modifier = Modifier
@@ -620,8 +643,8 @@ private fun HomeworkMetaEditor(
             DueChipButton("今天", dueDate == today) { onDueChange(today) }
             DueChipButton("明天", dueDate == today.plusDays(1)) { onDueChange(today.plusDays(1)) }
             DueChipButton("本周日", dueDate == nextSunday) { onDueChange(nextSunday) }
-            DueChipButton("自定义", false, onCustomDate)
-            DueChipButton("清除", false) { onDueChange(null) }
+            DueChipButton("自定义", isCustom, onCustomDate)
+            DueChipButton("清除", dueDate == null) { onDueChange(null) }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(

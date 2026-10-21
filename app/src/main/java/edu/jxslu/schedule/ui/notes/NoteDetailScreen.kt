@@ -163,6 +163,7 @@ fun NoteDetailScreen(
         )
         val newBody = body.text
         val newTitle = title.text.trim()
+        val titleAtSave = title.text
         val now = System.currentTimeMillis()
         busy = true
         scope.launch {
@@ -179,6 +180,11 @@ fun NoteDetailScreen(
                     refreshed.copy(updatedAt = now)
                 } else {
                     refreshed.copy(createdAt = now, updatedAt = now)
+                }
+                // 输入框里可能还有首尾空格；保存期间没有新输入才回写 trim 后的值，
+                // 否则会把用户刚敲的字冲掉（新输入会让 dirty 重新变 true）
+                if (title.text == titleAtSave && titleAtSave != newTitle) {
+                    title = TextFieldValue(newTitle, selection = TextRange(newTitle.length))
                 }
                 savedId = original!!.id
                 createdAt = original!!.createdAt
@@ -232,10 +238,10 @@ fun NoteDetailScreen(
         updated > created -> "创建于 ${epochMonthDay(created)} · 更新于 ${epochMonthDay(updated)}"
         else -> "创建于 ${epochMonthDay(created)}"
     }
-    val topSubtitle = if (original == null) {
-        "笔记 · 新建"
-    } else {
-        "笔记 · 更新于 ${epochMonthDay(updated)}"
+    val topSubtitle = when {
+        original == null && savedId == 0L -> "笔记 · 新建"
+        original == null -> "笔记"
+        else -> "笔记 · 更新于 ${epochMonthDay(updated)}"
     }
 
     Scaffold(

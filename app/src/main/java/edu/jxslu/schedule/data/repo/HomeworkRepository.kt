@@ -57,6 +57,11 @@ class HomeworkRepository(private val db: JuwDatabase) {
         dao.setDueDate(id, due?.toString(), System.currentTimeMillis())
     }
 
+    /** 只改正文（详情页保存正文用，避免覆盖并发的截止/完成改动）。 */
+    suspend fun setDetail(id: Long, detail: String) {
+        dao.setDetail(id, detail, System.currentTimeMillis())
+    }
+
     suspend fun delete(id: Long) = dao.deleteById(id)
 
     /** 附件清扫的引用来源（`AttachmentStore.sweep`）。 */
