@@ -8,17 +8,24 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -258,6 +265,91 @@ fun WenquPreregDashboardHost() {
                 if (state.isRunning) dismissedThisRun = true
             },
         )
+    } else if (!show && state.isRunning) {
+        // 折叠胶囊（2026-10-21 补）：面板被关掉 / 还没弹出时，屏幕顶部中央显示一枚
+        // 「抢报中」胶囊，单击重开面板。**不依赖悬浮球**——问渠页等二级页是独立窗口，
+        // 悬浮球按既有口径只在主窗口，但 Host 挂在两边的根组合上，胶囊全窗口可见；
+        // 主窗口里它也是悬浮球之外的第二入口（球在四个 Tab 才显示）。
+        DashCollapsedPill(
+            state = state,
+            onClick = {
+                dismissedThisRun = false
+                show = true
+            },
+        )
+    }
+}
+
+/** 折叠胶囊的收起延迟：终态后停留几秒再消失，用户来得及点开看结果。 */
+private const val PILL_RESULT_TTL_MS = 8_000L
+
+@Composable
+private fun DashCollapsedPill(
+    state: WenquPreregDashState,
+    onClick: () -> Unit,
+) {
+    val running = state.isRunning
+    // 终态后胶囊停留几秒（用户点开看结果），随后消失；在跑时常驻
+    var resultVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(state.phase) {
+        if (state.phase == WenquPreregDashState.Phase.Done) {
+            resultVisible = true
+            delay(PILL_RESULT_TTL_MS)
+            resultVisible = false
+        }
+    }
+    if (state.phase == WenquPreregDashState.Phase.Done && !resultVisible) return
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shadowElevation = 3.dp,
+            modifier = Modifier
+                .padding(top = 4.dp)
+                // 顶栏 inset 之下一点：二级页与主窗口的顶栏各自让位状态栏，胶囊跟随窗口
+                .statusBarsPadding()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 6.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                if (running) {
+                    val transition = rememberInfiniteTransition(label = "pillPulse")
+                    val alpha by transition.animateFloat(
+                        initialValue = 0.4f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+                        label = "pillPulseAlpha",
+                    )
+                    Spacer(
+                        Modifier
+                            .size(7.dp)
+                            .alpha(alpha)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    )
+                    Spacer(Modifier.width(7.dp))
+                }
+                Text(
+                    text = when {
+                        running && state.phase == WenquPreregDashState.Phase.Firing ->
+                            "抢报中 · 第 ${state.attempts} 发"
+                        running && state.phase == WenquPreregDashState.Phase.Waiting -> "抢报就位 · 等待开放"
+                        running -> "抢报准备中…"
+                        state.success == true -> "报名成功 · 点此查看"
+                        state.success == false -> "没抢到 · 点此查看"
+                        else -> "已取消自动抢"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
     }
 }
 

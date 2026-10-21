@@ -1090,8 +1090,10 @@ UI 规格见 §3.28。
 中断时把面板置「被系统中断」终态）+
 `WenquPreregDashboard.kt`（**前台仪表板**，2026-10-21：`WenquAppForeground` started 计数判前台
 （不引 lifecycle-process）；`WenquPreregDashboardHost` 挂 `JuwRoot` 与 `SettingsActivity`，
-执行期间任何界面自动弹，用户关掉后不再自动弹，重开 = 通知点击 / **悬浮球单击**（预报名期间，
-平时仍付款码）/ 蹲点页已预报名行；操作 = 取消（二次确认）· 手动报名 · 重试）+
+执行期间任何界面自动弹，用户关掉后不再自动弹；**顶部折叠胶囊**（面板关掉后常驻「抢报中 · 第 N 发」，
+单击重开，全窗口可见——不依赖只在主窗口的悬浮球，问渠页等独立窗口内也能重开）；重开 =
+通知点击 / 悬浮球单击（预报名期间，平时仍付款码）/ 顶部胶囊 / 蹲点页已预报名行；
+操作 = 取消（二次确认）· 手动报名 · 重试）+
 `data/wenqu/WenquServerClock.kt`（`Date` 头时钟偏移，试发窗口按服务器钟折算）。
 入口在详情弹层（`applyBlockReason == APPLY_NOT_STARTED` 才给按钮 + `WenquPreregConfirmDialog`
 二次确认；已排上显示「已预报名」状态行可取消）。**写请求不自动重发**：网络类失败只读核对后
