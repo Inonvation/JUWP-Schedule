@@ -121,7 +121,8 @@ git push origin main
 
 ## Step 7 · 创建 Release
 
-标签与标题都用版本号（不带 `v`，不带应用名），正文用中文日志 + 免责声明：
+标签与标题都用版本号（不带 `v`，不带应用名），正文用中文日志 + 免责声明。
+预发布在命令末尾加 `--prerelease`；它只是 GitHub 侧标记，**不改 `latest.json`**（见 Step 7.5）。
 
 ```powershell
 gh release create <版本号> "JUWP-Schedule-<版本号>.apk" `
@@ -150,6 +151,10 @@ gh api repos/Inonvation/JUWP-Schedule/releases/tags/<版本号> `
   —— 有输出就说明 APK 过期，必须重新 `assembleRelease`。
 
 ## Step 7.5 · 更新 App 内「检查更新」清单（docs-public/update/latest.json）
+
+**只有正式发布才更新这份清单。** 预发布（`gh release create --prerelease`）不改
+`latest.json`，保持上一正式版——App 不读 GitHub 的 prerelease 标记，清单一旦指向预发布，
+所有客户端都会被提示升级。预发布转正式时，再按本节更新并提交。
 
 App 的「检查更新」（DESIGN §3.3）**不请求 GitHub API**：版本、日志、下载链接全部来自
 仓库镜像 `docs-public/update/latest.json`（App 端 `RepoMirror` 多源轮询：gh-proxy 加速 →
