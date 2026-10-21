@@ -491,6 +491,14 @@ data class SchedulePendingChanges(
 ) {
     fun toChanges(): List<ScheduleDiff.Change> = changes.mapNotNull { it.toChange() }
 
+    /**
+     * 展示条数（课表 hub 入口行「N处差异」用）：与处置页 / 通知 / 收件箱同一口径，
+     * **按「一次调课」计**。缓存里一次单周调课是两行（原块缩周 + 新块只含目标周），
+     * 直接用 `changes.size`（行数）会把 3 处差异显示成 5 处（2026-10-21 用户报障）；
+     * 解码不出的脏行也被 [toChanges] 滤掉，与处置页看到的卡片数一致。
+     */
+    fun groupCount(): Int = ScheduleDiff.group(toChanges()).size
+
     fun encode(): String = format.encodeToString(this)
 
     companion object {

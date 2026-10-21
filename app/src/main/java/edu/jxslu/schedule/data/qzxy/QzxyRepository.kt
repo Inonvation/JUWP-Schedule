@@ -3,6 +3,8 @@ package edu.jxslu.schedule.data.qzxy
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import edu.jxslu.schedule.data.qiekj.QiekjJson
 import edu.jxslu.schedule.data.net.AppHttp
+import edu.jxslu.schedule.data.session.SessionExpiryStore
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.QzxyCredential
 import edu.jxslu.schedule.domain.QzxySign
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +49,11 @@ data class QzxyRateOrderRequest(
  * 参数由流程层从设备响应里取好后传进来。这样职责边界清楚：
  * 签名或字段错了改这里，蓝牙连接错了改那边。
  */
-class QzxyRepository(private val sessionStore: QzxySessionStore) {
+class QzxyRepository(
+    private val sessionStore: QzxySessionStore,
+    /** 「登录状态已过期」留痕（见 [SessionExpiryStore]）：失效当场写、进页消费。 */
+    private val expiry: SessionExpiryStore? = null,
+) {
 
     private val api: QzxyApi
 
@@ -78,6 +84,17 @@ class QzxyRepository(private val sessionStore: QzxySessionStore) {
 
     fun logout() {
         sessionStore.clear()
+        expiry?.clear(SessionService.Qzxy)
+        _loggedIn.value = false
+    }
+
+    /**
+     * 服务端判定会话失效：清会话并留一条「已过期」标记，供下次进页提示（2026-10-21）。
+     * 与 [logout] 的区别只在标记——主动退出不该提示过期。
+     */
+    fun markExpired() {
+        sessionStore.clear()
+        expiry?.mark(SessionService.Qzxy)
         _loggedIn.value = false
     }
 
@@ -114,6 +131,7 @@ class QzxyRepository(private val sessionStore: QzxySessionStore) {
             throw QzxyApiException("登录响应缺少项目或账号标识，可能是新学校未接入")
         }
         sessionStore.save(session)
+        expiry?.clear(SessionService.Qzxy)
         _loggedIn.value = true
         return session
     }
@@ -142,6 +160,7 @@ class QzxyRepository(private val sessionStore: QzxySessionStore) {
     /** 把一份已经确认有效的会话落盘并翻转登录态。 */
     fun adoptSession(session: QzxySession) {
         sessionStore.save(session)
+        expiry?.clear(SessionService.Qzxy)
         _loggedIn.value = true
     }
 

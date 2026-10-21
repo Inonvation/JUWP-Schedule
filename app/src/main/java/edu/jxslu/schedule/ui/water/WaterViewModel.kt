@@ -7,14 +7,21 @@ import edu.jxslu.schedule.data.qiekj.BalanceData
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
+import edu.jxslu.schedule.data.qiekj.QiekjWateringSession
+import edu.jxslu.schedule.data.qiekj.QiekjWateringStore
 import edu.jxslu.schedule.data.qiekj.ServerOrderItem
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
 import edu.jxslu.schedule.data.qiekj.UnlockException
 import edu.jxslu.schedule.data.qiekj.UnlockStopSignal
 import edu.jxslu.schedule.data.qiekj.UnlockStoppedException
+import edu.jxslu.schedule.data.session.SessionExpiryStore
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.UnlockResult
+import edu.jxslu.schedule.domain.calculateActualCost
+import edu.jxslu.schedule.domain.InboxKeys
+import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.widget.WaterWidgetSync
 import kotlinx.coroutines.Job
@@ -84,7 +91,14 @@ sealed interface WaterEvent {
  *   状态归 Idle 并刷新余额（此时轮询协程仍在后台收尾，完成后 Success 会重新落卡）；
  * - TokenExpiredException 统一清登录态并弹 Toast，不进 Failed 状态机。
  */
-class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
+class WaterViewModel(
+    private val repo: QiekjRepository,
+    /**
+     * 「正在出水」的落盘事实（2026-10-21）：开阀成功登记、结算/失败/超时清掉。
+     * 今日页服务卡与开水页各持一份 ViewModel，只有它能在两个窗口之间同步状态。
+     */
+    private val wateringStore: QiekjWateringStore,
+) : ViewModel() {
 
     private val unlockMutex = Mutex()
     private var unlockJob: Job? = null
@@ -263,9 +277,9 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
 
     private fun handleTokenExpired() {
         cancelFlowJobs()
-        repo.logout()
+        repo.markExpired()
         _uiState.update { WaterUiState() }
-        notice("登录已失效，请重新登录", NoticeTone.Warning)
+        notice(SessionExpiryStore.NOTICE_TEXT, NoticeTone.Warning)
     }
 
     // ── 资产 / 设备 ──
@@ -430,6 +444,10 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         stopSignal = signal
         unlockJob = viewModelScope.launch {
             if (!unlockMutex.tryLock()) return@launch
+            // 本轮是否已登记「出水中」：**不能用 store 非空来挡**——上一轮残留会话
+            // （页面被关、VM 已清、5 分钟内未过期）会把新一轮的起水时刻挡掉，
+            // 今日页卡片显示的会是上一轮的旧起点。登记标记跟着本轮流程走。
+            var sessionRegistered = false
             try {
                 _uiState.update {
                     it.copy(flow = UnlockFlowState.PreChecking("准备开水"))
@@ -439,6 +457,18 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                 runCatching {
                     repo.unlockDevice(device, usePoints = _uiState.value.usePoints, stopSignal = signal) { step ->
                         val working = step.contains("等待") || step.contains("设备工作")
+                        if (working && !sessionRegistered) {
+                            // 服务端确认出水：登记到落盘会话（跨窗口展示的唯一真相源）。
+                            // 只登记一次——后续 onStep 是同一轮出水的步骤推进，不重开计时。
+                            sessionRegistered = true
+                            wateringStore.begin(
+                                QiekjWateringSession(
+                                    startedAtMillis = System.currentTimeMillis(),
+                                    deviceName = device.goodsName,
+                                    goodsId = device.effectiveGoodsId,
+                                ),
+                            )
+                        }
                         _uiState.update { s ->
                             s.copy(
                                 flow = if (working) {
@@ -459,16 +489,25 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
                 }.onSuccess { result ->
                     cancelFlowJobs()
                     stopSignal = null
+                    // 结算完成：出水中结束（迟到重投时再清一次是空操作）
+                    wateringStore.clear()
                     _uiState.update {
                         it.copy(
                             flow = UnlockFlowState.Success(result),
                             orderHistory = repo.orderHistory(),
                         )
                     }
+                    // 开水结算留痕收件箱（2026-10-21）：数据（订单号/金额）已到手才投，
+                    // post 内部吞错不影响主链路。每次开水一条事实，按订单号去重。
+                    launch {
+                        runCatching { postWaterDoneInbox(result, device) }
+                    }
                     refreshBalance()
                 }.onFailure { e ->
                     cancelFlowJobs()
                     stopSignal = null
+                    // 流程失败（含手动结束未确认 / Token 失效）：本机的出水中登记一并收掉
+                    wateringStore.clear()
                     if (e is TokenExpiredException) {
                         handleTokenExpired()
                         return@launch
@@ -553,6 +592,8 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
      */
     private fun finishWithoutSettlement(message: String) {
         stopSignal = null
+        // 165 秒超时 / 手动结束未确认：服务端已（或即将）自动关阀，本机登记同步收掉
+        wateringStore.clear()
         _uiState.update { it.copy(flow = UnlockFlowState.Idle) }
         notice(message, NoticeTone.Warning)
         refreshBalance()
@@ -573,6 +614,31 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         timeoutJob = null
     }
 
+    /**
+     * 开水结算留痕收件箱（2026-10-21）：调用点在流程落 `Success` 处——订单号与金额
+     * 已到手。金额走 [calculateActualCost]（小票+现金口径），与结果卡同源不另算。
+     * post 内部吞错；这里不 catch 也是旁路（launch 内异常由调用点 runCatching 兜住）。
+     */
+    private suspend fun postWaterDoneInbox(result: UnlockResult, device: DeviceItem) {
+        val deviceName = device.goodsName.ifBlank { "开水设备" }
+        val body = buildString {
+            append(deviceName)
+            append(" · 花费 ¥").append(calculateActualCost(result))
+            if (result.payTypeName?.isNotBlank() == true) {
+                append("（").append(result.payTypeName).append("）")
+            }
+        }
+        Graph.inboxRepository(Graph.appContext).post(
+            kind = InboxKind.WATER_SESSION,
+            dedupeKey = InboxKeys.WATER_PREFIX + result.orderNo.ifBlank { result.orderId },
+            title = "开水已完成",
+            body = body,
+            // 落点 = 开水页（订单结果卡 / 本地订单快照在那里）；静默留痕不点红点
+            route = SubpageScreen.WATER.name,
+            silent = true,
+        )
+    }
+
     override fun onCleared() {
         cancelFlowJobs()
         super.onCleared()
@@ -585,8 +651,12 @@ class WaterViewModel(private val repo: QiekjRepository) : ViewModel() {
         const val END_SESSION_MIN_SECONDS = 5
     }
 
-    class Factory(private val repo: QiekjRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repo: QiekjRepository,
+        private val wateringStore: QiekjWateringStore,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = WaterViewModel(repo) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            WaterViewModel(repo, wateringStore) as T
     }
 }

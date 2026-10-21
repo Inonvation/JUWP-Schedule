@@ -35,11 +35,32 @@ data class Homework(
  *
  * 空行跳过；全是空行、空串、或只有图片时返回「未命名作业」（与旧 title.ifBlank 的兜底文案一致）。
  */
-fun homeworkDisplayTitle(detail: String): String =
-    detail.lineSequence()
-        .map { stripMarkdownLine(it) }
-        .firstOrNull { it.isNotBlank() }
-        ?: "未命名作业"
+fun homeworkDisplayTitle(detail: String): String = homeworkDisplay(detail).title
+
+/**
+ * 作业的「标题 + 正文」拆分（2026-10-21 列表展开详情用）。
+ *
+ * 作业没有独立标题字段，列表标题取正文第一行。展开区要同时显示标题与完整正文时，
+ * 若正文原样渲染会出现「标题行 + 正文第一行」重复一次；这里把**被当作标题的那一行**
+ * 从正文里摘掉，列表只渲染 [body]，详情页仍渲染原始 [detail]。
+ *
+ * [body] 保留其余所有行（包括标题行之前的图片行），只收掉首尾空行；
+ * 找不到可用标题时 [body] 为去首尾空行的原文。
+ */
+data class HomeworkDisplay(val title: String, val body: String)
+
+fun homeworkDisplay(detail: String): HomeworkDisplay {
+    val lines = detail.lines()
+    val titleIndex = lines.indexOfFirst { stripMarkdownLine(it).isNotBlank() }
+    if (titleIndex < 0) {
+        return HomeworkDisplay("未命名作业", detail.trim())
+    }
+    val title = stripMarkdownLine(lines[titleIndex])
+    val body = lines.filterIndexed { index, _ -> index != titleIndex }
+        .joinToString("\n")
+        .trim('\n')
+    return HomeworkDisplay(title, body)
+}
 
 /** 行内图片语法（`![alt](目标)`）。收集 `img:` 引用的正则在 [MarkdownImages]，这里要连外链一起剥。 */
 private val INLINE_IMAGE = Regex("""!\[[^\]]*]\([^)\n]*\)""")

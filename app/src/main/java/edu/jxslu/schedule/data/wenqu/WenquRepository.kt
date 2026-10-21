@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.data.wenqu
 
 import edu.jxslu.schedule.data.session.AutoSyncRules
+import edu.jxslu.schedule.data.session.SessionExpiryStore
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.WenquRules
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -186,6 +188,8 @@ internal fun mergeActivities(
  */
 class WenquRepository(
     private val store: WenquCredentialStore,
+    /** 「登录状态已过期」留痕（见 [SessionExpiryStore]）：失效当场写、进页消费。 */
+    private val expiry: SessionExpiryStore? = null,
     private val api: WenquApi = WenquApi.create(),
     /** 可注入的时钟（测试用假时钟，生产走系统钟）。 */
     private val now: () -> Long = System::currentTimeMillis,
@@ -307,6 +311,7 @@ class WenquRepository(
 
     fun logout() {
         store.clear()
+        expiry?.clear(SessionService.Wenqu)
         clearCaches()
         _loggedIn.value = false
         _session.value = null
@@ -340,7 +345,7 @@ class WenquRepository(
         phone: String,
         captcha: String,
         password: String,
-        rememberPassword: Boolean = false,
+        rememberPassword: Boolean = true,
     ): WenquSession =
         loginMutex.withLock {
             withContext(Dispatchers.IO) {
@@ -352,13 +357,13 @@ class WenquRepository(
     /**
      * 手机号 + 密码登录。
      *
-     * [rememberPassword] = false（默认，2026-10-20 用户拍板）时**只存 token、不存密码**：
-     * 会话在 JWT 有效期内照常可用，到期后要求重新登录；自动续期只在存了密码时可用。
+     * [rememberPassword] = true（默认，2026-10-21 用户拍板：默认记住密码）时密码一并落盘，
+     * JWT 到期前可自动续期；false 时**只存 token、不存密码**，到期后要求重新登录。
      */
     suspend fun login(
         phone: String,
         password: String,
-        rememberPassword: Boolean = false,
+        rememberPassword: Boolean = true,
     ): WenquSession = loginMutex.withLock {
         withContext(Dispatchers.IO) { persistLogin(phone, password, rememberPassword) }
     }
@@ -384,6 +389,7 @@ class WenquRepository(
             expiresAt = WenquRules.jwtExpiryMillis(data.token),
         )
         persist(session)
+        expiry?.clear(SessionService.Wenqu)
         _loggedIn.value = true
         return session
     }
@@ -768,6 +774,8 @@ class WenquRepository(
         val session = ensureToken()
         val envelope = call(session.token)
         if (envelope.status == WenquEnvelope.STATUS_NEED_LOGIN) {
+            // 写操作不自动重放（重复提交风险），但会话确实失效了：清掉并留过期标记
+            expireSession()
             throw WenquSessionExpiredException(envelope.msg ?: "登录已失效，请重试")
         }
         return envelope
@@ -1042,8 +1050,11 @@ class WenquRepository(
             return first.data ?: JsonNull
         }
         // 没存密码（记住登录关掉）时不能续期，直接让上层引导重新登录
-        if (!session.canRefresh) throw WenquSessionExpiredException("登录已过期，请重新登录")
-        val renewed = login(session.phone, session.password, rememberPassword = true)
+        if (!session.canRefresh) {
+            expireSession()
+            throw WenquSessionExpiredException("登录已过期，请重新登录")
+        }
+        val renewed = refreshLogin(session)
         val second = call(renewed.token)
         second.requireSuccess()
         return second.data ?: JsonNull
@@ -1055,9 +1066,36 @@ class WenquRepository(
             ?: throw WenquSessionExpiredException("未登录")
         if (!WenquRules.needsRefresh(session.expiresAt, now())) return session
         // 没存密码（记住登录关掉）时不能续期，直接让上层引导重新登录
-        if (!session.canRefresh) throw WenquSessionExpiredException("登录已过期，请重新登录")
-        return login(session.phone, session.password, rememberPassword = true)
+        if (!session.canRefresh) {
+            expireSession()
+            throw WenquSessionExpiredException("登录已过期，请重新登录")
+        }
+        return refreshLogin(session)
     }
+
+    /**
+     * 会话确实失效（token 不能续期，或平台回 410000）：清 token、翻登录态，并留一条
+     * 「已过期」标记，下次进页提示（2026-10-21）。手机号与密码保留，重新登录可预填。
+     */
+    private fun expireSession() {
+        val current = store.read() ?: return
+        if (current.token.isBlank()) return
+        store.save(current.copy(token = "", expiresAt = 0L))
+        // 先写标记再翻登录态：页面侧 LaunchedEffect(loggedIn) 一看到 false 就会消费标记，
+        // 反过来写会撞上「状态已翻、标记还没落」的空窗（这一轮提示丢失，要等下次进页）
+        expiry?.mark(SessionService.Wenqu)
+        _session.value = store.read()
+        _loggedIn.value = false
+    }
+
+    /** 续期登录：平台回 410000 也算会话失效（网络 / 5xx 不动会话）。 */
+    private suspend fun refreshLogin(session: WenquSession): WenquSession =
+        try {
+            login(session.phone, session.password, rememberPassword = true)
+        } catch (e: WenquSessionExpiredException) {
+            expireSession()
+            throw e
+        }
 
     /** 平台发码失败是 `status:200` + 这句 msg，翻成人话再抛。 */
     private fun friendlySendError(msg: String?): String {

@@ -37,6 +37,11 @@ class InboxRepository(
     /**
      * 投递一条消息。重复调用（同一轮 sync 撞上重试、状态型每日复核）按去重键落更新，
      * 不产生第二条；事件真变了（键不同）才以新消息出现。失败静默（旁路纪律）。
+     *
+     * [silent] = 静默留痕（2026-10-21）：插入即置已读、重投不重新置未读——**不产生
+     * 未读红点**。给「账单 / 流水」类消息用（快趣骑行结算 / 胖乖·趣智用水结算 /
+     * U净 洗衣完成）：它们是可回查的事实，但不是「需要你处理」的待办，点亮红点
+     * 会把「成绩发布」那种真信号的分量稀释掉。非 silent 的默认行为不变。
      */
     suspend fun post(
         kind: InboxKind,
@@ -45,6 +50,7 @@ class InboxRepository(
         body: String,
         route: String? = null,
         focusItemId: String? = null,
+        silent: Boolean = false,
     ) {
         runCatching {
             val now = nowMillis()
@@ -56,14 +62,19 @@ class InboxRepository(
                         title = title,
                         body = body,
                         createdAt = now,
-                        readAt = null,
+                        readAt = if (silent) now else null,
                         deletedAt = null,
                         route = route,
                         focusItemId = focusItemId,
                     ),
                 )
                 is PostDecision.Refresh ->
-                    dao.refreshAndReopen(decision.id, title, body, route, focusItemId, now)
+                    if (silent) {
+                        // 静默重投只刷新内容，不重新置未读（保持已读状态）
+                        dao.refreshSilent(decision.id, title, body, route, focusItemId, now)
+                    } else {
+                        dao.refreshAndReopen(decision.id, title, body, route, focusItemId, now)
+                    }
                 is PostDecision.RefreshDeleted ->
                     dao.refreshDeleted(decision.id, title, body, route, focusItemId, now)
             }

@@ -8,12 +8,19 @@
 - 参考 `F:\light-life-v3.0`；Base `https://userapi.qiekj.com/`
 - 只做：登录、开水、余额、订单、充值深链；签到默认关；禁止刷积分
 - 实现在 `data/qiekj/` + `ui/water/`；Token 走 EncryptedSharedPreferences，禁止进日志
+- **「出水中」跨窗口口径**（2026-10-21）：`Graph.qiekjWatering`（`QiekjWateringStore`，落盘
+  SharedPreferences + StateFlow）。`WaterViewModel.unlock()` 流程首次进入 `Working` 时 `begin`
+  （设备名 / 起水时刻），结算 `Success`、流程失败、165 秒超时收尾时 `clear`；5 分钟未清视为
+  过期（进程死在流程中），store 读取时静默清除。今日页服务卡、侧栏高亮都订阅它——开水页与
+  今日页各持一份 ViewModel，`UnlockFlowState.Working` 只在各自 VM 内，靠它同步。
 - **登录态只有一份**（2026-09-27）：`QiekjRepository.loggedIn`（StateFlow，`saveToken` /
   `logout` 就地翻转）。今日页开水卡与开水页各持一份 `WaterViewModel`，**别在 VM 里另存布尔**：
   init 读它、`syncLoginState` 跟着它翻转（相等即跳过，否则本地登录路径会把余额/设备各刷两轮）。
   `saveToken` 只在**校验通过后**调：Token 登录先 `validateToken(token)` 再落盘，顺序倒了
   今日页卡片会先切已登录再跳回来。账户卡那格与「扩展服务」副标题订阅同一条流，别再改回
   组合期读一次 / ON_RESUME 重读 token。
+  会话失效（401/403 /「请先登录」）走 `markExpired()` 而不是 `logout()`：前者留一条
+  「已过期」标记，进开水页时由 `SessionExpiredNotice` 提示一次（口径见 `login-session.md`）。
 - **退出要二次确认**（2026-09-27）：胖乖生活页顶栏的退出图标先弹 `AlertDialog`。确认后
   token 与开水订单快照一起清，重新登录要再收一次短信——代价不对等，别改回一点就走。
 - **充值是深链不是 REST**（2026-09-28）：QiekjApi 没有充值端点，余额行的「充值」走

@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
+import edu.jxslu.schedule.data.session.SessionExpiryStore
 import edu.jxslu.schedule.data.ujing.UjingAlipay
 import edu.jxslu.schedule.data.ujing.UjingApiException
 import edu.jxslu.schedule.data.ujing.UjingDraftStore
@@ -682,7 +683,7 @@ class UjingViewModel(
     private fun handleFailure(error: Throwable) {
         if (error is UjingSessionExpiredException) {
             repo.markExpired()
-            notify("登录已过期，请重新登录")
+            notify(SessionExpiryStore.NOTICE_TEXT)
         }
     }
 

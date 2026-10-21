@@ -58,6 +58,7 @@ import edu.jxslu.schedule.data.session.LoginGateRules
 import edu.jxslu.schedule.data.session.LoginState
 import edu.jxslu.schedule.data.session.LoginStateRules
 import edu.jxslu.schedule.data.session.LoginTarget
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.data.session.SessionStatus
 import edu.jxslu.schedule.data.session.WebViewCookieBridge
 import edu.jxslu.schedule.domain.capabilities
@@ -154,6 +155,15 @@ fun AccountsHubScreen(
     )
     val kvcxAccountMode = useMode.capabilities().inAppRide
 
+    // 第三方会话「已过期」标记（2026-10-21）：在功能页消费前，这里先显示「已失效」。
+    // 与 resumeTick / localTick 挂钩：从功能页回来（标记已被消费）时重读。
+    val expiry = remember { Graph.sessionExpiry(context) }
+    val qiekjExpired = remember(resumeTick, localTick) { expiry.isExpired(SessionService.Qiekj) }
+    val qzxyExpired = remember(resumeTick, localTick) { expiry.isExpired(SessionService.Qzxy) }
+    val ujingExpired = remember(resumeTick, localTick) { expiry.isExpired(SessionService.Ujing) }
+    val kqcxExpired = remember(resumeTick, localTick) { expiry.isExpired(SessionService.Kqcx) }
+    val wenquExpired = remember(resumeTick, localTick) { expiry.isExpired(SessionService.Wenqu) }
+
     val jwState = LoginStateRules.derive(
         credentialExists = casUsername != null,
         webSessionExists = webSession,
@@ -167,19 +177,19 @@ fun AccountsHubScreen(
     val qiekjState = LoginStateRules.derive(
         credentialExists = qiekjLoggedIn,
         webSessionExists = false,
-        suspended = LoginTarget.Qiekj in suspendedTargets,
+        suspended = LoginTarget.Qiekj in suspendedTargets || qiekjExpired,
     )
     // 趣智 / U净 / 快趣 / 问渠没有「停用」上报（会话只存在本机，失效只能在页面里撞），
-    // 与胖乖生活同一档：只分已登录 / 未开启
-    val qzxyState = LoginStateRules.derive(qzxyLoggedIn, false, false)
-    val ujingState = LoginStateRules.derive(ujingLoggedIn, false, false)
+    // 「失效」来自各仓库写的过期标记（SessionExpiryStore）——进功能页消费后翻回未开启
+    val qzxyState = LoginStateRules.derive(qzxyLoggedIn, false, qzxyExpired)
+    val ujingState = LoginStateRules.derive(ujingLoggedIn, false, ujingExpired)
     // 小程序方式下快趣没有账号：固定按未开启算，不计入「已开启」，但行仍保留
     val kvcxState = if (kvcxAccountMode) {
-        LoginStateRules.derive(kqcxLoggedIn, false, false)
+        LoginStateRules.derive(kqcxLoggedIn, false, kqcxExpired)
     } else {
         LoginState.NotLoggedIn
     }
-    val wenquState = LoginStateRules.derive(wenquSession?.isComplete == true, false, false)
+    val wenquState = LoginStateRules.derive(wenquSession?.isComplete == true, false, wenquExpired)
 
     val accountStates = buildList {
         add(jwState)

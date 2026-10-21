@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
@@ -60,6 +61,13 @@ import edu.jxslu.schedule.domain.MdParagraphPart
 import edu.jxslu.schedule.domain.MdStyle
 import edu.jxslu.schedule.domain.parseMarkdown
 import edu.jxslu.schedule.domain.splitParagraph
+
+/**
+ * 正文图片的呈现方式（2026-10-21）：
+ * - [FullWidth]：详情页满宽真图（原行为）；
+ * - [Thumbnail]：列表展开区的 72dp 缩略图，避免把 1080px 大图塞进列表。
+ */
+enum class MdImageStyle { FullWidth, Thumbnail }
 
 /**
  * Markdown 子集的 Compose 渲染（DESIGN §4.20，支持清单以文档为准）。
@@ -77,13 +85,20 @@ import edu.jxslu.schedule.domain.splitParagraph
 fun MarkdownView(
     markdown: String,
     modifier: Modifier = Modifier,
+    imageStyle: MdImageStyle = MdImageStyle.FullWidth,
     onImageClick: ((String) -> Unit)? = null,
     onLinkClick: ((String) -> Unit)? = null,
 ) {
     val blocks = remember(markdown) { parseMarkdown(markdown) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         blocks.forEach { block ->
-            MarkdownBlock(block, level = 0, onImageClick = onImageClick, onLinkClick = onLinkClick)
+            MarkdownBlock(
+                block = block,
+                level = 0,
+                imageStyle = imageStyle,
+                onImageClick = onImageClick,
+                onLinkClick = onLinkClick,
+            )
         }
     }
 }
@@ -92,6 +107,7 @@ fun MarkdownView(
 private fun ColumnScope.MarkdownBlock(
     block: MdBlock,
     level: Int,
+    imageStyle: MdImageStyle,
     onImageClick: ((String) -> Unit)?,
     onLinkClick: ((String) -> Unit)?,
 ) {
@@ -120,23 +136,47 @@ private fun ColumnScope.MarkdownBlock(
             // 独占一行的图片按块级画真图；其余行合并成行内文本（连插两张图、图紧跟文字后
             // 都落在同一段落里，不切开就会渲染成一串「[图片]」蓝标签，DESIGN §4.20）
             val parts = remember(block.content) { splitParagraph(block.content) }
-            parts.forEach { part ->
-                when (part) {
+            var partIndex = 0
+            while (partIndex < parts.size) {
+                when (val part = parts[partIndex]) {
                     is MdParagraphPart.BlockImage -> {
-                        if (isLocalImage(part.ref)) {
-                            val name = localImageName(part.ref)
-                            AttachmentImage(fileName = name, onClick = onImageClick?.let { { it(name) } })
+                        if (imageStyle == MdImageStyle.Thumbnail) {
+                            // 连续块级图片合成一行缩略图（一次插多张时它们在同一个 Paragraph 里）
+                            val refs = mutableListOf<String>()
+                            while (partIndex < parts.size && parts[partIndex] is MdParagraphPart.BlockImage) {
+                                refs += (parts[partIndex] as MdParagraphPart.BlockImage).ref
+                                partIndex++
+                            }
+                            val local = refs.filter { isLocalImage(it) }.map { localImageName(it) }
+                            val external = refs.filterNot { isLocalImage(it) }
+                            if (local.isNotEmpty()) {
+                                AttachmentThumbnailRow(fileNames = local, onOpen = onImageClick)
+                            }
+                            if (external.isNotEmpty()) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    external.forEach { CompactExternalImageHint() }
+                                }
+                            }
                         } else {
-                            ExternalImageHint(part.ref)
+                            if (isLocalImage(part.ref)) {
+                                val name = localImageName(part.ref)
+                                AttachmentImage(fileName = name, onClick = onImageClick?.let { { it(name) } })
+                            } else {
+                                ExternalImageHint(part.ref)
+                            }
+                            partIndex++
                         }
                     }
 
-                    is MdParagraphPart.Inline -> InlineText(
-                        nodes = part.content,
-                        style = bodyStyle(),
-                        onImageClick = onImageClick,
-                        onLinkClick = onLinkClick,
-                    )
+                    is MdParagraphPart.Inline -> {
+                        InlineText(
+                            nodes = part.content,
+                            style = bodyStyle(),
+                            onImageClick = onImageClick,
+                            onLinkClick = onLinkClick,
+                        )
+                        partIndex++
+                    }
                 }
             }
         }
@@ -152,6 +192,7 @@ private fun ColumnScope.MarkdownBlock(
                     ordered = block.ordered,
                     index = if (block.ordered) index++ else null,
                     level = level,
+                    imageStyle = imageStyle,
                     onImageClick = onImageClick,
                     onLinkClick = onLinkClick,
                 )
@@ -170,7 +211,9 @@ private fun ColumnScope.MarkdownBlock(
                 modifier = Modifier.padding(start = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                block.blocks.forEach { inner -> MarkdownBlock(inner, level, onImageClick, onLinkClick) }
+                block.blocks.forEach { inner ->
+                    MarkdownBlock(inner, level, imageStyle, onImageClick, onLinkClick)
+                }
             }
         }
 
@@ -196,6 +239,7 @@ private fun ListItemRow(
     ordered: Boolean,
     index: Int?,
     level: Int,
+    imageStyle: MdImageStyle,
     onImageClick: ((String) -> Unit)?,
     onLinkClick: ((String) -> Unit)?,
 ) {
@@ -231,7 +275,9 @@ private fun ListItemRow(
                 modifier = Modifier.padding(start = 14.dp, top = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                item.sub.forEach { sub -> MarkdownBlock(sub, level + 1, onImageClick, onLinkClick) }
+                item.sub.forEach { sub ->
+                    MarkdownBlock(sub, level + 1, imageStyle, onImageClick, onLinkClick)
+                }
             }
         }
     }
@@ -301,6 +347,26 @@ private fun ExternalImageHint(ref: String) {
             text = "外链图片不在本机显示 · $ref",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+    }
+}
+
+/** 缩略图模式下的外链图片占位：保持 72dp 方图，不把列表撑成一行说明。 */
+@Composable
+private fun CompactExternalImageHint() {
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .padding(4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "外链图片",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            textAlign = TextAlign.Center,
         )
     }
 }

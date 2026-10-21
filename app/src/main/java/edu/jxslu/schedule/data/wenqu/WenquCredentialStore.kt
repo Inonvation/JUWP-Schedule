@@ -6,7 +6,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * 问渠登录凭证（DESIGN §4.45）。**密码可选**——「记住登录」关掉（默认）时只落 token，
+ * 问渠登录凭证（DESIGN §4.45）。**密码可选**——「记住登录」默认开；关掉时只落 token，
  * 存了密码才能在 JWT 到期前自动续期（见 [WenquSession.canRefresh]）。
  *
  * [expiresAt] 从 JWT 的 `exp` 解析；[hours] / [starLevel] 是**上次成功取到的展示影子**，
@@ -25,7 +25,7 @@ data class WenquSession(
 ) {
     /**
      * 会话可用的判据：手机号 + token。**密码不是必要条件**——「记住登录」关掉时只存 token
-     * （2026-10-20 用户拍板，默认关），JWT 有效期内照常可用。
+     * （默认开，2026-10-21），JWT 有效期内照常可用。
      */
     val isComplete: Boolean get() = phone.isNotBlank() && token.isNotBlank()
 

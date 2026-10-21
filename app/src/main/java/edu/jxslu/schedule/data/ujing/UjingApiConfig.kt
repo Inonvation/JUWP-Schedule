@@ -18,6 +18,18 @@ object UjingApiConfig {
     const val APP_VERSION_ACCOUNT = "2.4.3"
     const val UA_ACCOUNT = "U jing/2.4.3 (iPhone; iOS 17.3; Scale/3.00)"
 
+    /**
+     * 门店查询（`stores/near` / `devices/reserve`，鉴权后）。
+     *
+     * 2026-10-21 修看板取不到数：这两个接口**不属于**扫码下单那组业务指纹。
+     * 社区实测（liteU / DUT-Ujing，2026-09-30）用的是 `ZA` + `2.4.18`；
+     * 此前跟 `BI` + `2.4.2` 一起发，`devices/reserve` 回 401，仓库按会话过期清了 token，
+     * 于是看板与侧栏状态一直取不到（重登后再次 401，像"刷新无效"）。
+     * 业务请求（扫码 / 套餐 / 订单）仍走下面的 BI 组。
+     */
+    const val APP_CODE_QUERY = "ZA"
+    const val APP_VERSION_QUERY = "2.4.18"
+
     /** 业务请求（鉴权后）。 */
     const val APP_CODE_BUSINESS = "BI"
     const val APP_VERSION_BUSINESS = "2.4.2"

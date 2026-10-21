@@ -232,8 +232,8 @@ adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 
 ```
 MainActivity → 底栏今日/课表/教务（2026-10-20 起 3 Tab；生活与我的收进左侧栏）
-               + 层叠左侧栏（StackedDrawerState + ui/life/SideDrawer：身份 / 钱包 / 生活 / 学习 / 工具
-                 / 设置 / 付款码；右滑展开，主页面在前、缩到 94%，侧栏是静态后层，DESIGN §3.1）
+               + 层叠左侧栏（StackedDrawerState + ui/life/SideDrawer：身份 / 钱包 / 生活 / 江水生活
+                 / 学习 / 设置 / 付款码；右滑展开，主页面在前、缩到 94%，侧栏是静态后层，DESIGN §3.1）
                + 路由 jw_import；SettingsActivity（独立窗口，2026-10-20，不再是隐藏「我的」路由）；
                JwImportActivity 的 Browse 模式（各业务页顶栏「网页」只读核对：复用导入窗口的
                电脑版/手机版、统一认证、返回先关弹层与错误处理）；

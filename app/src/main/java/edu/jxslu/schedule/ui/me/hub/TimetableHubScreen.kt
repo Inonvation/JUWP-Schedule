@@ -81,10 +81,11 @@ fun TimetableHubScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     // 调课检测（DESIGN §4.17 重立）：入口行脚注显示待处置差异数——
-    // 通知错过的话，这里是唯一常驻入口
+    // 通知错过的话，这里是唯一常驻入口。计数按「一次调课」= 1 处（与处置页同口径），
+    // 不能用缓存行数：单周调课在缓存里是两行
     val pendingChanges by remember { Graph.displayPrefs(context) }.schedulePendingChanges
         .collectAsStateWithLifecycle(initialValue = null)
-    val pendingCount = pendingChanges?.changes?.size ?: 0
+    val pendingCount = remember(pendingChanges) { pendingChanges?.groupCount() ?: 0 }
 
     Scaffold(
         topBar = {

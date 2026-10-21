@@ -652,8 +652,8 @@ class WenquViewModel(
         }
     }
 
-    /** 手机号 + 密码登录。[rememberPassword] 默认关：只存 token，不存密码。 */
-    fun login(phone: String, password: String, rememberPassword: Boolean = false) {
+    /** 手机号 + 密码登录。[rememberPassword] 默认开：密码一并加密存储，JWT 到期自动续期。 */
+    fun login(phone: String, password: String, rememberPassword: Boolean = true) {
         if (!WenquRules.isValidPhone(phone)) {
             _state.update { it.copy(message = "请输入 11 位手机号") }
             return
@@ -696,12 +696,12 @@ class WenquViewModel(
         }
     }
 
-    /** 首次设置 / 忘记密码：验证码 + 新密码 → 登录。[rememberPassword] 默认关。 */
+    /** 首次设置 / 忘记密码：验证码 + 新密码 → 登录。[rememberPassword] 默认开。 */
     fun setupPassword(
         phone: String,
         captcha: String,
         password: String,
-        rememberPassword: Boolean = false,
+        rememberPassword: Boolean = true,
     ) {
         if (!WenquRules.isValidPhone(phone)) {
             _state.update { it.copy(message = "请输入 11 位手机号") }

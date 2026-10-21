@@ -2,6 +2,8 @@ package edu.jxslu.schedule.data.qiekj
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import edu.jxslu.schedule.data.net.AppHttp
+import edu.jxslu.schedule.data.session.SessionExpiryStore
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.DiagnosisResult
 import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
@@ -41,6 +43,8 @@ class QiekjRepository(
      * release 传 null，一个字节都不落盘。
      */
     private val debugDumpDir: File? = null,
+    /** 「登录状态已过期」留痕（见 [SessionExpiryStore]）：失效当场写、进页消费。 */
+    private val expiry: SessionExpiryStore? = null,
 ) {
     private val api: QiekjApi
 
@@ -81,6 +85,7 @@ class QiekjRepository(
     /** 落盘 token 并翻转登录态。只在**已确认 token 有效**时调用，见 [validateToken]。 */
     fun saveToken(token: String) {
         tokenStore.saveToken(token)
+        expiry?.clear(SessionService.Qiekj)
         _loggedIn.value = true
     }
 
@@ -90,6 +95,18 @@ class QiekjRepository(
     fun logout() {
         tokenStore.clear()
         orderHistoryStore.clearAll()
+        expiry?.clear(SessionService.Qiekj)
+        _loggedIn.value = false
+    }
+
+    /**
+     * 服务端判定 token 失效（401/403 或「请先登录」）：清登录态并留一条「已过期」标记，
+     * 供下次进页提示（2026-10-21）。与 [logout] 的区别只在标记——主动退出不该提示过期。
+     */
+    fun markExpired() {
+        tokenStore.clear()
+        orderHistoryStore.clearAll()
+        expiry?.mark(SessionService.Qiekj)
         _loggedIn.value = false
     }
 

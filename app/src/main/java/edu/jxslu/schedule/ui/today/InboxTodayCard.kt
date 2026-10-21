@@ -33,6 +33,7 @@ import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.local.InboxMessageEntity
 import edu.jxslu.schedule.domain.DormRepairRecord
 import edu.jxslu.schedule.domain.DormRepairRules
+import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.formatDormRepairTime
 import edu.jxslu.schedule.ui.common.heroToneAccent
@@ -85,6 +86,22 @@ fun InboxTodayCard(
     val todays = messages.orEmpty().filter {
         Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate() == today
     }
+    // 标题计数 = 今天**全部**消息数（2026-10-21 二次口径修正：与「还有 N 条」同一总数，
+    // 数字和列表对得上——此前只数待办类，出现过「今日 1 条」却铺着 5 行的矛盾）。
+    // 红点仍只属于待办类：账单是静默留痕（silent），不影响计数口径。
+    val headlineCount = todays.size
+    val important = todays.filter { it.kind !in NOTICE_WORTHY_EXCLUDED_KINDS }
+    val bills = todays.filter { it.kind in NOTICE_WORTHY_EXCLUDED_KINDS }
+    // 今日卡固定铺 **3 行**（2026-10-21 用户口径），**报修状态行占其中 1 行**——
+    // 卡片整体不再长长一截。可选消息槽不足 3 个时按实际条数铺。
+    val repairSlots = if (repair != null) 1 else 0
+    val messageSlots = (TODAY_PREVIEW_LIMIT - repairSlots).coerceAtLeast(0)
+    // 待办类优先占位：纯时间截断时，一串账单会把带红点的消息挤进「还有 N 条」（真机踩到）。
+    // 选完槽位再按时间排序渲染，预览里既有最新流水，也一定看得到需要处理的那条。
+    val importantShown = important.take(messageSlots)
+    val selected = (importantShown + bills.take(messageSlots - importantShown.size))
+        .sortedByDescending { it.createdAt }
+    val moreCount = todays.size - selected.size
 
     AppCard(
         modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -115,10 +132,10 @@ fun InboxTodayCard(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
-            if (todays.isNotEmpty()) {
+            if (headlineCount > 0) {
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "今日 ${todays.size} 条",
+                    text = "今日 $headlineCount 条",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     maxLines = 1,
@@ -157,7 +174,7 @@ fun InboxTodayCard(
             )
         } else {
             Spacer(Modifier.height(6.dp))
-            todays.forEach { msg ->
+            selected.forEach { msg ->
                 InboxTodayRow(
                     msg = msg,
                     onClick = {
@@ -168,6 +185,25 @@ fun InboxTodayCard(
                         }
                     },
                 )
+            }
+            if (moreCount > 0) {
+                // 余量出口：不铺全部，一行收口（点开收件箱页看完整列表）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = "查看全部消息") {
+                            haptics.tap()
+                            onOpenInbox()
+                        }
+                        .padding(start = 30.dp, top = 4.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "还有 $moreCount 条",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }
@@ -274,7 +310,15 @@ private fun repairDetailLine(record: DormRepairRecord): String? {
     }
 }
 
-/** 今日页收件箱卡的行：图标 + 标题 · 正文 + 右侧时间/未读点。点击整行。 */
+/**
+ * 今日页收件箱卡的行（2026-10-21 改两行排版）：
+ * - 第一行 = 图标 + 标题 + 时间 + 未读点；
+ * - 第二行 = 正文（**满宽**、最多两行省略）。
+ *
+ * 此前标题与正文挤同一行对拆（各占 weight 一半），账单类正文（「车号 · 骑行 13 分钟；
+ * 费用 ¥1.50；已自动结清」）必然截断——摘要被截的消息等于没写。两行后正文拿到整行宽，
+ * 长账单也能读全；行高随正文 1~2 行自然伸缩。
+ */
 @Composable
 private fun InboxTodayRow(
     msg: InboxMessageEntity,
@@ -286,7 +330,6 @@ private fun InboxTodayRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 40.dp)
             .clickable(onClickLabel = msg.title) {
                 haptics.tap()
                 onClick()
@@ -301,39 +344,57 @@ private fun InboxTodayRow(
             modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.width(12.dp))
-        Text(
-            text = msg.title,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = msg.body,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = Instant.ofEpochMilli(msg.createdAt).atZone(zone)
-                .format(DateTimeFormatter.ofPattern("HH:mm")),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-        )
-        Spacer(Modifier.width(8.dp))
-        if (unread) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .background(MaterialTheme.colorScheme.error, CircleShape),
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = msg.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = Instant.ofEpochMilli(msg.createdAt).atZone(zone)
+                        .format(DateTimeFormatter.ofPattern("HH:mm")),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                )
+                Spacer(Modifier.width(6.dp))
+                if (unread) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(MaterialTheme.colorScheme.error, CircleShape),
+                    )
+                } else {
+                    // 已读占位，保证时间列右缘对齐
+                    Spacer(Modifier.size(8.dp))
+                }
+            }
+            Text(
+                text = msg.body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp),
             )
-        } else {
-            // 已读占位，保证时间列右缘对齐（多行消息的未读点不漂）
-            Spacer(Modifier.size(8.dp))
         }
     }
 }
+
+/**
+ * 今日卡标题计数**不统计**的来源（2026-10-21）：账单/流水类消息是静默留痕（`silent`，
+ * 不点未读红点），计数也要和红点语义一致——否则「今日 6 条」里 5 条是流水，数字失真。
+ * 消息本身仍在列表里显示、点开照样可回查。
+ */
+private val NOTICE_WORTHY_EXCLUDED_KINDS = setOf(
+    InboxKind.KVCX_RIDE.name,
+    InboxKind.WATER_SESSION.name,
+    InboxKind.QZXY_SESSION.name,
+    InboxKind.UJING_ORDER.name,
+)
+
+/** 今日卡最多铺多少行（消息行 + 报修状态行合计，2026-10-21 用户口径 3 行）。 */
+private const val TODAY_PREVIEW_LIMIT = 3

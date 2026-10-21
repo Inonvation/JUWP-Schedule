@@ -291,6 +291,7 @@ class SubpageActivity : ComponentActivity() {
                     focusItemId = request.focusItemId,
                     courseName = request.courseName,
                     itemId = request.itemId,
+                    startEditing = request.startEditing,
                     autoStart = autoStart,
                     ujingScanRaw = ujingScanRaw,
                 )
@@ -325,6 +326,8 @@ class SubpageActivity : ComponentActivity() {
         focusItemId: String? = null,
         courseName: String? = null,
         itemId: Long = 0L,
+        /** 笔记/作业详情：true = 直接进编辑态（列表铅笔入口）。 */
+        startEditing: Boolean = false,
         /** 小组件「去开水」直达：仅 WATER / QZXY 两个页面响应，见 [WaterAutoStart]。 */
         autoStart: Boolean = false,
         /** 今日页扫到的洗衣机机身码原文：仅 UJING 页响应，见 [UjingScanHandoff]。 */
@@ -539,69 +542,76 @@ class SubpageActivity : ComponentActivity() {
             // 笔记·课件（DESIGN §3.11）：课程库 → 课程列表 → 详情/编辑
             SubpageScreen.NOTES -> NoteLibraryScreen(
                 onBack = onBack,
-                onOpenNote = { name, id ->
+                onOpenNote = { name, id, startEditing ->
                     SubpageActivity.start(
                         this,
                         SubpageScreen.NOTE_DETAIL,
                         courseName = name,
                         itemId = id,
+                        startEditing = startEditing,
                     )
                 },
             )
             SubpageScreen.NOTES_COURSE -> NoteCourseScreen(
                 courseName = courseName.orEmpty(),
                 onBack = onBack,
-                onOpenNote = { id ->
+                onOpenNote = { id, startEditing ->
                     SubpageActivity.start(
                         this,
                         SubpageScreen.NOTE_DETAIL,
                         courseName = courseName,
                         itemId = id,
+                        startEditing = startEditing,
                     )
                 },
             )
             SubpageScreen.NOTE_DETAIL -> NoteDetailScreen(
                 courseName = courseName.orEmpty(),
                 noteId = itemId,
+                startEditing = startEditing,
                 onBack = onBack,
             )
             // 作业：课程库 → 课程列表 → 详情/编辑 + 作业中心
             SubpageScreen.HOMEWORK -> HomeworkLibraryScreen(
                 onBack = onBack,
-                onOpenHomework = { name, id ->
+                onOpenHomework = { name, id, startEditing ->
                     SubpageActivity.start(
                         this,
                         SubpageScreen.HOMEWORK_DETAIL,
                         courseName = name,
                         itemId = id,
+                        startEditing = startEditing,
                     )
                 },
             )
             SubpageScreen.HOMEWORK_COURSE -> HomeworkCourseScreen(
                 courseName = courseName.orEmpty(),
                 onBack = onBack,
-                onOpenHomework = { id ->
+                onOpenHomework = { id, startEditing ->
                     SubpageActivity.start(
                         this,
                         SubpageScreen.HOMEWORK_DETAIL,
                         courseName = courseName,
                         itemId = id,
+                        startEditing = startEditing,
                     )
                 },
             )
             SubpageScreen.HOMEWORK_DETAIL -> HomeworkDetailScreen(
                 courseName = courseName.orEmpty(),
                 homeworkId = itemId,
+                startEditing = startEditing,
                 onBack = onBack,
             )
             SubpageScreen.HOMEWORK_TODO -> HomeworkTodoScreen(
                 onBack = onBack,
-                onOpenHomework = { name, id ->
+                onOpenHomework = { name, id, startEditing ->
                     SubpageActivity.start(
                         this,
                         SubpageScreen.HOMEWORK_DETAIL,
                         courseName = name,
                         itemId = id,
+                        startEditing = startEditing,
                     )
                 },
                 onOpenLibrary = { SubpageActivity.start(this, SubpageScreen.HOMEWORK) },
@@ -634,6 +644,7 @@ class SubpageActivity : ComponentActivity() {
             focusItemId: String? = null,
             courseName: String? = null,
             itemId: Long = 0L,
+            startEditing: Boolean = false,
         ) {
             openSubpage(
                 context,
@@ -642,6 +653,7 @@ class SubpageActivity : ComponentActivity() {
                     focusItemId = focusItemId,
                     courseName = courseName,
                     itemId = itemId,
+                    startEditing = startEditing,
                 ),
             )
         }

@@ -71,6 +71,7 @@ import com.google.zxing.client.android.Intents
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.ujing.UjingHouse
 import edu.jxslu.schedule.data.ujing.UjingOrderSnapshot
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.QzxyPhoneMask
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.common.AppPermissions
@@ -82,6 +83,7 @@ import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
+import edu.jxslu.schedule.ui.common.SessionExpiredNotice
 import edu.jxslu.schedule.ui.common.SkeletonBox
 import edu.jxslu.schedule.ui.common.StaggeredReveal
 import edu.jxslu.schedule.ui.common.StatusHeroCard
@@ -172,6 +174,9 @@ fun UjingScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val haptics = rememberAppHaptics()
+
+    // 上次在别处判定登录过期：进页说一句为什么退回登录表单（只提示一次）
+    SessionExpiredNotice(SessionService.Ujing, state.loggedIn, snackbar)
     var houseToRemove by remember { mutableStateOf<UjingHouse?>(null) }
     var confirmLogout by remember { mutableStateOf(false) }
     var confirmCancelOrder by remember { mutableStateOf(false) }

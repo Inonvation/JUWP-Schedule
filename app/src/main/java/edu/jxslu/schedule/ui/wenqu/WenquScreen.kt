@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -74,6 +75,7 @@ import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.LocalBottomBarClearance
+import edu.jxslu.schedule.ui.common.SessionExpiredNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.WenquActivityAlertReminder
@@ -135,6 +137,9 @@ fun WenquScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // 上次判定登录过期（JWT 到期且没存密码 / 平台顶号）：进页说一句为什么退回登录表单
+    SessionExpiredNotice(SessionService.Wenqu, state.loggedIn, snackbar)
     // 下拉刷新的触感（同流水 / 账单 / 生活那几页：轻一下，别只靠指示器）
     val haptics = rememberAppHaptics()
     // 检索框的文字放页面层：放 LazyColumn 的 item 里会随滚动被回收，滚回来就空了
@@ -536,8 +541,8 @@ private fun LoginContent(state: WenquViewModel.UiState, vm: WenquViewModel) {
     var password by remember { mutableStateOf("") }
     var captcha by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
-    // 记住登录（2026-10-20 用户拍板：默认关）：关掉时只存 token、不存密码
-    var rememberPassword by remember { mutableStateOf(false) }
+    // 记住登录（2026-10-21 用户拍板：默认开）：默认把密码一并加密存在本机，JWT 到期自动续期
+    var rememberPassword by remember { mutableStateOf(true) }
 
     // 5 分钟重发倒计时（平台实测约 5 分钟一条，见 WenquRules.RESEND_COOLDOWN_MS）
     var resendRemaining by remember { mutableStateOf(0L) }
@@ -664,7 +669,7 @@ private fun LoginContent(state: WenquViewModel.UiState, vm: WenquViewModel) {
 }
 
 /**
- * 「记住登录」开关（2026-10-20）：默认关。关掉时只存 token、不存密码——
+ * 「记住登录」开关（2026-10-21）：默认开。关掉时只存 token、不存密码——
  * JWT 有效期内照常使用，到期后要求重新输入；存了密码才能自动续期。
  */
 @Composable

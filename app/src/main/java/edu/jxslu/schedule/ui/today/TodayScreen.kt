@@ -40,12 +40,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 // M3 1.3.0 的下拉刷新不在 material3 根包，而在 pulltorefresh 子包
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.pullToRefresh
@@ -99,6 +101,7 @@ import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.QuickScanTarget
 import edu.jxslu.schedule.domain.ShortcutSettings
 import edu.jxslu.schedule.domain.TodayState
+import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.domain.clockOf
 import edu.jxslu.schedule.domain.dayLabel
 import edu.jxslu.schedule.domain.quickScanTargetOf
@@ -106,9 +109,16 @@ import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.common.ShortcutSheet
+import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
+import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
+import edu.jxslu.schedule.ui.ebike.KvcxAction
+import edu.jxslu.schedule.ui.ebike.KvcxRideState
+import edu.jxslu.schedule.ui.ebike.kvcxConfirmDialog
 import edu.jxslu.schedule.ui.qzxy.QzxyViewModel
 import edu.jxslu.schedule.ui.ujing.UjingEntrySheet
+import edu.jxslu.schedule.data.ujing.UjingOrderSnapshot
+import edu.jxslu.schedule.domain.QzxyWatering
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
 import edu.jxslu.schedule.ui.qzxy.QzxyUiState
 import edu.jxslu.schedule.ui.qzxy.WateringReconcileEffect
@@ -122,6 +132,7 @@ import edu.jxslu.schedule.domain.sectionRange
 import edu.jxslu.schedule.domain.sectionShortLabel
 import edu.jxslu.schedule.domain.TimeSlot
 import edu.jxslu.schedule.domain.UnlockFlowState
+import edu.jxslu.schedule.data.qiekj.QiekjWateringSession
 import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.ui.common.ResumedTickerEffect
 import edu.jxslu.schedule.ui.common.AppCardRow
@@ -171,6 +182,12 @@ import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
 
 /** U净 弹窗打开时对订单的节流窗口：10 秒内不重复请求（同原生活页口径）。 */
 private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
+
+/**
+ * 今日页快趣在案订单查询的节流窗口（2026-10-21）：切 Tab / 从二级页返回都会重建组合
+ * 触发 ON_RESUME，60 秒内不重复打扰第三方接口；下拉刷新强制查。
+ */
+private const val KVCX_RIDE_QUERY_TTL_MILLIS = 60_000L
 
 /**
  * 今日课表。
@@ -278,6 +295,10 @@ fun TodayScreen(
     // 免费时长计时的两个值直接读偏好仓库：`DisplayPrefs` 那层合并读模型不带它们，
     // 而快趣卡只是展示（与 RideScreen / RideViewModel 读同一个单例）
     val context = LocalContext.current
+    // 胖乖「出水中」的跨窗口真相源（2026-10-21）：服务卡与侧栏高亮都读它——
+    // 开水页（另一个 Activity 的 ViewModel）里开的阀，今日页也看得到。
+    val qiekjWaterStore = remember(context) { Graph.qiekjWatering(context) }
+    val qiekjWateringSession by qiekjWaterStore.watering.collectAsStateWithLifecycle()
     // 趣智登录态：卡片与开水面板都要，直接订阅仓库那条流（理由见 QzxyCard 里的注释）
     val qzxyRepo = remember(context) { Graph.qzxy(context) }
     val qzxyLoggedIn by qzxyRepo.loggedIn.collectAsStateWithLifecycle()
@@ -286,10 +307,6 @@ fun TodayScreen(
         .collectAsStateWithLifecycle(initialValue = 0L)
     val ebikeFreeReminderEnabled by ebikePrefs.ebikeFreeReminderEnabled
         .collectAsStateWithLifecycle(initialValue = false)
-    // 使用方式（DESIGN §3.9 / §4.32）：只影响快趣卡副行的常态文案（两档的开车方式不同），
-    // 卡本身与入口不变
-    val ebikeUseMode by ebikePrefs.ebikeUseMode
-        .collectAsStateWithLifecycle(initialValue = EbikeUseMode.Default)
     // 宿舍报修进度（DESIGN §4.49）：有在途记录优先，没有则显示 3 天内已完成的。
     // 2026-10-21 起渲染在收件箱卡内的报修状态行（原独立报修卡并入删除）
     val dormRepairSnapshot by remember(context) { Graph.dormRepairStore(context) }
@@ -299,6 +316,25 @@ fun TodayScreen(
         snapshot = dormRepairSnapshot,
         now = System.currentTimeMillis(),
     )
+
+    // ── 进行中服务卡（2026-10-21）：四个服务的真相源在这里收集，卡片本体 ActiveServiceCard ──
+    // 快趣：控制器是 Graph 单例（与骑行页同一份状态）；只读 state 流，查询在
+    // RESUMED 时静默打一拍 + 下拉刷新一拍，**不轮询**（与骑行页同口径）。
+    val kvcxRide = remember(context) { runCatching { Graph.kvcxRide(context) }.getOrNull() }
+    val kvcxRideState by kvcxRide?.state
+        ?.collectAsStateWithLifecycle()
+        ?: remember { mutableStateOf<KvcxRideState?>(null) }
+    val kvcxLoggedIn by kvcxRide?.loggedIn
+        ?.collectAsStateWithLifecycle()
+        ?: remember { mutableStateOf(false) }
+    // 使用方式原始流：能力闸判据（小程序方式不露骑行行、不查询），读真值不读合并流
+    val ebikeUseModeRaw by remember(context) { Graph.displayPrefs(context) }
+        .ebikeUseMode
+        .collectAsStateWithLifecycle(initialValue = EbikeUseMode.Default)
+    val kvcxInAppRide = remember(ebikeUseModeRaw) { ebikeUseModeRaw.capabilities().inAppRide }
+    // U净 在案订单：落盘快照直接订阅；对表沿用 10s TTL 节流（RESUMED / 下拉时打一拍）
+    val ujingRepo = remember(context) { Graph.ujing(context) }
+    val ujingOrder by ujingRepo.orderState.collectAsStateWithLifecycle()
     // 百宝箱入口开关（DESIGN §4.47，默认开）：关掉时「+」菜单里整行不出现
     val toolboxEnabled by remember(context) { Graph.displayPrefs(context) }
         .toolboxEnabled
@@ -320,7 +356,6 @@ fun TodayScreen(
     var showUjingSheet by remember { mutableStateOf(false) }
     val shortcutSettings by remember(context) { Graph.repository(context).shortcutSettings }
         .collectAsStateWithLifecycle(initialValue = ShortcutSettings())
-    val ujingRepo = remember(context) { Graph.ujing(context) }
     var ujingOrderRefreshedAt by remember { mutableStateOf(0L) }
     val refreshUjingOrderIfStale: () -> Unit = {
         val id = ujingRepo.currentOrder()?.orderId
@@ -338,6 +373,103 @@ fun TodayScreen(
 
     // 「还剩 X 分钟」要跟着时间走；RESUMED 才 tick——退后台/灭屏不再每 30 秒唤醒重组
     ResumedTickerEffect(intervalMillis = 30_000L) { viewModel.refreshTick() }
+
+    // ── 进行中服务卡的快趣侧（2026-10-21）──
+    // 进页 / 回页各静默查一拍在案订单（**不轮询**，与骑行页同口径；能力闸关着不查）。
+    // 60 秒节流：今日页是高停留页，NavHost 切 Tab / 从二级页返回都会重建组合触发
+    // ON_RESUME，不挡的话一次来回就打扰第三方接口一次（下拉刷新传 force 绕过）。
+    // 触感实例：还车确认弹窗的「确认」是还车链路在今日页的动作点（按钮点击处已有 tap，
+    // 分发器不重复发，见 dispatchKvcxAction 注释）。
+    val serviceHaptics = rememberAppHaptics()
+    var kvcxQueriedAt by remember { mutableStateOf(0L) }
+    val queryKvcxQuietly: (Boolean) -> Unit = { force ->
+        val now = System.currentTimeMillis()
+        if (kvcxInAppRide && kvcxLoggedIn &&
+            (force || now - kvcxQueriedAt > KVCX_RIDE_QUERY_TTL_MILLIS)
+        ) {
+            kvcxQueriedAt = now
+            kvcxRide?.query(quiet = true)
+        }
+    }
+    // 进页 / 回页各静默查一拍（骑行页同款 LifecycleEventObserver 写法）
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, kvcxInAppRide, kvcxLoggedIn) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                queryKvcxQuietly(false)
+                refreshUjingOrderIfStale()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            queryKvcxQuietly(false)
+        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // 单例事件流 → 今日页提示（控制器拿不到页面级提示宿主；单例化后事件都走流）
+    LaunchedEffect(kvcxRide) {
+        kvcxRide?.notices?.collect { event ->
+            scope.postNotice(snackbar, event.text, event.tone)
+        }
+    }
+    // 快趣动作分发：锁车免确认（与骑行页同闸）；还车走确认弹窗（danger）；其余免确认动作直发。
+    // **不在这里触感**：按钮点击处（ActiveServiceCard 的 ActionChip）已经 tap 过，
+    // 这里再 tap 一次就是用户报的「弹两次」——触感归交互点，分发器只管动作。
+    var pendingKvcxAction by remember { mutableStateOf<KvcxAction?>(null) }
+    val dispatchKvcxAction: (KvcxAction) -> Unit = { action ->
+        when (action) {
+            KvcxAction.LOCK -> kvcxRide?.tempLock()
+            KvcxAction.RESUME, KvcxAction.RETRY_UNLOCK -> {
+                // 骑行卡上的开锁 = 对在案订单重发解锁；两段式未开与临时锁后继续骑同一条路
+                kvcxRide?.resumeRide()
+            }
+            KvcxAction.RETURN -> pendingKvcxAction = KvcxAction.RETURN
+            else -> Unit
+        }
+    }
+    pendingKvcxAction?.let { action ->
+        val ride = kvcxRideState?.ride
+        KvcxConfirmAlertDialog(
+            action = action,
+            carLabel = ride?.carNum?.let { "车 $it" } ?: "选中的车",
+            onConfirm = {
+                // 确认键是「还车」真正的动作点：触感在这里发（骑行的还车键同口径）
+                serviceHaptics.tap()
+                pendingKvcxAction = null
+                kvcxRide?.returnBike()
+            },
+            onDismiss = { pendingKvcxAction = null },
+        )
+    }
+
+    // 小程序免费计时行的「结束计时」确认（2026-10-21）：收计时会连带撤掉倒计时提醒与
+    // 通知，误触代价是「骑行中不再提醒免费额度」——值得一次确认。
+    var pendingEndFreeRide by remember { mutableStateOf(false) }
+    if (pendingEndFreeRide) {
+        AlertDialog(
+            onDismissRequest = { pendingEndFreeRide = false },
+            title = { Text("结束免费计时？") },
+            text = {
+                DialogWindowFadeEffect()
+                Text(
+                    "只在你已经还车时使用。结束本机的免费时长计时，" +
+                        "同时撤掉倒计时提醒与通知栏倒计时。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    serviceHaptics.tap()
+                    pendingEndFreeRide = false
+                    scope.launch {
+                        runCatching { EbikeFreeRideReminder.endRide(context) }
+                    }
+                }) { Text("结束计时") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingEndFreeRide = false }) { Text("取消") }
+            },
+        )
+    }
 
     // 余额面板/开水页发起解锁与查询的结果事件得有人收——此前只有开水页收，
     // 今日页侧的超时/失效提示会全部静默丢弃（Channel 无人消费即无处可去）。
@@ -671,6 +803,10 @@ fun TodayScreen(
                         viewModel.refreshTick()
                         waterViewModel?.refreshBalance()
                         waterViewModel?.refreshDevices()
+                        // 进行中服务（2026-10-21）：快趣在案订单静默一拍（下拉强制刷新，
+                        // 绕过 60 秒节流）、U净 按节流对表，都不阻塞课表刷新
+                        queryKvcxQuietly(true)
+                        refreshUjingOrderIfStale()
                         // 宿舍报修进度（DESIGN §4.49）：下拉时顺带刷新，不阻塞课表刷新
                         scope.launch {
                             runCatching { Graph.dormRepairSync(context).refresh() }
@@ -710,6 +846,23 @@ fun TodayScreen(
                     onOpenInbox = onOpenInbox,
                     onOpenRepair = onOpenDormRepair,
                     repair = dormRepair,
+                    kvcxRideState = kvcxRideState?.takeIf { kvcxInAppRide && kvcxLoggedIn },
+                    waterSession = qiekjWateringSession,
+                    waterStopping = (waterEntryState.flow as? UnlockFlowState.Working)?.stopping == true,
+                    waterCanStop = waterEntryState.flow is UnlockFlowState.Working,
+                    qzxyWatering = qzxyEntryState.watering,
+                    qzxyDeviceEnded = qzxyEntryState.wateringDeviceEnded,
+                    ujingOrder = ujingOrder,
+                    onKvcxAction = dispatchKvcxAction,
+                    onWaterEnd = { waterViewModel?.endSession() },
+                    onQzxyStop = { qzxyViewModel?.stopWater() },
+                    onOpenUjing = onOpenUjing,
+                    // 小程序方式的免费计时（DataStore 落盘）：账号方式不传（骑行信息更全的那行优先）
+                    freeRideStartAt = ebikeRideStartAt.takeIf { !kvcxInAppRide },
+                    onOpenEbike = onOpenEbike,
+                    onOpenWater = onOpenWater,
+                    onOpenQzxy = onOpenQzxy,
+                    onEndFreeRide = { pendingEndFreeRide = true },
                 )
             }
             PullToRefreshDefaults.Indicator(
@@ -924,6 +1077,33 @@ private fun TodayContent(
     onOpenRepair: () -> Unit = {},
     /** 报修当前该展示的那条（收件箱卡内置顶行）；null = 无可见记录。 */
     repair: DormRepairRecord? = null,
+    // ── 进行中服务卡（2026-10-21）：数据在 TodayScreen 收集，卡片按需渲染 ──
+    /** 快趣骑行状态（能力闸 + 登录双闸已在调用侧滤过）；null = 行不出现。 */
+    kvcxRideState: KvcxRideState? = null,
+    /**
+     * 微信小程序方式的免费计时起点（`ebikeRideStartAt`；账号方式恒 null——
+     * 骑行信息更全的 [kvcxRideState] 那行优先）。
+     */
+    freeRideStartAt: Long? = null,
+    /** 胖乖「出水中」会话（落盘 store，跨窗口）；null = 行不出现。 */
+    waterSession: QiekjWateringSession? = null,
+    /** 本窗口开水流程是否正在「结束中」。 */
+    waterStopping: Boolean = false,
+    /** 本窗口能否直接结束开水（流程在另一窗口的 ViewModel 里跑时只能点行进页）。 */
+    waterCanStop: Boolean = false,
+    qzxyWatering: QzxyWatering?,
+    qzxyDeviceEnded: Boolean,
+    ujingOrder: UjingOrderSnapshot?,
+    onKvcxAction: (KvcxAction) -> Unit = {},
+    onWaterEnd: () -> Unit = {},
+    onQzxyStop: () -> Unit = {},
+    /** 各状态行整行落点（2026-10-21 补齐：点行进对应页，行内按钮管动作）。 */
+    onOpenEbike: () -> Unit = {},
+    onOpenWater: () -> Unit = {},
+    onOpenQzxy: () -> Unit = {},
+    onOpenUjing: () -> Unit = {},
+    /** 小程序免费计时行的「结束计时」意图（确认弹窗在 TodayScreen 层）。 */
+    onEndFreeRide: () -> Unit = {},
 ) {
     val sectionColumnWidth = rememberSectionColumnWidth(state.timeline)
     // dock 收进侧栏后，列表最后一项要自己让开悬浮胶囊（2026-10-20）
@@ -985,6 +1165,33 @@ private fun TodayContent(
                         onClick = onOpenHomeworkTodo,
                     )
                 }
+            }
+
+            // 进行中服务卡（2026-10-21）：快趣骑行 / 胖乖开水 / 趣智洗澡 / U净 洗烘，
+            // 谁在进行中谁占一行；全无则整卡不渲染（返回 false 的判据在卡内）。
+            // 位置 = 作业卡与收件箱卡之间：同为「顺带看一眼」的区块，不抢课程区。
+            item(key = "active-services") {
+                ActiveServiceCard(
+                    kvcxState = kvcxRideState,
+                    freeRideStartAt = freeRideStartAt,
+                    waterSession = waterSession,
+                    waterStopping = waterStopping,
+                    waterCanStop = waterCanStop,
+                    qzxyWatering = qzxyWatering,
+                    qzxyDeviceEnded = qzxyDeviceEnded,
+                    ujingOrder = ujingOrder,
+                    kvcxOnUnlock = { onKvcxAction(KvcxAction.RESUME) },
+                    kvcxOnLock = { onKvcxAction(KvcxAction.LOCK) },
+                    kvcxOnReturn = { onKvcxAction(KvcxAction.RETURN) },
+                    waterOnEnd = onWaterEnd,
+                    qzxyOnStop = onQzxyStop,
+                    onOpenEbike = onOpenEbike,
+                    onOpenWater = onOpenWater,
+                    onOpenQzxy = onOpenQzxy,
+                    onOpenUjing = onOpenUjing,
+                    onEndFreeRide = onEndFreeRide,
+                    modifier = Modifier.animateItem(),
+                )
             }
 
             // 收件箱卡（DESIGN §3.24，2026-10-21 收口）：收件箱的唯一展示入口。
@@ -1404,3 +1611,54 @@ private fun TomorrowBlock(
  * 前者决定松手触发点，后者决定图标滑出的落位，写岔了会出现「图标到位了却没刷新」。
  */
 private val TodayPullRefreshThreshold = 56.dp
+
+/**
+ * 今日页进行中服务卡的还车确认弹窗（2026-10-21）：规格与文案的唯一出处仍是
+ * `KvcxRideController.kvcxConfirmDialog`（`KvcxAction.RETURN` 档），这里只做排版——
+ * 与骑行页 `KvcxConfirmDialog` 同构但**没有**「不再提醒」勾选（那是开锁专属，见 KDoc）。
+ */
+@Composable
+private fun KvcxConfirmAlertDialog(
+    action: KvcxAction,
+    carLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dialog = kvcxConfirmDialog(action, carLabel) ?: return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(dialog.title) },
+        text = {
+            DialogWindowFadeEffect()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                dialog.points.forEachIndexed { index, point ->
+                    Row(modifier = Modifier.padding(bottom = 8.dp)) {
+                        Text(
+                            text = "${index + 1}.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.width(20.dp),
+                        )
+                        Text(text = point, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                // 还车是花钱那一刻：确认键用错误色，与骑行页同一口径
+                Text(
+                    text = dialog.confirmLabel,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}

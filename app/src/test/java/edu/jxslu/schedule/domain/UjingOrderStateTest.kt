@@ -104,4 +104,29 @@ class UjingOrderStateTest {
         // 旧快照无剩余（0）：不动
         assertEquals(0, UjingState.liveRemainSeconds("40", 0, 1_000L, 301_000L))
     }
+
+    // ---- 洗衣完成状态过渡（2026-10-21，收件箱留痕触发口径） ----
+
+    @Test
+    fun washDoneTransitOnlyOnNonDoneToDone() {
+        // 没有上一份 → 50：首刷就完成（如冷启动后查已结束的订单），算完成事实
+        assertTrue(UjingState.transitToWashDone(null, "50"))
+        // 洗涤中 → 50：常规完成路径
+        assertTrue(UjingState.transitToWashDone("40", "50"))
+        // 已支付待启动 → 50：跳过洗涤态直接完成也认
+        assertTrue(UjingState.transitToWashDone("20", "50"))
+    }
+
+    @Test
+    fun washDoneTransitNotFiredOnRepeatOrCancel() {
+        // 已是 50 的重刷（页面轮询 / 完成闹钟 / 手动刷新多路到达）：不再算过渡
+        assertFalse(UjingState.transitToWashDone("50", "50"))
+        // 取消 / 超时 / 启动失败不是完成
+        assertFalse(UjingState.transitToWashDone("40", "60"))
+        assertFalse(UjingState.transitToWashDone("10", "51"))
+        assertFalse(UjingState.transitToWashDone("20", "52"))
+        // 完成以外的一切当前态都不触发
+        assertFalse(UjingState.transitToWashDone("40", "40"))
+        assertFalse(UjingState.transitToWashDone(null, "40"))
+    }
 }

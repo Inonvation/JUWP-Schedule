@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,17 +30,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -47,13 +55,19 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.Homework
 import edu.jxslu.schedule.domain.HomeworkCourseGroup
 import edu.jxslu.schedule.domain.courseHomeworkOrder
+import edu.jxslu.schedule.domain.homeworkDisplayTitle
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
+import edu.jxslu.schedule.ui.common.AppNoticeVisuals
+import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.courseTint
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import edu.jxslu.schedule.ui.common.showNotice
 import edu.jxslu.schedule.ui.reminder.ClassReminder
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -66,18 +80,16 @@ import java.time.LocalDate
  *
  * 每门课程一张 [AppCard]：头行 = 课程色点 + 课程名 + 未完成计数，点行展开/收起
  * 该课程的作业列表（AnimatedVisibility：高度展开/收起 + 淡入淡出，250ms/200ms）。
- * 展开区条目是**平铺行**（2026-10-09，`HomeworkRow(embedded = true)`）：组卡里再套一张张卡片
- * 就是「气泡套气泡」，行间与头行下改走卡内细线。
- * 行内勾选照旧；点条目进详情；头行右侧「＋」直接进该课程的新建页。
- * 「最近更新」区块移除（用户拍板 2026-09-23）。
- *
- * 展开状态存 [mutableStateMapOf]（内存，退出页面重置为全收起——展开是临时浏览动作）。
+ * 展开区条目是**详情块**（2026-10-21）：标题 + 截止 chip + 完整 Markdown 正文 +
+ * 图片缩略图，行间走卡内细线；完成项单独一段（「已完成 · N」）。
+ * 头行右侧「＋」直接进该课程的新建页；条目右侧铅笔直达编辑态。
+ * 展开时按培养方案同款 [scrollToReveal] 补足下方空间，避免「点了没反应」。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeworkLibraryScreen(
     onBack: () -> Unit,
-    onOpenHomework: (courseName: String, id: Long) -> Unit,
+    onOpenHomework: (courseName: String, id: Long, startEditing: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -89,8 +101,26 @@ fun HomeworkLibraryScreen(
     val courses by scheduleRepo.courses.collectAsStateWithLifecycle(initialValue = emptyList())
     val haptics = rememberAppHaptics()
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val snackbar = remember { SnackbarHostState() }
+    val listState = rememberLazyListState()
+    var viewer by remember { mutableStateOf<String?>(null) }
+
+    val revealSpacePx = with(LocalDensity.current) { 240.dp.toPx() }
+
+    /** 展开时只补足下方缺的空间，上限是课程头贴到视口顶部（与培养方案同款）。 */
+    fun scrollToReveal(key: String) {
+        val layout = listState.layoutInfo
+        val info = layout.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        val leftover = layout.viewportEndOffset - (info.offset + info.size)
+        val need = revealSpacePx - leftover
+        if (need <= 0f) return
+        val maxScroll = (info.offset - layout.viewportStartOffset).coerceAtLeast(0).toFloat()
+        val delta = minOf(need, maxScroll)
+        if (delta > 0f) scope.launch { listState.animateScrollBy(delta) }
+    }
 
     Scaffold(
+        snackbarHost = { AppSnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text("作业") },
@@ -119,6 +149,7 @@ fun HomeworkLibraryScreen(
             }
 
             else -> LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -139,14 +170,40 @@ fun HomeworkLibraryScreen(
                         expanded = expanded[group.courseName] == true,
                         onToggle = {
                             haptics.tap()
-                            expanded[group.courseName] = !(expanded[group.courseName] == true)
+                            val opening = expanded[group.courseName] != true
+                            expanded[group.courseName] = opening
+                            if (opening) scrollToReveal(group.courseName)
                         },
-                        onAdd = { onOpenHomework(group.courseName, 0L) },
-                        onOpenItem = { id -> onOpenHomework(group.courseName, id) },
+                        onAdd = { onOpenHomework(group.courseName, 0L, false) },
+                        onOpenItem = { id -> onOpenHomework(group.courseName, id, false) },
+                        onEditItem = { id -> onOpenHomework(group.courseName, id, true) },
                         onToggleItem = { id, done ->
                             scope.launch {
                                 repo.setDone(id, done)
                                 ClassReminder.enqueueCheck(context)
+                                if (done) {
+                                    val hw = courseItems.firstOrNull { it.id == id }
+                                    val label = hw?.let { homeworkDisplayTitle(it.detail) } ?: "作业"
+                                    val result = snackbar.showNotice(
+                                        "已完成「$label」",
+                                        actionLabel = "撤销",
+                                        duration = SnackbarDuration.Short,
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        repo.setDone(id, false)
+                                        ClassReminder.enqueueCheck(context)
+                                    }
+                                }
+                            }
+                        },
+                        onImageClick = { viewer = it },
+                        onLinkClick = { url ->
+                            if (!openLink(context, url)) {
+                                scope.launch {
+                                    snackbar.showNotice(
+                                        AppNoticeVisuals("打不开这个链接", tone = NoticeTone.Warning),
+                                    )
+                                }
                             }
                         },
                     )
@@ -154,11 +211,15 @@ fun HomeworkLibraryScreen(
             }
         }
     }
+
+    viewer?.let { fileName ->
+        ImageViewerDialog(fileName = fileName, onDismiss = { viewer = null })
+    }
 }
 
 /**
  * 课程分组折叠卡（作业库与作业中心共用，2026-09-23）：头行 + AnimatedVisibility 条目列表。
- * 条目是平铺行（2026-10-09，组卡里不再套卡），行间与头行下走 [AppCardDivider]。
+ * 条目是详情块（2026-10-21，`HomeworkItemBlock`），行间与头行下走 [AppCardDivider]。
  * [onAdd] 为 null 时隐藏「＋」（作业中心不需要新建入口）。
  */
 @Composable
@@ -172,7 +233,10 @@ internal fun HomeworkCourseCard(
     onToggle: () -> Unit,
     onAdd: (() -> Unit)?,
     onOpenItem: (Long) -> Unit,
+    onEditItem: (Long) -> Unit,
     onToggleItem: (Long, Boolean) -> Unit,
+    onImageClick: (String) -> Unit,
+    onLinkClick: (String) -> Unit,
 ) {
     AppCard(contentPadding = PaddingValues(0.dp)) {
         Row(
@@ -228,14 +292,21 @@ internal fun HomeworkCourseCard(
         ) {
             Column(modifier = Modifier.padding(bottom = 6.dp)) {
                 AppCardDivider()
+                val firstDone = items.indexOfFirst { it.done }
+                val doneCount = items.count { it.done }
                 items.forEachIndexed { index, homework ->
                     if (index > 0) AppCardDivider()
-                    HomeworkRow(
+                    if (index == firstDone) {
+                        HomeworkDoneHeader(count = doneCount)
+                    }
+                    HomeworkItemBlock(
                         homework = homework,
                         today = today,
                         onClick = { onOpenItem(homework.id) },
+                        onEdit = { onEditItem(homework.id) },
                         onToggle = { done -> onToggleItem(homework.id, done) },
-                        embedded = true,
+                        onImageClick = onImageClick,
+                        onLinkClick = onLinkClick,
                     )
                 }
             }

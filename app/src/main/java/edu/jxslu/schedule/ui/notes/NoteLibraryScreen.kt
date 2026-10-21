@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,11 +35,15 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,11 +54,13 @@ import edu.jxslu.schedule.domain.NoteCourseGroup
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDivider
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.courseTint
 import edu.jxslu.schedule.ui.common.epochMonthDay
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
+import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.ArrowDown01
@@ -61,20 +69,16 @@ import me.rerere.hugeicons.stroke.ArrowDown01
  * 笔记·课件库（我的 → 学习 → 笔记·课件，DESIGN §3.11）：**按课程折叠分组**（2026-09-23 改）。
  *
  * 每门课程一张 [AppCard]：头行 = 课程色点 + 课程名 + 篇数，点行展开/收起该课程的笔记列表
- * （AnimatedVisibility：高度展开/收起 + 淡入淡出，250ms/200ms）。点条目直达详情；
- * 头行右侧「＋」直接在该课程下新建。
- * 展开区条目是**平铺行**（2026-10-09，`NoteRow(embedded = true)`）：组卡里再套一张张卡片
- * 就是「气泡套气泡」，行间与头行下改走卡内细线。
- *
- * 「最近更新」区块原样保留（作业库不要，笔记库未明确要求移除）。
- *
- * 展开状态存 [mutableStateMapOf]（内存，退出页面重置为全收起）。
+ * （AnimatedVisibility：高度展开/收起 + 淡入淡出，250ms/200ms）。展开区条目是**详情块**
+ * （2026-10-21，`NoteItemBlock`）：标题 + 更新时间 + 2 行摘要 + 图片缩略图，行间走卡内细线。
+ * 头行右侧「＋」直接在该课程下新建；条目右侧铅笔直达编辑态。
+ * 展开时按培养方案同款 scrollToReveal 补足下方空间。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteLibraryScreen(
     onBack: () -> Unit,
-    onOpenNote: (courseName: String, noteId: Long) -> Unit,
+    onOpenNote: (courseName: String, id: Long, startEditing: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val repo = remember { Graph.noteRepository(context) }
@@ -83,7 +87,23 @@ fun NoteLibraryScreen(
     val allNotes by repo.observeAll().collectAsStateWithLifecycle(initialValue = null)
     val courses by scheduleRepo.courses.collectAsStateWithLifecycle(initialValue = emptyList())
     val haptics = rememberAppHaptics()
+    val scope = rememberCoroutineScope()
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val listState = rememberLazyListState()
+    var viewer by remember { mutableStateOf<String?>(null) }
+    val revealSpacePx = with(LocalDensity.current) { 240.dp.toPx() }
+
+    /** 展开时只补足下方缺的空间（与作业库同款）。 */
+    fun scrollToReveal(key: String) {
+        val layout = listState.layoutInfo
+        val info = layout.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        val leftover = layout.viewportEndOffset - (info.offset + info.size)
+        val need = revealSpacePx - leftover
+        if (need <= 0f) return
+        val maxScroll = (info.offset - layout.viewportStartOffset).coerceAtLeast(0).toFloat()
+        val delta = minOf(need, maxScroll)
+        if (delta > 0f) scope.launch { listState.animateScrollBy(delta) }
+    }
 
     Scaffold(
         topBar = {
@@ -114,6 +134,7 @@ fun NoteLibraryScreen(
             }
 
             else -> LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -127,14 +148,22 @@ fun NoteLibraryScreen(
                         expanded = expanded[group.courseName] == true,
                         onToggle = {
                             haptics.tap()
-                            expanded[group.courseName] = !(expanded[group.courseName] == true)
+                            val opening = expanded[group.courseName] != true
+                            expanded[group.courseName] = opening
+                            if (opening) scrollToReveal(group.courseName)
                         },
-                        onAdd = { onOpenNote(group.courseName, 0L) },
-                        onOpenItem = { id -> onOpenNote(group.courseName, id) },
+                        onAdd = { onOpenNote(group.courseName, 0L, false) },
+                        onOpenItem = { id -> onOpenNote(group.courseName, id, false) },
+                        onEditItem = { id -> onOpenNote(group.courseName, id, true) },
+                        onImageClick = { viewer = it },
                     )
                 }
             }
         }
+    }
+
+    viewer?.let { fileName ->
+        ImageViewerDialog(fileName = fileName, onDismiss = { viewer = null })
     }
 }
 
@@ -147,6 +176,8 @@ private fun NoteGroupCard(
     onToggle: () -> Unit,
     onAdd: () -> Unit,
     onOpenItem: (Long) -> Unit,
+    onEditItem: (Long) -> Unit,
+    onImageClick: (String) -> Unit,
 ) {
     val courseNotes = remember(allNotes, group.courseName) {
         allNotes.filter { it.courseName == group.courseName }
@@ -206,10 +237,11 @@ private fun NoteGroupCard(
                 AppCardDivider()
                 courseNotes.forEachIndexed { index, note ->
                     if (index > 0) AppCardDivider()
-                    NoteRow(
+                    NoteItemBlock(
                         note = note,
                         onClick = { onOpenItem(note.id) },
-                        embedded = true,
+                        onEdit = { onEditItem(note.id) },
+                        onImageClick = onImageClick,
                     )
                 }
             }

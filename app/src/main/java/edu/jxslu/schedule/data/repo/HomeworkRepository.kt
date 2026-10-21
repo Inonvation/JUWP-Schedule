@@ -6,6 +6,7 @@ import edu.jxslu.schedule.domain.Homework
 import edu.jxslu.schedule.domain.HomeworkCourseGroup
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.time.LocalDate
 
 /**
  * 作业仓库（DESIGN §4.20）：薄封装，排序/汇总/截止文案一律归 `domain/HomeworkCenter`。
@@ -49,6 +50,11 @@ class HomeworkRepository(private val db: JuwDatabase) {
     suspend fun setDone(id: Long, done: Boolean) {
         val now = System.currentTimeMillis()
         dao.setDone(id, done, doneAt = if (done) now else null, updatedAt = now)
+    }
+
+    /** 只改截止日期（详情页改截止即落库，不整行回写）。 */
+    suspend fun setDueDate(id: Long, due: LocalDate?) {
+        dao.setDueDate(id, due?.toString(), System.currentTimeMillis())
     }
 
     suspend fun delete(id: Long) = dao.deleteById(id)

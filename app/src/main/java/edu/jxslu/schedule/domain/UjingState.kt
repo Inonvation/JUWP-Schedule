@@ -119,6 +119,16 @@ object UjingState {
     fun commandAccepted(code: Int, innerErrorCode: Int?): Boolean =
         code == 0 || (code == 1703 && innerErrorCode == 0)
 
+    /**
+     * 洗衣完成的**状态过渡**判定（2026-10-21，收件箱留痕的触发口径）：
+     * 上一份快照不是已完成（含没有上一份）、这一份是 50，即视为「这次刷新完成的」。
+     * 已是 50 的重刷（多路到达：页面轮询 / 完成闹钟 / 手动刷新）不再算过渡——
+     * 入箱去重另有键兜底，这里保证语义只对一次。
+     * 取消 / 超时 / 启动失败（51/52/53/60）不是完成，不触发。
+     */
+    fun transitToWashDone(beforeStatus: String?, afterStatus: String): Boolean =
+        afterStatus == "50" && beforeStatus != "50"
+
     /** 剩余秒数 → 「X 分 Y 秒」（负数夹到 0）。 */
     fun remainText(remainSeconds: Int): String {
         val total = remainSeconds.coerceAtLeast(0)

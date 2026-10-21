@@ -7,10 +7,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,6 +43,7 @@ import edu.jxslu.schedule.domain.MdAction
 import edu.jxslu.schedule.domain.applyMarkdownAction
 import edu.jxslu.schedule.domain.autoPairDollar
 import edu.jxslu.schedule.domain.continueOnEnter
+import edu.jxslu.schedule.domain.imageRefs
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.CheckList
@@ -51,62 +59,56 @@ import me.rerere.hugeicons.stroke.TextItalic
 import me.rerere.hugeicons.stroke.TextStrikethrough
 
 /**
- * Markdown 编辑器（DESIGN §3.11）：源码输入 + 格式工具条 + 自动补全接线。
+ * Markdown 正文输入框（2026-10-21 从原 MarkdownEditor 拆出）：只有输入区，不含工具条。
+ *
+ * 拆分理由：详情页要把工具条固定在键盘上缘（`Scaffold` 底部 / `imePadding`），
+ * 不能再让它跟着正文滚。调用方把本组件放进 `weight(1f)` 的容器，输入框内部自己滚。
  *
  * 自动补全的判断**全部在 `domain/MarkdownEdit.kt`**（纯 JVM 可测），这里只是把
  * `TextFieldValue` 的差分喂进去、把结果写回——不要在 Composable 里另写续行/配对逻辑。
  */
 @Composable
-fun MarkdownEditor(
+fun MarkdownEditorField(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     modifier: Modifier = Modifier,
     placeholder: String = "写点什么…支持 Markdown 与 $ 公式",
-    minHeight: Dp = 220.dp,
-    onPickImages: (() -> Unit)? = null,
+    minHeight: Dp = 140.dp,
     /** 外部要主动聚焦编辑器时传入（如预览点铅笔进编辑）；不传则等用户自己点正文。 */
     focusRequester: FocusRequester? = null,
 ) {
-    Column(modifier) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = minHeight)
-                .clip(AppCardDefaults.Shape)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    shape = AppCardDefaults.Shape,
-                )
-                .padding(12.dp),
-        ) {
-            if (value.text.isEmpty()) {
-                Text(
-                    text = placeholder,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                )
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = { next -> onValueChange(handleMarkdownInput(value, next) ?: next) },
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = MaterialTheme.typography.bodyLarge.fontSize * 1.5f,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = minHeight)
+            .clip(AppCardDefaults.Shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+                shape = AppCardDefaults.Shape,
+            )
+            .padding(12.dp),
+    ) {
+        if (value.text.isEmpty()) {
+            Text(
+                text = placeholder,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
             )
         }
-        EditorToolbar(
+        BasicTextField(
             value = value,
-            onValueChange = onValueChange,
-            onPickImages = onPickImages,
-            modifier = Modifier.padding(top = 8.dp),
+            onValueChange = { next -> onValueChange(handleMarkdownInput(value, next) ?: next) },
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                lineHeight = MaterialTheme.typography.bodyLarge.fontSize * 1.5f,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
         )
     }
 }
@@ -176,11 +178,11 @@ private val TOOLBAR: List<ToolbarAction> = listOf(
 )
 
 @Composable
-private fun EditorToolbar(
+fun MarkdownToolbar(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
-    onPickImages: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onPickImages: (() -> Unit)? = null,
 ) {
     val haptics = rememberAppHaptics()
     Row(
@@ -231,6 +233,44 @@ private fun EditorToolbar(
                     modifier = Modifier.size(19.dp),
                 )
             }
+        }
+    }
+}
+
+/**
+ * 编辑器底栏（2026-10-21）：附件条 + 格式工具条，固定在键盘上缘。
+ *
+ * 放在 `Scaffold(bottomBar = …)` 里并 `imePadding()`；不要再塞回正文的
+ * `verticalScroll`，否则长文写到下半段时工具条在键盘后面（旧版就是这个毛病）。
+ */
+@Composable
+fun MarkdownEditorBottomBar(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    onPickImages: (() -> Unit)?,
+    onRemoveImage: (String) -> Unit,
+    onOpenImage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            // 键盘 + 手势导航条取并集：imePadding + navigationBarsPadding 会叠出双份空白
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+            AttachmentStrip(
+                fileNames = imageRefs(value.text).toList(),
+                onRemove = onRemoveImage,
+                onOpen = onOpenImage,
+            )
+            MarkdownToolbar(
+                value = value,
+                onValueChange = onValueChange,
+                onPickImages = onPickImages,
+            )
         }
     }
 }

@@ -2,30 +2,24 @@ package edu.jxslu.schedule.ui.notes
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,34 +27,31 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.domain.Note
-import edu.jxslu.schedule.domain.hasImageRef
-import edu.jxslu.schedule.domain.plainExcerpt
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
-import edu.jxslu.schedule.ui.common.epochMonthDay
-import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
-import me.rerere.hugeicons.stroke.Image01
 
 /**
  * 某课程的笔记列表（DESIGN §3.11）。
  *
- * 列表项 = 标题（空标题显示占位名）+ 创建日期（**自动记录，编辑不改**）+ 正文摘要 1 行 +
- * 有图时的角标；新建入口在顶栏（不用 FAB，列表页窄屏遮挡小）。
+ * 每条是 [NoteItemBlock]（2026-10-21）：标题（空标题用正文首行兜底）+ 更新时间 +
+ * 2 行摘要 + 图片缩略图；点条目进详情，点铅笔直接编辑。新建入口在顶栏
+ * （不用 FAB，列表页窄屏遮挡小）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteCourseScreen(
     courseName: String,
     onBack: () -> Unit,
-    onOpenNote: (Long) -> Unit,
+    onOpenNote: (id: Long, startEditing: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val repo = remember { Graph.noteRepository(context) }
     val notes by repo.observeForCourse(courseName).collectAsStateWithLifecycle(initialValue = null)
+    var viewer by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -74,7 +65,7 @@ fun NoteCourseScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { onOpenNote(0L) }) {
+                    IconButton(onClick = { onOpenNote(0L, false) }) {
                         Icon(HugeIcons.Add01, contentDescription = "新建笔记")
                     }
                 },
@@ -101,101 +92,21 @@ fun NoteCourseScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(list, key = { it.id }) { note ->
-                    NoteRow(note = note, onClick = { onOpenNote(note.id) })
+                    AppCard(contentPadding = PaddingValues(0.dp)) {
+                        NoteItemBlock(
+                            note = note,
+                            onClick = { onOpenNote(note.id, false) },
+                            onEdit = { onOpenNote(note.id, true) },
+                            onImageClick = { viewer = it },
+                            embedded = false,
+                        )
+                    }
                 }
             }
         }
     }
-}
 
-/**
- * 笔记列表行。两行结构（2026-09-22）：标题行（标题 + 图片角标 + 日期）与摘要行。
- * 旧版把日期单独放第三行，一行只有 8 个字符、纵向却占掉一整行，列表看着松散。
- *
- * [embedded] = true 时画成**组卡展开区的平铺行**（2026-10-09）：无卡底、无描边，只有整行涟漪
- * ——笔记库的课程折叠卡里每篇再套一张卡就是「气泡套气泡」。顶层列表（某课程的笔记页）仍是
- * [AppCard]。
- */
-@Composable
-internal fun NoteRow(
-    note: Note,
-    onClick: () -> Unit,
-    /** 课程库的「最近更新」区块要在同一行里交代课程名（列表本身按课程分组时不显示）。 */
-    showCourseName: Boolean = false,
-    embedded: Boolean = false,
-) {
-    val excerpt = remember(note.body) { plainExcerpt(note.body) }
-    if (embedded) {
-        val haptics = rememberAppHaptics()
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                // 不自己 clip：涟漪由外层组卡的 14dp 圆角裁形
-                .clickable {
-                    haptics.tap()
-                    onClick()
-                }
-                // 左缩进 32dp = 组卡头行的课程名左缘（14 内边距 + 8 色点 + 10 间距）
-                .padding(start = 32.dp, top = 11.dp, end = 14.dp, bottom = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            NoteRowBody(note = note, excerpt = excerpt, showCourseName = showCourseName)
-        }
-    } else {
-        AppCard(
-            onClick = onClick,
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            NoteRowBody(note = note, excerpt = excerpt, showCourseName = showCourseName)
-        }
-    }
-}
-
-/** [NoteRow] 的内容本体（标题行 + 摘要行），平铺态与卡片态共用。 */
-@Composable
-private fun NoteRowBody(
-    note: Note,
-    excerpt: String,
-    showCourseName: Boolean,
-) {
-    Row(verticalAlignment = Alignment.Bottom) {
-        Text(
-            text = note.title.ifBlank { "未命名笔记" },
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (hasImageRef(note.body)) {
-            Spacer(Modifier.width(6.dp))
-            Icon(
-                imageVector = HugeIcons.Image01,
-                contentDescription = "含图片",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                modifier = Modifier.size(15.dp),
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = if (showCourseName) {
-                "${note.courseName} · ${epochMonthDay(note.createdAt)}"
-            } else {
-                epochMonthDay(note.createdAt)
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-    if (excerpt.isNotBlank()) {
-        Text(
-            text = excerpt,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+    viewer?.let { fileName ->
+        ImageViewerDialog(fileName = fileName, onDismiss = { viewer = null })
     }
 }

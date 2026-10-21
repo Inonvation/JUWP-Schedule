@@ -24,6 +24,7 @@ import edu.jxslu.schedule.data.qzxy.QzxyScannedDevice
 import edu.jxslu.schedule.data.qzxy.QzxySessionExpiredException
 import edu.jxslu.schedule.data.qzxy.QzxyWaterFlow
 import edu.jxslu.schedule.data.qzxy.QzxyWateringStore
+import edu.jxslu.schedule.data.session.SessionExpiryStore
 import edu.jxslu.schedule.domain.QzxyClData
 import edu.jxslu.schedule.domain.QzxyFrame
 import edu.jxslu.schedule.domain.QzxyProtocol
@@ -31,6 +32,9 @@ import edu.jxslu.schedule.domain.QzxySessionLink
 import edu.jxslu.schedule.domain.QzxySign
 import edu.jxslu.schedule.domain.QzxyWatering
 import edu.jxslu.schedule.domain.QzxyWateringFormat
+import edu.jxslu.schedule.domain.InboxKeys
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.widget.WaterWidgetSync
 import kotlinx.coroutines.CancellationException
@@ -1566,6 +1570,29 @@ class QzxyViewModel(
         log("结算成功：consumeMoney=${result.consumeMoney} 厘，清除=${result.cleared}")
         // 记账要在 clear 之前取：clear 会把 store 里的起点一并清掉
         val startedAt = _uiState.value.watering?.startedAtMillis
+        val wateringDeviceName = _uiState.value.watering?.deviceName
+        // 用水结算留痕收件箱（2026-10-21）：结算金额已到手才投，按记账开始时刻去重。
+        // 旁路纪律：入箱失败不影响结算收尾（clear / 状态落卡照旧）。
+        startedAt?.let { start ->
+            viewModelScope.launch {
+                runCatching {
+                    Graph.inboxRepository(Graph.appContext).post(
+                        kind = InboxKind.QZXY_SESSION,
+                        dedupeKey = InboxKeys.QZXY_PREFIX + start,
+                        title = "用水已结算",
+                        body = buildString {
+                            append(wateringDeviceName?.ifBlank { null } ?: "热水器")
+                            append(" · 实扣 ${milliYuanText(result.consumeMoney)}")
+                            val duration = QzxyWateringFormat.duration(System.currentTimeMillis() - start)
+                            if (duration.isNotBlank()) append(" · 用时 $duration")
+                        },
+                        // 落点 = 趣智页（消费记录 / 账单在那里）；静默留痕不点红点
+                        route = SubpageScreen.QZXY.name,
+                        silent = true,
+                    )
+                }
+            }
+        }
         wateringStore.clear()
         // 桌面趣智开水卡退出「用水中」
         pushWaterWidget()
@@ -2222,7 +2249,7 @@ class QzxyViewModel(
     /** 会话失效统一回登录态；其余错误只提示，不把用户踢下线。 */
     private fun handleFailure(error: Throwable, fallback: String) {
         if (error is QzxySessionExpiredException) {
-            repo.logout()
+            repo.markExpired()
             link.close()
             scanner.stopScan()
             // 用 loggedOutState 而不是空状态：会话失效不等于「这台机器上什么都没发生过」，
@@ -2230,7 +2257,7 @@ class QzxyViewModel(
             // 用空状态还有个副作用：loggedIn 立刻变成 false，随后那条登录态流比较后直接
             // 返回，loggedOutState 永远轮不到执行
             _uiState.update { loggedOutState(it) }
-            notice("登录已失效，请重新登录", NoticeTone.Warning)
+            notice(SessionExpiryStore.NOTICE_TEXT, NoticeTone.Warning)
         } else {
             notice(error.message ?: fallback, NoticeTone.Error)
         }

@@ -24,6 +24,14 @@ enum class InboxKind {
     WENQU_ACTIVITY,
     /** 宿舍报修办结（`DormRepairSync` 打开 App 时对比出状态过渡，2026-10-19）。 */
     DORM_REPAIR,
+    /** 快趣骑行结束（还车结算结果，`performReturnBike` 成功收尾处，2026-10-21）。 */
+    KVCX_RIDE,
+    /** 胖乖开水结算完成（流程落 `Success` 处，2026-10-21）。 */
+    WATER_SESSION,
+    /** 趣智用水结算完成（`QzxyViewModel.handleSettled`，2026-10-21）。 */
+    QZXY_SESSION,
+    /** U净 洗衣完成（`UjingRepository.refreshOrder` 对比出状态过渡，2026-10-21）。 */
+    UJING_ORDER,
 }
 
 /** 收件箱消息的领域模型（`InboxMessageEntity` 的镜像，纯逻辑层可测）。 */
@@ -92,6 +100,28 @@ object InboxKeys {
      * `notifiedIds` 保证正常路径不会重复走到这里。
      */
     const val DORM_REPAIR_PREFIX = "repair|done|"
+
+    /**
+     * 快趣骑行结束：`kvcx|done|` + 车号 + `|` + 还车结算时刻（epoch 毫秒）。
+     * **时刻参与键**：同一辆车两轮骑行是两个事实；时刻来自还车成功那一拍，
+     * 同一次还车的重复投递（重试 / 页面重建）键相同，落更新不重复。
+     */
+    const val KVCX_DONE_PREFIX = "kvcx|done|"
+
+    /**
+     * 胖乖开水结算：`water|` + 订单号（`UnlockResult.orderId`，无则设备号 + 开始秒）。
+     * 每次开水是独立事实，按订单去重；同一次结算的重投落更新。
+     */
+    const val WATER_PREFIX = "water|"
+
+    /**
+     * 趣智用水结算：`qzxy|` + 记账开始时刻（epoch 毫秒，`QzxyWatering.startedAtMillis`）。
+     * 一次开阀一条事实；结算只发生一次（清记账后键不再重投）。
+     */
+    const val QZXY_PREFIX = "qzxy|"
+
+    /** U净 洗衣完成：`ujing|done|` + 订单 id。按单条订单去重，与报修办结同构。 */
+    const val UJING_DONE_PREFIX = "ujing|done|"
 }
 
 /**

@@ -101,6 +101,14 @@ interface InboxDao {
     )
     suspend fun refreshAndReopen(id: Long, title: String, body: String, route: String?, focusItemId: String?, now: Long)
 
+    /** 静默重投（账单类，2026-10-21）：只刷新内容，已读状态保持——不产生未读红点。 */
+    @Query(
+        "UPDATE inbox_messages SET title = :title, body = :body, route = :route, " +
+            "focusItemId = :focusItemId, createdAt = :now " +
+            "WHERE id = :id AND deletedAt IS NULL",
+    )
+    suspend fun refreshSilent(id: Long, title: String, body: String, route: String?, focusItemId: String?, now: Long)
+
     /** 重投命中已删行：只刷新内容，保持已删、不复活（[edu.jxslu.schedule.domain.InboxRules.RefreshDeleted]）。 */
     @Query(
         "UPDATE inbox_messages SET title = :title, body = :body, route = :route, " +

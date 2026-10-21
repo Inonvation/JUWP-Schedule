@@ -1,6 +1,8 @@
 package edu.jxslu.schedule.data.ujing
 
 import edu.jxslu.schedule.data.qiekj.QiekjJson
+import edu.jxslu.schedule.data.session.SessionExpiryStore
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.UjingState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,13 @@ class UjingRepository(
      * 每台设备覆盖一份，供补「投放加购声明字段」等协议样本，见 [dumpProgramInfo]。
      */
     private val debugDumpDir: File? = null,
+    /** 「登录状态已过期」留痕（见 [SessionExpiryStore]）：失效当场写、进页消费。 */
+    private val expiry: SessionExpiryStore? = null,
+    /**
+     * 洗衣完成回调（2026-10-21）：`refreshOrder` 判出「非完成 → 已完成(50)」时调用。
+     * 收件箱留痕走它（Graph 注入），仓库自己不依赖 Context / Room。
+     */
+    private val onWashDone: (suspend (UjingOrderSnapshot) -> Unit)? = null,
 ) {
     private val api = UjingApi.create()
 
@@ -49,12 +58,17 @@ class UjingRepository(
 
     fun logout() {
         sessionStore.clear()
+        expiry?.clear(SessionService.Ujing)
         _loggedIn.value = false
     }
 
-    /** 会话过期（服务端判定）：清 token 留手机号，UI 引导重新登录。 */
+    /**
+     * 会话过期（服务端判定）：清 token 留手机号，并留一条「已过期」标记供下次进页提示
+     * （2026-10-21）。与 [logout] 的区别只在标记——主动退出不该提示过期。
+     */
     fun markExpired() {
         sessionStore.clearToken()
+        expiry?.mark(SessionService.Ujing)
         _loggedIn.value = false
     }
 
@@ -76,6 +90,7 @@ class UjingRepository(
             userId = data.userId.orEmpty(),
         )
         sessionStore.save(session)
+        expiry?.clear(SessionService.Ujing)
         _loggedIn.value = true
         session
     }
@@ -127,9 +142,10 @@ class UjingRepository(
     }
 
     /**
-     * debug 专用：把 `devices/reserve` 的原始响应整包落盘，一店一份。补的样本用途：
-     * 看板只映射了 `device{deviceTypeName,free,total,waitTime}`——`total` 含不含离线设备、
-     * 有没有 online / offline 之类的字段，只有原始响应能答（「烘干机在线状态」要靠它定）。
+     * debug 专用：把 `devices/reserve` 的原始响应整包落盘，一店一份（成功与失败都写）。
+     * 补的样本用途：看板只映射了 `device{deviceTypeName,free,total,waitTime}`——`total`
+     * 含不含离线设备、有没有 online / offline 之类的字段，只有原始响应能答；
+     * 失败时的 `code` / `message` 则用来区分「会话过期」与「指纹组不对」。
      * 响应体不含凭证（token 在请求头），落盘失败静默；release 恒不落盘。
      */
     private fun dumpDevicesReserve(storeId: String, envelope: UjingEnvelope) {
@@ -184,8 +200,10 @@ class UjingRepository(
     suspend fun devicesReserve(storeId: String): List<UjingDeviceGroup> =
         withContext(Dispatchers.IO) {
             val envelope = api.devicesReserve(requireSession().token, storeId)
-            envelope.requireSuccess()
+            // 先落盘再判成功：失败时的 code / message 同样是「看板为什么空」的证据
+            // （2026-10-21 修 ZA/BI 指纹组时就是靠这类样本定位的）。
             dumpDevicesReserve(storeId, envelope)
+            envelope.requireSuccess()
             envelope.decodeData<UjingReserveData>()?.devices.orEmpty().mapNotNull { it.device }
         }
 
@@ -289,6 +307,11 @@ class UjingRepository(
     /**
      * 订单详情 → 刷新在案快照（状态 / 剩余时间 / 支付标记）。
      * 订单到达终结态时保留快照（卡片要展示结果），由 UI 的「知道了」清掉。
+     *
+     * 「非完成 → 已完成(50)」的过渡在这里判一次（[UjingState.transitToWashDone]），
+     * 命中即调 [onWashDone]——这是「数据已到手并完成对比」的收口点，收件箱留痕挂在
+     * 它上面（Graph 注入；去重键按订单 id，页面轮询 / 完成闹钟 / 手动刷新多路到达
+     * 只落一条）。取消（53/60）不算完成，不触发。
      */
     suspend fun refreshOrder(orderId: String): UjingOrderSnapshot = withContext(Dispatchers.IO) {
         val envelope = api.orderDetail(requireSession().token, orderId)
@@ -320,6 +343,9 @@ class UjingRepository(
         orderStore.save(snapshot)
         // 同一笔订单状态变化更新原条目（同 orderId 去重），历史页看到的就是最新状态
         historyStore.upsert(UjingHistoryEntry.fromSnapshot(snapshot))
+        if (UjingState.transitToWashDone(current?.status, snapshot.status)) {
+            onWashDone?.invoke(snapshot)
+        }
         snapshot
     }
 

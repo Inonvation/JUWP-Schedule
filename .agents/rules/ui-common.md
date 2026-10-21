@@ -107,10 +107,10 @@
   **只在首次组合播一次**）：只包「一直存在的主区块」，别包由 `AnimatedVisibility`
   管出现/消失的块——两套动画叠加会打架。
 - **卡片里放列表用平铺行，不许再套卡**（2026-10-09，用户反馈笔记/作业库「气泡套气泡」）：
-  组卡展开区的条目走 `NoteRow(embedded = true)` / `HomeworkRow(embedded = true)` 这类
-  平铺行——无卡底、无描边、整行涟漪，行间与头行下用 `AppCardDivider` 分隔
-  （同口径的既有实现：流水 `TurnoverRow`、电费明细 `BillRow`，卡内直排 + 细线）。
-  平铺行自己 `clickable` + `rememberAppHaptics`，不要再包 `AppCard` / `AppCardRow`。
+  组卡展开区的条目走 `HomeworkItemBlock` / `NoteItemBlock` 这类平铺详情块——无卡底、无描边、
+  整块涟漪，行间与头行下用 `AppCardDivider` 分隔（同口径的既有实现：流水 `TurnoverRow`、
+  电费明细 `BillRow`，卡内直排 + 细线）。平铺块自己 `clickable` + `rememberAppHaptics`，
+  不要再包 `AppCard` / `AppCardRow`。
 
 ## 金额大字只有一处定义
 

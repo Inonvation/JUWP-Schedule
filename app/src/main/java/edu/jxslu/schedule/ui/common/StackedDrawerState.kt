@@ -35,7 +35,7 @@ class StackedDrawerState(
     private val dragThresholdPx: Float,
     /** 方向锁：水平位移超过它才锁定方向，避免纵向滚动被误判。 */
     private val directionLockPx: Float,
-    /** 手势落定（动画播完）后的回调，参数为落定后的开合状态。 */
+    /** 手势落定（动画播完）后的回调，参数为落定后的开合状态；**只在状态真的变化时调用**（触感口径）。 */
     private val onSettled: (Boolean) -> Unit = {},
 ) {
     private val anim = Animatable(0f)
@@ -99,6 +99,10 @@ class StackedDrawerState(
     fun settle(velocity: Float) {
         if (!dragging) return
         dragging = false
+        // 落定前记住原来的开合态：只有真的开→关 / 关→开才回调 onSettled（触感）。
+        // 关着时往左滑（drag 被夹到 0）也走 settle，但状态没变——此前照样震一下，
+        // 读起来像「左滑也开抽屉」。
+        val wasOpen = intentOpen
         val target = when {
             dragBase > 0.5f -> {
                 // 已开：反向拉回、位移超阈值、或快速左甩 → 关
@@ -115,6 +119,7 @@ class StackedDrawerState(
             }
         }
         intentOpen = target > 0f
+        val stateChanged = (target > 0f) != wasOpen
         settleJob?.cancel()
         settleJob = scope.launch {
             val v = velocity / maxOffsetPx
@@ -125,7 +130,7 @@ class StackedDrawerState(
             else v.coerceIn(-abs(remaining) * omega, abs(remaining) * omega)
             anim.animateTo(target, springSpec, initialVelocity = initial)
             isOpen = target > 0f
-            onSettled(isOpen)
+            if (stateChanged) onSettled(isOpen)
         }
     }
 

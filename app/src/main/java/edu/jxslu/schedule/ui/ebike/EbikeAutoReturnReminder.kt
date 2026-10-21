@@ -153,6 +153,9 @@ object EbikeAutoReturnReminder {
         when (result) {
             is AutoReturnResult.Returned -> {
                 AppKvcxSideEffects.recordRide(result.summary)
+                // 骑行结束留痕收件箱（与手动还车同一份口径，见 postKvcxReturnInbox；
+                // 该函数内部对入箱失败吞错，这里再兜一层防构造路径抛错打断善后）
+                runCatching { postKvcxReturnInbox(result.summary, endedAt = System.currentTimeMillis()) }
                 EbikeRideSignal.notifyEnded("已自动还车，订单已结束")
                 EbikeAutoReturnNotifier.postSuccess(
                     app,

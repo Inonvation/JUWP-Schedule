@@ -70,6 +70,7 @@ import edu.jxslu.schedule.data.qzxy.QzxyBluetoothScanner
 import edu.jxslu.schedule.data.qzxy.QzxyBoundDevice
 import edu.jxslu.schedule.data.qzxy.QzxyDeviceInfo
 import edu.jxslu.schedule.data.qzxy.QzxyScannedDevice
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.QzxyWatering
 import edu.jxslu.schedule.domain.QzxyWateringFormat
 import edu.jxslu.schedule.domain.QzxyPhoneMask
@@ -82,6 +83,7 @@ import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
+import edu.jxslu.schedule.ui.common.SessionExpiredNotice
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -132,6 +134,9 @@ fun QzxyScreen(
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 上次在别处判定登录过期：进页说一句为什么退回登录表单（只提示一次）
+    SessionExpiredNotice(SessionService.Qzxy, state.loggedIn, snackbar)
     val haptics = rememberAppHaptics()
     var showDeviceSheet by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }

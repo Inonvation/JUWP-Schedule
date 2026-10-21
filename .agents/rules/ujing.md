@@ -57,8 +57,13 @@
 
 - 网关 `https://phoenix.ujing.online/api/v1`，壳 `{code, message, data}`，`code == 0` 成功；
   `401 / -99` = 会话过期（`UjingSessionExpiredException`）。
-- 两组「客户端指纹」：取码/登录 `x-app-code: ZI`（2.4.3）、业务 `BI`（2.4.2）+ `weex-version`。
-  **没有客户端签名**（无需逆向任何加密函数）。服务端对 code 宽容（ZA/BA 亦可用）。
+- **三组「客户端指纹」**（2026-10-21 修正）：取码/登录 `ZI`（2.4.3）；门店查询
+  `stores/near` / `devices/reserve` 用 `ZA`（2.4.18，**不带 weex / UA**）；业务
+  （扫码 / 套餐 / 订单）`BI`（2.4.2）+ `weex-version: 1.1.30`。
+  **看板取不到数先查这一组**：此前门店查询跟 BI 一起发，`devices/reserve` 回 401，
+  仓库按会话过期清了 token，重登后再 401——现象就是「看板一直空、刷新无效」。
+  **没有客户端签名**（无需逆向任何加密函数）。服务端对 code 宽容（ZA/BA 亦可用），
+  但门店查询组用 ZA 是社区实测定论（liteU / DUT-Ujing，2026-09-30）。
 - 服务端收紧校验时**先改 `UjingApiConfig`**（版本号 / UA / 头组合），改前重新抓包对齐。
 - 注意平台把经度拼成 **`lont`**；`devices/scanWasherCode` 必须传**二维码原始内容**（勿预提取 uuid）。
 
@@ -72,7 +77,9 @@
    不允许叠单**（主页 `confirmPreparedOrder` 先拦，下单页确认弹层是二次确认）。
 3. **登录节制**：只在用户主动点「获取验证码」时发码（60 秒冷却，UI 与 ViewModel 双保险）；
    短时间高频登录会被服务端限制数十分钟（实测）。会话过期**绝不自动重登**——清 token 留手机号，
-   由用户重新登录（`UjingRepository.markExpired`）。
+   由用户重新登录（`UjingRepository.markExpired`）。`markExpired()` 同时留一条「已过期」
+   标记，下次进 U净页由 `SessionExpiredNotice` 提示（口径见 `login-session.md`；
+   主动 `logout()` 清标记，不提示）。
 4. **不后台轮询**：看板只在进页 / 手动刷新时拉取；订单轮询限"页面可见 + 15 秒"（`LaunchedEffect`
    随组合取消）；完成提醒用 `setAlarmClock`（洗涤中按剩余、已支付未运行按模式总时长兜底，
    兜底早响时 check 按新剩余重排），到点也只查**一次**订单详情，不是轮询。

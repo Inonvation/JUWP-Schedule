@@ -19,8 +19,8 @@ import java.util.concurrent.TimeUnit
  * U净 裸 OkHttp 客户端（DESIGN §4.37）。
  *
  * 形态与 [edu.jxslu.schedule.data.kqcx.KqcxAuthClient] 同款：私有构造 + `create()`、
- * 手写指纹头、解析交宽容序列化。**不用 Retrofit**：请求头分两组（鉴权前 ZI / 鉴权后
- * BI），按调用点显式切换比在拦截器里猜 URL 直白。
+ * 手写指纹头、解析交宽容序列化。**不用 Retrofit**：请求头分三组（鉴权前 ZI / 门店查询
+ * ZA / 业务 BI），按调用点显式切换比在拦截器里猜 URL 直白。
  *
  * 红线：
  * - **无日志拦截器**——token 绝不进 Logcat（对齐一卡通 / 电费 / 快趣）；
@@ -85,7 +85,7 @@ class UjingApi private constructor(private val http: OkHttpClient) {
     suspend fun storesNear(token: String, lat: Double, lng: Double): UjingEnvelope = request(
         method = "GET",
         path = "stores/near",
-        identity = Identity.Business,
+        identity = Identity.Query,
         token = token,
         query = mapOf(
             "lat" to lat.toString(),
@@ -101,7 +101,7 @@ class UjingApi private constructor(private val http: OkHttpClient) {
     suspend fun devicesReserve(token: String, storeId: String): UjingEnvelope = request(
         method = "GET",
         path = "devices/reserve",
-        identity = Identity.Business,
+        identity = Identity.Query,
         token = token,
         query = mapOf("storeId" to storeId),
     )
@@ -211,7 +211,7 @@ class UjingApi private constructor(private val http: OkHttpClient) {
         token = token,
     )
 
-    private enum class Identity { Account, Business }
+    private enum class Identity { Account, Query, Business }
 
     private suspend fun request(
         method: String,
@@ -243,6 +243,12 @@ class UjingApi private constructor(private val http: OkHttpClient) {
                 .header("x-app-code", UjingApiConfig.APP_CODE_ACCOUNT)
                 .header("x-app-version", UjingApiConfig.APP_VERSION_ACCOUNT)
                 .header("User-Agent", UjingApiConfig.UA_ACCOUNT)
+
+            // 门店查询组：只带 code/version（对齐社区实测的可用形态），
+            // 不混入业务组的 weex / UA —— 混着发就是本轮回 401 的那版。
+            Identity.Query -> builder
+                .header("x-app-code", UjingApiConfig.APP_CODE_QUERY)
+                .header("x-app-version", UjingApiConfig.APP_VERSION_QUERY)
 
             Identity.Business -> builder
                 .header("x-app-code", UjingApiConfig.APP_CODE_BUSINESS)

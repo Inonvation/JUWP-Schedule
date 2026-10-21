@@ -10,6 +10,10 @@ import edu.jxslu.schedule.data.kqcx.KqcxSessionRepository
 import edu.jxslu.schedule.data.kqcx.KqxCredentialStore
 import edu.jxslu.schedule.data.kqcx.KqcxBikeClient
 import edu.jxslu.schedule.data.kqcx.ZoneCacheStore
+import edu.jxslu.schedule.domain.InboxKeys
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.ui.ebike.KvcxNotice
+import edu.jxslu.schedule.ui.ebike.KvcxRideController
 import edu.jxslu.schedule.data.power.PowerClient
 import edu.jxslu.schedule.data.power.PowerDebugDump
 import edu.jxslu.schedule.data.power.PowerHistoryCache
@@ -21,6 +25,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.qiekj.QiekjOrderHistoryStore
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.QiekjTokenStore
+import edu.jxslu.schedule.data.qiekj.QiekjWateringStore
 import edu.jxslu.schedule.data.qzxy.QzxyRepository
 import edu.jxslu.schedule.data.qzxy.QzxyDeviceStore
 import edu.jxslu.schedule.data.qzxy.QzxyDebugStore
@@ -79,6 +84,7 @@ import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.repo.TranscriptStore
 import edu.jxslu.schedule.data.session.CasSession
 import edu.jxslu.schedule.data.session.CredentialVault
+import edu.jxslu.schedule.data.session.SessionExpiryStore
 import edu.jxslu.schedule.data.ykt.YktClient
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktRepository
@@ -86,6 +92,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 object Graph {
     /**
@@ -124,6 +131,9 @@ object Graph {
 
     @Volatile
     private var qiekjRepository: QiekjRepository? = null
+
+    @Volatile
+    private var sessionExpiryStore: SessionExpiryStore? = null
 
     @Volatile
     private var qzxyRepository: QzxyRepository? = null
@@ -582,6 +592,16 @@ object Graph {
                 .also { campusCalendarStore = it }
         }
 
+    /**
+     * 各功能「登录状态已过期」留痕（2026-10-21）：仓库在判定失效时写、页面进页时消费，
+     * 见 [SessionExpiryStore]。进程级单例，多个窗口共用一份标记。
+     */
+    fun sessionExpiry(context: Context): SessionExpiryStore =
+        sessionExpiryStore ?: synchronized(this) {
+            sessionExpiryStore ?: SessionExpiryStore(context.applicationContext)
+                .also { sessionExpiryStore = it }
+        }
+
     /** 胖乖仓库单例（DESIGN §4.10）：Retrofit client 只建一次，token 存加密 prefs。 */
     fun qiekj(context: Context): QiekjRepository =
         qiekjRepository ?: synchronized(this) {
@@ -591,6 +611,7 @@ object Graph {
                 // debug 专用：只读查询与开水链路的响应原文落盘，供确认设备状态字段
                 debugDumpDir = File(context.applicationContext.filesDir, "qiekj_debug")
                     .takeIf { BuildConfig.DEBUG },
+                expiry = sessionExpiry(context.applicationContext),
             ).also { qiekjRepository = it }
         }
 
@@ -603,6 +624,7 @@ object Graph {
             kqcxSession ?: KqcxSessionRepository(
                 KqcxAuthClient.create(),
                 KqxCredentialStore(context.applicationContext),
+                expiry = sessionExpiry(context.applicationContext),
             ).also { kqcxSession = it }
         }
 
@@ -610,6 +632,10 @@ object Graph {
      * U净 仓库单例（DESIGN §4.37）。同为第三方的独立会话：token 落加密 prefs
      * （secure_ujing.xml，已排除备份），与胖乖 / 趣智 / 快趣各存一份，互不牵连。
      * 在案订单快照同属进程级状态（跨窗口 / 跨进程恢复），随仓库单例持有。
+     *
+     * `onWashDone`（2026-10-21）：`refreshOrder` 判出「非完成 → 已完成(50)」时把
+     * 完成事实写进收件箱（`InboxKind.UJING_ORDER`，键按订单 id，多路到达只落一条）。
+     * 回调内部吞错：留痕失败不影响订单刷新主链路。
      */
     fun ujing(context: Context): UjingRepository =
         ujingRepository ?: synchronized(this) {
@@ -620,6 +646,18 @@ object Graph {
                 // debug 专用：扫码后把 program/info 原始响应落盘，供补投放加购的协议样本
                 debugDumpDir = File(context.applicationContext.filesDir, "ujing_debug")
                     .takeIf { BuildConfig.DEBUG },
+                expiry = sessionExpiry(context.applicationContext),
+                onWashDone = { snapshot ->
+                    inboxRepository(context).post(
+                        kind = InboxKind.UJING_ORDER,
+                        dedupeKey = InboxKeys.UJING_DONE_PREFIX + snapshot.orderId,
+                        title = "衣服洗好了",
+                        body = "「${snapshot.deviceName.ifBlank { "洗衣机" }}」的洗衣已结束，记得取衣服。",
+                        // 落点 = U净 历史账单页（这笔账就在那里）；静默留痕不产生未读红点
+                        route = SubpageScreen.UJING_HISTORY.name,
+                        silent = true,
+                    )
+                },
             ).also { ujingRepository = it }
         }
 
@@ -652,8 +690,10 @@ object Graph {
      */
     fun qzxy(context: Context): QzxyRepository =
         qzxyRepository ?: synchronized(this) {
-            qzxyRepository ?: QzxyRepository(QzxySessionStore(context.applicationContext))
-                .also { qzxyRepository = it }
+            qzxyRepository ?: QzxyRepository(
+                QzxySessionStore(context.applicationContext),
+                sessionExpiry(context.applicationContext),
+            ).also { qzxyRepository = it }
         }
 
     /**
@@ -664,8 +704,10 @@ object Graph {
      */
     fun wenqu(context: Context): WenquRepository =
         wenquRepository ?: synchronized(this) {
-            wenquRepository ?: WenquRepository(WenquCredentialStore(context.applicationContext))
-                .also { wenquRepository = it }
+            wenquRepository ?: WenquRepository(
+                WenquCredentialStore(context.applicationContext),
+                expiry = sessionExpiry(context.applicationContext),
+            ).also { wenquRepository = it }
         }
 
     /** 趣智校园已绑定设备（DESIGN §4.30）。纯本地偏好，与登录会话分开存。 */
@@ -714,6 +756,22 @@ object Graph {
         qzxyWateringStore ?: synchronized(this) {
             qzxyWateringStore ?: QzxyWateringStore(context.applicationContext)
                 .also { qzxyWateringStore = it }
+        }
+
+    @Volatile
+    private var qiekjWateringStore: QiekjWateringStore? = null
+
+    /**
+     * 胖乖进行中的开水（2026-10-21，DESIGN §4.10）。
+     *
+     * **必须是单例**：今日页（MainActivity 的 ViewModel）与开水页（二级页的另一份
+     * ViewModel）各持一份 `UnlockFlowState.Working`，互相看不见；「正在出水」的事实
+     * 收进这条落盘 StateFlow，今日页服务卡 / 侧栏高亮 / 开水页展示才一致。
+     */
+    fun qiekjWatering(context: Context): QiekjWateringStore =
+        qiekjWateringStore ?: synchronized(this) {
+            qiekjWateringStore ?: QiekjWateringStore(context.applicationContext)
+                .also { qiekjWateringStore = it }
         }
 
     /**
@@ -765,6 +823,34 @@ object Graph {
         yktRepository ?: synchronized(this) {
             yktRepository ?: YktRepository(YktClient.create(), credentialVault(context))
                 .also { yktRepository = it }
+        }
+
+    /**
+     * 本机用车编排单例（DESIGN §4.32，2026-10-21）：骑行状态与开锁 / 锁车 / 还车动作
+     * 全进程一份。此前归 BikeMapViewModel 私有——今日页「进行中服务」卡要展示骑行状态
+     * 并直接执行写动作，两个实例会各查各的、互相覆盖（旧包晚到正是控制器里
+     * `snapshotSeq` / `readSeq` 防的事）。作用域用 [appScope]：还车链路（结算查询）
+     * 不再依赖某个页面活着；notice / unlocked 经共享流转发给各消费方。
+     */
+    @Volatile
+    private var kvcxRide: KvcxRideController? = null
+
+    fun kvcxRide(context: Context): KvcxRideController =
+        kvcxRide ?: synchronized(this) {
+            kvcxRide ?: run {
+                val scope = appScope
+                val notices = MutableSharedFlow<KvcxNotice>(extraBufferCapacity = 8)
+                val unlocked = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+                KvcxRideController(
+                    session = runCatching { kqcx(context) }.getOrNull(),
+                    scope = scope,
+                    // 事件只走共享流（控制器见流即不再回调；这里给空实现防重复投递）
+                    onNotice = { _, _ -> },
+                    onUnlocked = {},
+                    rideNotices = notices,
+                    rideUnlocked = unlocked,
+                )
+            }.also { kvcxRide = it }
         }
 
     /**

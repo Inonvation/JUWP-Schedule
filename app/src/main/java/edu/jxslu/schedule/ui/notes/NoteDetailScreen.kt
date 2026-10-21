@@ -4,15 +4,18 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,14 +30,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.domain.Note
@@ -42,12 +47,12 @@ import edu.jxslu.schedule.domain.imageRefs
 import edu.jxslu.schedule.domain.removeImageRef
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
-import edu.jxslu.schedule.ui.common.AttachmentStrip
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
-import edu.jxslu.schedule.ui.common.MarkdownEditor
+import edu.jxslu.schedule.ui.common.MarkdownEditorBottomBar
+import edu.jxslu.schedule.ui.common.MarkdownEditorField
 import edu.jxslu.schedule.ui.common.MarkdownView
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.TitleTextField
@@ -57,24 +62,24 @@ import edu.jxslu.schedule.ui.common.rememberImageInserter
 import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.Eye
+import me.rerere.hugeicons.stroke.MoreVertical
 import me.rerere.hugeicons.stroke.PencilEdit02
 
 /**
- * 笔记详情/编辑（DESIGN §3.11）：**单页双态**。
+ * 笔记详情/编辑（DESIGN §3.11）：**单页双态**，2026-10-21 重排。
  *
- * 查看态 = 渲染 Markdown/公式/图片（图片点开全屏）；编辑态 = 标题 + 附件条 + 编辑器
- * （工具条 + 自动补全，规格见 `domain/MarkdownEdit.kt`）。删除只在详情页（确认弹窗），
- * 列表不放开删除入口，防误触。
- *
- * 保存是显式动作（顶栏「保存」），返回时若有未保存修改给确认弹窗——与 `CourseEditSheet` 同口径。
+ * 编辑态 = 标题固定 + 正文输入框占满剩余高度（内部滚动），附件条与工具条放
+ * `Scaffold.bottomBar` 并 `imePadding()`；预览态 = 标题 + 创建/更新时间 + MarkdownView。
+ * 保存语义与作业一致：保存 = 落库 + 切回预览 + 「已保存」+ 留在本页。
+ * 删除收进溢出菜单（列表不放开删除入口，防误触）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteDetailScreen(
     courseName: String,
     noteId: Long,
+    startEditing: Boolean = false,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -100,9 +105,13 @@ fun NoteDetailScreen(
     var body by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
-    var editing by rememberSaveable { mutableStateOf(noteId == 0L) }
+    var editing by rememberSaveable { mutableStateOf(noteId == 0L || startEditing) }
     var loadedFromDb by rememberSaveable { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(noteId == 0L) }
+    var viewer by remember { mutableStateOf<String?>(null) }
+    var showDelete by remember { mutableStateOf(false) }
+    var showDiscard by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     // 从查看态点铅笔进编辑后主动聚焦标题（光标在末尾），省一次点击；
     // loaded 守卫：载入中标题框还没组合，requestFocus 会抛 FocusRequester not initialized
     val titleFocus = remember { FocusRequester() }
@@ -112,9 +121,6 @@ fun NoteDetailScreen(
             title = title.copy(selection = TextRange(title.text.length))
         }
     }
-    var viewer by remember { mutableStateOf<String?>(null) }
-    var showDelete by remember { mutableStateOf(false) }
-    var showDiscard by remember { mutableStateOf(false) }
 
     LaunchedEffect(noteId) {
         if (noteId > 0) {
@@ -127,7 +133,7 @@ fun NoteDetailScreen(
                     createdAt = note.createdAt
                     title = TextFieldValue(note.title)
                     body = TextFieldValue(note.body)
-                    editing = false
+                    editing = noteId == 0L || startEditing
                 }
                 loadedFromDb = true
             }
@@ -169,14 +175,24 @@ fun NoteDetailScreen(
                 }
                 val refreshed = base.copy(id = if (base.id > 0) base.id else id, title = newTitle, body = newBody)
                 // 新笔记的首存时间由仓库盖；展示与后续保存都以「现在」为准（重建后也不会变回 0）
-                original = if (base.id > 0) refreshed else refreshed.copy(createdAt = now)
+                original = if (base.id > 0) {
+                    refreshed.copy(updatedAt = now)
+                } else {
+                    refreshed.copy(createdAt = now, updatedAt = now)
+                }
                 savedId = original!!.id
                 createdAt = original!!.createdAt
-                showNotice("已保存", NoticeTone.Success)
                 onSaved()
             } finally {
                 busy = false
             }
+        }
+    }
+
+    fun saveAndPreview() {
+        save {
+            editing = false
+            showNotice("已保存", NoticeTone.Success)
         }
     }
 
@@ -202,12 +218,46 @@ fun NoteDetailScreen(
     // 返回有未保存修改：先确认（不让用户白写一场）
     BackHandler(enabled = dirty) { showDiscard = true }
 
+    // 图片插入：Photo Picker → 私有目录 → 光标处插引用（零权限，DESIGN §4.20）
+    val pickImages = rememberImageInserter(
+        value = body,
+        onValueChange = { body = it },
+        onNotice = showNotice,
+    )
+
+    val created = original?.createdAt ?: createdAt
+    val updated = original?.updatedAt ?: created
+    val dateText = when {
+        original == null -> "新笔记"
+        updated > created -> "创建于 ${epochMonthDay(created)} · 更新于 ${epochMonthDay(updated)}"
+        else -> "创建于 ${epochMonthDay(created)}"
+    }
+    val topSubtitle = if (original == null) {
+        "笔记 · 新建"
+    } else {
+        "笔记 · 更新于 ${epochMonthDay(updated)}"
+    }
+
     Scaffold(
         snackbarHost = { AppSnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
-                    Text(if (savedId > 0) "笔记" else "新建笔记")
+                    Column {
+                        Text(
+                            text = courseName,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = topSubtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 },
                 navigationIcon = {
                     IconButton(
@@ -232,7 +282,7 @@ fun NoteDetailScreen(
                         TextButton(
                             onClick = {
                                 haptics.tap()
-                                save()
+                                saveAndPreview()
                             },
                             enabled = (dirty || original == null) && !busy,
                         ) {
@@ -248,13 +298,37 @@ fun NoteDetailScreen(
                             Icon(HugeIcons.PencilEdit02, contentDescription = "编辑")
                         }
                     }
-                    if (original != null) {
-                        IconButton(onClick = { showDelete = true }) {
-                            Icon(HugeIcons.Delete02, contentDescription = "删除")
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(HugeIcons.MoreVertical, contentDescription = "更多")
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            if (original != null) {
+                                DropdownMenuItem(
+                                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        menuOpen = false
+                                        showDelete = true
+                                    },
+                                )
+                            }
                         }
                     }
                 },
             )
+        },
+        bottomBar = {
+            if (editing) {
+                MarkdownEditorBottomBar(
+                    value = body,
+                    onValueChange = { body = it },
+                    onPickImages = pickImages,
+                    onRemoveImage = { name ->
+                        body = TextFieldValue(removeImageRef(body.text, name))
+                    },
+                    onOpenImage = { viewer = it },
+                )
+            }
         },
     ) { padding ->
         if (!loaded) {
@@ -262,63 +336,68 @@ fun NoteDetailScreen(
             return@Scaffold
         }
 
-        // 图片插入：Photo Picker → 私有目录 → 光标处插引用（零权限，DESIGN §4.20）
-        val pickImages = rememberImageInserter(
-            value = body,
-            onValueChange = { body = it },
-            onNotice = showNotice,
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // 标题 + 创建日期成组（4dp）：日期属于标题的副信息，不该和正文抢同一层间距
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (editing) {
+        if (editing) {
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     TitleTextField(
                         value = title,
                         onValueChange = { title = it },
                         placeholder = "标题（可空）",
                         focusRequester = titleFocus,
                     )
-                } else {
                     Text(
-                        text = title.text.ifBlank { "未命名笔记" },
-                        style = MaterialTheme.typography.headlineSmall,
+                        text = dateText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     )
                 }
+                MarkdownEditorField(
+                    value = body,
+                    onValueChange = { body = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    placeholder = "写点什么…支持 Markdown 与 \$ 公式",
+                    // 外层 weight(1f) 已经给足高度；这里不再设 min，键盘弹起时不会把底栏顶出去
+                    minHeight = 0.dp,
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
-                    text = original?.let { "创建于 ${epochMonthDay(it.createdAt)}" } ?: "新笔记",
+                    text = title.text.ifBlank { "未命名笔记" },
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    text = dateText,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
-            }
-
-            if (editing) {
-                val refs = imageRefs(body.text).toList()
-                AttachmentStrip(
-                    fileNames = refs,
-                    onRemove = { name ->
-                        body = TextFieldValue(removeImageRef(body.text, name))
-                    },
-                    onOpen = { viewer = it },
-                )
-                MarkdownEditor(
-                    value = body,
-                    onValueChange = { body = it },
-                    onPickImages = pickImages,
-                )
-            } else {
                 if (body.text.isBlank()) {
-                    EmptyHint(title = "笔记是空的", body = "点右上角铅笔进入编辑。")
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        EmptyHint(title = "笔记是空的", body = "点右上角铅笔进入编辑。")
+                    }
                 } else {
                     MarkdownView(
                         markdown = body.text,
+                        modifier = Modifier.padding(top = 8.dp),
                         onImageClick = { viewer = it },
                         onLinkClick = { url ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -341,7 +420,6 @@ fun NoteDetailScreen(
             title = { Text("删除这篇笔记？") },
             text = {
                 // 弹窗进出场动画：必须在弹窗窗口自己的组合里（内容槽第一行）。
-                // 写在 AlertDialog 外面拿到的是页面窗口，与不调用等价（ui-common.md）。
                 DialogWindowFadeEffect()
                 Text("删除后无法恢复（正文里的图片会一并清理）。")
             },
@@ -367,7 +445,6 @@ fun NoteDetailScreen(
             title = { Text("放弃未保存的修改？") },
             text = {
                 // 弹窗进出场动画：必须在弹窗窗口自己的组合里（内容槽第一行）。
-                // 写在 AlertDialog 外面拿到的是页面窗口，与不调用等价（ui-common.md）。
                 DialogWindowFadeEffect()
                 Text("这篇笔记有改动还没保存。")
             },
@@ -385,7 +462,7 @@ fun NoteDetailScreen(
                 TextButton(
                     onClick = {
                         showDiscard = false
-                        save()
+                        save { onBack() }
                     },
                 ) {
                     Text("保存")

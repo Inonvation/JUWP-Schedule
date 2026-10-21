@@ -13,6 +13,7 @@ internal object SubpageExtras {
     const val FOCUS_ITEM = "focus_item"
     const val COURSE_NAME = "course_name"
     const val ITEM_ID = "item_id"
+    const val START_EDITING = "start_editing"
 }
 
 /**
@@ -31,12 +32,15 @@ internal data class SubpageRequest(
     val focusItemId: String? = null,
     val courseName: String? = null,
     val itemId: Long = 0L,
+    /** 笔记/作业详情：true = 直接进编辑态（列表铅笔入口）。 */
+    val startEditing: Boolean = false,
 ) {
     fun applyTo(intent: Intent): Intent = intent.apply {
         putExtra(SubpageExtras.SCREEN, screen.name)
         if (focusItemId != null) putExtra(SubpageExtras.FOCUS_ITEM, focusItemId)
         if (courseName != null) putExtra(SubpageExtras.COURSE_NAME, courseName)
         if (itemId != 0L) putExtra(SubpageExtras.ITEM_ID, itemId)
+        if (startEditing) putExtra(SubpageExtras.START_EDITING, true)
     }
 
     companion object {
@@ -68,9 +72,10 @@ internal data class SubpageRequest(
             focusItemId: String? = null,
             courseName: String? = null,
             itemId: Long = 0L,
+            startEditing: Boolean = false,
         ): SubpageRequest? =
             screenOf(screenName)?.let { screen ->
-                SubpageRequest(screen, focusItemId, courseName, itemId)
+                SubpageRequest(screen, focusItemId, courseName, itemId, startEditing)
             }
 
         fun from(intent: Intent?): SubpageRequest? = of(
@@ -78,6 +83,7 @@ internal data class SubpageRequest(
             focusItemId = intent?.getStringExtra(SubpageExtras.FOCUS_ITEM),
             courseName = intent?.getStringExtra(SubpageExtras.COURSE_NAME),
             itemId = intent?.getLongExtra(SubpageExtras.ITEM_ID, 0L) ?: 0L,
+            startEditing = intent?.getBooleanExtra(SubpageExtras.START_EDITING, false) ?: false,
         )
     }
 }

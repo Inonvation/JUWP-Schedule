@@ -2,6 +2,33 @@
 
 作用域：改笔记/课件、作业、自研 Markdown 与 TeX 渲染、课程备注搬运时读。规格见 DESIGN §3.11 / §4.20。
 
+## 列表展开区只走详情块
+
+- 作业/笔记库与课程页的条目**只有一条实现**：`HomeworkItemBlock` / `NoteItemBlock`
+  （2026-10-21）。作业块渲染完整正文 + 72dp 缩略图，笔记块渲染标题 + 更新时间 +
+  2 行摘要 + 44dp 缩略图；不要再回到「一行摘要 + 点进详情」的旧 `HomeworkRow` / `NoteRow`。
+- 作业标题行从正文里摘掉的口径只有 `domain/Homework.kt` 的 `homeworkDisplay(detail)`：
+  `title` 给列表头行，`body` 给展开区正文；**不要**在 UI 里再写一份「第一行」判断。
+- 列表图片只走 `AttachmentThumbnailRow`（240px 解码、LRU）；详情页才用
+  `AttachmentImage` 的满宽 1080px。把满宽图搬进列表会内存与滚动双爆。
+
+## 编辑器底栏固定在键盘上缘
+
+- 正文工具条与附件条放在 `Scaffold(bottomBar = { MarkdownEditorBottomBar(...) })`，
+  底栏内部用 `WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)`（键盘 + 手势条取并集）。
+  **不要**再把工具条塞回正文的 `verticalScroll`——长文写到下半段时它会在键盘后面。
+- 编辑态正文框占满剩余高度（`weight(1f)`）并内部滚动；标题/截止 chips 固定在顶部。
+  预览态才整页滚动。
+
+## 保存语义只有一套
+
+- 保存 = 落库 + 切回预览 + 「已保存」+ **留在本页**；返回时才退出（dirty 弹确认）。
+  作业与笔记一致，不要再出现「作业保存后直接 onBack、笔记留在原地」两套。
+- 作业的**截止日期与完成状态是离散状态，改动即落库**（`setDueDate` / `setDone` 定向 UPDATE），
+  只有正文需要显式保存。改截止时不要整行回写，否则会覆盖正文的并发编辑。
+- 列表铅笔入口走 `SubpageExtras.START_EDITING`（`SubpageRequest.startEditing`），
+  详情页初始 `editing = id == 0L || startEditing`；不要另开一条「编辑页」路由。
+
 ## 课程备注属于课程行
 
 - 课程备注（DESIGN §4.3）属于**课程行**（同一门课的不同时段各写各的），存储在 `courses.remark`；

@@ -211,6 +211,10 @@ interface HomeworkDao {
     @Query("UPDATE homework SET done = :done, doneAt = :doneAt, updatedAt = :updatedAt WHERE id = :id")
     suspend fun setDone(id: Long, done: Boolean, doneAt: Long?, updatedAt: Long)
 
+    /** 只改截止日期：定向 UPDATE，不整行回写（详情页改截止时不覆盖正文）。 */
+    @Query("UPDATE homework SET dueDate = :dueDate, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setDueDate(id: Long, dueDate: String?, updatedAt: Long)
+
     @Query("DELETE FROM homework WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

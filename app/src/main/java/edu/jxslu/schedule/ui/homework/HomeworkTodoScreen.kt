@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.ui.homework
 
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,11 +23,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
@@ -33,9 +38,12 @@ import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.Homework
 import edu.jxslu.schedule.domain.homeworkDisplayTitle
 import edu.jxslu.schedule.domain.pendingHomework
+import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.EmptyHint
+import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.LoadingHint
+import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SectionHeader
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.showNotice
@@ -58,7 +66,7 @@ import java.time.LocalDate
 @Composable
 fun HomeworkTodoScreen(
     onBack: () -> Unit,
-    onOpenHomework: (courseName: String, id: Long) -> Unit,
+    onOpenHomework: (courseName: String, id: Long, startEditing: Boolean) -> Unit,
     onOpenLibrary: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -73,6 +81,21 @@ fun HomeworkTodoScreen(
     // 默认全展开：collapsed 集合记录用户手动收起的课程（与「默认展开」语义对齐）
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     val pending = remember(all) { all?.let { pendingHomework(it, today) } }
+    val listState = rememberLazyListState()
+    var viewer by remember { mutableStateOf<String?>(null) }
+    val revealSpacePx = with(LocalDensity.current) { 240.dp.toPx() }
+
+    /** 展开时只补足下方缺的空间（与作业库同款）。 */
+    fun scrollToReveal(key: String) {
+        val layout = listState.layoutInfo
+        val info = layout.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        val leftover = layout.viewportEndOffset - (info.offset + info.size)
+        val need = revealSpacePx - leftover
+        if (need <= 0f) return
+        val maxScroll = (info.offset - layout.viewportStartOffset).coerceAtLeast(0).toFloat()
+        val delta = minOf(need, maxScroll)
+        if (delta > 0f) scope.launch { listState.animateScrollBy(delta) }
+    }
 
     Scaffold(
         snackbarHost = { AppSnackbarHost(snackbar) },
@@ -107,6 +130,7 @@ fun HomeworkTodoScreen(
                 // 按课程分组，组内已按统一口径排序；组间按组内最早截止（逾期组天然在前）
                 val byCourse = summary.items.groupBy { it.courseName }
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -125,9 +149,11 @@ fun HomeworkTodoScreen(
                             onToggle = {
                                 haptics.tap()
                                 collapsed[courseName] = expanded
+                                if (!expanded) scrollToReveal(courseName)
                             },
                             onAdd = null,
-                            onOpenItem = { id -> onOpenHomework(courseName, id) },
+                            onOpenItem = { id -> onOpenHomework(courseName, id, false) },
+                            onEditItem = { id -> onOpenHomework(courseName, id, true) },
                             onToggleItem = { id, done ->
                                 scope.launch {
                                     repo.setDone(id, done)
@@ -147,10 +173,24 @@ fun HomeworkTodoScreen(
                                     }
                                 }
                             },
+                            onImageClick = { viewer = it },
+                            onLinkClick = { url ->
+                                if (!openLink(context, url)) {
+                                    scope.launch {
+                                        snackbar.showNotice(
+                                            AppNoticeVisuals("打不开这个链接", tone = NoticeTone.Warning),
+                                        )
+                                    }
+                                }
+                            },
                         )
                     }
                 }
             }
         }
+    }
+
+    viewer?.let { fileName ->
+        ImageViewerDialog(fileName = fileName, onDismiss = { viewer = null })
     }
 }

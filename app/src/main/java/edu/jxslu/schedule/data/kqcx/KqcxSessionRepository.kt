@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.data.kqcx
 
+import edu.jxslu.schedule.data.session.SessionExpiryStore
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.BikeNearby
 import edu.jxslu.schedule.domain.CarDetailResult
 import edu.jxslu.schedule.domain.KqcxAuth
@@ -36,6 +38,8 @@ import java.util.concurrent.atomic.AtomicReference
 class KqcxSessionRepository(
     private val client: KqcxAuthClient,
     private val credentials: KqxCredentialStore,
+    /** 「登录状态已过期」留痕（见 [SessionExpiryStore]）：静默重登失败时写、进页消费。 */
+    private val expiry: SessionExpiryStore? = null,
 ) : KvcxRideSession, KvcxZoneSource {
 
     /** 会话流：UI（hub 登录态、快趣页）统一订阅这条。 */
@@ -60,13 +64,15 @@ class KqcxSessionRepository(
      * 账号密码登录：成功后 token 入内存、翻转登录态。
      * 失败原样抛（[KvcBusinessError] 带服务端文案 / [IOException] 网络），调用方提示。
      *
-     * [remember] = false（默认，2026-10-20 用户拍板）时**不落凭证**：本次会话有效，
-     * 进程结束后需要重新登录；token 本身从不落盘（见类注释）。
+     * [remember] = true（默认，2026-10-21 用户拍板：默认记住密码）时落凭证；
+     * false 时**不落凭证**：本次会话有效，进程结束后需要重新登录。
+     * token 本身从不落盘（见类注释）。
      */
-    suspend fun login(mobile: String, password: String, remember: Boolean = false) {
+    suspend fun login(mobile: String, password: String, remember: Boolean = true) {
         val result = client.loginJson(mobile, KqcxAuth.passwordCipher(password))
             .let { KqcxAuth.parseLogin(it) }
         if (remember) credentials.saveCredential(mobile, password) else credentials.clear()
+        expiry?.clear(SessionService.Kqcx)
         token = result.token
         currentMobile = result.mobile.ifBlank { mobile }
         _loggedIn.value = true
@@ -75,6 +81,7 @@ class KqcxSessionRepository(
     /** 退出登录：清凭证与内存 token（常驻倒计时等无关状态不在此处碰）。 */
     fun logout() {
         credentials.clear()
+        expiry?.clear(SessionService.Kqcx)
         token = null
         currentMobile = null
         _loggedIn.value = false
@@ -430,13 +437,19 @@ class KqcxSessionRepository(
                 return false
             }
         return try {
-            login(mobile, password)
+            // 静默重登必须 remember = true：凭证本来就在盘上，不能因这次重登把它清掉
+            //（2026-10-21 修「更新后偶尔掉登录」：旧版走默认 false，每次静默重登都清凭证）
+            login(mobile, password, remember = true)
             true
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            // 凭证失效（改密/注销）这类业务失败：退出登录态，让 UI 回登录表单
-            if (error is KvcBusinessError) _loggedIn.value = false
+            // 凭证失效（改密/注销）这类业务失败：退出登录态，让 UI 回登录表单。
+            // 同时留一条「已过期」标记：下次进页要告诉用户为什么退回登录表单。
+            if (error is KvcBusinessError) {
+                expiry?.mark(SessionService.Kqcx)
+                _loggedIn.value = false
+            }
             false
         }
     }

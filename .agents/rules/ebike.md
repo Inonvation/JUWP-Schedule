@@ -666,15 +666,20 @@
   两个落点从解包产物核对过——小程序**登录页的「忘记密码」**（`pages/login/forget`：
   手机号 + 短信验证码 → `resetPassword`）、**登录后「设置 → 修改密码」**
   （`pages/setting/modifypassword`：只填新密码 → `updatePassword`）。同一句里写明密码
-  默认不保存；打开「记住登录」后才加密存在本机（`KqxCredentialStore`，为的是 token
-  失效后静默重登），别让人以为「App 不用密码」。
+  默认加密保存在本机（`KqxCredentialStore`，为的是 token 失效后静默重登），可关闭
+  「记住登录」，别让人以为「App 不用密码」。
 - **字段解析一律宽容取值**（`KqcxAuth` 里 `text/long/double/int/bool` 五个私有扩展）：
   快趣后端字段类型不稳定（数值给字符串或带小数点的 number、布尔给 0/1），严格 DTO 会在真机
   直接抛「骑行订单字段解析失败」（2026-09-28 用户真机报过）——**别退回 `@Serializable` 硬解**，
   测试里有混合类型回归用例。
 - **token 仅内存**（`KqcxSessionRepository` 的 @Volatile），落盘只落账号密码
-  （`KqxCredentialStore` → `secure_kqcx.xml`，已排除备份）；**只有「记住登录」打开时才落**
-  （默认关，2026-10-20 用户拍板：关掉 = 本次进程有效，重启后重新登录）。TTL 未知，靠「按需重登」兜：
+  （`KqxCredentialStore` → `secure_kqcx.xml`，已排除备份）；**「记住登录」默认开**
+  （2026-10-21 用户拍板；关掉 = 凭证不落、本次进程有效，重启后重新登录）。
+  **静默重登必须 `login(..., remember = true)`**——凭证本来就在盘上，不能因为一次重登把它清掉
+  （2026-10-21 修「更新后偶尔掉登录」：旧默认 false 会在每次静默重登时清凭证）。
+  静默重登的业务失败会留一条「已过期」标记，下次进快趣账号页由 `SessionExpiredNotice`
+  提示（口径见 `login-session.md`；主动退出清标记）。
+  TTL 未知，靠「按需重登」兜：
   查询遇 `looksLikeTokenError` 才重登一次——这个启发式**宁漏判不误判**，别放宽（误判会把
   「车辆不存在」这类业务错误变成反复重登）。重登是**单飞**：
   `AtomicReference<CompletableDeferred<Boolean>>` 让并发调用共享同一次登录结果；

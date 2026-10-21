@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.EbikeCardExpiry
 import edu.jxslu.schedule.domain.KqcxAuth
 import edu.jxslu.schedule.domain.RideRecord
@@ -60,6 +61,7 @@ import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
+import edu.jxslu.schedule.ui.common.SessionExpiredNotice
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.postNotice
 import edu.jxslu.schedule.ui.theme.semanticColors
@@ -105,6 +107,11 @@ fun KvcxScreen(
     )
     // 能力矩阵（DESIGN §3.9）：本页的账号 / 记录属于 App 内用车那一档
     val appRideEnabled = useMode.capabilities().inAppRide
+
+    // 账号方式下上次判定登录过期：进页说一句为什么退回登录表单（小程序方式没有账号，不提示）
+    if (appRideEnabled) {
+        SessionExpiredNotice(SessionService.Kqcx, state.loggedIn, snackbar)
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -462,8 +469,8 @@ private fun AccountSection(state: KvcxUiState, viewModel: KvcxViewModel) {
 @Composable
 private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
     var showPassword by remember { mutableStateOf(false) }
-    // 记住登录（2026-10-20 用户拍板：默认关）：关掉时凭证不落盘，仅本次进程有效
-    var remember by remember { mutableStateOf(false) }
+    // 记住登录（2026-10-21 用户拍板：默认开）：默认把凭证加密存在本机，token 失效时静默重登
+    var remember by remember { mutableStateOf(true) }
     // 卡片化（2026-09-29 统一风格）：本页其余区块都是 SettingsSection，登录表单裸在页面
     // 背景上会显得"没装进容器"；它又是本页的主任务，套同一套容器最稳
     SettingsSection(
@@ -531,7 +538,7 @@ private fun LoginSection(state: KvcxUiState, viewModel: KvcxViewModel) {
         Text(
             text = "忘记或不知道密码？在微信里打开「快趣出行」小程序：登录页点「忘记密码」，" +
                 "用手机号 + 短信验证码重设；登录后在「设置 → 修改密码」也能改。" +
-                "密码默认不保存；打开「记住登录」后才会加密存在本机，请妥善保管。",
+                "密码默认加密保存在本机（可关闭「记住登录」）；不进云备份，请妥善保管。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             modifier = Modifier.padding(top = 10.dp),

@@ -7,7 +7,7 @@ import org.junit.Test
 /**
  * 问渠会话完整性（2026-10-20）：**密码不是必要条件**。
  *
- * 「记住登录」默认关时只落 token；`isComplete` 仍为 true（JWT 有效期内照常可用），
+ * 「记住登录」关掉时只落 token；`isComplete` 仍为 true（JWT 有效期内照常可用），
  * 但 `canRefresh` 为 false——到期后必须重新登录，不能拿空密码去撞平台。
  */
 class WenquSessionTest {

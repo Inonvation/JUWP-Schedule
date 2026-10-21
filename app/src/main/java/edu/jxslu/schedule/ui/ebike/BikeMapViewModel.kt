@@ -238,6 +238,11 @@ class BikeMapViewModel(
      * 每次成功拉取写回。null = 不缓存（只影响图层，车辆列表照旧）。
      */
     private val zoneCache: ZoneCacheStore? = null,
+    /**
+     * 本机用车控制器（2026-10-21 单例化）：Factory 注入 [Graph.kvcxRide]；
+     * 传 null（本文件外的测试 / 特殊路径）时走旧路——本 VM 自建一份实例。
+     */
+    private val rideController: KvcxRideController? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BikeMapUiState())
@@ -261,13 +266,32 @@ class BikeMapViewModel(
      * 本机用车（DESIGN §4.32，与出码页共用同一份编排）：骑行状态与写动作。
      * 地图页在本页就能开锁、锁车、还车——官方小程序也是在地图上直接操作当前用车。
      * **只在账号登录方式下使用**，见 [useMode] / [queryRideQuietly]。
+     *
+     * 2026-10-21 起控制器是 **Graph 单例**（[Graph.kvcxRide]）：今日页「进行中服务」卡
+     * 与骑行页必须看到同一份骑行状态，两个实例会各查各的、互相覆盖。本页只负责把
+     * 单例的事件流接进自己的事件通道（notice → Snackbar、unlocked → 成功触感）；
+     * [rideController] 为 null 时退回自建实例（旧消费形态，事件直走本通道）。
      */
-    val kvcx: KvcxRideController = KvcxRideController(
-        session = kqcx,
-        scope = viewModelScope,
-        onNotice = { text, tone -> _events.trySend(BikeMapEvent.Notice(text, tone)) },
-        onUnlocked = { _events.trySend(BikeMapEvent.Unlocked) },
-    )
+    val kvcx: KvcxRideController
+
+    init {
+        kvcx = rideController ?: KvcxRideController(
+            session = kqcx,
+            scope = viewModelScope,
+            onNotice = { text, tone -> _events.trySend(BikeMapEvent.Notice(text, tone)) },
+            onUnlocked = { _events.trySend(BikeMapEvent.Unlocked) },
+        )
+        if (rideController != null) {
+            viewModelScope.launch {
+                kvcx.notices.collect { event ->
+                    _events.trySend(BikeMapEvent.Notice(event.text, event.tone))
+                }
+            }
+            viewModelScope.launch {
+                kvcx.unlockedSignal.collect { _events.trySend(BikeMapEvent.Unlocked) }
+            }
+        }
+    }
 
     /**
      * 使用方式（DESIGN §3.9 / §4.32，2026-09-29）：地图上的「开锁」按钮与「当前用车」卡
@@ -1476,6 +1500,7 @@ class BikeMapViewModel(
                 runCatching { Graph.kqcx(Graph.appContext) }.getOrNull(),
                 runCatching { Graph.kqcx(Graph.appContext) }.getOrNull(),
                 runCatching { Graph.zoneCacheStore(Graph.appContext) }.getOrNull(),
+                runCatching { Graph.kvcxRide(Graph.appContext) }.getOrNull(),
             ) as T
     }
 }

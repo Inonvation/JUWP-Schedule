@@ -60,6 +60,13 @@
   （侧栏只有 300dp 宽，挂里面会被裁）。U净 无登录 / 无收藏店时右侧不显示状态，
   弹窗入口随之隐藏。侧栏展开时余额静默刷新一轮（60 秒节流，MainActivity），
   U净 空闲摘要单独拉（30 秒节流，SideDrawer）。
+- **服务进行中行描边高亮**（2026-10-21）：快趣 / 胖乖 / 趣智 / U净 四行在对应服务进行中
+  （骑行或免费计时 / 开水 Working / 用水记账 / 洗烘在案）时，`DrawerRow` 的 `active` 参数
+  点亮——主色描边 + 6% 主色底，180ms 过渡（`AppCardDefaults.HighlightTransitionMillis`，
+  与 `AppCard.highlighted` 同族）。标记由 `ServiceActiveFlags` 从壳层（MainActivity）传入：
+  各真相源与今日页「进行中服务卡」同源（快趣单例 state + 免费计时落盘 / WaterViewModel
+  Working / `QzxyWateringStore` / `UjingOrderStore`），**两处展示不另立判据**；侧栏只消费
+  布尔，零网络请求。
 - **点普通入口不收侧栏**（2026-10-21 用户口径）：二级页 / 设置是独立窗口，直接盖在侧栏上，
   返回后侧栏仍展开（与设置同一姿势）。`openFromDrawer` 里**不要再调用 `drawer.close()`**：
   先收侧栏再推窗口的叠层动画观感别扭。只有「动作」类出口仍先收：扫一扫、

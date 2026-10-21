@@ -69,6 +69,7 @@ import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.ServerOrderItem
+import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.UnlockFlowState
 import edu.jxslu.schedule.domain.UnlockResult
 import edu.jxslu.schedule.domain.QzxyPhoneMask
@@ -84,6 +85,7 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingChoiceRow
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
+import edu.jxslu.schedule.ui.common.SessionExpiredNotice
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WaterUnlockButton
 import edu.jxslu.schedule.ui.common.postNotice
@@ -127,7 +129,10 @@ fun WaterScreen(
     /** 小组件「去开水」直达（WaterAutoStart）：进页自动开水一次；普通入口保持 false。 */
     autoStart: Boolean = false,
     viewModel: WaterViewModel = viewModel(
-        factory = WaterViewModel.Factory(Graph.qiekj(LocalContext.current)),
+        factory = WaterViewModel.Factory(
+            Graph.qiekj(LocalContext.current),
+            Graph.qiekjWatering(LocalContext.current),
+        ),
     ),
     // 开水卡显示与点击方式的读写（原 WaterSettingsScreen 的 ViewModel，2026-09-20 并入）
     prefsViewModel: MeViewModel = viewModel(
@@ -143,6 +148,9 @@ fun WaterScreen(
     var confirmLogout by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // 上次在别处判定登录过期：进页说一句为什么退回登录表单（只提示一次）
+    SessionExpiredNotice(SessionService.Qiekj, state.loggedIn, snackbar)
 
     // 桌面胶囊直达：首帧触发一次（VM 内有防重入，未登录 / 流程进行中会自行跳过）
     LaunchedEffect(autoStart) {

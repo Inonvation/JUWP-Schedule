@@ -1036,6 +1036,27 @@ cookie 桥、新鲜度）。
 它的每日闸门只挡重复请求，挡不住「凭证失效 → 每天一条失效通知」的骚扰。
 失效提示由用户打开 App 时在状态卡上看到。
 
+#### 第三方会话过期的进页提示（2026-10-21 用户要求）
+
+胖乖 / 趣智 / U净 / 快趣 / 问渠的会话不在 CAS 体系里，失效往往发生在用户离开页面之后
+（token / JWT 到期、被平台顶掉、本机凭证被清）。旧行为是下次进页只剩一张登录表单，
+用户不知道刚才发生了什么。现行口径：
+
+- 会话在**判定失效的那一刻**写一条持久标记（`data/session/SessionExpiryStore`，
+  `SessionService` 五档），功能页进页时**消费一次**并提示
+  「登录状态已过期，请重新登录」（`ui/common/SessionExpiredNotice`）；
+  **登录成功与用户主动退出清标记**——主动退出不该报过期。
+- 标记点：胖乖 `QiekjRepository.markExpired()`（401/403 /「请先登录」）、趣智
+  `QzxyRepository.markExpired()`、U净 `UjingRepository.markExpired()`、快趣
+  `KqcxSessionRepository` 的静默重登业务失败、问渠 `WenquRepository.expireSession()`
+  （JWT 到期且不能续期 / 410000）。**只有「会话失效」才标**，网络与 5xx 不动标记。
+- 问渠不能续期时**同时清 token 并翻 `loggedIn`**，否则页面会一边显示已登录、一边报过期。
+- 提示只在**功能自己的页面**（胖乖开水 / 趣智 / U净 / 快趣账号 / 问渠），
+  **不要放进今日页卡片**：那会变成一打开 App 就弹多家过期提示。
+- 账号中心的状态胶囊也读这条标记：页面消费前显示「重新登录」（`LoginState.Expired`），
+  消费后回到「登录」；主动退出不会让胶囊变红。
+- 新增第三方登录功能照这个模式接；别在页面里自己观察 `loggedIn` 变化来弹提示。
+
 #### 兼容与迁移
 
 - `onboarding_seen` 缺失的老用户 → **不弹引导**（默认不打扰），只在「我的」页显示状态卡
@@ -1701,8 +1722,9 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 做，App 既不存找回流程也没有客服通道。两个落点从解包产物核对过——小程序登录页的「忘记密码」
 （`pages/login/forget`，手机号 + 短信验证码 → `resetPassword`）、登录后「设置 → 修改密码」
 （`pages/setting/modifypassword`，只填新密码 → `updatePassword`）。同一句里写明**密码
-（连同手机号）保存在本机加密存储**（`KqxCredentialStore`，为的是 token 失效后静默重登），
-所以别让人以为"App 不用密码"。
+（连同手机号）默认加密保存在本机**（`KqxCredentialStore`，为的是 token 失效后静默重登），
+可关闭「记住登录」；关掉则凭证不落盘、仅本次进程有效（2026-10-21 默认改为开）：
+别让人以为"App 不用密码"。
 
 **字段解析的宽容口径（2026-09-28 真机教训）**：快趣后端字段类型不稳定——数值可能给字符串
 （`"3665"`）或带小数点的 number（`85.0`）、布尔可能给 `0/1`。首版用严格 `@Serializable` DTO
@@ -1716,6 +1738,8 @@ spark-md5 口径）；响应 `{resultCode, errorCode, resultMsg, result:{token, 
 是因为 token 短命、密码登录无签名可随时静默重登。token 失效策略「按需重登」：查询遇
 `looksLikeTokenError`（保守启发式，宁漏判不误判）清 token 重登一次再试一次；重登互斥
 （`AtomicReference<CompletableDeferred<Boolean>>` 单飞，并发调用共享同一次结果）。
+**静默重登必须带 `remember = true`**——凭证本来就在盘上，重登只是换 token，不能顺手清凭证
+（2026-10-21 修「更新后偶尔掉登录」：旧版走默认 false，每次静默重登都清一次）。
 TTL 未知是已知边界，真机确认后如有必要再补主动续期。
 
 **查询**：`queryUnderwayOrder`（POST 空 body）→ `KqcxAuth.Ride`。无骑行订单两种形态：

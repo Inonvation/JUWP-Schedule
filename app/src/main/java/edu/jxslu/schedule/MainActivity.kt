@@ -106,10 +106,15 @@ import edu.jxslu.schedule.ui.common.LocalBottomBarVisibleRequest
 import edu.jxslu.schedule.ui.common.StackedDrawerState
 import edu.jxslu.schedule.ui.life.LifeScreen
 import edu.jxslu.schedule.ui.life.RechargeKind
+import edu.jxslu.schedule.domain.EbikeFreeRide
+import edu.jxslu.schedule.domain.EbikeUseMode
 import edu.jxslu.schedule.domain.QuickScanTarget
+import edu.jxslu.schedule.domain.UnlockFlowState
+import edu.jxslu.schedule.domain.capabilities
 import edu.jxslu.schedule.domain.quickScanTargetOf
 import edu.jxslu.schedule.ui.common.AppPermissions
 import edu.jxslu.schedule.ui.ebike.EbikeScanActivity
+import edu.jxslu.schedule.ui.life.ServiceActiveFlags
 import edu.jxslu.schedule.ui.life.SideDrawerContent
 import edu.jxslu.schedule.ui.qzxy.QzxyEntrySheet
 import edu.jxslu.schedule.ui.ujing.UjingEntrySheet
@@ -946,7 +951,10 @@ internal fun JuwApp(
     // 这里这份供今日页直接触发 unlock 时使用
     val waterViewModel: WaterViewModel = viewModel(
         viewModelStoreOwner = context as ComponentActivity,
-        factory = WaterViewModel.Factory(Graph.qiekj(context)),
+        factory = WaterViewModel.Factory(
+            Graph.qiekj(context),
+            Graph.qiekjWatering(context),
+        ),
     )
 
     // 趣智校园 ViewModel 挂 Activity 作用域（DESIGN §4.30）：侧栏趣智入口与趣智校园页
@@ -1029,6 +1037,36 @@ internal fun JuwApp(
         ?.let { "¥${it.ticketText}" }
     val qzxyBalanceText = qzxyEntryState.balance?.takeIf { qzxyLoggedIn }
         ?.let { "¥${it.text}" }
+
+    // ── 侧栏四行服务的「进行中」高亮（2026-10-21）──
+    // 各真相源在壳层收一份投影：快趣 = Graph.kvcxRide 单例 state（账号在案订单）+ 免费计时
+    // 落盘起点（小程序方式）；胖乖 = 落盘会话（跨窗口，与今日页服务卡同一口径）；趣智 =
+    // wateringStore（落盘）；U净 = orderState（落盘快照）。
+    // 只读流，零新增请求；判据与今日页 ActiveServiceCard 同源，两处展示不另立。
+    val kvcxRideForDrawer = remember { Graph.kvcxRide(context) }
+    val drawerRideState by kvcxRideForDrawer.state.collectAsStateWithLifecycle()
+    val drawerFreeRideStartAt by remember { Graph.displayPrefs(context) }
+        .ebikeRideStartAt
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    val drawerUseMode by remember { Graph.displayPrefs(context) }
+        .ebikeUseMode
+        .collectAsStateWithLifecycle(initialValue = EbikeUseMode.Default)
+    val drawerQiekjWatering by remember { Graph.qiekjWatering(context) }
+        .watering
+        .collectAsStateWithLifecycle()
+    val drawerQzxyWatering by remember { Graph.qzxyWatering(context) }
+        .watering
+        .collectAsStateWithLifecycle()
+    val drawerUjingOrder by remember { Graph.ujing(context) }
+        .orderState
+        .collectAsStateWithLifecycle()
+    val serviceActiveFlags = ServiceActiveFlags(
+        ride = (drawerRideState.ride != null && drawerUseMode.capabilities().inAppRide) ||
+            (drawerFreeRideStartAt > 0 && EbikeFreeRide.isActive(drawerFreeRideStartAt, System.currentTimeMillis())),
+        water = drawerQiekjWatering?.isStale(System.currentTimeMillis()) == false,
+        qzxy = drawerQzxyWatering != null,
+        ujing = drawerUjingOrder?.let { !it.isTerminal } == true,
+    )
 
     // 悬浮导航栏（DESIGN §4.22）：底栏形态是全局项，这里单独订阅一次。
     // 不复用 JuwRoot 那份：它是为了定主题色，作用域在 setContent 最外层，拿不到这里。
@@ -1165,6 +1203,7 @@ internal fun JuwApp(
                 waterBalance = waterBalanceText,
                 qzxyBalance = qzxyBalanceText,
                 wenquHours = wenquHoursText,
+                serviceActive = serviceActiveFlags,
                 // U净 空闲摘要的拉取闸：侧栏可见才发请求（与余额刷新同一口径）
                 drawerVisible = drawer.isVisible,
                 onOpenWenqu = { openFromDrawer(SubpageScreen.WENQU, null) },

@@ -153,4 +153,35 @@ class ScheduleDiffGroupTest {
         assertEquals(2, groups.size)
         assertTrue(groups.none { it.move != null })
     }
+
+    /**
+     * 待处置缓存的展示条数（课表 hub 入口行「N处差异」，2026-10-21 用户报障）：
+     * 2 次单周调课 + 1 门删除在缓存里是 5 行，但对用户是 3 处。入口行与处置页
+     * 必须同一口径，否则卡片显示 5、点进去只有 3 张卡。
+     */
+    @Test
+    fun `待处置缓存按组计数而不是按行计数`() {
+        val a = course(name = "人机交互技术", day = 4, startSection = 7, endSection = 8)
+        val b = course(name = "机械制造基础A", day = 4, startSection = 1, endSection = 2)
+        val c = course(name = "大学物理", day = 5, startSection = 3, endSection = 4)
+        val remote = listOf(
+            a.copy(weeks = a.weeks - 8),
+            a.copy(day = 2, startSection = 3, endSection = 4, weeks = setOf(9)),
+            b.copy(weeks = b.weeks - 8),
+            b.copy(day = 6, weeks = setOf(12)),
+        )
+
+        val changes = ScheduleDiff.detect(listOf(a, b, c), remote)
+        assertEquals(5, changes.size)
+        val pending = SchedulePendingChanges(
+            timetableId = 1,
+            term = "2026-2027-1",
+            changes = changes.map(ScheduleChangeRow::of),
+            fingerprint = ScheduleDiff.fingerprintOf(changes),
+        )
+        // 走一遍落盘 / 读盘（入口行读的就是 DataStore 里的 JSON）
+        val restored = SchedulePendingChanges.decode(pending.encode())!!
+        assertEquals(5, restored.changes.size)
+        assertEquals(3, restored.groupCount())
+    }
 }

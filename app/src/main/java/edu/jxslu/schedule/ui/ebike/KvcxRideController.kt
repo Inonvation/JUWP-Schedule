@@ -8,7 +8,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.kqcx.KvcxRideSession
+import edu.jxslu.schedule.domain.InboxKeys
+import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.data.kqcx.LockOutcome
 import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.data.kqcx.UnlockOutcome
@@ -21,7 +24,9 @@ import edu.jxslu.schedule.ui.common.NoticeTone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -89,6 +94,17 @@ enum class KvcxAction {
     /** 锁状态查询：按权威来源（在案订单）现查一次锁没锁上。 */
     QUERY_LOCK,
 }
+
+/**
+ * 用车事件（提示 / 开锁成功信号）的共享流载荷（2026-10-21 单例化）：
+ * 控制器全进程一份后，事件要能同时到达骑行页、快趣账号页与今日页服务卡——
+ * 回调只有一个槽位，流才是多消费方的载体。
+ */
+data class KvcxNotice(val text: String, val tone: NoticeTone)
+
+/** 无共享流的控制器实例（单测 / 兼容路径）兜底用的空事件流。 */
+private val emptyNotices = MutableSharedFlow<KvcxNotice>(extraBufferCapacity = 0)
+private val emptyUnlocked = MutableSharedFlow<Unit>(extraBufferCapacity = 0)
 
 /**
  * 快趣骑行状态 + 写动作的共享状态（DESIGN §4.32）。
@@ -282,6 +298,13 @@ class KvcxRideController internal constructor(
      * 走回调而不是状态计数器：计数器在"离开页面再回来"时会重放一次震动。
      */
     private val onUnlocked: () -> Unit = {},
+    /**
+     * 事件共享流（Graph 单例化 2026-10-21）：单例的回调收不到页面级提示宿主，
+     * 事件同时发进这两条流，各消费方（骑行页 / 快趣账号页 / 今日页服务卡）自己收。
+     * `onNotice` / `onUnlocked` 回调保留——单测仍走回调断言，行为不变。
+     */
+    private val rideNotices: MutableSharedFlow<KvcxNotice>? = null,
+    private val rideUnlocked: MutableSharedFlow<Unit>? = null,
     /** 定位前置（写操作硬闸）。默认走真实定位；单测里换成假坐标。 */
     private val locate: suspend () -> LocateResult = {
         // 写动作不能像地图页那样等 8 秒；5 秒拿不到就走车辆锚点 / 明确提示。
@@ -297,6 +320,27 @@ class KvcxRideController internal constructor(
 
     private val _state = MutableStateFlow(KvcxRideState())
     val state: StateFlow<KvcxRideState> = _state.asStateFlow()
+
+    /** 提示事件共享流（单例化后各消费方自己收；单测不走这里）。 */
+    val notices: SharedFlow<KvcxNotice> get() = rideNotices ?: emptyNotices
+
+    /** 开锁成功信号共享流（同上）。 */
+    val unlockedSignal: SharedFlow<Unit> get() = rideUnlocked ?: emptyUnlocked
+
+    /**
+     * 事件出口（2026-10-21 单例化）：**有共享流就走流、没有才走回调**——两者同时发会
+     * 让消费方收到两遍（Graph 单例注入时 onNotice 就是流转发，重复一次等于弹两条提示）。
+     * 单测注入的控制器没有流，仍走回调断言。
+     */
+    private fun notice(text: String, tone: NoticeTone) {
+        val sink = rideNotices
+        if (sink != null) sink.tryEmit(KvcxNotice(text, tone)) else onNotice(text, tone)
+    }
+
+    private fun unlocked() {
+        val sink = rideUnlocked
+        if (sink != null) sink.tryEmit(Unit) else onUnlocked()
+    }
 
     /** 登录态（会话不可用时恒 false）。UI 据此决定要不要露出「开锁 / 锁车 / 还车」。 */
     val loggedIn: StateFlow<Boolean> = session?.loggedIn ?: MutableStateFlow(false)
@@ -344,7 +388,7 @@ class KvcxRideController internal constructor(
                 }
                 .onFailure {
                     if (seq == snapshotSeq && read == readSeq && !quiet) {
-                        onNotice(kvcxErrorText(it), NoticeTone.Error)
+                        notice(kvcxErrorText(it), NoticeTone.Error)
                     }
                 }
         }
@@ -413,7 +457,7 @@ class KvcxRideController internal constructor(
                     )
                 }
                 // 成功触感也立即发：它属于"开锁成功"这一刻，不该被善后拖后
-                onUnlocked()
+                unlocked()
                 // 免费计时与开锁**同步**：本机开锁是服务端确认的骑行
                 // 开始（比"点扫一扫"这个准备动作强得多），提醒开关关着就顺手打开——
                 // 倒计时通知因此跟着开锁一起来。开关在「快趣出行设置」里可见、可随时关掉。
@@ -430,7 +474,7 @@ class KvcxRideController internal constructor(
                     sendUnlock -> "已开锁"
                     else -> "已创建订单，车辆保持锁定"
                 }
-                onNotice(
+                notice(
                     head + "；" + timerText +
                         if (reminderOpened) "（已打开免费时长提醒）" else "",
                     timerTone,
@@ -461,7 +505,7 @@ class KvcxRideController internal constructor(
                         returnSummary = null,
                     )
                 }
-                onNotice(
+                notice(
                     if (sendUnlock) {
                         "订单已创建但未确认开锁；可点「重试开锁」，或到快趣小程序核对"
                     } else {
@@ -479,7 +523,7 @@ class KvcxRideController internal constructor(
     fun retryUnlock() = run(KvcxAction.RETRY_UNLOCK) { session ->
         val ride = _state.value.ride
         if (ride == null) {
-            onNotice("没有在案订单，请重新开锁", NoticeTone.Warning)
+            notice("没有在案订单，请重新开锁", NoticeTone.Warning)
             return@run
         }
         val point = locateOrNotice(ride) ?: return@run
@@ -495,14 +539,14 @@ class KvcxRideController internal constructor(
                         unlockCooldownUntil = System.currentTimeMillis() + UNLOCK_COOLDOWN_MS,
                     )
                 }
-                onNotice("已确认开锁", NoticeTone.Success)
+                notice("已确认开锁", NoticeTone.Success)
             }
             is UnlockOutcome.Unconfirmed -> {
                 // 解锁意图发出即作废锁车悬置（与 resumeRide 同一口径）：否则快照回报
                 // 未锁时裁决先消解 unlockPending、把残留的 lockPending 暴露成
                 // 「锁车确认中…」——和用户刚做的开锁动作打架
                 _state.update { it.copy(lockPending = false) }
-                onNotice("仍未确认开锁；请到快趣小程序核对", NoticeTone.Warning)
+                notice("仍未确认开锁；请到快趣小程序核对", NoticeTone.Warning)
             }
         }
         refreshInternal()
@@ -521,7 +565,7 @@ class KvcxRideController internal constructor(
     fun resumeRide() = run(KvcxAction.RESUME) { session ->
         val ride = _state.value.ride
         if (ride == null) {
-            onNotice("没有在案订单，请重新开锁", NoticeTone.Warning)
+            notice("没有在案订单，请重新开锁", NoticeTone.Warning)
             return@run
         }
         val point = locateOrNotice(ride) ?: return@run
@@ -537,14 +581,14 @@ class KvcxRideController internal constructor(
                         unlockCooldownUntil = System.currentTimeMillis() + UNLOCK_COOLDOWN_MS,
                     )
                 }
-                onNotice(
+                notice(
                     if (wasLocked) "已解锁，继续骑行" else "已确认开锁",
                     NoticeTone.Success,
                 )
             }
             is UnlockOutcome.Unconfirmed -> {
                 _state.update { it.copy(lockPending = false) }
-                onNotice("未确认解锁；请到快趣小程序核对", NoticeTone.Warning)
+                notice("未确认解锁；请到快趣小程序核对", NoticeTone.Warning)
             }
         }
         refreshInternal()
@@ -572,7 +616,7 @@ class KvcxRideController internal constructor(
                         lockPending = false,
                     )
                 }
-                onNotice("已临时锁车；订单与计费继续，用完记得还车", NoticeTone.Info)
+                notice("已临时锁车；订单与计费继续，用完记得还车", NoticeTone.Info)
             }
             is LockOutcome.Unconfirmed -> {
                 // 窗口内最后一份快照一并采纳（[LockOutcome.lastKnown] 的设计用途）
@@ -584,7 +628,7 @@ class KvcxRideController internal constructor(
                         lockPending = true,
                     )
                 }
-                onNotice(
+                notice(
                     "锁车指令已发送，车辆回报稍慢；可点刷新核实，车没锁上就再点一次锁车",
                     NoticeTone.Warning,
                 )
@@ -604,7 +648,7 @@ class KvcxRideController internal constructor(
     fun returnBike() = run(KvcxAction.RETURN) { session ->
         val before = _state.value.ride
         if (before == null) {
-            onNotice("没有进行中的骑行", NoticeTone.Warning)
+            notice("没有进行中的骑行", NoticeTone.Warning)
             return@run
         }
         val point = locateOrNotice(before, allowInvalidFallback = true)
@@ -632,6 +676,8 @@ class KvcxRideController internal constructor(
             )
         }
         effects.recordRide(summary)
+        // 骑行结束留痕收件箱（手动与自动还车共用同一份口径，见 postKvcxReturnInbox）
+        scope.launch { runCatching { postKvcxReturnInbox(summary, endedAt = System.currentTimeMillis()) } }
         // 手动还车也把「订单结束」告诉其他活着的页面（账号页 / 另一个骑行页实例）
         EbikeRideSignal.notifyEnded()
         if (summary.settling) {
@@ -682,7 +728,7 @@ class KvcxRideController internal constructor(
         readSeq++
         val hadRide = _state.value.ride != null
         _state.update { it.copy(ride = null, unlockPending = false, lockPending = false) }
-        if (hadRide && notice.isNotBlank()) onNotice(notice, NoticeTone.Success)
+        if (hadRide && notice.isNotBlank()) notice(notice, NoticeTone.Success)
     }
 
     /**
@@ -692,12 +738,12 @@ class KvcxRideController internal constructor(
      */
     fun ringFindCar() {
         if (_state.value.ride == null) {
-            onNotice("没有进行中的骑行，响铃寻车用不上", NoticeTone.Warning)
+            notice("没有进行中的骑行，响铃寻车用不上", NoticeTone.Warning)
             return
         }
         run(KvcxAction.RING) { session ->
             session.ringFindCar()
-            onNotice("已发送响铃，留意身边的提示音", NoticeTone.Success)
+            notice("已发送响铃，留意身边的提示音", NoticeTone.Success)
         }
     }
 
@@ -723,7 +769,7 @@ class KvcxRideController internal constructor(
                 val ride = session.queryUnderway()
                 if (seq == snapshotSeq && read == readSeq) {
                     _state.update { it.withRideSnapshot(ride) }
-                    onNotice(
+                    notice(
                         when {
                             ride == null -> "没有进行中的订单"
                             ride.locked == true -> "车辆已锁上；订单还在，计费继续"
@@ -735,7 +781,7 @@ class KvcxRideController internal constructor(
             } catch (error: CancellationException) {
                 throw error // 取消穿透：不能把页面/作用域撤销报成「操作异常」
             } catch (error: Throwable) {
-                onNotice(kvcxErrorText(error), NoticeTone.Error)
+                notice(kvcxErrorText(error), NoticeTone.Error)
             } finally {
                 _state.update { it.copy(busy = null) }
             }
@@ -746,7 +792,7 @@ class KvcxRideController internal constructor(
     private fun run(action: KvcxAction, block: suspend (KvcxRideSession) -> Unit) {
         val session = session
         if (session == null) {
-            onNotice("快趣会话不可用", NoticeTone.Warning)
+            notice("快趣会话不可用", NoticeTone.Warning)
             return
         }
         if (_state.value.busy != null) return
@@ -763,7 +809,7 @@ class KvcxRideController internal constructor(
             } catch (error: CancellationException) {
                 throw error // 取消穿透：不能把页面/作用域撤销报成「操作异常」
             } catch (error: Throwable) {
-                onNotice(kvcxErrorText(error), NoticeTone.Error)
+                notice(kvcxErrorText(error), NoticeTone.Error)
             } finally {
                 _state.update { it.copy(busy = null, busyAt = 0L) }
             }
@@ -786,18 +832,18 @@ class KvcxRideController internal constructor(
         val lat = fallback?.lat
         val lng = fallback?.lng
         if (lat != null && lng != null && isValidActionCoord(lat, lng)) {
-            onNotice("定位不到你，使用车辆位置继续", NoticeTone.Info)
+            notice("定位不到你，使用车辆位置继续", NoticeTone.Info)
             return LocateResult.Ok(lat, lng, source = "vehicle")
         }
         if (lat != null && lng != null) {
             if (allowInvalidFallback) {
-                onNotice("车辆没有有效位置，按无定位还车", NoticeTone.Warning)
+                notice("车辆没有有效位置，按无定位还车", NoticeTone.Warning)
                 return LocateResult.Ok(0.0, 0.0, source = "none")
             }
-            onNotice("车辆没有有效位置，暂时无法操作", NoticeTone.Warning)
+            notice("车辆没有有效位置，暂时无法操作", NoticeTone.Warning)
             return null
         }
-        onNotice((result as LocateResult.Failed).message, NoticeTone.Warning)
+        notice((result as LocateResult.Failed).message, NoticeTone.Warning)
         return null
     }
 
@@ -1036,6 +1082,35 @@ internal fun rememberRideElapsed(ride: KqcxAuth.Ride?, fetchedAt: Long): String?
 }
 
 /** 结算卡的实现在 `RidePanels.kt` 的 `RideSettledBar`；本文件只留数据口径。 */
+
+/**
+ * 骑行结束入收件箱（2026-10-21）：手动还车（[KvcxRideController.returnBike]）与自动还车
+ * （`EbikeAutoReturnReminder` 的 `Returned` 分支）共用的留痕点——两者都已在「订单结束 +
+ * 结算口径到手」之后，符合收件箱旁路纪律（`InboxRepository.post` 内部吞错，失败不影响
+ * 还车主链路）。**别挪进 `performReturnBike`**：那条被 JVM 单测直接跑到，挂上 Graph 会崩。
+ *
+ * 键 = `InboxKeys.KVCX_DONE_PREFIX` + 车号 + `|` + 当刻：时刻来自还车成功那一拍，
+ * 同一次还车的重复投递同键落更新；两轮骑行是两个事实。没有时长/金额时各段缺省，
+ * 不编数据。
+ */
+internal suspend fun postKvcxReturnInbox(summary: KvcxReturnSummary, endedAt: Long) {
+    val carNum = summary.carNum ?: return
+    val parts = buildList {
+        summary.durationText?.let { add("骑行 $it") }
+        summary.feeText?.let { add("费用 $it") }
+        add(summary.settleText)
+    }
+    Graph.inboxRepository(Graph.appContext).post(
+        kind = InboxKind.KVCX_RIDE,
+        dedupeKey = InboxKeys.KVCX_DONE_PREFIX + carNum + "|" + endedAt,
+        title = "快趣骑行已结束",
+        body = "$carNum · " + parts.joinToString("；"),
+        // 落点 = 快趣账号页（本机骑行记录列表就在那里）；静默留痕不产生未读红点。
+        // 不带 focusItemId：KVCX 页不消费它（inbox.md：带之前先确认目标页消费）。
+        route = SubpageScreen.KVCX.name,
+        silent = true,
+    )
+}
 
 /**
  * 起免费时长计时并把结果映射成提示文案与语气（点扫一扫 / 本机开锁成功共用）。

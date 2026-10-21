@@ -27,6 +27,43 @@
 - **远课轻提示（`NextStartHint`）已删**：不再有 60 分钟窗口的「下一节」提示。
 - 改版前先读 DESIGN §3.3 的 2026-10-13 段。
 
+## 进行中服务卡（2026-10-21，DESIGN §3.3）
+
+- 位置：**作业卡与收件箱卡之间**，`item(key = "active-services")`；本体 `ui/today/ActiveServiceCard.kt`。
+  快趣骑行 / 胖乖开水 / 趣智洗澡 / U净 洗烘谁在进行中谁占一行（一张 AppCard 平铺 +
+  `AppCardDivider` 分隔，行进出场 220/160ms），全无整卡不渲染。
+- 各行真相源与刷新口径（**零新增常驻网络路径**）：
+  - 快趣：`Graph.kvcxRide` 单例（2026-10-21 从 BikeMapViewModel 私有提升；骑行页 / 快趣账号页 /
+    今日页服务卡共享同一份状态与事件）。今日页只读 `state` 流；查询 = 进页 / 回页（`ON_RESUME`）+
+    下拉各静默一拍，**不轮询**；`ON_RESUME` 走 **60 秒节流**（切 Tab / 二级页返回都会重建组合，
+    不挡会反复打扰第三方接口；下拉传 `force=true`）。能力闸 =
+    `EbikeUseMode.capabilities().inAppRide`（小程序方式不查在案订单）。
+    **小程序方式有 `freeRideStartAt` 行**（2026-10-21 补）：`ebikeRideStartAt` 落盘计时在
+    `EbikeFreeRide.isActive` 窗口内时展示「免费时长」倒计时行——小程序方式查不了在案订单
+    （无账号 token），但计时是本机动作；行尾「结束计时」给提前还车的出口（确认弹窗后调
+    `EbikeFreeRideReminder.endRide`，连带撤提醒与通知）。两行能力闸互斥，不同时出现。
+    行内「开锁⇄锁车」：`locked==true` 显「开锁」→ `resumeRide()`；未锁显「锁车」→ `tempLock()`
+    （免确认，与骑行页同闸）；悬置 / busy 显「确认中…」；开锁 3 秒冷却内锁车 / 还车置灰显剩余秒；
+    已锁车的副行追加「已锁车（计费继续）」（临时锁车 ≠ 订单结束）。
+    「还车」走今日页本地的 `KvcxConfirmAlertDialog`（文案唯一出处仍是 `kvcxConfirmDialog`）。
+  - 胖乖：**`Graph.qiekjWatering` 落盘会话**（`QiekjWateringStore`，2026-10-21）——`unlock()` 流程
+    首次进入 Working 时 `begin`，结算 / 失败 / 165 秒超时收尾 `clear`；5 分钟未清按过期静默清除。
+    它是跨窗口的唯一真相源（今日页与开水页各持一份 `WaterViewModel`，`Working` 只在各自 VM 里，
+    互相看不见）。「结束开水」只在流程跑在**本窗口** VM 时可用（`waterCanStop`），否则行只展示 +
+    点行进开水页（跨窗口结束没有对应的 VM 可调）。行落点 = 开水页。
+  - 趣智：`QzxyWateringStore.watering`（落盘）；对账沿用今日页已有 `WateringReconcileEffect`；
+    超 1h / 设备确认结束转「待核对」，按钮切「结算核对」。
+  - U净：`UjingRepository.orderState`（落盘快照）；对表沿用 10s TTL 节流（进页 / 回页 / 下拉 /
+    开弹窗四路同一道闸）；行纯展示点整行进 UJING 页（写操作只在 U净 主页）。
+- **订单完成入收件箱**（`InboxKind.KVCX_RIDE / WATER_SESSION / QZXY_SESSION / UJING_ORDER`）：
+  挂点全在「数据到手并完成对比」处——快趣在 `postKvcxReturnInbox`（手动 + 自动还车共用，
+  **别挪进 `performReturnBike`**：那条被 JVM 单测跑到）；胖乖在流程落 `Success` 处；趣智在
+  `handleSettled`（清记账之前取 startedAt 做键）；U净 在 `refreshOrder` 的
+  `UjingState.transitToWashDone` 过渡（旧非 50 → 新 50；取消 / 超时不投）。完成只入箱不发
+  新通知（快趣自动还车 / U净洗衣完成已有现成通知）。
+- 行首呼吸圆点 900ms（同 `WateringBadge` 手法）；计时 `tnum` 等宽 + 每秒（不做 crossfade）；
+  行图标用侧栏同款品牌位图 24dp。
+
 ## 宿舍报修状态行（2026-10-19；2026-10-21 并入收件箱卡，DESIGN §4.49）
 
 - 位置：**收件箱卡内置顶行**（`InboxTodayCard`，消息行之上；§3.24）；未开学 / 课表为空的

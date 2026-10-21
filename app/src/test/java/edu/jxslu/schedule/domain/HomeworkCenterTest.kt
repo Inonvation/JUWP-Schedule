@@ -88,6 +88,48 @@ class HomeworkCenterTest {
         assertEquals("未命名作业", homeworkDisplayTitle("![](img:a.jpg)\n\n![](img:b.jpg)"))
     }
 
+    // ---- homeworkDisplay（2026-10-21 展开区：标题行从正文里摘掉，避免重复） ----
+
+    @Test
+    fun display_removesTitleLineFromBody() {
+        assertEquals(
+            HomeworkDisplay("完成课后习题", "详情…"),
+            homeworkDisplay("完成课后习题\n\n详情…"),
+        )
+    }
+
+    @Test
+    fun display_keepsImageBeforeTitleInBody() {
+        // 首行是图片时标题顺延到下一行；图片行必须留在正文里，否则展开区会丢图
+        assertEquals(
+            HomeworkDisplay("拍张照片", "![](img:a.jpg)\n\n正文"),
+            homeworkDisplay("![](img:a.jpg)\n拍张照片\n\n正文"),
+        )
+    }
+
+    @Test
+    fun display_singleLineHasEmptyBody() {
+        assertEquals(HomeworkDisplay("单行", ""), homeworkDisplay("单行"))
+    }
+
+    @Test
+    fun display_blankDetailFallsBack() {
+        assertEquals(HomeworkDisplay("未命名作业", ""), homeworkDisplay(""))
+        assertEquals(HomeworkDisplay("未命名作业", ""), homeworkDisplay("\n\n  \n"))
+    }
+
+    @Test
+    fun display_stripsMarkdownPrefixFromTitleOnly() {
+        assertEquals(
+            HomeworkDisplay("标题", "正文"),
+            homeworkDisplay("## 标题\n\n正文"),
+        )
+        assertEquals(
+            HomeworkDisplay("任务", "- [ ] 第二项"),
+            homeworkDisplay("- [ ] 任务\n- [ ] 第二项"),
+        )
+    }
+
     /** 逾期（降序：最近过期在前）→ 今天 → 未来（升序）→ 无截止（创建倒序） */
     @Test
     fun pendingOrder_overdueThenTodayThenFutureThenNoDue() {

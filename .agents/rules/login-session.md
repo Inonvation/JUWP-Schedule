@@ -90,6 +90,23 @@
   学籍缓存（姓名 / 班级 / 学号 / 补抓闸门）也一起清——否则凭证清了、卡上还留着上一个人的名字。
   第三方登录表单统一一句「只保存登录状态，不保存密码」（胖乖 / 趣智 / U净）。
 
+## 登录过期要在下次进页说出来（2026-10-21）
+
+- 第三方会话（胖乖 / 趣智 / U净 / 快趣 / 问渠）在**判定失效的那一刻**写一条持久标记
+  （`data/session/SessionExpiryStore` + `SessionService`），功能页进页时消费一次并提示
+  「登录状态已过期，请重新登录」；**登录成功与用户主动退出清标记**（主动退出不该报过期）。
+- 标记点：`QiekjRepository.markExpired()` / `QzxyRepository.markExpired()` /
+  `UjingRepository.markExpired()` / `KqcxSessionRepository` 静默重登的业务失败 /
+  `WenquRepository.expireSession()`（JWT 到期不能续期、410000）。**网络与 5xx 不标**。
+  问渠失效时同时清 token、翻 `loggedIn`——否则会出现「页面显示已登录、却报已过期」。
+- 页面侧只调 `ui/common/SessionExpiredNotice(service, loggedIn, snackbar)`，
+  **只在功能自己的页面**；今日页卡片不要调（否则一打开 App 就弹多家过期提示）。
+  账号中心的状态胶囊也读这条标记：页面消费前显示「重新登录」，消费后回到「登录」；
+  主动退出不会变红。
+  新加第三方登录功能照这个模式接，别在页面里自己观察 `loggedIn` 变化来弹提示。
+- 教务与一卡通不在这条链上：它们已有各自的「未登录 / 会话已失效 / 凭证已失效」出口
+  （`JwImportDiagnosis` 与账户卡 `LoginState.Expired`），不要重复接一套。
+
 ## 首启引导只服务新安装
 
 - **首启引导只服务新安装**（2026-09-24，DESIGN §3.16）：`onboarding_seen` 为 false 时
