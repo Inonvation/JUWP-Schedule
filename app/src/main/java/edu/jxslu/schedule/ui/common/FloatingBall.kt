@@ -25,8 +25,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -49,6 +52,14 @@ private const val BallIdleAlpha = 0.8f
 
 /** 位置跟随的弹簧：偏硬，跟手不拖沓，松手原地停住（不吸附边缘）。 */
 private val BallMotion = spring<Float>(dampingRatio = 1f, stiffness = 6_000f)
+
+/**
+ * 阴影：**自绘**径向渐变，不用平台 elevation 阴影。平台会把圆形轮廓近似成多边形
+ * （七边形），球的底色又只有 80% 不透明，阴影的多边形面会直接透出来（2026-10-21 用户报）。
+ */
+private val BallShadowSpread = 7.dp
+private val BallShadowOffsetY = 2.dp
+private const val BallShadowAlpha = 0.14f
 
 /**
  * 拖动刚结束后挡掉单击的窗口（毫秒）。长按后**原地松手**（没移动）时，单击检测仍可能把
@@ -136,8 +147,9 @@ fun FloatingBallOverlay(
         )
         // 常态半透明、拖动时提到全不透明：既压得住内容，拖动时又看得清。
         // **不透明度落在 Surface 底色上**（图标 tint 保持不透明），不能对整个节点用
-        // Modifier.alpha：那会生成一层离屏图层，把 Surface 的 elevation 阴影裁成
-        // 节点矩形（用户 2026-10-19 反馈的「球下方矩形阴影」）。
+        // Modifier.alpha：那会生成一层离屏图层，把阴影裁成节点矩形（用户 2026-10-19
+        // 反馈的「球下方矩形阴影」）。阴影同样不能用 `shadowElevation`——平台把圆轮廓
+        // 多边形化，半透明底色下透出一块七边形（用户 2026-10-21 反馈），改自绘（见上）。
         val alpha by animateFloatAsState(
             targetValue = if (dragging) 1f else BallIdleAlpha,
             animationSpec = BallMotion,
@@ -149,7 +161,6 @@ fun FloatingBallOverlay(
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
-            shadowElevation = 6.dp,
             modifier = Modifier
                 .offset(
                     x = with(density) { dispX.toDp() } + BallMargin,
@@ -157,6 +168,29 @@ fun FloatingBallOverlay(
                 )
                 .size(ballSize)
                 .scale(scale)
+                .drawBehind {
+                    val radius = size.minDimension / 2f
+                    val spread = BallShadowSpread.toPx()
+                    val outer = radius + spread
+                    val inner = radius / outer
+                    val mid = (inner + 1f) / 2f
+                    val shadowCenter = center + Offset(0f, BallShadowOffsetY.toPx())
+                    // 球内一段是等强度，出球后先缓后急地淡出，接近平台 6dp elevation 的观感
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to Color.Black.copy(alpha = BallShadowAlpha),
+                                inner to Color.Black.copy(alpha = BallShadowAlpha),
+                                mid to Color.Black.copy(alpha = BallShadowAlpha * 0.45f),
+                                1f to Color.Transparent,
+                            ),
+                            center = shadowCenter,
+                            radius = outer,
+                        ),
+                        radius = outer,
+                        center = shadowCenter,
+                    )
+                }
                 .pointerInput(Unit) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = {

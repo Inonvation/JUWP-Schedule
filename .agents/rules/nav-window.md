@@ -166,9 +166,16 @@
     （`BallDragScale`）并提到全不透明。**别再写「松手吸附到最近边缘」**——
     那会「啪」地闪到边上，用户已否掉。
   - **半透明度落在颜色上，不要对整球用 `Modifier.alpha`**（2026-10-19 修矩形阴影）：
-    整层 alpha 会生成离屏图层，把 `Surface` 的 elevation 阴影裁成节点矩形（球下方一块
-    方块阴影）。改成 `color = primary.copy(alpha = …)`；图标 tint 保持 `onPrimary` 不透明
+    整层 alpha 会生成离屏图层，把阴影裁成节点矩形（球下方一块方块阴影）。改成
+    `color = primary.copy(alpha = …)`；图标 tint 保持 `onPrimary` 不透明
     （整层 alpha 时图标也一起被稀释，落到颜色上后若再给 tint 加 alpha 会比原来暗一档）。
+  - **阴影自绘，不要用 `Surface` 的 `shadowElevation`**（2026-10-21 修七边形）：
+    平台渲染 elevation 阴影会把圆轮廓近似成多边形（七边形），底色又只有 80% 不透明，
+    那块阴影面直接透出来（用户报「悬浮球后方下部分一个白色七边形」；AOSP 模拟器同样
+    复现，不是 ROM 特性）。现在 `Surface(shadowElevation = 0)`，阴影在 `FloatingBall.kt`
+    里用 `drawBehind` + `Brush.radialGradient` 自绘（球内等强度、出球后淡出，
+    `BallShadowSpread` / `BallShadowOffsetY` / `BallShadowAlpha` 三个常量），
+    写在 `Modifier.scale` 之后随球一起缩放。以后别再把 elevation 加回来。
   - **手势是两个独立 `pointerInput`**（`detectTapGestures` + `detectDragGesturesAfterLongPress`）：
     单击/双击共存意味着单击有一档 ~300ms 判定延迟；长按原地松手会误判成单击，
     靠「拖动结束时刻」挡掉（`TapSuppressAfterDragMs`）。改手势前先在真机上对一遍手感。
