@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -55,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.R
 import edu.jxslu.schedule.data.ujing.UjingHouseStore
 import edu.jxslu.schedule.data.ujing.UjingRepository
 import edu.jxslu.schedule.domain.AccountMask
@@ -300,34 +303,44 @@ fun SideDrawerContent(
                         onClick = { showShortcutSheet = true },
                     )
                     DrawerRow("空调遥控", HugeIcons.RemoteControl, onClick = onOpenAcRemote)
-                    DrawerRow("快趣出行", HugeIcons.ScooterElectric, onClick = onOpenRide)
+                    // 快趣/胖乖/趣智/U净/问渠五行走**官方品牌图标**（2026-10-21 用户口径）：
+                    // 位图自带彩色底，视觉体量比线性图标大，槽位取 24dp（线性 22dp）保持行内平衡
+                    DrawerRow(
+                        label = "快趣出行",
+                        brandIcon = R.drawable.ic_brand_kqcx,
+                        onClick = onOpenRide,
+                    )
                     // 三张卡（2026-10-21 用户口径）：**行本体直接进二级页**，右侧状态 / 余额
                     // 才开原来的入口弹窗——「看状态」与「进页操作」是两个动作，不再让
                     // 整行都落在弹窗上。U净 无登录 / 无收藏店时右侧没有状态可点，
                     // 弹窗入口随行内隐藏；数据侧同样等有数据才拉（见 ujingFreeText）。
                     DrawerRow(
                         label = "胖乖生活",
-                        icon = HugeIcons.Wallet01,
+                        brandIcon = R.drawable.ic_brand_pangguai,
                         trailing = waterBalance,
                         onClick = onOpenWater,
                         onTrailingClick = onOpenWaterSheet,
                     )
                     DrawerRow(
                         label = "趣智校园",
-                        icon = HugeIcons.ShowerHead,
+                        brandIcon = R.drawable.ic_brand_qzxy,
                         trailing = qzxyBalance,
                         onClick = onOpenQzxy,
                         onTrailingClick = onOpenQzxySheet,
                     )
                     DrawerRow(
                         label = "U净",
-                        icon = HugeIcons.WashingMachine,
+                        brandIcon = R.drawable.ic_brand_ujing,
                         trailing = ujingFreeText,
                         trailingLoading = ujingFreeLoading,
                         onClick = onOpenUjing,
                         onTrailingClick = onOpenUjingSheet,
                     )
-                    DrawerRow("问渠 · 志愿服务", HugeIcons.HeartHandshake, onClick = onOpenWenqu)
+                    DrawerRow(
+                        label = "问渠 · 志愿服务",
+                        brandIcon = R.drawable.ic_brand_wenqu,
+                        onClick = onOpenWenqu,
+                    )
                 }
                 DrawerSection("学习") {
                     DrawerRow("笔记 · 课件", HugeIcons.Book01, onClick = onOpenNotes)
@@ -838,7 +851,9 @@ private fun DrawerSection(title: String, content: @Composable ColumnScope.() -> 
 @Composable
 private fun DrawerRow(
     label: String,
-    icon: ImageVector,
+    icon: ImageVector? = null,
+    /** 官方品牌图标（drawable 位图，自带彩色底）：与 [icon] 二选一，brandIcon 优先。 */
+    brandIcon: Int? = null,
     trailing: String? = null,
     trailingLoading: Boolean = false,
     onClick: () -> Unit,
@@ -846,7 +861,6 @@ private fun DrawerRow(
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val muted = onSurface.copy(alpha = 0.78f)
-    val trailingMuted = onSurface.copy(alpha = 0.55f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -857,12 +871,21 @@ private fun DrawerRow(
             .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = muted,
-            modifier = Modifier.size(22.dp),
-        )
+        when {
+            // 品牌位图 24dp：彩色底自带视觉重量，比线性图标放大一档才不显小，
+            // 但仍比文字行高小一截（M3 行高 56dp 的 43%），不把行撑高
+            brandIcon != null -> Image(
+                painter = painterResource(brandIcon),
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+            )
+            else -> Icon(
+                imageVector = icon!!,
+                contentDescription = null,
+                tint = muted,
+                modifier = Modifier.size(22.dp),
+            )
+        }
         Spacer(Modifier.width(16.dp))
         Text(
             text = label,
