@@ -636,10 +636,15 @@ private fun RideActionButtons(
 
         carNum != null -> when {
             caps.directUnlock -> RideActionButton(
-                // 开锁等待期给过程反馈（2026-10-10）：定位 + 请求最长十几秒，按钮从确认
-                // 那一刻就写「开锁中…（已等 Ns）」并禁用——旧版这里纹丝不动，看着像卡死。
-                // 走秒与骑行态同一套（[waitedText]，超阈值补出路）
-                text = if (busy == KvcxAction.UNLOCK) "开锁中…" + waitedText else "开锁",
+                // 两段式（2026-10-21 用户口径）：「开启」= 创建订单、车保持已锁，
+                // 解锁在骑行卡上点；busy 文案随动作分流（扫码自动开锁那条是 DIRECT_UNLOCK，
+                // 仍叫「开锁」）。等待期给过程反馈（2026-10-10）：定位 + 请求最长十几秒，
+                // 按钮从确认那一刻就写「…中（已等 Ns）」并禁用。
+                text = when (busy) {
+                    KvcxAction.UNLOCK -> "开启中…" + waitedText
+                    KvcxAction.DIRECT_UNLOCK -> "开锁中…" + waitedText
+                    else -> "开启"
+                },
                 onClick = { onUnlock(carNum) },
                 icon = HugeIcons.LockOpen,
                 enabled = busy == null,
@@ -1857,7 +1862,9 @@ private fun RideBikeRow(
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
         ) {
             Text(
-                text = if (canUnlock) "开锁" else "生成乘车码",
+                // 两段式（2026-10-21）：远程开锁改叫「开启」——创建订单、车保持已锁，
+                // 解锁在骑行卡上点
+                text = if (canUnlock) "开启" else "生成乘车码",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -1954,7 +1961,7 @@ internal fun RideCarNumberSheet(
                 text = if (mini) {
                     "车身上的码看不清时，用这里生成一张，存进相册后在微信「扫一扫 → 相册」选图。"
                 } else {
-                    "输入完整车号或尾部 3 位，确认后回到页面开锁。"
+                    "输入完整车号或尾部 3 位，确认后创建订单（车辆保持锁定，解锁在骑行卡上点）。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -2000,7 +2007,9 @@ internal fun RideCarNumberSheet(
                 }
             } else {
                 RideActionButton(
-                    text = if (resolvedCarNum != null) "开锁 · 车 $resolvedCarNum" else "开锁",
+                    // 两段式（2026-10-21）：按车号开的是「开启」——创建订单、车保持已锁，
+                    // 解锁在骑行卡上点
+                    text = if (resolvedCarNum != null) "开启 · 车 $resolvedCarNum" else "开启",
                     onClick = { requestClose { onUnlock() } },
                     icon = HugeIcons.LockOpen,
                     enabled = resolvedCarNum != null,
@@ -2119,8 +2128,9 @@ internal fun RideCarNumberSheet(
             )
             if (!mini) {
                 Text(
-                    text = "开锁即按快趣规则计费。若账号为微信支付分免押，开锁时需跳微信完成授权" +
-                        "（微信限制，App 无法代做）；联系快趣客服可关闭该授权。",
+                    text = "「开启」创建订单后即按快趣规则计费（车辆保持锁定，解锁在骑行卡上点）。" +
+                        "若账号为微信支付分免押，开锁时需跳微信完成授权（微信限制，App 无法代做）；" +
+                        "联系快趣客服可关闭该授权。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
@@ -2769,7 +2779,7 @@ private fun RideModeOption(mode: EbikeUseMode, selected: Boolean, onClick: () ->
         }
         Text(
             text = if (mode.isAccount) {
-                "登录后在 App 内直接开锁 / 锁车 / 还车，从开锁起计费；非官方客户端，订单与善后以快趣为准。"
+                "登录后在 App 内「开启」（创建订单，解锁在骑行卡上点）/ 锁车 / 还车，从开启起计费；非官方客户端，订单与善后以快趣为准。"
             } else {
                 "只生成乘车码与计时，开车 / 还车都在微信小程序里完成；App 内不做任何写操作。"
             },

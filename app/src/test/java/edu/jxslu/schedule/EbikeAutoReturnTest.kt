@@ -263,6 +263,7 @@ class EbikeAutoReturnTest {
             gcjLat: Double,
             gcjLng: Double,
             locationSource: String,
+            sendUnlock: Boolean,
         ) = throw UnsupportedOperationException("自动还车用不到")
 
         override suspend fun retryUnlock(

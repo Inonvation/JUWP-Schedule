@@ -1729,7 +1729,8 @@ TTL 未知是已知边界，真机确认后如有必要再补主动续期。
 
 | 动作 | 调用序列（POST form） |
 |------|----------------------|
-| 开锁 | `createOrder {carNum, lat, lng, clientType:1, clientVersion:V6.0.0, locationSource}` → 官方 `helmet==1&&helmetConfig==1`（或开锁返 16015）走 `helmetUnLock {}`，否则 `greenCarUnlock {lng, lat, locationSource}` |
+| 开启（两段式，2026-10-21） | `createOrder {carNum, lat, lng, clientType:1, clientVersion:V6.0.0, locationSource}` **只建单、不发票**——车辆保持已锁，骑行卡按「已锁」落位；解锁由用户到车边点骑行卡上的「解锁」（对在案订单重发 `greenCarUnlock`，走「重试开锁」那条现成路）。地图远程开锁 / 车号面板 / 「重新使用该车」都走这条。头盔流程的车（建单响应 `helmet==1&&helmetConfig==1`）两段式覆盖不了，退回完整流程 |
+| 完整开锁 | `createOrder` → 官方 `helmet==1&&helmetConfig==1`（或开锁返 16015）走 `helmetUnLock {}`，否则 `greenCarUnlock {lng, lat, locationSource}`。**扫车身码自动开锁专用**（`KvcxAction.DIRECT_UNLOCK`）——人已站在车边，扫完即开 |
 | 临时锁车 | `greenCarLock {lng, lat, locationSource}`（官方骑行面板「锁车」，订单与计费继续）；响应过 `parseSuccess`（2026-10-08 起解析信封——旧版把响应整个丢弃，服务端明确拒绝被吞成笼统"未确认"） |
 | 还车 | 未锁先 `muteCarLock`（静默锁，尽力而为）→ `endTheOrder {lat, lng, locationValid, locationSource, locationTime(秒), bdStatus:0, bdPileStatus:0, bluetoothName:"", dispatchFlag:2}`；`locationValid` 按坐标是否有效传 1/0 |
 | 写后确认 | 开锁/还车写接口成功即返回（2026-10-18 提速，不再阻塞查 `queryUnderwayOrder`）；只有临时锁车保留 8 次 ≈ 12 秒的有界确认 |
@@ -1783,7 +1784,8 @@ TTL 未知是已知边界，真机确认后如有必要再补主动续期。
 没报「已锁」就按「已解锁」落位），缺的字段由后台补；
 ③ **后台补全**（`syncAfterUnlock`）：仓库层写成功即返回；补全最多 `UNLOCK_SYNC_ATTEMPTS` 拍、
 快照同时带上 `totalDate` 与 `currentPercent` 才收工（常见路径 0 次查询）、单拍为空不写状态、
-报回「已锁」照实采纳并停；它跑在 `scope.launch`，**别改回阻塞 unlock**；④ **缺字段沿用**
+报回「已锁」照实采纳并停（**只适用于真发过解锁指令的路径**：完整开锁 / 头盔流程——两段式
+`locked=true` 是预期常态，不当停拍信号，2026-10-21）；它跑在 `scope.launch`，**别改回阻塞 unlock**；④ **缺字段沿用**
 （`carryKnownRideFields`）：同车新快照缺 `totalDate` / `payMoney` / `currentPercent` 时
 沿用上一份，锁状态只在没有悬置待核实时沿用（悬置期间未知比旧值诚实，裁决按快照原文判）；
 ⑤ **查询时序闸**：写动作 / 锁状态现查开始时 `snapshotSeq +1`；每次读（`query` /
@@ -1795,6 +1797,8 @@ TTL 未知是已知边界，真机确认后如有必要再补主动续期。
 然后才做 `ensureReminderEnabled` / `startRideTimer` 与 Snackbar，最后 `syncAfterUnlock`——
 善后是一串 DataStore 读写与系统调用（排闹钟 / 起通知服务），旧顺序会把骑行卡挡在后面；
 但善后**不许**挪到 `syncAfterUnlock` 之后（补全在后台，通知栏倒计时不能等它）。
+**冷却只挂真发过指令的动作**（2026-10-21）：两段式开启车没动，`unlockCooldownUntil` 不落
+（锁车重发无妨、还车 `wasLocked=true` 跳过静默锁）；完整开锁 / 头盔流程照旧挂 3 秒。
 车辆卡的「开锁」按钮同时给等待态（「开锁中…（已等 Ns）」+ 禁用，见 §3.9）。
 **弹窗开关带过渡，不瞬间抽动**（2026-10-03，用户口径「不要有突变跳动」）：material3 1.3.0 的
 `AlertDialog` 没有 compose 侧动画、compose 的 Dialog 窗口也没配 `windowAnimationStyle`，

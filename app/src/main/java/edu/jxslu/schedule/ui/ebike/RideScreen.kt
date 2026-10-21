@@ -461,11 +461,13 @@ fun RideScreen(
         }
     }
     // 扫码自动开锁：确认可用后才到这一步；只有账号方式 + 已登录 + 无在案订单才发
-    // （与「开锁」按钮同一判据 caps.directUnlock——今日页扫一扫在两档下都可能进本页）
+    // （与「开锁」按钮同一判据 caps.directUnlock——今日页扫一扫在两档下都可能进本页）。
+    // 走 DIRECT_UNLOCK 完整开锁（2026-10-21 用户口径：人已站在车边、扫的就是车身码，
+    // 保持「扫完即开」；地图远程开锁才走两段式 UNLOCK——只建单、车保持已锁）
     LaunchedEffect(autoUnlockRequest) {
         val carNum = autoUnlockRequest ?: return@LaunchedEffect
         autoUnlockRequest = null
-        if (caps.directUnlock) requestKvcxAction(KvcxAction.UNLOCK, carNum)
+        if (caps.directUnlock) requestKvcxAction(KvcxAction.DIRECT_UNLOCK, carNum)
     }
     LaunchedEffect(Unit) {
         ebikeViewModel.events.collect { event ->
@@ -1130,7 +1132,9 @@ private fun KvcxConfirmHost(
                 }
             }
             when (action) {
-                KvcxAction.UNLOCK -> carNum?.let(kvcx::unlock)
+                KvcxAction.UNLOCK -> carNum?.let { kvcx.unlock(it, sendUnlock = false) }
+                // 扫车身码自动开锁：建单 + 立即发票（完整开锁）
+                KvcxAction.DIRECT_UNLOCK -> carNum?.let { kvcx.unlock(it, sendUnlock = true) }
                 KvcxAction.RETRY_UNLOCK -> kvcx.retryUnlock()
                 KvcxAction.RESUME -> kvcx.resumeRide()
                 KvcxAction.LOCK -> kvcx.tempLock()

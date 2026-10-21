@@ -81,12 +81,19 @@ interface KvcxRideSession {
      * 开锁：`createOrder` → （头盔流程 | `greenCarUnlock`）。
      * 写接口成功即返回 [UnlockOutcome.Unlocked]；**零自动重试**由实现方保证
      * （超时抛错，调用方刷新状态后决定）。
+     *
+     * [sendUnlock] = false 时走**两段式**（2026-10-21 用户口径「点开锁是开启车辆但不解锁，
+     * 手动点解锁才启动」）：只发 `createOrder` 建单，**不发票**，车辆保持已锁；
+     * 返回 [UnlockOutcome.Unlocked] 带最小订单（`locked = true`），解锁由用户点
+     * 「解锁」对在案订单重发（[retryUnlock]，官方同款）。头盔流程的车两段式覆盖不了
+     * （它的解锁在 `helmetUnLock`），退回完整流程照旧。
      */
     suspend fun unlockBike(
         carNum: String,
         gcjLat: Double,
         gcjLng: Double,
         locationSource: String = "realtime",
+        sendUnlock: Boolean = true,
     ): UnlockOutcome
 
     /**

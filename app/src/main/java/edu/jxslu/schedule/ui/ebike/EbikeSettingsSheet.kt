@@ -296,8 +296,8 @@ private fun RideConfirmSettingsSection(prefs: EbikePrefsSnapshot) {
     var unlockConfirm by remember(prefs.unlockConfirm) { mutableStateOf(prefs.unlockConfirm) }
     SettingsSection(title = "开锁与还车") {
         SettingSwitchRow(
-            title = "开锁前确认",
-            subtitle = "开锁前弹确认框，写明计费与车号；关掉后点「开锁」直接开锁并开始计费",
+            title = "开启前确认",
+            subtitle = "开启前弹确认框，写明计费与车号；关掉后点「开启」直接创建订单（车辆保持锁定，解锁在骑行卡上点）",
             checked = unlockConfirm,
             onCheckedChange = { checked ->
                 unlockConfirm = checked

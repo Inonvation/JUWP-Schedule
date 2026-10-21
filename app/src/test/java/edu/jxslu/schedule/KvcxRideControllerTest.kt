@@ -78,6 +78,8 @@ class KvcxRideControllerTest {
         var lockCalls = 0
         var returnCalls = 0
         var unlockLocationSource: String? = null
+        /** 最近一次 `unlockBike` 的 `sendUnlock`（两段式 / 完整开锁分流的断言用）。 */
+        var lastSendUnlock: Boolean? = null
         var retryLocationSource: String? = null
         var lockLocationSource: String? = null
         var returnLocationSource: String? = null
@@ -109,9 +111,11 @@ class KvcxRideControllerTest {
             gcjLat: Double,
             gcjLng: Double,
             locationSource: String,
+            sendUnlock: Boolean,
         ): UnlockOutcome {
             unlockCalls++
             unlockLocationSource = locationSource
+            lastSendUnlock = sendUnlock
             return unlockResult()
         }
 
@@ -210,7 +214,8 @@ class KvcxRideControllerTest {
     // ---------- 开锁 ----------
 
     @Test
-    fun `开锁成功同步计时与提醒开关`() {
+    fun `开启成功同步计时与提醒开关`() {
+        // 两段式开启（默认）：只建单、车保持已锁；计时照挂（计费从建单起）
         // 提醒开关原本关着：善后顺手打开，提示里补一句括号说明
         val session = FakeSession()
         val effects = FakeEffects(reminderWasOff = true)
@@ -219,9 +224,10 @@ class KvcxRideControllerTest {
         kvcx.unlock("100000669")
 
         assertEquals(1, session.unlockCalls)
+        assertEquals(false, session.lastSendUnlock)
         assertEquals(1, effects.startedTimer)
         assertEquals(
-            "已开锁；已开始计时，通知栏已显示倒计时（已打开免费时长提醒）",
+            "已创建订单，车辆保持锁定；已开始计时，通知栏已显示倒计时（已打开免费时长提醒）",
             notices.single().first,
         )
         assertEquals(NoticeTone.Success, notices.single().second)
@@ -233,14 +239,67 @@ class KvcxRideControllerTest {
         notices.clear()
         val kvcx2 = controller(FakeSession(), FakeEffects(reminderWasOff = false))
         kvcx2.unlock("100000669")
-        assertEquals("已开锁；已开始计时，通知栏已显示倒计时", notices.single().first)
+        assertEquals("已创建订单，车辆保持锁定；已开始计时，通知栏已显示倒计时", notices.single().first)
     }
 
     @Test
-    fun `开锁成功排自动还车`() {
+    fun `完整开锁保留原口径`() {
+        // 扫车身码自动开锁那条（DIRECT_UNLOCK）：建单 + 立即发票，提示仍叫「已开锁」
+        val session = FakeSession()
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669", sendUnlock = true)
+
+        assertEquals(true, session.lastSendUnlock)
+        assertEquals("已开锁；已开始计时，通知栏已显示倒计时", notices.single().first)
+        // 完整流程发了指令：锁车 / 还车进冷却（车侧上报异步，2026-10-09 口径）
+        assertTrue(kvcx.state.value.unlockCooldownUntil > 0L)
+    }
+
+    @Test
+    fun `开启落已锁快照且不进冷却`() {
+        // 车没收到解锁指令：骑行卡按「已锁」落位，左位按钮就是「解锁」；
+        // 没发过指令 → 冷却不挂（锁车 / 还车不用挡）
+        val session = FakeSession()
+        // 两段式建单后服务端的在案订单就是已锁（没发票）：后台补全读到的也是它
+        session.underway = ride(locked = true)
+        val kvcx = controller(session)
+
+        kvcx.unlock("100000669")
+
+        assertEquals(true, kvcx.state.value.ride?.locked)
+        assertEquals(0L, kvcx.state.value.unlockCooldownUntil)
+        // 头盔车例外：两段式覆盖不了头盔流程，退回完整流程（快照带 locked=true 由仓库给，
+        // 兜底分支按「未锁」）；这里只钉非头盔路径的 sendUnlock 透传
+        assertEquals(false, session.lastSendUnlock)
+    }
+
+    @Test
+    fun `开启后点解锁重发指令不重建订单`() {
+        // 两段式的第二段走的是现成的 retryUnlock 那条路（resumeRide 同一条调用）
+        val session = FakeSession()
+        session.underway = ride(locked = true) // 建单后在案订单是已锁（没发票）
+        val kvcx = controller(session)
+        kvcx.unlock("100000669")
+        assertTrue(kvcx.state.value.ride?.locked == true)
+        val unlockCallsBefore = session.unlockCalls
+
+        // 解锁指令生效：车辆上报「未锁」，动作后的收尾刷新读到它
+        session.underway = ride(locked = false)
+        kvcx.resumeRide()
+
+        assertEquals(0, session.unlockCalls - unlockCallsBefore)
+        assertEquals(1, session.retryCalls)
+        // 调用前是已锁态 → 成功文案走「已解锁，继续骑行」
+        assertEquals("已解锁，继续骑行", notices.last().first)
+        assertFalse(kvcx.state.value.ride?.locked ?: true)
+    }
+
+    @Test
+    fun `开启成功排自动还车`() {
         // 自动还车的触发点 = 计时起点 + 15 分钟 − 提前量：必须和计时同刻排（见
         // EbikeAutoReturnReminder）。开关关着时副作用实现里是空操作，但编排层要保证
-        // 每次都调用——漏掉就是"开了开关也不生效"
+        // 每次都调用——漏掉就是"开了开关也不生效"。两段式同样计费，同样要排
         val session = FakeSession()
         val effects = FakeEffects()
         val kvcx = controller(session, effects)
@@ -289,13 +348,15 @@ class KvcxRideControllerTest {
         session.unlockResult = { UnlockOutcome.Unlocked("100000669", helmetFlow = true) }
         val kvcx = controller(session)
 
-        kvcx.unlock("100000669")
+        kvcx.unlock("100000669", sendUnlock = true)
 
         assertTrue(notices.single().first.startsWith("已创建订单，请取下车盔；"))
     }
 
     @Test
-    fun `开锁未确认给重试出口且不计成功`() {
+    fun `开启未确认给刷新出口且不计成功`() {
+        // 两段式的"未确认"= 建单响应没回来，与"开锁未确认"是两个语义：出路是刷新核实，
+        // 不是「重试开锁」（那是对在案订单重发解锁指令）
         val session = FakeSession()
         val effects = FakeEffects(reminderWasOff = true)
         session.unlockResult = { UnlockOutcome.Unconfirmed("100000669") }
@@ -309,13 +370,14 @@ class KvcxRideControllerTest {
         assertEquals(0, unlockedSignals)
         assertEquals(0, effects.startedTimer)
         assertEquals(NoticeTone.Warning, notices.single().second)
-        assertTrue(notices.single().first.contains("重试开锁"))
+        assertTrue(notices.single().first.contains("刷新核实"))
         // 未确认不算"开车"：不进冷却，用户仍可锁车 / 还车兜底
         assertEquals(0L, kvcx.state.value.unlockCooldownUntil)
     }
 
     @Test
     fun `开锁成功采纳确认快照并进入三秒冷却`() {
+        // 完整流程（sendUnlock = true，扫码自动开锁那条）：指令已发，快照按「未锁」采纳
         val session = FakeSession()
         // 确认那一刻就带数据：卡片不必等下一次刷新，补全一轮也不发（首拍直接收工）
         session.unlockResult = {
@@ -328,7 +390,7 @@ class KvcxRideControllerTest {
         val kvcx = controller(session)
         val before = System.currentTimeMillis()
 
-        kvcx.unlock("100000669")
+        kvcx.unlock("100000669", sendUnlock = true)
 
         val state = kvcx.state.value
         assertEquals(12L, state.ride?.totalDateSeconds)
@@ -342,23 +404,24 @@ class KvcxRideControllerTest {
     @Test
     fun `开锁确认快照缺字段时有界补全`() {
         // 新订单在服务端异步落账：确认快照可能缺已骑时长 / 锁状态——不轮询的前提下，
-        // 一次刷新落空就会一直挂在骑行卡上（「已骑 --」「锁状态未知」），所以有界补拍
+        // 一次刷新落空就会一直挂在骑行卡上（「已骑 --」「锁状态未知」），所以有界补拍。
+        // 两段式同样适用（缺时长 / 电量由后台补；locked=true 是本次动作给的事实）
         val session = FakeSession()
         session.unlockResult = {
             UnlockOutcome.Unlocked(
                 "100000669",
                 helmetFlow = false,
-                ride = ride(totalDateSeconds = null, locked = null),
+                ride = ride(totalDateSeconds = null, locked = true),
             )
         }
-        session.queryScript = ArrayDeque(listOf(ride(totalDateSeconds = 5, locked = false)))
+        session.queryScript = ArrayDeque(listOf(ride(totalDateSeconds = 5, locked = true)))
         val kvcx = controller(session)
 
         kvcx.unlock("100000669")
 
         val state = kvcx.state.value
         assertEquals(5L, state.ride?.totalDateSeconds)
-        assertEquals(false, state.ride?.locked)
+        assertEquals(true, state.ride?.locked)
         assertEquals(1, session.queryCalls)
     }
 
@@ -370,13 +433,13 @@ class KvcxRideControllerTest {
             UnlockOutcome.Unlocked(
                 "100000669",
                 helmetFlow = false,
-                ride = ride(totalDateSeconds = 5, batteryPercent = null, locked = false),
+                ride = ride(totalDateSeconds = 5, batteryPercent = null, locked = true),
             )
         }
         session.queryScript = ArrayDeque(
             listOf(
-                ride(totalDateSeconds = 6, batteryPercent = null, locked = false),
-                ride(totalDateSeconds = 7, batteryPercent = 80, locked = false),
+                ride(totalDateSeconds = 6, batteryPercent = null, locked = true),
+                ride(totalDateSeconds = 7, batteryPercent = 80, locked = true),
             ),
         )
         val kvcx = controller(session)
@@ -403,7 +466,7 @@ class KvcxRideControllerTest {
         session.queryGate = gate
         val kvcx = controller(session)
 
-        kvcx.unlock("100000669")
+        kvcx.unlock("100000669", sendUnlock = true)
 
         assertNull(kvcx.state.value.busy)
         assertEquals(1, session.queryCalls)
@@ -412,7 +475,7 @@ class KvcxRideControllerTest {
     }
 
     @Test
-    fun `开锁后刷新落空不清掉刚确认的订单`() {
+    fun `开启后刷新落空不清掉刚确认的订单`() {
         // 同一辆车刚还完就再开：服务端要先后走完结束与新建两条账，那几拍里查询可能落空——
         // 空回包不许写状态（写下去正是「骑行时长等信息丢失」），恢复后照常落位
         val session = FakeSession()
@@ -420,11 +483,11 @@ class KvcxRideControllerTest {
             UnlockOutcome.Unlocked(
                 "100000669",
                 helmetFlow = false,
-                ride = ride(totalDateSeconds = null, locked = false),
+                ride = ride(totalDateSeconds = null, locked = true),
             )
         }
         session.queryScript = ArrayDeque(
-            listOf(null, ride(totalDateSeconds = 8, locked = false)),
+            listOf(null, ride(totalDateSeconds = 8, locked = true)),
         )
         val kvcx = controller(session)
 
@@ -644,7 +707,7 @@ class KvcxRideControllerTest {
     }
 
     @Test
-    fun `开锁超时只发一次请求（零自动重试）`() {
+    fun `开启超时只发一次请求（零自动重试）`() {
         val session = FakeSession()
         session.unlockResult = { throw SocketTimeoutException("timeout") }
         val kvcx = controller(session)
@@ -875,6 +938,7 @@ class KvcxRideControllerTest {
     @Test
     fun `确认弹窗只对开锁与还车弹出`() {
         assertNotNull(kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669"))
+        assertNotNull(kvcxConfirmDialog(KvcxAction.DIRECT_UNLOCK, "车 100000669"))
         assertNotNull(kvcxConfirmDialog(KvcxAction.RETRY_UNLOCK, "车 100000669"))
         assertNotNull(kvcxConfirmDialog(KvcxAction.RETURN, "车 100000669"))
         // 临时锁车与解锁继续骑都没有新增的计费后果：不弹
@@ -883,11 +947,27 @@ class KvcxRideControllerTest {
     }
 
     @Test
-    fun `开锁确认弹窗写清支付分授权与客服出路`() {
-        // 账号方式开锁前要交代「可能要跳微信做支付分授权」，以及唯一能让本机直接开锁
-        // 端到端可用的出路：联系快趣客服关闭该授权。文案只在 kvcxConfirmDialog 里
+    fun `开启确认弹窗写清两段式与支付分出路`() {
+        // 两段式（2026-10-21）：「开启」= 创建订单、车保持已锁，解锁在骑行卡上点；
+        // 支付分授权与客服出路沿用原文案。文案只在 kvcxConfirmDialog 里
         val dialog = kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669")!!
         val text = dialog.points.joinToString("\n")
+        assertTrue(dialog.title.contains("开启"))
+        assertTrue(text.contains("创建订单"))
+        assertTrue(text.contains("保持锁定"))
+        assertTrue(text.contains("微信支付分"))
+        assertTrue(text.contains("客服"))
+        assertTrue(text.contains("车 100000669"))
+        assertEquals(3, dialog.points.size)
+        assertEquals("开启", dialog.confirmLabel)
+    }
+
+    @Test
+    fun `开锁确认弹窗写清支付分授权与客服出路`() {
+        // 完整开锁（扫车身码自动开锁那条）保留原口径：建单 + 立即开锁
+        val dialog = kvcxConfirmDialog(KvcxAction.DIRECT_UNLOCK, "车 100000669")!!
+        val text = dialog.points.joinToString("\n")
+        assertTrue(dialog.title.contains("直接开锁"))
         assertTrue(text.contains("微信支付分"))
         assertTrue(text.contains("客服"))
         assertTrue(text.contains("车 100000669"))
@@ -901,6 +981,7 @@ class KvcxRideControllerTest {
         // 「不再提醒」只给开锁：四道闸里它是唯一"用户对自己账号"的授权；还车涉及结算与
         // 调度费、重试开锁是异常路径，都保留每次确认
         assertTrue(kvcxConfirmDialog(KvcxAction.UNLOCK, "车 100000669")!!.allowSkip)
+        assertTrue(kvcxConfirmDialog(KvcxAction.DIRECT_UNLOCK, "车 100000669")!!.allowSkip)
         assertFalse(kvcxConfirmDialog(KvcxAction.RETRY_UNLOCK, "车 100000669")!!.allowSkip)
         assertFalse(kvcxConfirmDialog(KvcxAction.RETURN, "车 100000669")!!.allowSkip)
     }
@@ -980,7 +1061,7 @@ class KvcxRideControllerTest {
     }
 
     @Test
-    fun `建单成功但开锁断网时给出重试出口`() {
+    fun `建单成功但未确认时给出刷新出口`() {
         val session = FakeSession()
         // 仓库层在 createOrder 成功后遇到 IOException 会返回 Unconfirmed + 最小订单；
         // 控制器拿到的是这个契约，不再直接看到 IOException。
@@ -998,7 +1079,7 @@ class KvcxRideControllerTest {
         assertEquals("100000669", kvcx.state.value.ride?.carNum)
         assertTrue(kvcx.state.value.unlockPending)
         assertEquals(NoticeTone.Warning, notices.single().second)
-        assertTrue(notices.single().first.contains("重试开锁"))
+        assertTrue(notices.single().first.contains("刷新核实"))
     }
 
     @Test
@@ -1102,9 +1183,9 @@ class KvcxRideControllerTest {
     }
 
     @Test
-    fun `重新开锁成功清掉还车结算卡`() {
-        // 结算卡上的「重新使用该车」：开锁成功 = 离开结算态，否则「已还车」的卡片会和
-        // 在案订单并存
+    fun `重新开启成功清掉还车结算卡`() {
+        // 结算卡上的「重新使用该车」：开启成功 = 离开结算态，否则「已还车」的卡片会和
+        // 在案订单并存。两段式下开启落「已锁」快照、不进冷却
         val session = FakeSession()
         val kvcx = controller(session)
         kvcx.query(quiet = true)
@@ -1113,18 +1194,19 @@ class KvcxRideControllerTest {
         assertNotNull(kvcx.state.value.returnSummary)
 
         session.unlockResult = {
-            UnlockOutcome.Unlocked("100000669", helmetFlow = false, ride = ride(locked = false))
+            UnlockOutcome.Unlocked("100000669", helmetFlow = false, ride = ride(locked = true))
         }
         kvcx.unlock("100000669")
 
         assertNull(kvcx.state.value.returnSummary)
         assertNotNull(kvcx.state.value.ride)
-        assertTrue(kvcx.state.value.unlockCooldownUntil > 0L)
+        assertEquals(true, kvcx.state.value.ride?.locked)
+        assertEquals(0L, kvcx.state.value.unlockCooldownUntil)
     }
 
     @Test
-    fun `重新开锁未确认也清掉还车结算卡`() {
-        // 订单已创建（只是没确认到锁）：同样离开结算态——「已还车」的卡片不能与在案订单并存
+    fun `重新开启未确认也清掉还车结算卡`() {
+        // 订单已创建（只是没确认到）：同样离开结算态——「已还车」的卡片不能与在案订单并存
         val session = FakeSession()
         val kvcx = controller(session)
         kvcx.query(quiet = true)
@@ -1142,7 +1224,7 @@ class KvcxRideControllerTest {
     }
 
     @Test
-    fun `重新开锁失败保留还车结算卡`() {
+    fun `重新开启失败保留还车结算卡`() {
         // 失败可原地重试：结算卡不许被清（清卡只在成功 / 未确认两条路径上）
         val session = FakeSession()
         val kvcx = controller(session)

@@ -68,7 +68,17 @@ internal const val UNLOCK_SYNC_INTERVAL_MS = 1_500L
 
 /** 快趣用车动作（DESIGN §4.32，B/C 档）：同一时刻只允许一个在跑。 */
 enum class KvcxAction {
+    /**
+     * 两段式开启（2026-10-21 用户口径）：只创建订单，**车辆保持已锁**；
+     * 解锁由用户到车边点骑行卡上的「解锁」（[retryUnlock] 那条现成路）。
+     * 地图开锁 / 车号面板 / 「重新使用该车」都走这枚。
+     */
     UNLOCK,
+    /**
+     * 完整开锁（建单 + 立即发解锁指令）：**扫车身码自动开锁专用**——人已站在车边、
+     * 扫的就是车身码，再要用户多点一下解锁反而别扭。
+     */
+    DIRECT_UNLOCK,
     RETRY_UNLOCK,
     /** 临时锁车后继续骑（与 [RETRY_UNLOCK] 是同一条调用，只是文案不同）。 */
     RESUME,
@@ -341,17 +351,23 @@ class KvcxRideController internal constructor(
     }
 
     /**
-     * 直接开锁：`createOrder` + 开锁。仓库层写接口成功即返回，不再等状态落地。
-     * 成功后：免费时长起点钉在**真正开锁的时刻**、顺手打开提醒开关（[KvcxSideEffects]）、
+     * 开锁：[sendUnlock] = true 为完整流程（建单 + 立即发票）；false 为**两段式**
+     * （2026-10-21 用户口径）——只创建订单，车辆保持已锁，骑行卡按「已锁」落位，
+     * 用户点左位「解锁」才真正开车（走 [retryUnlock] 那条现成路，不重建订单）。
+     * 两段式的口令文案是「开启」；完整流程仍叫「开锁」（扫码自动开锁那条）。
+     * 仓库层写接口成功即返回，不再等状态落地。
+     * 成功后：免费时长起点钉在**订单创建的时刻**、顺手打开提醒开关（[KvcxSideEffects]）、
      * 并通过 [onUnlocked] 发一次一次性信号（页面补成功触感）。
      * 未确认时置 [KvcxRideState.unlockPending]，UI 给「重试开锁」出口。
      *
      * [carNum] 必须是**完整车号**（调用方用 `EbikeQr.resolveCarNum` 规范化过）。
      */
-    fun unlock(carNum: String) = run(KvcxAction.UNLOCK) { session ->
+    fun unlock(carNum: String, sendUnlock: Boolean = false) = run(
+        if (sendUnlock) KvcxAction.DIRECT_UNLOCK else KvcxAction.UNLOCK,
+    ) { session ->
         val point = locateOrNotice() ?: return@run
         val outcome = try {
-            session.unlockBike(carNum, point.lat, point.lng, point.source)
+            session.unlockBike(carNum, point.lat, point.lng, point.source, sendUnlock = sendUnlock)
         } catch (error: KvcBusinessError) {
             // 11035 = 微信支付分下单授权：只能在微信里完成（App 无法代调 wxpayScoreUse）。
             // 记会话标记，让 UI 给说明与出路，别让用户反复白点
@@ -368,7 +384,9 @@ class KvcxRideController internal constructor(
                 val confirmedRide = (outcome.ride ?: KqcxAuth.Ride(
                     carNum = outcome.carNum,
                     bluetoothName = null,
-                    locked = false,
+                    // 兜底快照：完整流程按「未锁」乐观落位（指令已发）；两段式没发指令、
+                    // 头盔流程的锁随头盔放开，都按「未锁」
+                    locked = !(sendUnlock || outcome.helmetFlow),
                 )).adoptConfirmedUnlock()
                 _state.update {
                     it.copy(
@@ -380,7 +398,14 @@ class KvcxRideController internal constructor(
                         unlockPending = false,
                         lockPending = false,
                         scoreAuthRequired = false,
-                        unlockCooldownUntil = confirmedAt + UNLOCK_COOLDOWN_MS,
+                        // 冷却防的是「刚发过解锁指令，车侧上报还在走」——只有真发过指令
+                        // （完整流程 / 两段式撞上头盔车退回完整流程）才需要；两段式车没动，
+                        // 锁车（重发无妨）/ 还车（wasLocked 跳过静默锁）都不用挡
+                        unlockCooldownUntil = if (sendUnlock || outcome.helmetFlow) {
+                            confirmedAt + UNLOCK_COOLDOWN_MS
+                        } else {
+                            0L
+                        },
                         // 重新开锁成功即离开结算态（结算卡上的「重新使用该车」）：「已还车」的
                         // 卡片只在"还完车待决定"这段时间成立。失败路径不经过这里，卡片保留，
                         // 用户可以原地再点一次。
@@ -394,12 +419,17 @@ class KvcxRideController internal constructor(
                 // 倒计时通知因此跟着开锁一起来。开关在「快趣出行设置」里可见、可随时关掉。
                 // **顺序纪律**：这段善后在界面更新之后跑，但**不许**挪到 [syncAfterUnlock]
                 // 后面——补全在后台跑，挪过去会让通知栏倒计时白等。
+                // 两段式计费同样从建单起，计时照挂（起点只早不晚，提醒更保守）
                 val reminderOpened = effects.ensureReminderEnabled()
                 val (timerText, timerTone) = effects.startRideTimer()
                 // 自动还车与计时同刻排（触发点 = 计时起点 + 15 分钟 − 提前量；见
                 // EbikeAutoReturnReminder）。开关关着时是一次空操作
                 effects.scheduleAutoReturn()
-                val head = if (outcome.helmetFlow) "已创建订单，请取下车盔" else "已开锁"
+                val head = when {
+                    outcome.helmetFlow -> "已创建订单，请取下车盔"
+                    sendUnlock -> "已开锁"
+                    else -> "已创建订单，车辆保持锁定"
+                }
                 onNotice(
                     head + "；" + timerText +
                         if (reminderOpened) "（已打开免费时长提醒）" else "",
@@ -408,8 +438,11 @@ class KvcxRideController internal constructor(
                 // 对账 + 补全放到后台：动作的 busy 在这一拍就结束，不让最多 5 次查询
                 // 继续占住按钮。**不走**共享的 refreshInternal（见 [syncAfterUnlock]）：
                 // 那份在服务端抽风回空时会把刚确认的订单整个抹掉。
+                // sentUnlock = 本次真发过解锁指令（完整流程 / 两段式撞上头盔车），
+                // 决定补全要不要把「报回已锁」当停拍信号
                 val syncSeq = snapshotSeq
-                scope.launch { syncAfterUnlock(outcome.carNum, syncSeq) }
+                val sent = sendUnlock || outcome.helmetFlow
+                scope.launch { syncAfterUnlock(outcome.carNum, syncSeq, sentUnlock = sent) }
             }
             is UnlockOutcome.Unconfirmed -> {
                 // 订单已创建（只是没确认到锁）：同样离开结算态——「已还车」的卡片
@@ -428,9 +461,16 @@ class KvcxRideController internal constructor(
                         returnSummary = null,
                     )
                 }
-                onNotice("订单已创建但未确认开锁；可点「重试开锁」，或到快趣小程序核对", NoticeTone.Warning)
+                onNotice(
+                    if (sendUnlock) {
+                        "订单已创建但未确认开锁；可点「重试开锁」，或到快趣小程序核对"
+                    } else {
+                        "订单已创建但未确认；可点刷新核实，或到快趣小程序核对"
+                    },
+                    NoticeTone.Warning,
+                )
                 val syncSeq = snapshotSeq
-                scope.launch { syncAfterUnlock(outcome.carNum, syncSeq) }
+                scope.launch { syncAfterUnlock(outcome.carNum, syncSeq, sentUnlock = sendUnlock) }
             }
         }
     }
@@ -813,9 +853,11 @@ class KvcxRideController internal constructor(
      *   （常见路径 = 采纳的快照就完整 = 0 次查询）；
      * - 一拍为空**不写状态**（订单刚刚确认在案，这一拍的空是脏回包，写下去正是"信息丢失"），
      *   等下一拍；
-     * - 报回「已锁」与刚确认的开锁打架：照实采纳（服务端的说法是权威），但停止补全。
+     * - 「报回已锁即停」只适用于真发过解锁指令的路径（[sentUnlock]）：那是"服务端说车锁上了，
+     *   与刚发的开锁指令打架，照实采纳并停"；**两段式（只建单没发票）下 `locked = true`
+     *   是预期的常态**，不能当停拍信号，否则时长 / 电量补不全。
      */
-    private suspend fun syncAfterUnlock(carNum: String, seq: Long) {
+    private suspend fun syncAfterUnlock(carNum: String, seq: Long, sentUnlock: Boolean) {
         val session = session ?: return
         val read = ++readSeq
         repeat(UNLOCK_SYNC_ATTEMPTS) { index ->
@@ -836,7 +878,7 @@ class KvcxRideController internal constructor(
             if (seq != snapshotSeq || read != readSeq) return
             if (_state.value.ride?.carNum != carNum) return
             _state.update { it.withRideSnapshot(fresh) }
-            if (fresh.locked == true) return
+            if (sentUnlock && fresh.locked == true) return
         }
     }
 }
@@ -874,7 +916,22 @@ internal fun kvcxConfirmDialog(
     action: KvcxAction,
     carLabel: String,
 ): KvcxConfirm? = when (action) {
+    // 两段式（2026-10-21）：「开启」= 创建订单，车保持已锁；解锁在车边点
     KvcxAction.UNLOCK -> KvcxConfirm(
+        title = "开启这辆车？",
+        points = listOf(
+            "将用你的快趣账号为 $carLabel 创建订单，从现在起按快趣规则计费；车辆保持锁定，到车边点骑行卡上的「解锁」才启动。",
+            "水贝贝是非官方客户端，请确认车辆与车号一致；订单善后以快趣为准。",
+            // 支付分授权只能跳微信（wxpayScoreUse 是微信客户端专属 API，见 §4.32 的 11035）；
+            // 唯一能让「本机直接开锁」端到端可用的出路是找客服关掉授权
+            "若账号为微信支付分免押，开锁时需跳转微信完成支付分授权（微信限制，App 无法代做）；" +
+                "可联系快趣客服为账号关闭该授权，之后即可直接开锁。",
+        ),
+        confirmLabel = "开启",
+        allowSkip = true,
+    )
+    // 完整开锁（建单 + 立即发票）：扫车身码自动开锁专用
+    KvcxAction.DIRECT_UNLOCK -> KvcxConfirm(
         title = "直接开锁？",
         points = listOf(
             "将用你的快趣账号为 $carLabel 创建订单并开锁，从开锁起按快趣规则计费。",

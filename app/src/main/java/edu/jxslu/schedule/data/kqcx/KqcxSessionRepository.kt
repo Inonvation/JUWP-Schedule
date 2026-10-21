@@ -107,6 +107,12 @@ class KqcxSessionRepository(
      * **成功即返回**：`greenCarUnlock` / `helmetUnLock` 成功就返回 [UnlockOutcome.Unlocked]，
      * 不再等 `queryUnderwayOrder` 确认。调用方先落骑行卡，再在后台做只读补全。
      *
+     * **两段式**（[sendUnlock] = false，2026-10-21）：只发 `createOrder` 建单，**不发票**
+     * ——车保持已锁，解锁由用户对在案订单点「解锁」（[retryUnlock]）完成。
+     * 返回的最小订单按 `locked = true` 落位（车辆没收到开锁指令）。
+     * 头盔流程（建单响应要求 / 16015）例外：那套解锁在 `helmetUnLock`，两段式第二步
+     * 覆盖不了，退回完整流程照旧。
+     *
      * **零自动重试**：`createOrder` 超时抛错，调用方刷新状态后决定；回滚不必要——
      * 订单若真创建成功，刷新能看到，重试开锁走 [retryUnlock]。
      */
@@ -115,6 +121,7 @@ class KqcxSessionRepository(
         gcjLat: Double,
         gcjLng: Double,
         locationSource: String,
+        sendUnlock: Boolean,
     ): UnlockOutcome {
         ensureSession()
         val token = requireToken()
@@ -122,6 +129,12 @@ class KqcxSessionRepository(
             KqcxAuth.parseCreatedOrder(
                 client.createOrderJson(token, carNum, gcjLat, gcjLng, locationSource),
             )
+        }
+        if (!sendUnlock) {
+            // 两段式第一段：订单在案、车没解锁（locked = true）。头盔车除外——它在建单
+            // 响应里就要求走头盔流程，那套解锁属于完整流程。
+            if (created.helmetFlowRequired) return fullUnlock(created, token, gcjLat, gcjLng, locationSource)
+            return UnlockOutcome.Unlocked(created.carNum, helmetFlow = false, ride = lockedRide(created))
         }
         if (created.helmetFlowRequired) {
             // 官方头盔流程：此路开头盔锁，车锁随头盔流程放开
@@ -161,6 +174,29 @@ class KqcxSessionRepository(
             // 不要让一次网络抖动把人卡在“没有订单、又开不了新车”的中间态。
             return UnlockOutcome.Unconfirmed(created.carNum, provisionalRide(created))
         }
+    }
+
+    /**
+     * 两段式建单撞上头盔车时的回退：把完整流程跑完（与 [unlockBike] 的头盔分支同一套，
+     * 抽出来只为复用，不是第二份口径）。
+     */
+    private suspend fun fullUnlock(
+        created: KqcxAuth.CreatedOrder,
+        token: String,
+        gcjLat: Double,
+        gcjLng: Double,
+        locationSource: String,
+    ): UnlockOutcome {
+        try {
+            server { client.helmetUnlockJson(token) }
+        } catch (error: IOException) {
+            return UnlockOutcome.Unconfirmed(created.carNum, provisionalRide(created))
+        }
+        return UnlockOutcome.Unlocked(
+            created.carNum,
+            helmetFlow = true,
+            ride = provisionalRide(created),
+        )
     }
 
     /**
@@ -487,6 +523,13 @@ class KqcxSessionRepository(
             locked = false,
             batteryPercent = created.batteryPercent,
         )
+
+    /**
+     * 两段式（只建单不发票）的最小订单：与 [provisionalRide] 同构，但 `locked = true`
+     * ——没发过开锁指令，车保持已锁；解锁由用户点「解锁」对在案订单重发。
+     */
+    private fun lockedRide(created: KqcxAuth.CreatedOrder): KqcxAuth.Ride =
+        provisionalRide(created).copy(locked = true)
 
     /** 官方 `Math.ceil(ts/1e3)` 同口径的秒级时间戳。 */
     private fun nowSeconds(): Long = (System.currentTimeMillis() + 999) / 1000
