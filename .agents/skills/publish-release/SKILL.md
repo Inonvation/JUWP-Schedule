@@ -112,9 +112,13 @@ Copy-Item app\build\outputs\apk\release\app-release.apk "JUWP-Schedule-<版本�
 git push origin main
 ```
 
-若遇到 `unable to access 'https://github.com/...': Failed to connect to 127.0.0.1 port <端口>`：
-- 说明 git 配置的 `http.proxy` / `https.proxy` 指向了已关闭的本地代理
-- 先确认代理进程是否在运行；若代理已关闭，等代理恢复后重试推送
+若推送失败（连接被重置、`Failed to connect to 127.0.0.1 port <端口>` 等）：
+
+- **禁止私自开关代理**：电脑有时连的是校园网，校园网禁止挂代理；开不开代理只由用户决定。
+- **先尝试直连推送**：`git -c http.proxy= -c https.proxy= push origin main`（临时清掉代理配置重试，不改全局配置；`Failed to connect to 127.0.0.1` 报错即 git 配置指向了已关闭的本地代理，这条命令同样能绕过）。网络抖动常见，直连失败可重试 1–2 次再放弃。
+- 直连仍失败 → 停下告知用户，提醒**确认代理（端口 19191）已开启**，等用户确认后再带代理重推：
+  `git -c http.proxy=http://127.0.0.1:19191 -c https.proxy=http://127.0.0.1:19191 push origin main`
+  （这不是私自开代理——禁止的是启动代理进程，指向用户已开启的代理没有问题。）
 - `gh` 的网络走自身认证链路，不受 git `http.proxy` 配置影响，不要用 `gh` 代替 git 推送提交
 
 推送成功后再进入 Step 7。
@@ -195,4 +199,5 @@ jsdelivr → raw 兜底）。发版时必须
 - 禁止用 debug 签名包对外分发（debug 与 release 签名不同，用户无法覆盖安装）
 - 禁止复用或回退 `versionCode`
 - 禁止用中文文件名上传资产（会被静默改名）
+- 禁止私自开关代理（校园网禁止挂代理）；推送失败先直连重试，仍失败才提醒用户确认代理已开启（端口 19191），再带代理重试
 - 禁止把 `F:\JUWP-schedule` 之外的本地路径写进日志或 Release 正文
