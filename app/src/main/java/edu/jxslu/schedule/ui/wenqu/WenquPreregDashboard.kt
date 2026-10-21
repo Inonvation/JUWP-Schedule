@@ -174,6 +174,13 @@ object WenquPreregDashboardHost {
     /** 「把面板弹出来」请求计数（通知 extra / 悬浮球单击都会 +1，Host 订阅到即弹）。 */
     internal val reopenRequest = MutableStateFlow(0)
 
+    /**
+     * 「用户本轮关过面板」标记（2026-10-21 修）：**单例持有、跨窗口共享**。
+     * 之前放在各 Host composable 的 `remember` 里，主窗口与设置窗口各一份——
+     * 主窗口关掉后切到设置窗口还会再弹一次。`reopen()` 与用户点弹窗 ✕ 都写它。
+     */
+    internal val dismissed = MutableStateFlow(false)
+
     /** 服务被系统中断时置的终态（执行器无法自己报告「我没跑完」）。 */
     internal fun markInterrupted(reason: String) {
         WenquPreregRunner.updateDash { cur ->
@@ -194,6 +201,7 @@ object WenquPreregDashboardHost {
      * MainActivity 消费 [EXTRA_DASH_REOPEN] 后也走这里——都能突破「关过不再自动弹」。
      */
     fun reopen() {
+        dismissed.value = false
         reopenRequest.value += 1
     }
 }
@@ -225,14 +233,14 @@ fun WenquPreregDashboardHost() {
     val state by WenquPreregRunner.dash.collectAsState()
     val reopen by WenquPreregDashboardHost.reopenRequest.collectAsState()
     val foreground by WenquAppForeground.foreground.collectAsState()
-    // 用户关过面板后本轮不再自动弹（结果通知与悬浮球仍可重开）
-    var dismissedThisRun by remember { mutableStateOf(false) }
+    // 用户关过面板后本轮不再自动弹（结果通知与悬浮球仍可重开）。
+    // 标记在 Host 单例里跨窗口共享（主窗口关掉的，设置窗口也不会再弹）。
+    val dismissedThisRun by WenquPreregDashboardHost.dismissed.collectAsState()
     var show by remember { mutableStateOf(false) }
 
     // 通知重开：标记一变且状态非 Idle 就弹（清掉 dismissed）
     LaunchedEffect(reopen) {
         if (reopen > 0 && state.phase != WenquPreregDashState.Phase.Idle) {
-            dismissedThisRun = false
             show = true
         }
     }
@@ -245,8 +253,10 @@ fun WenquPreregDashboardHost() {
             show = true
         }
         if (!running) {
-            dismissedThisRun = false
-            if (state.phase == WenquPreregDashState.Phase.Idle) show = false
+            if (state.phase == WenquPreregDashState.Phase.Idle) {
+                show = false
+                WenquPreregDashboardHost.dismissed.value = false
+            }
         }
     }    // 终态震一下（结果通知同口径；面板开着时通知里那条已震过，这里只补「面板在场」的反馈）
     LaunchedEffect(state.phase, state.success) {
@@ -262,7 +272,7 @@ fun WenquPreregDashboardHost() {
             state = state,
             onDismiss = {
                 show = false
-                if (state.isRunning) dismissedThisRun = true
+                if (state.isRunning) WenquPreregDashboardHost.dismissed.value = true
             },
         )
     } else if (!show && state.isRunning) {
@@ -272,10 +282,7 @@ fun WenquPreregDashboardHost() {
         // 主窗口里它也是悬浮球之外的第二入口（球在四个 Tab 才显示）。
         DashCollapsedPill(
             state = state,
-            onClick = {
-                dismissedThisRun = false
-                show = true
-            },
+            onClick = { WenquPreregDashboardHost.reopen() },
         )
     }
 }
@@ -404,18 +411,28 @@ private fun WenquPreregDashboardDialog(
         confirmButton = {
             when {
                 state.isRunning -> TextButton(onClick = { confirmCancel = true }) { Text("取消") }
-                state.phase == WenquPreregDashState.Phase.Done && state.success == false ->
-                    TextButton(onClick = {
-                        WenquPreregReminder.startRetry(context)
-                    }) { Text("重试（5 发）") }
+                state.phase == WenquPreregDashState.Phase.Done && state.success == false -> {
+                    // 重试跑的是 dash **当前**目标：若用户已排了别的活动，旧面板点重试
+                    // 会去抢新活动（2026-10-21 修）——目标变了就禁用，让用户看新面板。
+                    val retryable = state.id == WenquPreregRunner.dash.value.id &&
+                        WenquPreregRunner.dash.value.id > 0L
+                    TextButton(
+                        enabled = retryable,
+                        onClick = { WenquPreregReminder.startRetry(context) },
+                    ) { Text(if (retryable) "重试（5 发）" else "目标已更换") }
+                }
                 else -> TextButton(onClick = onDismiss) { Text("完成") }
             }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (state.isRunning) {
+                    // 手动报名只在试发段起有意义：Waiting 阶段平台必回「尚未开始」，
+                    // 禁用免得用户白点（2026-10-21 修）。
+                    val manualAllowed = state.phase == WenquPreregDashState.Phase.Firing ||
+                        state.phase == WenquPreregDashState.Phase.FinalCheck
                     TextButton(
-                        enabled = !manualBusy,
+                        enabled = manualAllowed && !manualBusy,
                         onClick = {
                             manualBusy = true
                             scope.launch {

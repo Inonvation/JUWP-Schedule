@@ -312,17 +312,23 @@ object WenquPreregRunner {
             delay(WenquRules.PREREG_ATTEMPT_GAP_MS)
         }
 
-        // 5) 收工终检（2026-10-21）：不是成功也不是明确终结（触顶 / 网络类收工）时，
-        //    做最后一次**耐心**核对——不再赶下一发，超时放宽到 10 秒，把「其实报上了」捞回来。
+        // 5) 收工终检（2026-10-21）：不是成功也不是明确终结时，做最后一次**耐心**核对
+        //    ——不再赶下一发，超时放宽到 10 秒，把「其实报上了」捞回来。
+        //    试发过（触顶/网络类收工）与**一发没发**（执行启动得太晚，2026-10-21 修）都做：
+        //    后者一样可能「其实已报上」（手动报过 / 上一轮残留 / 重试轮已成交），终检零成本。
         var finalCheckNote = ""
-        if (!success && terminalText == null && attempts > 0) {
+        if (!success && terminalText == null) {
             _dash.value = _dash.value.copy(phase = WenquPreregDashState.Phase.FinalCheck)
             if (showProgress) WenquPreregReminder.updateProgress(context, "收工核对：确认是否已报上…")
             when (repo.preregAppliedNowSlow(id)) {
                 WenquPreregCheck.Applied -> {
                     success = true
-                    finalCheckNote = "其中一次试发其实已生效，收工核对时确认报上（旧版本会误报「没抢到」）。"
-                    Log.i(TAG, "final check recovered applied")
+                    finalCheckNote = if (attempts > 0) {
+                        "其中一次试发其实已生效，收工核对时确认报上（旧版本会误报「没抢到」）。"
+                    } else {
+                        "执行启动得太晚没来得及提交，但核对发现该活动已报上（此前某次已成交），无需再抢。"
+                    }
+                    Log.i(TAG, "final check recovered applied attempts=$attempts")
                 }
 
                 WenquPreregCheck.NotApplied -> finalCheckNote = "收工核对已确认未报上。"
