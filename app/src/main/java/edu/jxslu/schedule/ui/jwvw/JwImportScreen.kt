@@ -174,6 +174,23 @@ fun JwImportScreen(
     var showSaveCredentialPrompt by remember { mutableStateOf(false) }
     /** 自动登录只做一次：失败就交给用户手登，反复试只会撞风控。 */
     var autoLoginTried by remember { mutableStateOf(false) }
+    /**
+     * Browse 模式「会话失效 → 自动回统一认证重登」只做一次（2026-10-21）。
+     *
+     * 用户报障：网页核对入口碰上 cookie 过期时，重新登录后不会自动落回目标页；
+     * 兜底做法是检测到教务登录页时直接重走一遍认证（带着凭证自动填表），
+     * 登录落点再由 [startAutoNavOnLanding] 导到目标页。只放一次，真故障时不打转。
+     */
+    var browseRecoveryUsed by remember { mutableStateOf(false) }
+    /**
+     * Browse 模式是否还在「认证 → 目标页」这条链上（2026-10-21 复核补）。
+     *
+     * 落点放宽到「任何已登录教务页」后，不能对用户随手停留的页面也起跳：顶栏刷新
+     * 会把 `autoNavDone` 放开，若没有这道标记，用户在任意教务页点刷新都会被拽回
+     * 最初的目标页。初值为 true（窗口从 SSO_WARMUP 起）；到达目标页、或起跳去目标页
+     * 时置 false；会话失效自动重登时重新置 true。
+     */
+    var browseAuthChainActive by remember { mutableStateOf(true) }
     val snackbar = remember { SnackbarHostState() }
 
     /**
@@ -350,8 +367,34 @@ fun JwImportScreen(
      * 认证链上的 500 会先**自动重试一次**：实测该 500 是自愈型（响应同时写下
      * `bzb_njw`，重新走一遍预热入口即可通过），用户此前要靠「过一会手动刷新」，
      * 现在由 App 完成。只自动重试一次，避免在真故障时反复打服务端。
+     *
+     * [recoverable] = 本次是「教务登录页 / 会话被顶」这类**重新登一次就能好**的失败：
+     * 网页核对（Browse）模式下直接回预热入口重走认证，不再停一个错误浮层让人点重试
+     * （2026-10-21 用户口径：cookie 过期后要能自动登录并跳回目标页）。同样只放一次。
      */
-    fun reportFailure(failedUrl: String?, diag: JwImportDiagnosis.Diagnosis, statusCode: Int? = null) {
+    fun reportFailure(
+        failedUrl: String?,
+        diag: JwImportDiagnosis.Diagnosis,
+        statusCode: Int? = null,
+        recoverable: Boolean = false,
+    ) {
+        if (recoverable && mode == JwImportMode.Browse && !browseRecoveryUsed && savedCas != null) {
+            browseRecoveryUsed = true
+            // 这一轮会重走认证 → 落点 → 目标页，重新点亮「认证链在途」
+            browseAuthChainActive = true
+            lastFailedUrl = null
+            autoLoginTried = false
+            autoNavPending = false
+            autoNavDone = false
+            // 这是用户主动打开网页后撞上的过期，重登一次是应当的；
+            // 只放开「自动填表」这道节流（**不要**动 relogin 窗口：后台同步靠它防登录乒乓）
+            SessionStatus.releaseAutoLoginAttempt()
+            pageState = PageState.Loading
+            statusNote = "教务会话已失效，正在自动重新登录…"
+            Log.d(TAG, "browse auto-recovery after session loss at ${JwTeachingEval.redactForLog(failedUrl)}")
+            webView?.loadUrl(JwUrls.SSO_WARMUP)
+            return
+        }
         lastFailedUrl = failedUrl
         if (statusCode != null && JwImportDiagnosis.shouldAutoRetry(statusCode, failedUrl) && !autoRetryUsed) {
             autoRetryUsed = true
@@ -415,6 +458,10 @@ fun JwImportScreen(
             val r = unwrapJsString(raw)
             Log.d(TAG, "auto-login on CAS page: $r @ $u")
             if (r?.startsWith(JwAutoLogin.OK_PREFIX) != true) {
+                // 没找到表单（页面还在渲染 / 不是真正的登录页）**不算一次登录尝试**：
+                // 把进程级节流退回去，别的窗口仍可自动登录；本窗口的页面级标记保留，
+                // 不在同一页上反复注入（2026-10-21：此前这一下会白占 5 分钟窗口）。
+                SessionStatus.releaseAutoLoginAttempt()
                 statusNote = "自动登录没走通，请在下方页面手动登录一次"
             }
         }
@@ -446,16 +493,44 @@ fun JwImportScreen(
             // 但文案不同，用户看到的「为什么」必须对得上事实（2026-10-06）。
             if (JwImportDiagnosis.looksLikeSessionConflict(probe)) {
                 Log.d(TAG, "session conflict detected at $url (probe=$probe)")
-                reportFailure(url, JwImportDiagnosis.sessionConflict(JwVpnDetector.isVpnActive(context)))
+                reportFailure(
+                    url,
+                    JwImportDiagnosis.sessionConflict(JwVpnDetector.isVpnActive(context)),
+                    recoverable = true,
+                )
                 return@evaluateJavascript
             }
             if (JwImportDiagnosis.looksLikeLoginPage(probe)) {
                 Log.d(TAG, "session lost detected at $url (probe=$probe)")
-                reportFailure(url, JwImportDiagnosis.sessionLost(JwVpnDetector.isVpnActive(context)))
+                reportFailure(
+                    url,
+                    JwImportDiagnosis.sessionLost(JwVpnDetector.isVpnActive(context)),
+                    recoverable = true,
+                )
                 return@evaluateJavascript
             }
+            // 探针通过 = 教务会话真的可用。若本窗口刚自动填过表，就算一次登录成功：
+            // 放开 5 分钟节流，下一次会话过期仍能立即自动登录（2026-10-21）。
+            if (autoLoginTried) SessionStatus.markAutoLoginSucceeded()
             onDone()
         }
+    }
+
+    /**
+     * 延迟到点后是否还该起跳：教务主页判据照旧；Browse 模式放宽到「任何已登录的教务页」。
+     *
+     * 2026-10-21：网页核对撞上 cookie 过期时，重新登录后的落点不一定还是 `xsMainV`
+     * （SSO 可能直接回发起页、或教务自己换个主页壳）。只要不是认证中转、不是登录页、
+     * 也不是目标页本身，就说明认证已经完成，可以导到 [autoNavTarget]。
+     */
+    fun stillOnNavLanding(): Boolean {
+        val u = currentUrl
+        if ("xsMainV" in u) return true
+        return mode == JwImportMode.Browse &&
+            JwUrls.isJwHost(u) &&
+            !JwUrls.isAuthHop(u) &&
+            !JwWebFit.isLoginLikeUrl(u) &&
+            !JwUrls.samePath(u, autoNavTarget)
     }
 
     /** 真正发起自动跳转（会话探针已过；两处入口共用）。 */
@@ -469,8 +544,10 @@ fun JwImportScreen(
         wv.postDelayed({
             // 期间用户自己发了新导航（手动按钮/刷新会把 autoNavPending 清掉）：这一跳作废
             if (!autoNavPending) return@postDelayed
-            if (!autoNavDone && currentUrl.contains("xsMainV")) {
+            if (!autoNavDone && stillOnNavLanding()) {
                 autoNavDone = true
+                // 起跳 = 离开认证落点，之后用户停留在别的教务页刷新不再被拽回来
+                if (mode == JwImportMode.Browse) browseAuthChainActive = false
                 if (mode == JwImportMode.TeachingEval) {
                     // 评教没有静态目标页（DESIGN §4.44）：注入取 token 脚本、同窗口跳转。
                     // 回调只判「有没有真的发起」；发起后未必有导航（ajax 静默失败），
@@ -541,9 +618,25 @@ fun JwImportScreen(
      */
     fun startAutoNavOnLanding(view: WebView?, url: String?) {
         val wv = view ?: return
-        if (url == null || "xsMainV" !in url) return
+        val u = url.orEmpty()
+        // 已经在目标页上：这条认证链到此结束（之后刷新/翻页都不再起跳）
+        if (mode == JwImportMode.Browse && JwUrls.samePath(u, browseUrl)) {
+            browseAuthChainActive = false
+        }
+        val home = "xsMainV" in u
+        // Browse 模式（2026-10-21）：重登后的落点不一定是 xsMainV——只要它是教务域里
+        // 一个已登录的普通页（不是 sso.jsp / LoginToXk 这类认证中转、不是登录页、
+        // 也不是目标页本身），就当成可以起跳的落点。**只认认证链在途的窗口**：
+        // 否则用户在任意教务页刷新都会被拽回最初的目标页（2026-10-21 复核补）。
+        val browseLanding = mode == JwImportMode.Browse &&
+            browseAuthChainActive &&
+            JwUrls.isJwHost(u) &&
+            !JwUrls.isAuthHop(u) &&
+            !JwWebFit.isLoginLikeUrl(u) &&
+            !JwUrls.samePath(u, browseUrl)
+        if (!home && !browseLanding) return
         if (autoNavPending || autoNavDone) return
-        checkSessionLost(wv, url) { startAutoNav(wv) }
+        checkSessionLost(wv, u) { startAutoNav(wv) }
     }
 
     /**
@@ -964,6 +1057,8 @@ fun JwImportScreen(
                             autoNavPending = false
                             // 刷新 = 新的一轮：落地页的自动跳转也放开重试一次（看门狗提示就是这么说的）
                             autoNavDone = false
+                            // 用户显式重试 = 新的一轮：网页核对的自动重登也重新放一次
+                            browseRecoveryUsed = false
                             // 用户显式重试 = 新的一轮，自动重试闸门重新打开
                             autoRetryUsed = false
                             // 错误态下刷新不是无脑 reload：失败 URL 若是 CAS/SSO 页（含一次性 ticket），
@@ -1350,6 +1445,8 @@ fun JwImportScreen(
                             autoNavPending = false
                             // 重试同样是新的一轮：落地页的自动跳转放开（同顶栏刷新的口径）
                             autoNavDone = false
+                            // 用户显式重试 = 新的一轮：网页核对的自动重登也重新放一次
+                            browseRecoveryUsed = false
                             // 用户显式重试 = 新的一轮，自动重试闸门重新打开
                             autoRetryUsed = false
                             // err.retryUrl 为空 = 失败页可安全重放（如课表页自己 5xx）；

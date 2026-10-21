@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
+import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.ScheduleCalculator
 import edu.jxslu.schedule.domain.ScoreCalculator
 import edu.jxslu.schedule.ui.common.AppCard
@@ -65,11 +66,12 @@ import me.rerere.hugeicons.stroke.Task01
 import me.rerere.hugeicons.stroke.Toolbox
 
 /**
- * 教务 Tab（2026-10-20 新 IA，2026-10-20 第三版）。
+ * 教务 Tab（2026-10-20 新 IA，2026-10-20 第三版；2026-10-21 课表入原生页）。
  *
  * 这一版只保留「总览 + 快捷入口 + 分组卡」：网页核对按钮不再堆在每一行，
- * 已经分别落到成绩、考试、教材、学业、培养方案、实习基地、选课、学籍、
- * 教学日历各自的页面顶栏。这里不再有重复的「课表核对」「成绩单」「网页」入口。
+ * 已经分别落到成绩、考试、教材、学业、培养方案、实习基地、选课、教学日历
+ * 各自的页面顶栏。理论 / 实验课表也先落到本机课表的只读清单（网页核对在页顶栏）。
+ * 学籍信息不在这里——按用户口径收进左侧栏的头像区（2026-10-21）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,7 +85,6 @@ fun JwHubScreen(
     onOpenCurriculum: () -> Unit,
     onOpenSelection: () -> Unit,
     onOpenInternship: () -> Unit,
-    onOpenStudentInfo: () -> Unit,
     onOpenTeachingCalendar: () -> Unit,
     onOpenTeachingEval: () -> Unit,
     onOpenLeave: () -> Unit,
@@ -98,8 +99,8 @@ fun JwHubScreen(
     JwImportOutcomeEffect(snackbar)
 
     val quickEntries = listOf(
-        QuickEntry("理论课表", "教务网页", HugeIcons.Book01, onOpenTheorySchedule),
-        QuickEntry("实验课表", "教务网页", HugeIcons.Layers01, onOpenLabSchedule),
+        QuickEntry("理论课表", stats.theoryShort, HugeIcons.Book01, onOpenTheorySchedule),
+        QuickEntry("实验课表", stats.labShort, HugeIcons.Layers01, onOpenLabSchedule),
         QuickEntry("成绩查询", stats.scoresShort, HugeIcons.Analytics01, onOpenScores),
         QuickEntry("考试安排", stats.examsShort, HugeIcons.Calendar01, onOpenExams),
     )
@@ -110,7 +111,6 @@ fun JwHubScreen(
             entries = listOf(
                 HubEntry("教材", "本学期教材清单", HugeIcons.Book01, onOpenTextbooks),
                 HubEntry("选课", "记录 · 轮次", HugeIcons.Task01, onOpenSelection),
-                HubEntry("学籍信息", "学号 · 专业 · 班级", HugeIcons.File01, onOpenStudentInfo),
                 HubEntry("教学日历", "第 1 周周一 · 每周起止", HugeIcons.Calendar01, onOpenTeachingCalendar),
             ),
         ),
@@ -390,6 +390,8 @@ private data class JwHubStats(
     val examsShort: String,
     val textbooks: String,
     val schedule: String,
+    val theoryShort: String,
+    val labShort: String,
 )
 
 /**
@@ -486,6 +488,11 @@ private fun rememberJwHubStats(): JwHubStats {
             examsShort = examsShort,
             textbooks = textbooks,
             schedule = schedule,
+            // 快捷格副标题：理论 / 实验各自的课次数（不是「门」，一门课可能分多块）
+            theoryShort = courses.count { it.kind == CourseKind.Theory }
+                .takeIf { it > 0 }?.let { "$it 条" } ?: "暂无",
+            labShort = courses.count { it.kind == CourseKind.Lab }
+                .takeIf { it > 0 }?.let { "$it 条" } ?: "暂无",
         )
     }
 }

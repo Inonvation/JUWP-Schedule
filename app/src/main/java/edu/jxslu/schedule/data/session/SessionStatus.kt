@@ -87,6 +87,28 @@ object SessionStatus {
         lastReloginMs = 0L
     }
 
+    /**
+     * 自动填表**没找到表单**（页面还在渲染 / 不是真正的登录页）：把这一轮用掉的节流退回去。
+     *
+     * 场景（2026-10-21）：CAS 页面停在跳转中的壳上时，`onPageFinished` 先到、表单还没渲染，
+     * 注入脚本回 `no-form`。此前这算「用掉一次自动登录」，之后 5 分钟内任何窗口都只能手登
+     * ——正是「cookie 过期后不会自动登录」的一半来源。页面级标记仍保留，同一页不反复注入。
+     */
+    fun releaseAutoLoginAttempt() {
+        lastAutoLoginMs = 0L
+    }
+
+    /**
+     * 自动填表登录**已确认成功**（探针在教务页上通过）：放开节流。
+     *
+     * 节流原本防的是「密码错时每开一个窗口撞一遍 CAS」。登录成功说明凭证没错，
+     * 下一次会话过期（例如刚清理了 WebView cookie）应当允许立即自动登录；
+     * 不在这里放开的话，成功那一刻起 5 分钟内的重登会被静默压住。
+     */
+    fun markAutoLoginSucceeded() {
+        lastAutoLoginMs = 0L
+    }
+
     /** 两次「发现会话作废 → 重登」之间的最小间隔。 */
     const val RELOGIN_WINDOW_MS: Long = 60_000L
 }

@@ -39,4 +39,36 @@ class JwUrlsTest {
         assertEquals(JwSchedulePage.Lab, JwUrls.schedulePageKind(JwUrls.LAB_SCHEDULE))
         assertEquals(JwSchedulePage.Exam, JwUrls.schedulePageKind(JwUrls.EXAM_QUERY))
     }
+
+    /**
+     * 自动跳转的「落点」判据（2026-10-21）：认证中转页不能当成登录完成，
+     * 否则会在 SSO 还没换完票时就跳到目标页。
+     */
+    @Test
+    fun authHop_coversSsoAndCasOnly() {
+        assertTrue(JwUrls.isAuthHop(JwUrls.SSO_WARMUP))
+        assertTrue(JwUrls.isAuthHop("${JwUrls.XSD_BASE}/jsxsd/xk/LoginToXk?method=jwxt&ticket1=abc"))
+        assertTrue(JwUrls.isAuthHop("https://eapp2.juwp.edu.cn:9443/cas/login?service=x"))
+        assertTrue(JwUrls.isAuthHop("https://jiaowu.juwp.edu.cn:81/Logon.do"))
+
+        assertFalse(JwUrls.isAuthHop(JwUrls.STUDENT_HOME))
+        assertFalse(JwUrls.isAuthHop(JwUrls.SCHEDULE_LIST))
+        assertFalse(JwUrls.isAuthHop(null))
+    }
+
+    @Test
+    fun samePath_ignoresQueryAndFragment() {
+        assertTrue(JwUrls.samePath(JwUrls.SCHEDULE_LIST, "${JwUrls.SCHEDULE_LIST}&xnxq01id=2025-2026-2"))
+        assertTrue(JwUrls.samePath(JwUrls.STUDENT_HOME, "${JwUrls.STUDENT_HOME}?t=1"))
+        assertFalse(JwUrls.samePath(JwUrls.SCHEDULE_LIST, JwUrls.LAB_SCHEDULE))
+        assertFalse(JwUrls.samePath(null, JwUrls.SCHEDULE_LIST))
+        assertFalse(JwUrls.samePath("", ""))
+    }
+
+    @Test
+    fun scheduleListUrl_appendsTermOnlyWhenValid() {
+        assertTrue(JwUrls.scheduleListUrl("2025-2026-2").endsWith("&xnxq01id=2025-2026-2"))
+        assertEquals(JwUrls.SCHEDULE_LIST, JwUrls.scheduleListUrl(null))
+        assertEquals(JwUrls.SCHEDULE_LIST, JwUrls.scheduleListUrl("2025-2026"))
+    }
 }

@@ -174,6 +174,14 @@ object JwUrls {
         else LAB_SCHEDULE
 
     /**
+     * 理论课表页 + 指定学期。与 [labScheduleUrl] 同一把尺子：学期号白名单不通过就退回裸地址。
+     * `SCHEDULE_LIST` 已带 `?viweType=0`，学期参数用 `&` 接。
+     */
+    fun scheduleListUrl(term: String?): String =
+        if (term != null && TERM_PATTERN.matches(term)) "$SCHEDULE_LIST&xnxq01id=$term"
+        else SCHEDULE_LIST
+
+    /**
      * 考试安排查询壳页（考试报名 → 我的考试 → 考试安排查询，DESIGN §4.14）。
      * 数据接口 `/jsxsd/xsks/xsksap_list`（不带 .do），由注入 JS 同源 fetch。
      */
@@ -429,6 +437,29 @@ object JwUrls {
 
     /** 是否教务域（`jiaowu.juwp.edu.cn`，`:` 与 `:8080` 两套部署同域）。 */
     fun isJwHost(url: String?): Boolean = hostOf(url) == "jiaowu.juwp.edu.cn"
+
+    /**
+     * 认证链上的中转页（sso.jsp / LoginToXk / CAS 登录页）。
+     *
+     * 这类页面的 URL 也在教务域，但**会话还没落定**——自动跳转不能把它们当成
+     * 「登录后的落点」，否则会在 SSO 还没换完票时就跳走。
+     */
+    fun isAuthHop(url: String?): Boolean {
+        val u = url.orEmpty()
+        return "/sso.jsp" in u || "LoginToXk" in u || "/cas/login" in u || "Logon.do" in u
+    }
+
+    /**
+     * 两个 URL 是否指向同一路径（忽略查询串与 fragment）。
+     *
+     * 课表/成绩这类页面会在查询串里带学期与分页，同一页的 URL 并不唯一；
+     * 自动跳转据此判断「是不是已经在目标页上」，避免自己重载自己。
+     */
+    fun samePath(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        fun pathOf(url: String) = url.substringBefore('?').substringBefore('#').trimEnd('/')
+        return pathOf(a) == pathOf(b)
+    }
 
     /** 是否统一认证域（`eapp2.juwp.edu.cn:9443`）。 */
     fun isCasHost(url: String?): Boolean = hostOf(url) == "eapp2.juwp.edu.cn"

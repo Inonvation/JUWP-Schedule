@@ -245,7 +245,9 @@ MainActivity → 底栏今日/课表/教务（2026-10-20 起 3 Tab；生活与�
                调课处置页 SCHEDULE_CHANGES，§4.17；账号与登录 ACCOUNTS（全量账号状态与
                补登入口，2026-10-20），§3.3；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
                 培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES + 教材 TEXTBOOKS +
-                学籍信息 STUDENT_INFO + 教学日历 TEACHING_CALENDAR，§3.26 / §3.27；问渠 WENQU +
+                理论课表 THEORY_SCHEDULE + 实验课表 LAB_SCHEDULE（原生只读清单，顶栏外链教务页，
+                2026-10-21）+ 学籍信息 STUDENT_INFO（入口在左侧栏身份区）+ 教学日历
+                TEACHING_CALENDAR，§3.26 / §3.27；问渠 WENQU +
                志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
                 WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交）+ 预报名
                 （详情弹层入口 · **唯一自动提交路径** · 精确闹钟 4008 + shortService，§4.45），

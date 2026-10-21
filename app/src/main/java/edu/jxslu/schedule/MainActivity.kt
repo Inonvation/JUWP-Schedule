@@ -80,7 +80,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.xg.XgUrls
-import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.domain.FloatingBall
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
@@ -1064,10 +1063,11 @@ internal fun JuwApp(
     val floatingBallOnTab = currentRoute == Routes.TODAY || currentRoute == Routes.WEEK ||
         currentRoute == Routes.LIFE
 
-    // 侧栏里点普通入口先收侧栏：返回时看到的是页面，而不是还开着的侧栏。
-    // 设置例外：设置窗口直接覆盖，退出后侧栏仍保持展开。
+    // 侧栏里点普通入口**不收侧栏**（2026-10-21 用户口径，与设置同一个姿势）：
+    // 二级页是独立窗口，直接盖在侧栏上；返回时侧栏还开着，用户接着点下一项。
+    // 此前先 close() 再起窗口，收起动画与窗口推入叠在一起，观感很别扭。
+    // 例外只有两类「动作」而不是「入口」：扫一扫、充值（后者要导航到隐藏的 Life 页）。
     val openFromDrawer: (SubpageScreen, String?) -> Unit = { screen, focus ->
-        drawer.close()
         openSubpage(context, SubpageRequest(screen = screen, focusItemId = focus))
     }
 
@@ -1105,6 +1105,7 @@ internal fun JuwApp(
         ) {
             SideDrawerContent(
                 onOpenAccounts = { openFromDrawer(SubpageScreen.ACCOUNTS, null) },
+                onOpenStudentInfo = { openFromDrawer(SubpageScreen.STUDENT_INFO, null) },
                 onOpenPayCode = { openFromDrawer(SubpageScreen.PAY_CODE, null) },
                 onOpenShortcuts = { itemId -> openFromDrawer(SubpageScreen.SHORTCUTS, itemId) },
                 onOpenCainiao = { openFromDrawer(SubpageScreen.TOOLBOX_CAINIAO, null) },
@@ -1387,10 +1388,10 @@ internal fun JuwApp(
                     composable(Routes.JW) {
                         JwHubScreen(
                             onOpenTheorySchedule = {
-                                JwImportActivity.startBrowse(context, "理论课表", JwUrls.SCHEDULE_LIST)
+                                openSubpage(context, SubpageRequest(screen = SubpageScreen.THEORY_SCHEDULE))
                             },
                             onOpenLabSchedule = {
-                                JwImportActivity.startBrowse(context, "实验课表", JwUrls.LAB_SCHEDULE)
+                                openSubpage(context, SubpageRequest(screen = SubpageScreen.LAB_SCHEDULE))
                             },
                             onOpenScores = { openSubpage(context, SubpageRequest(screen = SubpageScreen.SCORES)) },
                             onOpenExams = { openSubpage(context, SubpageRequest(screen = SubpageScreen.EXAMS)) },
@@ -1401,7 +1402,6 @@ internal fun JuwApp(
                             onOpenInternship = {
                                 openSubpage(context, SubpageRequest(screen = SubpageScreen.INTERNSHIP_BASES))
                             },
-                            onOpenStudentInfo = { openSubpage(context, SubpageRequest(screen = SubpageScreen.STUDENT_INFO)) },
                             onOpenTeachingCalendar = {
                                 openSubpage(context, SubpageRequest(screen = SubpageScreen.TEACHING_CALENDAR))
                             },

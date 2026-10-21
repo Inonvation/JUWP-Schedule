@@ -95,6 +95,7 @@ private enum class WalletDetail { Campus, Power }
  * 左侧栏内容（2026-10-20 第二轮）。
  *
  * - 头部用「我的」页同一份身份数据（姓名 / 遮罩学号 / 班级），不再写死「水贝贝」；
+ *   头像 + 姓名 + 班级整块可点，进学籍信息页（2026-10-21，入口从教务 Tab 挪来）；
  * - 校园卡与电费都是可点的余额行，详情弹层里放账单与充值；右侧一枚充值入口开选择弹层；
  * - 生活 / 学习 / 工具三段：删掉已迁去教务 Tab 的成绩/考试/学业/更多，补百宝箱/收件箱/天气；
  * - 底部左设置、右付款码，`navigationBarsPadding` 让开手势条，不再贴屏幕底。
@@ -102,6 +103,8 @@ private enum class WalletDetail { Campus, Power }
 @Composable
 fun SideDrawerContent(
     onOpenAccounts: () -> Unit,
+    /** 头像 / 姓名 / 班级那一块（2026-10-21）：点开教务学籍信息页。 */
+    onOpenStudentInfo: () -> Unit,
     onOpenPayCode: () -> Unit,
     onOpenShortcuts: (String?) -> Unit,
     onOpenCainiao: () -> Unit,
@@ -206,6 +209,7 @@ fun SideDrawerContent(
                     avatarText = avatarText,
                     title = titleLine,
                     subtitle = subtitle,
+                    onOpenStudentInfo = onOpenStudentInfo,
                     onScan = onScan,
                 )
                 AccountRow(onClick = onOpenAccounts)
@@ -336,6 +340,7 @@ private fun DrawerHeader(
     avatarText: String,
     title: String,
     subtitle: String,
+    onOpenStudentInfo: () -> Unit,
     onScan: () -> Unit,
 ) {
     Row(
@@ -344,37 +349,48 @@ private fun DrawerHeader(
             .padding(start = 24.dp, end = 24.dp, top = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
+        // 头像 + 姓名 + 班级整块可点：进「学籍信息」（2026-10-21 用户口径，
+        // 该入口从教务 Tab 的服务列表挪到这里）。扫一扫是独立按钮，不包进这块。
+        Row(
             modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClickLabel = "学籍信息", onClick = onOpenStudentInfo)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = avatarText,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = avatarText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
         ScanCircle(onClick = onScan)
     }

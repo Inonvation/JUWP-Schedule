@@ -397,8 +397,19 @@
 - **各业务页顶栏的「网页」按钮也走这个窗口**（2026-10-20）：统一入口是
   `JwWebActionButton` → `JwImportActivity.startBrowse()` → `JwImportMode.Browse`。
   不要再新建 WebView 窗口；Browse 模式没有导入按钮，教务目标仍从 `SSO_WARMUP`
-  落 `xsMainV` 后自动跳，非教务目标直接开目标页。网页核对由此天然继承电脑版/手机版、
+  起跳，非教务目标直接开目标页。网页核对由此天然继承电脑版/手机版、
   返回先关弹层、会话失效回登录与错误态。
+- **cookie 过期后的自动重登与落页**（2026-10-21，用户报「网页核对入口重登后不自动跳」）：
+  ① Browse 的「落点」不再只认 `xsMainV`——`startAutoNavOnLanding` 接受教务域里任何
+  已登录的普通页（`JwUrls.isAuthHop` 排除 `sso.jsp` / `LoginToXk`，`isLoginLikeUrl`
+  排除登录页，`samePath` 排除目标页本身），重登后 SSO 直接回发起页也能导到目标；
+  ② 探针认出登录页 / 会话被顶时，Browse 模式**自动**回 `SSO_WARMUP` 重走认证一次
+  （`browseRecoveryUsed`，有凭证才走；顶栏刷新与错误浮层重试会把它重新放开），
+  不再停在错误浮层等人点重试；
+  ③ 自动填表返回 `no-form` 时用 `SessionStatus.releaseAutoLoginAttempt()` 退回进程级
+  5 分钟节流（那一跳没真的提交，不该白占窗口）；探针通过后用
+  `markAutoLoginSucceeded()` 放开节流（登录成功说明凭证没错，下次过期应能立即重登）。
+  三条都别改回「只看 xsMainV / 只给错误浮层」。
 
 ## 教务窗口的返回语义（2026-10-08，DESIGN §4.4.4）
 

@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.ui.me.CalendarSettingsScreen
 import edu.jxslu.schedule.ui.me.DataSettingsScreen
 import edu.jxslu.schedule.ui.me.JwAccountScreen
@@ -43,6 +44,7 @@ import edu.jxslu.schedule.ui.homework.HomeworkTodoScreen
 import edu.jxslu.schedule.ui.inbox.InboxScreen
 import edu.jxslu.schedule.ui.internship.InternshipBasesScreen
 import edu.jxslu.schedule.ui.jw.StudentInfoScreen
+import edu.jxslu.schedule.ui.jw.JwScheduleListScreen
 import edu.jxslu.schedule.ui.jw.TeachingCalendarScreen
 import edu.jxslu.schedule.ui.jw.TextbookScreen
 import edu.jxslu.schedule.ui.notes.NoteCourseScreen
@@ -116,7 +118,11 @@ enum class SubpageScreen {
     EXAM_SETTINGS,
     /** 教务 → 教材（当前课表学期的教材清单，2026-10-20） */
     TEXTBOOKS,
-    /** 教务 → 学籍信息（教务学籍卡片，2026-10-20） */
+    /** 教务 → 理论课表（本机课表只读清单，顶栏外链开教务页，2026-10-21） */
+    THEORY_SCHEDULE,
+    /** 教务 → 实验课表（本机课表只读清单，顶栏外链开教务页，2026-10-21） */
+    LAB_SCHEDULE,
+    /** 教务 → 学籍信息（教务学籍卡片，2026-10-20；入口在左侧栏头像区） */
     STUDENT_INFO,
     /** 教务 → 教学日历（第 1 周周一 · 每周起止，2026-10-20） */
     TEACHING_CALENDAR,
@@ -384,6 +390,10 @@ class SubpageActivity : ComponentActivity() {
             SubpageScreen.EXAMS -> ExamScreen(onBack = onBack)
             SubpageScreen.EXAM_SETTINGS -> ExamSettingsScreen(onBack = onBack)
             SubpageScreen.TEXTBOOKS -> TextbookScreen(onBack = onBack)
+            SubpageScreen.THEORY_SCHEDULE ->
+                JwScheduleListScreen(kind = CourseKind.Theory, onBack = onBack)
+            SubpageScreen.LAB_SCHEDULE ->
+                JwScheduleListScreen(kind = CourseKind.Lab, onBack = onBack)
             SubpageScreen.STUDENT_INFO -> StudentInfoScreen(onBack = onBack)
             SubpageScreen.TEACHING_CALENDAR -> TeachingCalendarScreen(onBack = onBack)
             SubpageScreen.SCHOLAR -> ScholarScreen(onBack = onBack)

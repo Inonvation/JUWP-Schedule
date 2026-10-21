@@ -194,6 +194,9 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
                                                 val r = unwrapJsString(raw)
                                                 Log.d(TAG, "auto-login on CAS page: $r")
                                                 if (r?.startsWith(JwAutoLogin.OK_PREFIX) != true) {
+                                                    // 没找到表单不算一次登录尝试：退回共享节流，
+                                                    // 别把别的窗口（教务网页核对）也压 5 分钟（2026-10-21）
+                                                    SessionStatus.releaseAutoLoginAttempt()
                                                     statusNote = "自动登录没走通，请在下方页面手动登录一次"
                                                 }
                                             }
