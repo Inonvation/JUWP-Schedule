@@ -332,15 +332,27 @@ object YktModels {
             ?.mapNotNull { el ->
                 val o = el as? JsonObject ?: return@mapNotNull null
                 val amt = jsonToFen(o["tranamt"]) ?: return@mapNotNull null
+                val typeId = jsonToStr(o["typeId"])
+                val typeText = jsonToStr(o["turnoverType"]) ?: ""
+                // 交易后余额分两本账（2026-10-22 实测）：cardBalance = 卡账户（POS 刷卡）
+                // 记账后的余额，ebagamt = 线上账户（微信充值 / 二维码支付）记账后的余额。
+                // 另一侧要等对账后才更新，直接取 cardBalance 会把线上交易显示成**付款前**
+                // 的余额（余额 20 元扫码付 10 元，弹窗仍显示 20）。按本笔记账的那一侧取。
+                val onlineLedger = typeId == "2" || typeId == "4" ||
+                    typeText == "充值" || typeText == "二维码支付"
                 YktTurnover(
                     jndatetimeStr = jsonToStr(o["jndatetimeStr"]) ?: jsonToStr(o["jndatetime"]) ?: "",
                     effectdateStr = jsonToStr(o["effectdateStr"]),
                     tranamtFen = amt,
                     income = jsonToStr(o["typeFrom"]) == "1",
-                    turnoverType = jsonToStr(o["turnoverType"]) ?: "",
+                    turnoverType = typeText,
                     remark = jsonToStr(o["remark"]),
                     resume = jsonToStr(o["resume"]),
-                    balanceAfterFen = jsonToFen(o["cardBalance"]) ?: jsonToFen(o["ebagamt"]),
+                    balanceAfterFen = if (onlineLedger) {
+                        jsonToFen(o["ebagamt"]) ?: jsonToFen(o["cardBalance"])
+                    } else {
+                        jsonToFen(o["cardBalance"]) ?: jsonToFen(o["ebagamt"])
+                    },
                     locationName = jsonToStr(o["locationName"]),
                     orderId = jsonToStr(o["orderId"]),
                     fromAccount = jsonToStr(o["fromAccount"]),

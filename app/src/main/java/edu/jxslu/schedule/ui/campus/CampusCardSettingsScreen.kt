@@ -1424,7 +1424,27 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
             syncer.sync(username, password, maxPages = 1, force = true)
             val count = db.yktTurnoverDao().countIncomeSince(startedAt)
             if (count > 0) {
-                markArrived(orderFen = orderFen, newBalanceFen = _balance.value?.totalFen)
+                // 流水可能先于余额接口更新：此时 _balance 里的快照仍是充值前的数字，
+                // 直接端给「充值成功」弹窗就会把充值前余额写成「当前卡余额」。
+                // 只有按到账口径确认余额已经涨了订单金额才展示，否则宁可不显示。
+                val snapshot = _balance.value
+                val newBalanceFen = if (_arrivalTarget != null) {
+                    YktArrival.walletArrival(
+                        balanceBeforeFen = _arrivalWalletBaseFen,
+                        orderFen = orderFen,
+                        currentFen = snapshot?.accountFen,
+                    )
+                } else {
+                    YktArrival.balanceArrival(
+                        account = _arrivalAccount,
+                        balanceBeforeFen = _arrivalBaseFen,
+                        orderFen = orderFen,
+                        cardBalances = snapshot?.cards
+                            ?.associate { it.account to it.cardBalanceFen }
+                            .orEmpty(),
+                    )
+                }
+                markArrived(orderFen = orderFen, newBalanceFen = newBalanceFen)
                 return true
             }
         } catch (e: CancellationException) {

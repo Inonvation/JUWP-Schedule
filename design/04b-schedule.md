@@ -569,7 +569,12 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
 
 - 流水 `records[]` 字段（实测 30 个，UI 只取子集）：`tranamt`（分）、`typeFrom`（`"1"`=收入/
   `"2"`=支出）、`turnoverType`（类型名：消费/二维码支付/充值…）、`jndatetimeStr`（交易时间）、
-  `remark`/`resume`（摘要）、`cardBalance`/`ebagamt`（**交易后余额快照**，分）、`locationName`
+  `remark`/`resume`（摘要）、`cardBalance`/`ebagamt`（分，**两本账的余额快照，不是同一个
+  「交易后余额」**：`cardBalance` 是卡账户（POS 刷卡）记账后的余额，`ebagamt` 是线上账户
+  （微信充值 / 二维码支付）记账后的余额，另一侧要等对账后才更新；解析按 `typeId`
+  （`2` 充值 / `4` 二维码支付走 `ebagamt`，`1` 消费走 `cardBalance`）取本笔记账的那一侧，
+  否则扫码支付会把弹窗余额显示成付款前的数字——2026-10-22 实测余额 20 元付 10 元时
+  `cardBalance=2000`、`ebagamt=1000`）、`locationName`
   （商户/终端）、`orderId`。
 - 探测存档：`berserker-search` 服务在 `/plat/` 前端零出现，只存在于 `/campus-card/`
   应用（`frontInfo.getFrontConfig.campusCard` 外链）；该应用 chunk 请求必须带
@@ -784,7 +789,9 @@ L3 增量同步器 + VM 接本地库 → L4 统计视图（月卡片 + 年柱状
   延迟数分钟至数十分钟）→ 检测到即弹「充值成功」对话框（金额大字 `AmountHeroText` +
   已到账 + 当前余额，2026-10-07）；双判定 =
   **付款那张卡**的余额涨满订单金额（主，口径见 `domain/YktArrival.kt`）或增量流水出现
-  晚于下单时刻的新记录（辅，覆盖余额视图滞后）；余额口径的基线随未确认充值落库，
+  晚于下单时刻的新记录（辅，覆盖余额视图滞后；此时余额快照可能仍是充值前的数，
+  只有按同一到账口径确认已涨满订单金额才把「当前余额」写进成功弹窗，否则省略该行——
+  2026-10-22 修）；余额口径的基线随未确认充值落库，
   进程被杀重启后照常可用；超时给安抚提示「到账后消费流水自动显示」）。
   「支付完成，正在确认到账」弹窗**每笔充值只弹一次**（`pending_recharge_confirm_shown`），
   之后等待态只由「等待到账」行承载——进出页面会反复触发 `onHostResume`，

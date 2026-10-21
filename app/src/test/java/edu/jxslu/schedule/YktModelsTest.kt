@@ -97,6 +97,27 @@ class YktModelsTest {
     }
 
     @Test
+    fun `交易后余额按记账侧取：二维码支付与充值取 ebagamt，刷卡消费取 cardBalance`() {
+        val data = YktModels.json.parseToJsonElement(
+            """{"records":[
+                {"jndatetimeStr":"2026-10-21 18:37:11","tranamt":1000,"typeFrom":"2",
+                 "typeId":"4","turnoverType":"二维码支付","cardBalance":2000,"ebagamt":1000},
+                {"jndatetimeStr":"2026-10-21 18:30:00","tranamt":1000,"typeFrom":"2",
+                 "typeId":"1","turnoverType":"消费","cardBalance":1000,"ebagamt":2000},
+                {"jndatetimeStr":"2026-10-21 18:00:00","tranamt":10000,"typeFrom":"1",
+                 "typeId":"2","turnoverType":"充值","cardBalance":2000,"ebagamt":12000}
+            ]}""",
+        )
+        val records = YktModels.turnoverPageFrom(data).records
+        // 二维码支付：cardBalance 是付款前（20 元），ebagamt 才是付款后（10 元）
+        assertEquals(1000L, records[0].balanceAfterFen)
+        // 刷卡消费：cardBalance 是刷后，ebagamt 是刷前
+        assertEquals(1000L, records[1].balanceAfterFen)
+        // 微信充值：ebagamt 是入账后，cardBalance 是入账前
+        assertEquals(12000L, records[2].balanceAfterFen)
+    }
+
+    @Test
     fun `金额字符串数字与缺字段容错`() {
         val data = YktModels.json.parseToJsonElement(
             """{"records":[
