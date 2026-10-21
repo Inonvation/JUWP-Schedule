@@ -173,7 +173,9 @@ fun InboxTodayCard(
                 modifier = Modifier.padding(start = 30.dp, top = 2.dp),
             )
         } else {
-            Spacer(Modifier.height(6.dp))
+            // 报修行自带上下 6dp 内距；有它时不再叠这层 6dp，否则「报修 → 首条消息」
+            // 是 18dp，比消息之间（6+6=12dp）大出一截（2026-10-21 真机反馈）
+            if (repair == null) Spacer(Modifier.height(6.dp))
             selected.forEach { msg ->
                 InboxTodayRow(
                     msg = msg,
