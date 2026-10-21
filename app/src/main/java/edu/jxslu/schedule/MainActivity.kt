@@ -1121,7 +1121,6 @@ internal fun JuwApp(
                 onOpenNotes = { openFromDrawer(SubpageScreen.NOTES, null) },
                 onOpenHomework = { openFromDrawer(SubpageScreen.HOMEWORK, null) },
                 onOpenToolbox = { openFromDrawer(SubpageScreen.TOOLBOX, null) },
-                onOpenInbox = { openFromDrawer(SubpageScreen.INBOX, null) },
                 onOpenWeather = { openFromDrawer(SubpageScreen.WEATHER, null) },
                 onOpenStatement = { openFromDrawer(SubpageScreen.CAMPUS_STATEMENT, null) },
                 onOpenPowerBill = { openFromDrawer(SubpageScreen.POWER_BILL, null) },
@@ -1309,7 +1308,8 @@ internal fun JuwApp(
                             onOpenPayCode = {
                                 SubpageActivity.start(context, SubpageScreen.PAY_CODE)
                             },
-                            // 收件箱（DESIGN §3.24）：今日页「+」下拉第三行，独立窗口
+                            // 收件箱（DESIGN §3.24，2026-10-21 收口）：今日页收件箱卡
+                            // 「查看更多」的落点，独立窗口
                             onOpenInbox = {
                                 SubpageActivity.start(context, SubpageScreen.INBOX)
                             },

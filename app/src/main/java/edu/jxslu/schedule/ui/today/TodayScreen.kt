@@ -42,8 +42,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -159,7 +157,6 @@ import me.rerere.hugeicons.stroke.ChevronDown
 import me.rerere.hugeicons.stroke.ChevronUp
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.ShowerHead
-import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Menu01
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.RemoteControl
@@ -190,9 +187,13 @@ private const val UJING_ORDER_REFRESH_TTL_MILLIS = 10_000L
  *   编辑/删除是详情里的二级动作——直跳编辑器易误触。
  *
  * 底部固定区（2026-10-20）：**整块 dock 已收进左侧栏**（取快递 / U净 / 空调遥控 /
- * 快趣出行 / 胖乖 / 趣智 / 问渠 / 笔记 / 作业 / 百宝箱 / 收件箱 / 天气）。
+ * 快趣出行 / 胖乖 / 趣智 / 问渠 / 笔记 / 作业 / 百宝箱 / 天气）。
  * 今日页只留课程与提示，课程区拿回全部高度；列表最后一项自己让开悬浮胶囊
  * （[LocalBottomBarClearance]）。旧的 dock 组件与 `todayDockExpanded` 偏好一并删除。
+ *
+ * 收件箱（2026-10-21 收口）：展示入口在页面列表的收件箱卡（[InboxTodayCard]，
+ * 只列今天 + 「查看更多」进收件箱页），顶栏「+」不再挂收件箱行与角标。
+ * 宿舍报修状态（在途优先 / 3 天内完成）是卡内置顶行，原独立报修卡同轮删除。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -225,7 +226,7 @@ fun TodayScreen(
     onOpenDormRepair: () -> Unit = {},
     /** 顶栏「+ → 付款码」：校园卡付款码展示页（DESIGN §3.10） */
     onOpenPayCode: () -> Unit = {},
-    /** 顶栏「+ → 收件箱」：应用内重要事实的留痕页（DESIGN §3.24） */
+    /** 收件箱卡「查看更多」：打开收件箱页（DESIGN §3.24，2026-10-21 起唯一入口在卡片上） */
     onOpenInbox: () -> Unit = {},
     /** 顶栏「+ → 百宝箱」：小工具集合（图片工具 + 菜鸟批量查，DESIGN §4.47，2026-10-12） */
     onOpenToolbox: () -> Unit = {},
@@ -289,11 +290,8 @@ fun TodayScreen(
     // 卡本身与入口不变
     val ebikeUseMode by ebikePrefs.ebikeUseMode
         .collectAsStateWithLifecycle(initialValue = EbikeUseMode.Default)
-    // 收件箱未读数（DESIGN §3.24）：驱动「+」图标与「+」菜单行两处角标
-    val inboxUnread by remember(context) { Graph.inboxRepository(context) }
-        .unreadCount
-        .collectAsStateWithLifecycle(initialValue = 0)
-    // 宿舍报修进度（DESIGN §4.49）：有在途记录优先，没有则显示 3 天内已完成的
+    // 宿舍报修进度（DESIGN §4.49）：有在途记录优先，没有则显示 3 天内已完成的。
+    // 2026-10-21 起渲染在收件箱卡内的报修状态行（原独立报修卡并入删除）
     val dormRepairSnapshot by remember(context) { Graph.dormRepairStore(context) }
         .snapshot
         .collectAsStateWithLifecycle()
@@ -567,10 +565,11 @@ fun TodayScreen(
                         }
                     }
                 },
-                // 「+」快捷入口（2026-10-02，2026-10-06 加收件箱）：扫一扫（车码 / 机身码
-                // 自动分流）+ 付款码 + 收件箱。与微信首页右上角同一形态：一枚图标 + 下拉，
-                // 不做页内常驻按钮——低频动作不跟底部固定区的卡片抢位置。
-                // 有未读时「+」图标右上叠一枚红点（应用内 UI 角标，不接桌面 launcher 角标）。
+                // 「+」快捷入口（2026-10-02）：扫一扫（车码 / 机身码自动分流）+ 付款码
+                // + 百宝箱。与微信首页右上角同一形态：一枚图标 + 下拉，不做页内常驻按钮——
+                // 低频动作不跟页面卡片抢位置。
+                // 收件箱不在这里（2026-10-21 收口）：展示入口移到页面上的收件箱卡
+                // （InboxTodayCard），「+」不再挂角标。
                 actions = {
                     Box {
                         IconButton(
@@ -579,9 +578,7 @@ fun TodayScreen(
                                 quickMenuOpen = true
                             },
                         ) {
-                            BadgedBox(badge = { if (inboxUnread > 0) Badge() }) {
-                                Icon(HugeIcons.Add01, contentDescription = "快捷入口")
-                            }
+                            Icon(HugeIcons.Add01, contentDescription = "快捷入口")
                         }
                         DropdownMenu(
                             expanded = quickMenuOpen,
@@ -604,20 +601,6 @@ fun TodayScreen(
                                     quickMenuOpen = false
                                     quickHaptics.tap()
                                     onOpenPayCode()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("收件箱") },
-                                leadingIcon = { Icon(HugeIcons.Inbox, contentDescription = null) },
-                                trailingIcon = {
-                                    if (inboxUnread > 0) {
-                                        Badge { Text(inboxUnread.coerceAtMost(99).toString()) }
-                                    }
-                                },
-                                onClick = {
-                                    quickMenuOpen = false
-                                    quickHaptics.tap()
-                                    onOpenInbox()
                                 },
                             )
                             // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合
@@ -703,8 +686,9 @@ fun TodayScreen(
                     "先在「课表设置」里填好开学日期与周数，也能手动加课。",
                     actionLabel = "去设置学期",
                     onAction = onOpenTimetableSettings,
-                    dormRepair = dormRepair,
-                    onOpenDormRepair = onOpenDormRepair,
+                    onOpenInbox = onOpenInbox,
+                    onOpenRepair = onOpenDormRepair,
+                    repair = dormRepair,
                 )
 
                 state.totalCourseCount == 0 -> TodayEmptyContent(
@@ -712,8 +696,9 @@ fun TodayScreen(
                     "课表默认为空，请登录教务系统导入「学期理论课表」，也可手动加课。",
                     actionLabel = "从教务导入",
                     onAction = onOpenJwImport,
-                    dormRepair = dormRepair,
-                    onOpenDormRepair = onOpenDormRepair,
+                    onOpenInbox = onOpenInbox,
+                    onOpenRepair = onOpenDormRepair,
+                    repair = dormRepair,
                 )
 
                 else -> TodayContent(
@@ -722,8 +707,9 @@ fun TodayScreen(
                     textbookTitles = textbookTitles,
                     onOpenCourse = { detailCourse = it },
                     onOpenHomeworkTodo = onOpenHomeworkTodo,
-                    dormRepair = dormRepair,
-                    onOpenDormRepair = onOpenDormRepair,
+                    onOpenInbox = onOpenInbox,
+                    onOpenRepair = onOpenDormRepair,
+                    repair = dormRepair,
                 )
             }
             PullToRefreshDefaults.Indicator(
@@ -866,14 +852,13 @@ fun TodayScreen(
  */
 @Composable
 private fun TodayCenteredShell(
-    /** 顶部常驻内容（今日页的宿舍报修卡）：空态/未开学时也要在，不能只在有课时出现。 */
-    topContent: (@Composable () -> Unit)? = null,
+    /** 贴底常驻内容（收件箱卡，含报修状态行）：空态也要有（余额预警不依赖学期）。 */
+    bottomContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     // 顶部/底部的避让由外层刷新容器给（2026-09-23 起），这里不再吃 Scaffold 的 padding
     val clearance = LocalBottomBarClearance.current
     Column(modifier = Modifier.fillMaxSize()) {
-        topContent?.invoke()
         // fillMaxWidth 必须带：Box 默认 wrap 内容、crossAxis 左对齐，
         // 少了它整个居中态贴左（旧版加载态左偏的根因）。
         // 底部让开悬浮胶囊：dock 收进侧栏后，居中内容直接贴到窗口底（2026-10-20）
@@ -886,6 +871,7 @@ private fun TodayCenteredShell(
         ) {
             content()
         }
+        bottomContent?.invoke()
     }
 }
 
@@ -908,13 +894,20 @@ private fun TodayEmptyContent(
     body: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
-    dormRepair: DormRepairRecord? = null,
-    onOpenDormRepair: () -> Unit = {},
+    onOpenInbox: () -> Unit = {},
+    /** 报修行点击：进原生报修详情页（收件箱卡内的报修行，2026-10-21）。 */
+    onOpenRepair: () -> Unit = {},
+    /** 报修当前该展示的那条（收件箱卡内置顶行）；null = 无可见记录。 */
+    repair: DormRepairRecord? = null,
 ) {
-    val top: (@Composable () -> Unit)? = dormRepair?.let { record ->
-        @Composable { DormRepairCard(record = record, onClick = onOpenDormRepair) }
+    val bottom: @Composable () -> Unit = {
+        InboxTodayCard(
+            repair = repair,
+            onOpenInbox = onOpenInbox,
+            onOpenRepair = onOpenRepair,
+        )
     }
-    TodayCenteredShell(topContent = top) {
+    TodayCenteredShell(bottomContent = bottom) {
         EmptyHint(title, body, actionLabel, onAction)
     }
 }
@@ -926,8 +919,11 @@ private fun TodayContent(
     textbookTitles: Map<String, List<String>>,
     onOpenCourse: (Course) -> Unit,
     onOpenHomeworkTodo: () -> Unit,
-    dormRepair: DormRepairRecord? = null,
-    onOpenDormRepair: () -> Unit = {},
+    onOpenInbox: () -> Unit = {},
+    /** 报修行点击：进原生报修详情页（收件箱卡内的报修行，2026-10-21）。 */
+    onOpenRepair: () -> Unit = {},
+    /** 报修当前该展示的那条（收件箱卡内置顶行）；null = 无可见记录。 */
+    repair: DormRepairRecord? = null,
 ) {
     val sectionColumnWidth = rememberSectionColumnWidth(state.timeline)
     // dock 收进侧栏后，列表最后一项要自己让开悬浮胶囊（2026-10-20）
@@ -937,13 +933,6 @@ private fun TodayContent(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 16.dp + clearance),
         ) {
-            // 宿舍报修进度（DESIGN §4.49）：有在途记录（或 3 天内完成）时置顶，
-            // 没有就整卡不出现。报修是短时事件，值得占课程区上方这一格。
-            if (dormRepair != null) {
-                item(key = "dorm-repair") {
-                    DormRepairCard(record = dormRepair, onClick = onOpenDormRepair)
-                }
-            }
             // 今日课程：一列到底。正在上的课**留在原位**、就地套焦点卡形态；最近一节已上完的
             // 课置灰保留（更早的不出现）——三态切换的动画在 TodayCourseCard 里。
             // 今天没课 / 不在学期 / 全部上完：一行状态卡（DoneBlock）。
@@ -996,6 +985,18 @@ private fun TodayContent(
                         onClick = onOpenHomeworkTodo,
                     )
                 }
+            }
+
+            // 收件箱卡（DESIGN §3.24，2026-10-21 收口）：收件箱的唯一展示入口。
+            // 常驻（今天没消息也渲染单行空态）——「查看更多」要能到达更早的消息。
+            // 报修状态行内置（在途优先 / 3 天内完成，原独立报修卡并入，同轮删除）。
+            // 放在作业卡之后：与作业同属「顺带看一眼」，不抢课程区的位置。
+            item(key = "inbox") {
+                InboxTodayCard(
+                    repair = repair,
+                    onOpenInbox = onOpenInbox,
+                    onOpenRepair = onOpenRepair,
+                )
             }
         }
 

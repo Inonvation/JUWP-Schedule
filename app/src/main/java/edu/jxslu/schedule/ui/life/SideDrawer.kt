@@ -73,7 +73,6 @@ import me.rerere.hugeicons.stroke.Bolt
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.ChevronRight
 import me.rerere.hugeicons.stroke.HeartHandshake
-import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.RemoteControl
@@ -97,7 +96,8 @@ private enum class WalletDetail { Campus, Power }
  * - 头部用「我的」页同一份身份数据（姓名 / 遮罩学号 / 班级），不再写死「水贝贝」；
  *   头像 + 姓名 + 班级整块可点，进学籍信息页（2026-10-21，入口从教务 Tab 挪来）；
  * - 校园卡与电费都是可点的余额行，详情弹层里放账单与充值；右侧一枚充值入口开选择弹层；
- * - 生活 / 学习 / 工具三段：删掉已迁去教务 Tab 的成绩/考试/学业/更多，补百宝箱/收件箱/天气；
+ * - 生活 / 学习 / 工具三段：删掉已迁去教务 Tab 的成绩/考试/学业/更多，补百宝箱/天气；
+ *   收件箱不进侧栏（2026-10-21 收口：唯一展示入口在今日页收件箱卡）；
  * - 底部左设置、右付款码，`navigationBarsPadding` 让开手势条，不再贴屏幕底。
  */
 @Composable
@@ -124,7 +124,6 @@ fun SideDrawerContent(
     onOpenNotes: () -> Unit,
     onOpenHomework: () -> Unit,
     onOpenToolbox: () -> Unit,
-    onOpenInbox: () -> Unit,
     onOpenWeather: () -> Unit,
     onOpenStatement: () -> Unit,
     onOpenPowerBill: () -> Unit,
@@ -179,10 +178,6 @@ fun SideDrawerContent(
         power.error != null -> "读取失败"
         else -> "—"
     }
-
-    val inboxUnread by remember { Graph.inboxRepository(context) }
-        .unreadCount
-        .collectAsStateWithLifecycle(initialValue = 0)
 
     var showShortcutSheet by remember { mutableStateOf(false) }
     var showRechargeChoice by remember { mutableStateOf(false) }
@@ -247,12 +242,6 @@ fun SideDrawerContent(
                 }
                 DrawerSection("工具") {
                     DrawerRow("百宝箱", HugeIcons.Toolbox, onClick = onOpenToolbox)
-                    DrawerRow(
-                        label = "收件箱",
-                        icon = HugeIcons.Inbox,
-                        trailing = inboxUnread.takeIf { it > 0 }?.toString(),
-                        onClick = onOpenInbox,
-                    )
                     DrawerRow("天气", HugeIcons.Sun01, onClick = onOpenWeather)
                 }
                 Spacer(Modifier.height(8.dp))

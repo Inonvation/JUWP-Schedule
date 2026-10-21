@@ -47,7 +47,6 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageActivity
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.local.InboxMessageEntity
-import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.InboxRules
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
@@ -58,19 +57,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Alert02
-import me.rerere.hugeicons.stroke.BookEdit
-import me.rerere.hugeicons.stroke.Calendar01
-import me.rerere.hugeicons.stroke.Exchange01
-import me.rerere.hugeicons.stroke.GraduationScroll
-import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Inbox
-import me.rerere.hugeicons.stroke.Repair
-import me.rerere.hugeicons.stroke.Wallet01
 
 /**
  * 收件箱（DESIGN §3.24 / §4.38，2026-10-06）：应用内重要事实的留痕——考试安排、成绩、
- * 调课差异、选课轮次、余额预警。入口在今日页顶栏「+」下拉（带未读角标）。
+ * 调课差异、选课轮次、余额预警。入口在今日页收件箱卡的「查看更多」（2026-10-21 起）。
  *
  * 交互口径：
  * - 行右侧红点 = 未读；点行 = 标已读 + 按 [InboxMessageEntity.route] 跳二级页
@@ -279,7 +270,7 @@ private fun MessageRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                kindIcon(msg.kind),
+                inboxKindIcon(msg.kind),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(22.dp),
@@ -371,20 +362,6 @@ private fun EmptyState() {
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
         )
     }
-}
-
-/** 各来源的行首图标（图标名全部查过本地 JAR 或项目已在用，勿在此替换成没查过的名字）。 */
-private fun kindIcon(kind: String) = when (
-    runCatching { InboxKind.valueOf(kind) }.getOrDefault(InboxKind.EXAM)
-) {
-    InboxKind.EXAM -> HugeIcons.Calendar01
-    InboxKind.SCORE -> HugeIcons.GraduationScroll
-    InboxKind.SCHEDULE_CHANGE -> HugeIcons.Exchange01
-    InboxKind.SELECTION_ROUND -> HugeIcons.BookEdit
-    InboxKind.POWER_LOW -> HugeIcons.Alert02
-    InboxKind.YKT_LOW -> HugeIcons.Wallet01
-    InboxKind.WENQU_ACTIVITY -> HugeIcons.HeartHandshake
-    InboxKind.DORM_REPAIR -> HugeIcons.Repair
 }
 
 /** 时间标签：当天只给 HH:mm，当年给「M月d日 HH:mm」，更早带年份。 */
