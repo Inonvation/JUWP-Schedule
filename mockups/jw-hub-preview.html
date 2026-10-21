@@ -1,0 +1,1883 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>教务页 · 优化预览</title>
+  <style>
+    :root {
+      --page: #e9edf5;
+      --bg: #f7f9fc;
+      --surface: #ffffff;
+      --surface-soft: #f4f6fb;
+      --text: #171a21;
+      --muted: #6e7687;
+      --faint: #9aa2b1;
+      --line: #e2e6ef;
+      --line-soft: #edf0f6;
+      --primary: #4b63e8;
+      --primary-deep: #3448c4;
+      --primary-soft: #e9edff;
+      --primary-soft-2: #f3f5ff;
+      --success: #2e7c5b;
+      --success-soft: #e8f7ef;
+      --shadow: 0 24px 70px rgba(31, 43, 76, 0.22);
+    }
+
+    * { box-sizing: border-box; }
+
+    [hidden] { display: none !important; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--page);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-image:
+        radial-gradient(circle at 12% 8%, rgba(75, 99, 232, 0.13), transparent 30%),
+        radial-gradient(circle at 88% 84%, rgba(15, 124, 124, 0.11), transparent 30%);
+    }
+
+    button { font: inherit; }
+
+    .sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    .icon {
+      width: 20px;
+      height: 20px;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .stage {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 64px;
+      padding: 48px 32px;
+    }
+
+    .notes {
+      width: 348px;
+      flex: none;
+    }
+
+    .notes-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--primary);
+    }
+
+    .notes-kicker::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--primary);
+      box-shadow: 0 0 0 4px rgba(75, 99, 232, 0.12);
+    }
+
+    .notes h2 {
+      margin: 12px 0 12px;
+      font-size: 31px;
+      line-height: 1.16;
+      letter-spacing: -0.035em;
+    }
+
+    .notes > p {
+      margin: 0 0 22px;
+      color: #596276;
+      font-size: 13.5px;
+      line-height: 1.75;
+    }
+
+    .notes ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+
+    .notes li {
+      display: flex;
+      gap: 10px;
+      color: #3e4658;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .notes .num {
+      width: 22px;
+      height: 22px;
+      margin-top: 1px;
+      border-radius: 7px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 10.5px;
+      font-weight: 800;
+    }
+
+    .notes strong {
+      color: #252b38;
+      font-weight: 700;
+    }
+
+    .ghost-btn {
+      margin-top: 24px;
+      height: 42px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 12px;
+      border: 1px solid rgba(75, 99, 232, 0.26);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--primary-deep);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(75, 99, 232, 0.08);
+    }
+
+    .ghost-btn .icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    .notes-foot {
+      margin-top: 14px;
+      color: var(--faint);
+      font-size: 10.5px;
+      line-height: 1.6;
+    }
+
+    .phone-shell {
+      flex: none;
+    }
+
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 8px solid #14171d;
+      border-radius: 49px;
+      background: var(--bg);
+      box-shadow: var(--shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+    }
+
+    .island {
+      position: absolute;
+      top: 11px;
+      left: 50%;
+      z-index: 80;
+      width: 100px;
+      height: 27px;
+      border-radius: 99px;
+      background: #090a0d;
+      transform: translateX(-50%);
+    }
+
+    .statusbar {
+      height: 46px;
+      padding: 8px 22px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #1b1e26;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .status-icons .icon {
+      width: 15px;
+      height: 15px;
+      stroke-width: 2;
+    }
+
+    .app {
+      height: calc(100% - 46px);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: var(--bg);
+    }
+
+    .app::after {
+      content: "";
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 15;
+      height: 86px;
+      background: linear-gradient(
+        to bottom,
+        rgba(247, 249, 252, 0),
+        rgba(247, 249, 252, 0.9) 52%,
+        var(--bg)
+      );
+      pointer-events: none;
+    }
+
+    .topbar {
+      padding: 7px 17px 10px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(247, 249, 252, 0.9);
+      backdrop-filter: blur(16px);
+      z-index: 10;
+    }
+
+    .title-block h1 {
+      margin: 0;
+      font-size: 27px;
+      line-height: 1.05;
+      letter-spacing: -0.045em;
+      font-weight: 750;
+    }
+
+    .title-block p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+    }
+
+    .top-actions {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-top: 2px;
+    }
+
+    .import-btn {
+      height: 34px;
+      padding: 0 13px;
+      border: 1px solid rgba(75, 99, 232, 0.18);
+      border-radius: 11px;
+      background: var(--primary-soft);
+      color: var(--primary-deep);
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .import-btn .icon {
+      width: 15px;
+      height: 15px;
+    }
+
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      background: transparent;
+      color: #6d7586;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+
+    .icon-btn:hover,
+    .icon-btn:focus-visible {
+      background: #eef1f7;
+      outline: none;
+    }
+
+    .icon-btn .icon {
+      width: 19px;
+      height: 19px;
+    }
+
+    .more-menu {
+      position: absolute;
+      top: 42px;
+      right: 0;
+      width: 154px;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow: 0 14px 34px rgba(28, 39, 68, 0.16);
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+      pointer-events: none;
+      transition: 0.16s ease;
+      z-index: 30;
+    }
+
+    .more-menu.open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .more-menu button {
+      width: 100%;
+      padding: 9px 10px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: #3c4454;
+      text-align: left;
+      font-size: 11.5px;
+      cursor: pointer;
+    }
+
+    .more-menu button:hover {
+      background: var(--surface-soft);
+    }
+
+    .content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 4px 16px 112px;
+      scrollbar-width: none;
+    }
+
+    .content::-webkit-scrollbar { display: none; }
+
+    .summary-card {
+      position: relative;
+      overflow: hidden;
+      padding: 15px 16px 14px;
+      border: 1px solid #dde3f5;
+      border-radius: 20px;
+      background:
+        radial-gradient(circle at 94% 8%, rgba(75, 99, 232, 0.16), transparent 34%),
+        linear-gradient(135deg, #edf1ff 0%, #f8f9ff 53%, #ffffff 100%);
+    }
+
+    .summary-card::after {
+      content: "";
+      position: absolute;
+      top: -74px;
+      right: -68px;
+      width: 190px;
+      height: 190px;
+      border-radius: 50%;
+      border: 1px solid rgba(75, 99, 232, 0.1);
+    }
+
+    .summary-head {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .summary-label {
+      color: #525b70;
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+    }
+
+    .sync-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 99px;
+      background: var(--success-soft);
+      color: var(--success);
+      font-size: 9.5px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .sync-pill::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #43a477;
+    }
+
+    .metrics {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 11px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 8px 0 7px;
+    }
+
+    .metric:nth-child(2n) {
+      padding-left: 17px;
+      border-left: 1px solid #e2e7f4;
+    }
+
+    .metric:nth-child(n + 3) {
+      border-top: 1px solid #e2e7f4;
+    }
+
+    .metric-label {
+      display: block;
+      margin-bottom: 3px;
+      color: #788196;
+      font-size: 10px;
+      font-weight: 550;
+    }
+
+    .metric-value {
+      display: flex;
+      align-items: baseline;
+      gap: 3px;
+      color: #202431;
+      font-size: 21px;
+      line-height: 1.1;
+      font-weight: 750;
+      letter-spacing: -0.035em;
+      white-space: nowrap;
+    }
+
+    .metric-value small {
+      color: #7e8799;
+      font-size: 10px;
+      font-weight: 550;
+      letter-spacing: 0;
+    }
+
+    .quick-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .quick {
+      min-width: 0;
+      padding: 10px 4px 9px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+
+    .quick:hover {
+      border-color: #d4daf6;
+      box-shadow: 0 5px 15px rgba(75, 99, 232, 0.08);
+    }
+
+    .quick:active { transform: scale(0.975); }
+
+    .quick-icon {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .quick-icon .icon {
+      width: 17px;
+      height: 17px;
+    }
+
+    .quick-title {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11.5px;
+      font-weight: 650;
+    }
+
+    .quick-sub {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--faint);
+      font-size: 9px;
+    }
+
+    .section { margin-top: 17px; }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px 7px;
+    }
+
+    .section-title {
+      color: #626b7e;
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.055em;
+    }
+
+    .section-count {
+      color: #a0a7b5;
+      font-size: 9.5px;
+      font-weight: 600;
+    }
+
+    .card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface);
+    }
+
+    .row {
+      position: relative;
+      width: 100%;
+      min-height: 61px;
+      padding: 11px 13px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .row + .row::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 47px;
+      right: 0;
+      height: 1px;
+      background: var(--line-soft);
+    }
+
+    .row:hover,
+    .row:focus-visible {
+      background: #fafbff;
+    }
+
+    .row-icon {
+      width: 22px;
+      height: 22px;
+      flex: none;
+      color: var(--primary);
+    }
+
+    .row-icon .icon {
+      width: 22px;
+      height: 22px;
+      stroke-width: 1.7;
+    }
+
+    .row-text {
+      flex: 1;
+      min-width: 0;
+      display: block;
+    }
+
+    .row-title {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13.5px;
+      font-weight: 650;
+      line-height: 1.35;
+    }
+
+    .row-sub {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+
+    .row-tag {
+      flex: none;
+      padding: 3px 7px;
+      border-radius: 99px;
+      background: #f1f3f8;
+      color: #8b93a3;
+      font-size: 9px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .row-web {
+      width: 38px;
+      height: 38px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: #a0a7b5;
+      cursor: pointer;
+    }
+
+    .row-web:hover,
+    .row-web:focus-visible {
+      background: var(--primary-soft);
+      color: var(--primary);
+      outline: none;
+    }
+
+    .row-web .icon {
+      width: 17px;
+      height: 17px;
+    }
+
+    .row-chevron {
+      width: 15px;
+      height: 15px;
+      flex: none;
+      color: #c2c8d4;
+    }
+
+    .sync-card {
+      margin-top: 17px;
+      padding: 12px 13px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .sync-card-icon {
+      width: 31px;
+      height: 31px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: #f0f3fa;
+      color: #6d7890;
+    }
+
+    .sync-card-icon .icon {
+      width: 17px;
+      height: 17px;
+    }
+
+    .sync-card-text { flex: 1; min-width: 0; }
+
+    .sync-card-title {
+      font-size: 11.5px;
+      font-weight: 650;
+    }
+
+    .sync-card-sub {
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 9.5px;
+    }
+
+    .sync-card-action {
+      flex: none;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .sync-card-action:hover { background: var(--primary-soft); }
+
+    .footer-note {
+      padding: 15px 4px 0;
+      color: #a5acb8;
+      font-size: 9.5px;
+      line-height: 1.65;
+    }
+
+    .bottom-nav {
+      position: absolute;
+      left: 50%;
+      bottom: 16px;
+      z-index: 20;
+      width: calc(100% - 48px);
+      height: 62px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      border: 1px solid rgba(224, 228, 238, 0.9);
+      border-radius: 99px;
+      background: rgba(255, 255, 255, 0.93);
+      box-shadow: 0 12px 30px rgba(31, 43, 76, 0.14);
+      backdrop-filter: blur(18px);
+      transform: translateX(-50%);
+    }
+
+    .nav-item {
+      min-width: 74px;
+      padding: 6px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      border: 0;
+      border-radius: 99px;
+      background: transparent;
+      color: #9ca4b2;
+      font-size: 9.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .nav-item .icon {
+      width: 19px;
+      height: 19px;
+    }
+
+    .nav-item.active {
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .web-sheet {
+      position: absolute;
+      top: 46px;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      background: #ffffff;
+      transform: translateX(101%);
+      transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .web-sheet.open { transform: translateX(0); }
+
+    .web-topbar {
+      padding: 10px 14px 9px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .web-back {
+      width: 33px;
+      height: 33px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #4e5668;
+      cursor: pointer;
+    }
+
+    .web-back:hover { background: #f1f3f8; }
+
+    .web-back .icon {
+      width: 19px;
+      height: 19px;
+    }
+
+    .web-title-block { flex: 1; min-width: 0; padding-top: 1px; }
+
+    .web-title-block h2 {
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15.5px;
+      line-height: 1.25;
+      letter-spacing: -0.015em;
+    }
+
+    .web-title-block p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 9.5px;
+    }
+
+    .web-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding-top: 1px;
+    }
+
+    .desktop-chip {
+      height: 32px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid #d8e0ff;
+      border-radius: 99px;
+      background: var(--primary-soft);
+      color: var(--primary-deep);
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .desktop-chip .icon {
+      width: 14px;
+      height: 14px;
+    }
+
+    .web-refresh {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: #6e778a;
+      cursor: pointer;
+    }
+
+    .web-refresh:hover { background: #f1f3f8; }
+
+    .web-refresh .icon {
+      width: 17px;
+      height: 17px;
+    }
+
+    .web-progress {
+      height: 2px;
+      background: linear-gradient(90deg, var(--primary), #8fa0ff);
+    }
+
+    .web-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      background: #f2f4f8;
+      scrollbar-width: none;
+    }
+
+    .web-body::-webkit-scrollbar { display: none; }
+
+    .mock-web {
+      min-height: 100%;
+      background: #ffffff;
+    }
+
+    .web-scale-box { width: 100%; overflow: hidden; }
+
+    .mock-web .web-inner {
+      width: 100%;
+      min-height: 100%;
+      background: #ffffff;
+      transform-origin: top left;
+    }
+
+    .mock-web.desktop .web-inner {
+      width: 100%;
+      min-height: 100%;
+      transform: none;
+    }
+
+    .mock-layout {
+      display: flex;
+      min-height: 100%;
+    }
+
+    .mock-sidebar {
+      display: none;
+      width: 172px;
+      flex: none;
+      padding: 14px 9px;
+      border-right: 1px solid #e4e7ef;
+      background: #f7f8fb;
+    }
+
+    .mock-web.desktop .mock-sidebar { display: block; }
+
+    .mock-sidebar-title {
+      padding: 0 8px 10px;
+      color: #30364a;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+    }
+
+    .mock-sidebar-item {
+      padding: 7px 8px;
+      border-radius: 5px;
+      color: #6b7285;
+      font-size: 9.5px;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
+
+    .mock-sidebar-item.active {
+      background: #e9edff;
+      color: #4b63e8;
+      font-weight: 700;
+    }
+
+    .mock-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .mock-toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 10px;
+      border-bottom: 1px solid #e4e7ef;
+      background: #f7f8fb;
+      color: #62697a;
+      font-size: 10px;
+    }
+
+    .mock-web.desktop .mock-toolbar {
+      gap: 10px;
+      padding: 12px 14px;
+      font-size: 11px;
+    }
+
+    .mock-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+
+    .mock-select {
+      min-width: 78px;
+      padding: 4px 7px;
+      border: 1px solid #d7dbe5;
+      border-radius: 4px;
+      background: #ffffff;
+      color: #555c6d;
+      font-size: inherit;
+    }
+
+    .mock-btn {
+      padding: 4px 9px;
+      border: 1px solid #4b63e8;
+      border-radius: 4px;
+      background: #4b63e8;
+      color: #ffffff;
+      font-size: inherit;
+      cursor: pointer;
+    }
+
+    .mock-reset {
+      padding: 4px 8px;
+      border: 1px solid #d7dbe5;
+      border-radius: 4px;
+      background: #ffffff;
+      color: #6d7484;
+      font-size: inherit;
+    }
+
+    .mock-table-wrap {
+      padding: 0 10px 18px;
+      overflow-x: auto;
+    }
+
+    .mock-web.desktop .mock-table-wrap { padding: 0 14px 24px; }
+
+    .mock-summary {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 7px;
+      padding: 10px;
+      border-bottom: 1px solid #edf0f5;
+    }
+
+    .mock-web.desktop .mock-summary {
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .mock-summary-item {
+      padding: 8px;
+      border-radius: 6px;
+      background: #f7f8fb;
+    }
+
+    .mock-summary-item span {
+      display: block;
+      margin-bottom: 3px;
+      color: #7a8292;
+      font-size: 9px;
+    }
+
+    .mock-summary-item strong {
+      color: #2f3542;
+      font-size: 15px;
+      font-weight: 750;
+    }
+
+    .mock-table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+      font-size: 9.5px;
+    }
+
+    .mock-web.desktop .mock-table { font-size: 11px; }
+
+    .mock-table th {
+      padding: 8px 4px;
+      border-bottom: 1px solid #e4e7ef;
+      background: #f4f6fa;
+      color: #6c7383;
+      font-weight: 600;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mock-table td {
+      padding: 9px 4px;
+      border-bottom: 1px solid #edf0f5;
+      color: #3b4150;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mock-table th:nth-child(1),
+    .mock-table td:nth-child(1) { width: 46%; }
+
+    .mock-table th:nth-child(2),
+    .mock-table td:nth-child(2) { width: 18%; }
+
+    .mock-table th:nth-child(3),
+    .mock-table td:nth-child(3) { width: 18%; }
+
+    .mock-table th:nth-child(4),
+    .mock-table td:nth-child(4) { width: 18%; }
+
+    .mock-table td:last-child,
+    .mock-table th:last-child { text-align: right; }
+
+    .mock-grade {
+      color: #3448c4;
+      font-weight: 750;
+    }
+
+    .mock-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px 20px;
+      border-top: 1px solid #edf0f5;
+      color: #7a8292;
+      font-size: 9px;
+    }
+
+    .mock-pages {
+      display: flex;
+      gap: 4px;
+    }
+
+    .mock-page {
+      width: 19px;
+      height: 19px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #d9dde8;
+      border-radius: 4px;
+      background: #ffffff;
+    }
+
+    .mock-page.active {
+      border-color: #4b63e8;
+      background: #4b63e8;
+      color: #ffffff;
+    }
+
+    .mock-generic {
+      min-height: 100%;
+      padding: 48px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: #ffffff;
+      text-align: center;
+    }
+
+    .mock-generic[hidden] { display: none; }
+
+    .mock-generic-icon {
+      width: 52px;
+      height: 52px;
+      margin-bottom: 4px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      background: #eef2ff;
+      color: #4b63e8;
+    }
+
+    .mock-generic-icon .icon {
+      width: 24px;
+      height: 24px;
+    }
+
+    .mock-generic h3 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: -0.015em;
+    }
+
+    .mock-generic p {
+      max-width: 220px;
+      margin: 0;
+      color: #7a8292;
+      font-size: 10px;
+      line-height: 1.6;
+    }
+
+    .web-mode-tag {
+      margin-left: auto;
+      padding: 3px 7px;
+      border-radius: 99px;
+      background: #e9edff;
+      color: #4b63e8;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .web-note {
+      flex: none;
+      padding: 9px 14px 10px;
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      border-top: 1px solid var(--line);
+      background: #fbfcff;
+      color: #6b7487;
+      font-size: 9px;
+      line-height: 1.45;
+    }
+
+    .web-note .icon {
+      width: 14px;
+      height: 14px;
+      flex: none;
+      color: #2e7c5b;
+      margin-top: 1px;
+    }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 94px;
+      z-index: 90;
+      max-width: calc(100% - 52px);
+      padding: 8px 12px;
+      border-radius: 99px;
+      background: rgba(31, 36, 48, 0.94);
+      color: #ffffff;
+      font-size: 10.5px;
+      line-height: 1.35;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 8px);
+      transition: 0.18s ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    @media (max-width: 900px) {
+      .stage {
+        min-height: 100dvh;
+        display: block;
+        padding: 0;
+      }
+
+      .notes { display: none; }
+
+      .phone-shell { width: 100%; height: 100dvh; }
+
+      .phone {
+        width: 100%;
+        height: 100dvh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .island { display: none; }
+
+      .statusbar { height: 42px; padding-top: 6px; }
+
+      .app { height: calc(100% - 42px); }
+
+      .web-sheet { top: 42px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-chart" viewBox="0 0 24 24">
+      <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3"/>
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24">
+      <rect x="3" y="5" width="18" height="16" rx="3"/>
+      <path d="M8 3v4M16 3v4M3 10h18"/>
+    </symbol>
+    <symbol id="i-book" viewBox="0 0 24 24">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/>
+      <path d="M4 5.5v16M8 7h8"/>
+    </symbol>
+    <symbol id="i-task" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="18" height="18" rx="4"/>
+      <path d="M8 12l3 3 5-6"/>
+    </symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24">
+      <path d="M12 3l9 5-9 5-9-5 9-5z"/>
+      <path d="M3 12l9 5 9-5M3 16l9 5 9-5"/>
+    </symbol>
+    <symbol id="i-file" viewBox="0 0 24 24">
+      <path d="M7 3h7l4 4v14H7z"/>
+      <path d="M14 3v5h4M9 13h6M9 17h6"/>
+    </symbol>
+    <symbol id="i-toolbox" viewBox="0 0 24 24">
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2 2.6-2.6z"/>
+    </symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M8 12l2.5 2.5L16 9"/>
+    </symbol>
+    <symbol id="i-external" viewBox="0 0 24 24">
+      <path d="M14 4h6v6M20 4l-9 9"/>
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>
+    </symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24">
+      <path d="M9 6l6 6-6 6"/>
+    </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24">
+      <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-import" viewBox="0 0 24 24">
+      <path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>
+    </symbol>
+    <symbol id="i-back" viewBox="0 0 24 24">
+      <path d="M15 18l-6-6 6-6"/>
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M20 11a8 8 0 1 0-2.3 5.7"/>
+      <path d="M20 5v6h-6"/>
+    </symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="12" rx="2"/>
+      <path d="M8 20h8M12 16v4"/>
+    </symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24">
+      <rect x="7" y="2" width="10" height="20" rx="3"/>
+      <path d="M11 18h2"/>
+    </symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M12 7v5l3 2"/>
+    </symbol>
+    <symbol id="i-signal" viewBox="0 0 24 24">
+      <path d="M4 17v-2M8 17v-5M12 17V9M16 17V6"/>
+    </symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24">
+      <path d="M3 9a13 13 0 0 1 18 0M6.5 12.5a8 8 0 0 1 11 0M10 16a3.5 3.5 0 0 1 4 0M12 19h.01"/>
+    </symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24">
+      <rect x="3" y="7" width="16" height="10" rx="2"/>
+      <path d="M21 10v4"/>
+    </symbol>
+    <symbol id="i-jw" viewBox="0 0 24 24">
+      <path d="M3 10l9-6 9 6"/>
+      <path d="M5 10v9h14v-9M9 19v-5h6v5"/>
+    </symbol>
+  </svg>
+
+  <div class="stage">
+    <aside class="notes">
+      <div class="notes-kicker">JUWP Schedule · 建议稿</div>
+      <h2>教务页<br>不像设置页了</h2>
+      <p>
+        这是按上一轮方案做的静态预览。数据是示例，重点看层级、分组和右上角的「网页核对」。
+      </p>
+      <ul>
+        <li>
+          <span class="num">01</span>
+          <span><strong>一张摘要卡</strong>，把成绩、学分、考试、本周课收在第一屏，不再散落在每行副标题里。</span>
+        </li>
+        <li>
+          <span class="num">02</span>
+          <span><strong>入口落到真页面</strong>：教材、学籍、教学日历不再用网页顶；成绩单、宿舍报修、评教各回各的页面。</span>
+        </li>
+        <li>
+          <span class="num">03</span>
+          <span><strong>网页只留一个壳</strong>：所有「网页」复用课表导入窗口，电脑版/手机版、返回、自动登录一次做对。</span>
+        </li>
+        <li>
+          <span class="num">04</span>
+          <span><strong>少一点噪音</strong>：15 个「网页」文字胶囊收成右侧图标，分组用卡片，滚动距离也短了。</span>
+        </li>
+      </ul>
+      <button class="ghost-btn" id="openWebFromNotes">
+        <svg class="icon"><use href="#i-external"/></svg>
+        打开网页核对预览
+      </button>
+      <div class="notes-foot">静态原型，仅用于看方向；不是最终像素稿。</div>
+    </aside>
+
+    <div class="phone-shell">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="statusbar">
+          <span>20:31</span>
+          <span class="status-icons">
+            <svg class="icon"><use href="#i-signal"/></svg>
+            <svg class="icon"><use href="#i-wifi"/></svg>
+            <svg class="icon"><use href="#i-battery"/></svg>
+          </span>
+        </div>
+
+        <div class="app">
+          <header class="topbar">
+            <div class="title-block">
+              <h1>教务</h1>
+              <p>第 8 周 · 2026-2027-1</p>
+            </div>
+            <div class="top-actions">
+              <button class="import-btn" data-toast="从教务导入（原型）">
+                <svg class="icon"><use href="#i-import"/></svg>
+                导入
+              </button>
+              <button class="icon-btn" id="moreBtn" aria-label="更多">
+                <svg class="icon"><use href="#i-more"/></svg>
+              </button>
+              <div class="more-menu" id="moreMenu">
+                <button data-toast="打开教务首页（原型）">教务首页</button>
+                <button data-toast="查看同步状态（原型）">同步状态</button>
+                <button data-web="成绩查询">网页核对预览</button>
+              </div>
+            </div>
+          </header>
+
+          <main class="content">
+            <section class="summary-card">
+              <div class="summary-head">
+                <span class="summary-label">学业概览 · 2025-2026-2</span>
+                <span class="sync-pill">20:12 已同步</span>
+              </div>
+              <div class="metrics">
+                <div class="metric">
+                  <span class="metric-label">加权平均</span>
+                  <span class="metric-value">86.4<small>分</small></span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">已修学分</span>
+                  <span class="metric-value">26.25<small>学分</small></span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">最近考试</span>
+                  <span class="metric-value">12-06<small>1 场</small></span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">本周课程</span>
+                  <span class="metric-value">30<small>节</small></span>
+                </div>
+              </div>
+            </section>
+
+            <section class="quick-grid" aria-label="本学期快捷入口">
+              <button class="quick" data-toast="打开成绩查询">
+                <span class="quick-icon"><svg class="icon"><use href="#i-chart"/></svg></span>
+                <span class="quick-title">成绩查询</span>
+                <span class="quick-sub">最近 16 门</span>
+              </button>
+              <button class="quick" data-toast="打开考试安排">
+                <span class="quick-icon"><svg class="icon"><use href="#i-calendar"/></svg></span>
+                <span class="quick-title">考试安排</span>
+                <span class="quick-sub">1 场 · 12-06</span>
+              </button>
+              <button class="quick" data-toast="打开教材（原生页）">
+                <span class="quick-icon"><svg class="icon"><use href="#i-book"/></svg></span>
+                <span class="quick-title">教材</span>
+                <span class="quick-sub">10 本</span>
+              </button>
+              <button class="quick" data-toast="切到课表 Tab">
+                <span class="quick-icon"><svg class="icon"><use href="#i-task"/></svg></span>
+                <span class="quick-title">课表核对</span>
+                <span class="quick-sub">第 8 周 · 30 节</span>
+              </button>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <span class="section-title">学业与规划</span>
+                <span class="section-count">3 项</span>
+              </div>
+              <div class="card">
+                <div class="row" role="button" tabindex="0" data-toast="打开学业完成情况">
+                  <span class="row-icon"><svg class="icon"><use href="#i-chart"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">学业完成情况</span>
+                    <span class="row-sub">培养方案达成度</span>
+                  </span>
+                  <button class="row-web" data-web="学业完成情况" aria-label="在教务网页核对学业完成情况">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开培养方案">
+                  <span class="row-icon"><svg class="icon"><use href="#i-book"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">培养方案</span>
+                    <span class="row-sub">课程设置总表</span>
+                  </span>
+                  <button class="row-web" data-web="培养方案" aria-label="在教务网页核对培养方案">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开实习基地">
+                  <span class="row-icon"><svg class="icon"><use href="#i-layers"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">实习基地</span>
+                    <span class="row-sub">基地清单</span>
+                  </span>
+                  <button class="row-web" data-web="实习基地" aria-label="在教务网页核对实习基地">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <span class="section-title">教务服务</span>
+                <span class="section-count">3 项</span>
+              </div>
+              <div class="card">
+                <div class="row" role="button" tabindex="0" data-toast="打开成绩单导出">
+                  <span class="row-icon"><svg class="icon"><use href="#i-file"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">成绩单</span>
+                    <span class="row-sub">盖章 PDF · 最近导出</span>
+                  </span>
+                  <button class="row-web" data-web="成绩单" aria-label="在签章系统网页核对成绩单">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开学籍信息（原生页）">
+                  <span class="row-icon"><svg class="icon"><use href="#i-file"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">学籍信息</span>
+                    <span class="row-sub">学号 · 专业 · 班级</span>
+                  </span>
+                  <button class="row-web" data-web="学籍信息" aria-label="在教务网页核对学籍信息">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开教学日历（原生页）">
+                  <span class="row-icon"><svg class="icon"><use href="#i-calendar"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">教学日历</span>
+                    <span class="row-sub">第 1 周周一 · 本周日期</span>
+                  </span>
+                  <button class="row-web" data-web="教学日历" aria-label="在教务网页核对教学日历">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <span class="section-title">学工与校历</span>
+                <span class="section-count">4 项</span>
+              </div>
+              <div class="card">
+                <div class="row" role="button" tabindex="0" data-toast="打开学生评教（只导航）">
+                  <span class="row-icon"><svg class="icon"><use href="#i-check-circle"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">学生评教</span>
+                    <span class="row-sub">评完解锁成绩</span>
+                  </span>
+                  <span class="row-tag">只导航</span>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开请假表单">
+                  <span class="row-icon"><svg class="icon"><use href="#i-file"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">请假</span>
+                    <span class="row-sub">学工系统 · 填表</span>
+                  </span>
+                  <button class="row-web" data-web="请假" aria-label="在学工网页核对请假">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开宿舍报修进度">
+                  <span class="row-icon"><svg class="icon"><use href="#i-toolbox"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">宿舍报修</span>
+                    <span class="row-sub">进度 · 审批</span>
+                  </span>
+                  <button class="row-web" data-web="宿舍报修" aria-label="在学工网页核对宿舍报修">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+                <div class="row" role="button" tabindex="0" data-toast="打开校历">
+                  <span class="row-icon"><svg class="icon"><use href="#i-calendar"/></svg></span>
+                  <span class="row-text">
+                    <span class="row-title">校历</span>
+                    <span class="row-sub">学年校历</span>
+                  </span>
+                  <button class="row-web" data-web="校历" aria-label="在学校官网核对校历">
+                    <svg class="icon"><use href="#i-external"/></svg>
+                  </button>
+                  <svg class="icon row-chevron"><use href="#i-chevron"/></svg>
+                </div>
+              </div>
+            </section>
+
+            <section class="sync-card">
+              <span class="sync-card-icon"><svg class="icon"><use href="#i-clock"/></svg></span>
+              <span class="sync-card-text">
+                <span class="sync-card-title">上次同步 20:12</span>
+                <span class="sync-card-sub">课表 · 成绩 · 考试 · 教材都已完成</span>
+              </span>
+              <button class="sync-card-action" data-toast="立即同步（原型）">立即同步</button>
+            </section>
+
+            <p class="footer-note">
+              数据来自教务系统，非学校官方应用；有疑问以教务网页为准。
+            </p>
+          </main>
+
+          <nav class="bottom-nav" aria-label="底部导航">
+            <button class="nav-item" data-toast="切到今日（原型）">
+              <svg class="icon"><use href="#i-calendar"/></svg>
+              今日
+            </button>
+            <button class="nav-item" data-toast="切到课表（原型）">
+              <svg class="icon"><use href="#i-book"/></svg>
+              课表
+            </button>
+            <button class="nav-item active" data-toast="当前就是教务 Tab">
+              <svg class="icon"><use href="#i-jw"/></svg>
+              教务
+            </button>
+          </nav>
+        </div>
+
+        <section class="web-sheet" id="webSheet" aria-hidden="true">
+          <div class="web-topbar">
+            <button class="web-back" id="webBack" aria-label="关闭网页核对">
+              <svg class="icon"><use href="#i-back"/></svg>
+            </button>
+            <div class="web-title-block">
+              <h2 id="webTitle">成绩查询</h2>
+              <p>网页核对 · 以网页数据为准</p>
+            </div>
+            <div class="web-actions">
+              <button class="desktop-chip" id="desktopChip">
+                <svg class="icon"><use href="#i-monitor"/></svg>
+                <span id="desktopChipText">电脑版</span>
+              </button>
+              <button class="web-refresh" data-toast="刷新网页（原型）" aria-label="刷新">
+                <svg class="icon"><use href="#i-refresh"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="web-progress"></div>
+
+          <div class="web-body">
+            <div class="mock-web desktop" id="mockWeb">
+              <div class="web-scale-box">
+                <div class="web-inner">
+                  <div class="mock-layout" id="gradeView">
+                    <aside class="mock-sidebar">
+                      <div class="mock-sidebar-title">教务服务</div>
+                      <div class="mock-sidebar-item">学生首页</div>
+                      <div class="mock-sidebar-item active">成绩查询</div>
+                      <div class="mock-sidebar-item">考试安排</div>
+                      <div class="mock-sidebar-item">学籍信息</div>
+                      <div class="mock-sidebar-item">教学日历</div>
+                      <div class="mock-sidebar-item">选课中心</div>
+                    </aside>
+                    <div class="mock-main">
+                      <div class="mock-toolbar">
+                        <span class="mock-field">开课时间
+                          <span class="mock-select">全部学期</span>
+                        </span>
+                        <span class="mock-field">课程性质
+                          <span class="mock-select">请选择</span>
+                        </span>
+                        <button class="mock-btn">查询</button>
+                        <button class="mock-reset">重置</button>
+                        <span class="web-mode-tag" id="webModeTag">电脑版 · 侧栏</span>
+                      </div>
+                      <div class="mock-summary">
+                        <div class="mock-summary-item"><span>加权平均</span><strong>86.4</strong></div>
+                        <div class="mock-summary-item"><span>平均绩点</span><strong>3.42</strong></div>
+                        <div class="mock-summary-item"><span>已修学分</span><strong>26.25</strong></div>
+                        <div class="mock-summary-item"><span>课程门数</span><strong>16</strong></div>
+                      </div>
+                      <div class="mock-table-wrap">
+                        <table class="mock-table">
+                          <thead>
+                            <tr>
+                              <th>课程名称</th>
+                              <th>学分</th>
+                              <th>成绩</th>
+                              <th>绩点</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr><td>机械设计</td><td>3</td><td class="mock-grade">92</td><td>4.0</td></tr>
+                            <tr><td>单片机原理及应用B</td><td>2</td><td class="mock-grade">79</td><td>3.0</td></tr>
+                            <tr><td>工程训练</td><td>2</td><td class="mock-grade">83</td><td>3.3</td></tr>
+                            <tr><td>机械设计基础课程设计</td><td>2</td><td class="mock-grade">82</td><td>3.3</td></tr>
+                            <tr><td>传感器与测试技术</td><td>2.5</td><td class="mock-grade">85</td><td>3.5</td></tr>
+                            <tr><td>现代机械设计方法</td><td>2</td><td class="mock-grade">88</td><td>3.7</td></tr>
+                            <tr><td>智能装备与物联网技术</td><td>2</td><td class="mock-grade">84</td><td>3.3</td></tr>
+                            <tr><td>大学英语</td><td>3</td><td class="mock-grade">80</td><td>3.0</td></tr>
+                            <tr><td>高等数学 A</td><td>4</td><td class="mock-grade">89</td><td>3.9</td></tr>
+                            <tr><td>大学物理 B</td><td>3</td><td class="mock-grade">85</td><td>3.5</td></tr>
+                            <tr><td>机械制造技术基础</td><td>3</td><td class="mock-grade">87</td><td>3.7</td></tr>
+                            <tr><td>液压与气压传动</td><td>2.5</td><td class="mock-grade">81</td><td>3.1</td></tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="mock-pager">
+                        <span>共 16 条 · 当前第 1 页</span>
+                        <span class="mock-pages">
+                          <span class="mock-page active">1</span>
+                          <span class="mock-page">2</span>
+                          <span class="mock-page">下一页</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mock-generic" id="genericView" hidden>
+                    <div class="mock-generic-icon">
+                      <svg class="icon"><use href="#i-external"/></svg>
+                    </div>
+                    <h3 id="genericTitle">教务网页</h3>
+                    <p>这里显示对应业务页的原始网页。电脑版 / 手机版由顶栏切换，返回先关弹层。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="web-note">
+            <svg class="icon"><use href="#i-check-circle"/></svg>
+            <span>与课表导入共用同一个窗口：电脑版 / 手机版、返回先关弹层、会话过期自动回登录。</span>
+          </div>
+        </section>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const webSheet = document.getElementById("webSheet");
+    const webTitle = document.getElementById("webTitle");
+    const mockWeb = document.getElementById("mockWeb");
+    const gradeView = document.getElementById("gradeView");
+    const genericView = document.getElementById("genericView");
+    const genericTitle = document.getElementById("genericTitle");
+    const desktopChip = document.getElementById("desktopChip");
+    const desktopChipText = document.getElementById("desktopChipText");
+    const webModeTag = document.getElementById("webModeTag");
+    const toast = document.getElementById("toast");
+    const moreBtn = document.getElementById("moreBtn");
+    const moreMenu = document.getElementById("moreMenu");
+    let toastTimer = 0;
+    let desktop = true;
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    function openWeb(title) {
+      const name = title || "教务网页";
+      const isGrades = name === "成绩查询";
+      webTitle.textContent = name;
+      gradeView.hidden = !isGrades;
+      genericView.hidden = isGrades;
+      genericTitle.textContent = name;
+      webSheet.classList.add("open");
+      webSheet.setAttribute("aria-hidden", "false");
+      moreMenu.classList.remove("open");
+    }
+
+    function closeWeb() {
+      webSheet.classList.remove("open");
+      webSheet.setAttribute("aria-hidden", "true");
+    }
+
+    function renderDesktopToggle() {
+      mockWeb.classList.toggle("desktop", desktop);
+      desktopChipText.textContent = desktop ? "电脑版" : "手机版";
+      desktopChip.querySelector("use").setAttribute(
+        "href",
+        desktop ? "#i-monitor" : "#i-phone"
+      );
+      webModeTag.textContent = desktop ? "电脑版 · 侧栏" : "手机版 · 单列";
+    }
+
+    document.querySelectorAll("[data-web]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openWeb(button.dataset.web);
+      });
+    });
+
+    document.querySelectorAll("[data-toast]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showToast(button.dataset.toast);
+      });
+    });
+
+    document.querySelectorAll(".row[role='button']").forEach((row) => {
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          row.click();
+        }
+      });
+    });
+
+    document.getElementById("webBack").addEventListener("click", closeWeb);
+    document.getElementById("openWebFromNotes").addEventListener("click", () => openWeb("成绩查询"));
+
+    desktopChip.addEventListener("click", () => {
+      desktop = !desktop;
+      renderDesktopToggle();
+      showToast(desktop ? "已切换为电脑版；双指可放大缩小" : "已切换为手机版");
+    });
+
+    moreBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      moreMenu.classList.toggle("open");
+    });
+
+    moreMenu.querySelectorAll("button").forEach((button) => {
+      button.addEventListener("click", () => moreMenu.classList.remove("open"));
+    });
+
+    document.addEventListener("click", () => moreMenu.classList.remove("open"));
+    webSheet.addEventListener("click", (event) => event.stopPropagation());
+
+    renderDesktopToggle();
+    if (new URLSearchParams(location.search).get("mobile") === "1") {
+      desktop = false;
+      renderDesktopToggle();
+    }
+    if (location.hash === "#web") {
+      openWeb(new URLSearchParams(location.search).get("page") || "成绩查询");
+    }
+  </script>
+</body>
+</html>
