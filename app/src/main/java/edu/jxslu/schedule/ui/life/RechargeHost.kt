@@ -67,7 +67,8 @@ fun RechargeHost(
     // 一卡通侧（余额、到账轮询、充值）复用 CampusCardViewModel：那套状态机已经在
     // 「我的 -> 校园卡」跑通，这里只做入口与展示。
     val campusViewModel: CampusCardViewModel = viewModel(
-        factory = CampusCardViewModel.Factory(context.applicationContext),
+        // 宿主常驻：冷启动不取数；打开充值弹层时 refreshBalance(force = false) 会按需拉
+        factory = CampusCardViewModel.Factory(context.applicationContext, autoFetch = false),
     )
     val campusEnabled by campusViewModel.enabled.collectAsStateWithLifecycle()
     val balance by campusViewModel.balance.collectAsStateWithLifecycle()

@@ -21,6 +21,9 @@
   判定顺序是「先 `.part` 再 `.pdf`」（`x.pdf.part` 同时满足两个后缀），否则崩溃留下的半成品
   会被当成一条记录列出来；打开/分享前必须用 `TranscriptStore.existingFile` 复核（新导出会触发
   保留策略删旧的，列表那一屏可能已经过期）。
+  PDF 含姓名/学号/证件照/全部成绩：`transcripts/` 已从 `backup_rules.xml` 与
+  `data_extraction_rules.xml` 的 cloud / device-transfer **三段**排除，不上云、不随迁移；
+  新增同类目录时同步这三处（漏一段 = 隐私文件进备份）。
 
 ## 学工表单是 WebView
 

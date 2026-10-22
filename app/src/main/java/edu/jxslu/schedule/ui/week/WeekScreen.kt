@@ -47,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -315,11 +316,13 @@ fun WeekScreen(
     // 滑动过程中 settledPage 恒为旧值，松手（含 fling 衰减小 1s）后才变，于是「第 N 周」滞后。
     // 方案：横滑进行中由 currentPage + currentPageOffsetFraction 就地推算出「离得最近的那一周」，
     // 手指划过一半就翻牌；停稳后再由 settledPage 回写 VM，两者取值一致时不会抖动。
-    val pagerWeek = pagerState?.let { ps ->
-        val nearest = ps.currentPage + if (ps.currentPageOffsetFraction > 0.5f) 1 else 0
-        nearest.coerceIn(0, (totalWeeks - 1).coerceAtLeast(0)) + 1
+    val displayWeek by remember(pagerState, totalWeeks) {
+        derivedStateOf {
+            val ps = pagerState ?: return@derivedStateOf state.week
+            val nearest = ps.currentPage + if (ps.currentPageOffsetFraction > 0.5f) 1 else 0
+            nearest.coerceIn(0, (totalWeeks - 1).coerceAtLeast(0)) + 1
+        }
     }
-    val displayWeek = pagerWeek ?: state.week
 
     // VM → Pager（回到本周 / 外部改周）
     LaunchedEffect(pagerState, totalWeeks, state.week) {

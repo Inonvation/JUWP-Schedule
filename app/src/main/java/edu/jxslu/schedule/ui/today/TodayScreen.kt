@@ -270,6 +270,17 @@ fun TodayScreen(
     val qzxyEntryState by qzxyViewModel?.uiState
         ?.collectAsStateWithLifecycle()
         ?: remember { mutableStateOf(QzxyUiState()) }
+    // 侧栏那份 Activity 作用域 VM 关掉了 init 自动取数（从课表/教务启动时不白拉）；
+    // 今日页才是开水/趣智卡片的实际展示位，进页补一次。已加载过则不再重复。
+    LaunchedEffect(waterViewModel) {
+        val vm = waterViewModel ?: return@LaunchedEffect
+        if (!vm.uiState.value.balanceLoaded) vm.refreshBalance()
+        if (vm.uiState.value.devices.isEmpty()) vm.refreshDevices()
+    }
+    LaunchedEffect(qzxyViewModel) {
+        val vm = qzxyViewModel ?: return@LaunchedEffect
+        if (!vm.uiState.value.balanceLoaded) vm.refreshAccount()
+    }
     val homework by viewModel.homeworkPending.collectAsStateWithLifecycle()
     // 课程卡的教材名（DESIGN §4.31，2026-10-07）：当前课表学期下「课程名 → 书名列表」，
     // 挂在课名右边（2026-10-08 收口，不再另起一行）；单独订阅不掺课表状态（与 homework

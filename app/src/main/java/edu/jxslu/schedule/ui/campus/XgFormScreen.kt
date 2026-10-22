@@ -287,6 +287,15 @@ fun XgFormScreen(form: XgForm, onBack: () -> Unit) {
                         webView = wv
                     }
                 },
+                // 页面离开组合时销毁 WebView：壳里可能挂着页面简历/附件选择器等
+                // 引用，不销毁会一直持有 Activity。与教务导入窗口同一处理。
+                onRelease = { shell ->
+                    (0 until shell.childCount).mapNotNull { shell.getChildAt(it) as? WebView }
+                        .forEach { wv ->
+                            wv.stopLoading()
+                            wv.destroy()
+                        }
+                },
             )
         }
     }

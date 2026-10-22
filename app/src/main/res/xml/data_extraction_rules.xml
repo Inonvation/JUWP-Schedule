@@ -7,8 +7,8 @@
      文件目录：crash/（崩溃留痕，堆栈不出本机）、ujing_debug/（debug 包协议样本）、
      power_debug/（debug 包电费协议样本，§4.24）、selection_debug/（debug 包选课应答样本，§4.36）、
      ai_img/（AI 调课通知截图，会话级）、internship_bases.json（实习基地缓存，可重取）、
-     dorm_repair.json（宿舍报修快照，含宿舍号/故障描述），
-     同属「不上云」口径，见 backup_rules.xml 注释。 -->
+     dorm_repair.json（宿舍报修快照，含宿舍号/故障描述）、transcripts/（盖章成绩单 PDF，
+     含学号/成绩）同属「不上云」口径，见 backup_rules.xml 注释。 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secure_token.xml" />
@@ -36,6 +36,7 @@
         <exclude domain="file" path="ai_img/" />
         <exclude domain="file" path="internship_bases.json" />
         <exclude domain="file" path="dorm_repair.json" />
+        <exclude domain="file" path="transcripts/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="secure_token.xml" />
@@ -63,5 +64,6 @@
         <exclude domain="file" path="ai_img/" />
         <exclude domain="file" path="internship_bases.json" />
         <exclude domain="file" path="dorm_repair.json" />
+        <exclude domain="file" path="transcripts/" />
     </device-transfer>
 </data-extraction-rules>

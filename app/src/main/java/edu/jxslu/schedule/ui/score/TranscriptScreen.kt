@@ -709,6 +709,15 @@ private fun AuthorizationOverlay(
                 }
             },
             update = { /* 状态在 Compose 侧持有，不需要主动刷新 */ },
+            // 离开导出窗口时销毁 WebView：登录页/导出会话不应继续持有 Activity。
+            // 与教务导入窗口同一处理。
+            onRelease = { shell ->
+                (0 until shell.childCount).mapNotNull { shell.getChildAt(it) as? WebView }
+                    .forEach { wv ->
+                        wv.stopLoading()
+                        wv.destroy()
+                    }
+            },
         )
         Row(
             modifier = Modifier

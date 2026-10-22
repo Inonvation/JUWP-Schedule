@@ -47,7 +47,14 @@ private object AiImageCache {
     fun put(key: String, bitmap: Bitmap) {
         cache.put(key, bitmap)
     }
+
+    fun clear() {
+        cache.evictAll()
+    }
 }
+
+/** 内存压力 / AI 会话结束时清空位图缓存；文件仍由 AiImageStore 管。 */
+internal fun clearAiImageCache() = AiImageCache.clear()
 
 /** 一张本地 AI 图片。[fullScreen] = true 时按查看器的尺寸解码。 */
 @Composable

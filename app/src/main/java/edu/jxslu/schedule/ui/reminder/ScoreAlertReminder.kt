@@ -115,26 +115,33 @@ object ScoreAlertReminder {
             val workManager = WorkManager.getInstance(context)
             // 盯了指定活动（问渠蹲点）也要靠这趟周期任务：没有它，「名额空出」永远看不到
             val pinned = prefs.wenquGrabPinnedId.first() > 0L
-            if (!prefs.scoreAlertEnabled.first() &&
-                !prefs.examAlertEnabled.first() &&
-                !prefs.selectionAlertEnabled.first() &&
-                !prefs.scheduleAlertEnabled.first() &&
-                !prefs.wenquActivityAlertEnabled.first() &&
-                !pinned
-            ) {
+            val scoreOn = prefs.scoreAlertEnabled.first()
+            val examOn = prefs.examAlertEnabled.first()
+            val selectionOn = prefs.selectionAlertEnabled.first()
+            val scheduleOn = prefs.scheduleAlertEnabled.first()
+            val wenquOn = prefs.wenquActivityAlertEnabled.first()
+            if (!scoreOn && !examOn && !selectionOn && !scheduleOn && !wenquOn && !pinned) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
                 prefs.setAlertPeriodicInterval(0)
                 return
             }
-            val intervalHours = listOf(
-                ScoreAlertDefaults.coerceIntervalHours(prefs.scoreAlertIntervalHours.first()),
-                ScoreAlertDefaults.coerceIntervalHours(prefs.examAlertIntervalHours.first()),
-                ScoreAlertDefaults.coerceIntervalHours(prefs.selectionAlertIntervalHours.first()),
-                ScheduleAlertDefaults.coerceIntervalHours(prefs.scheduleAlertIntervalHours.first()),
-                WenquRules.coerceActivityIntervalHours(prefs.wenquActivityIntervalHours.first()),
+            // 只取**已开启**链的最小档：关着的链不该把周期带快（此前全量参与，
+            // 只开 24h 调课提醒也会被关着的 6h 成绩/考试档拖成 6h 醒来）。
+            val intervalHours = buildList {
+                if (scoreOn) add(ScoreAlertDefaults.coerceIntervalHours(prefs.scoreAlertIntervalHours.first()))
+                if (examOn) add(ScoreAlertDefaults.coerceIntervalHours(prefs.examAlertIntervalHours.first()))
+                if (selectionOn) {
+                    add(ScoreAlertDefaults.coerceIntervalHours(prefs.selectionAlertIntervalHours.first()))
+                }
+                if (scheduleOn) {
+                    add(ScheduleAlertDefaults.coerceIntervalHours(prefs.scheduleAlertIntervalHours.first()))
+                }
+                if (wenquOn) {
+                    add(WenquRules.coerceActivityIntervalHours(prefs.wenquActivityIntervalHours.first()))
+                }
                 // 盯了活动时这一路要 1 小时一轮（其它路的检查时刻各自自判，不会被带快）
-                if (pinned) WenquRules.GRAB_PIN_CHECK_INTERVAL_HOURS else Int.MAX_VALUE,
-            ).min()
+                if (pinned) add(WenquRules.GRAB_PIN_CHECK_INTERVAL_HOURS)
+            }.min()
             val request = PeriodicWorkRequestBuilder<ScoreAlertCheckWorker>(intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(connectedConstraint())
                 .build()

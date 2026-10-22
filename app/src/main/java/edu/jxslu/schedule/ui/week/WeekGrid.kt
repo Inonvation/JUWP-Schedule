@@ -184,6 +184,13 @@ internal fun WeekPage(
         val pulledIn = cells.map { it.second }.filter { week !in it.weeks }.toSet()
         allCourses.filter { week !in it.weeks && it !in pulledIn }
     }
+    // 排序只跟源列表走：不 remember 的话每次重组（横滑、30s tick）都重排一遍。
+    val sortedOtherWeekCourses = remember(otherWeekCourses) {
+        otherWeekCourses.sortedWith(compareBy({ it.day }, { it.startSection }, { it.name }))
+    }
+    val sortedCells = remember(cells) {
+        cells.sortedWith(compareBy({ it.first }, { it.second.startSection }))
+    }
     val occupied = remember(cells) {
         cells.map { (day, course) -> day to course.startSection }.toSet()
     }
@@ -323,8 +330,7 @@ internal fun WeekPage(
             // ---- 非本周灰态（默认关）
             if (showNonCurrentWeek) {
                 val claimed = occupied.toMutableSet()
-                otherWeekCourses
-                    .sortedWith(compareBy({ it.day }, { it.startSection }, { it.name }))
+                sortedOtherWeekCourses
                     .forEach { course ->
                         val column = ScheduleCalculator.columnOf(visibleDays, course.day)
                             ?: return@forEach
@@ -353,8 +359,7 @@ internal fun WeekPage(
             val colorOverrides = remember(cellCourses) {
                 ScheduleCalculator.weekColorOverrides(cellCourses)
             }
-            cells
-                .sortedWith(compareBy({ it.first }, { it.second.startSection }))
+            sortedCells
                 .forEach { (columnDay, course) ->
                     val column = ScheduleCalculator.columnOf(visibleDays, columnDay)
                         ?: return@forEach

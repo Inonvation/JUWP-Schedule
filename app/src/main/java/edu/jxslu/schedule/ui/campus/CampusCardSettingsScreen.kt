@@ -823,7 +823,14 @@ private fun SettingValueRow(
     }
 }
 
-class CampusCardViewModel(private val appContext: Context) : ViewModel() {
+class CampusCardViewModel(
+    private val appContext: Context,
+    /**
+     * 是否在 init 里自动拉一次余额。侧栏 / 充值宿主那份传 false：冷启动没人看，
+     * 等侧栏展开或充值弹层打开时再刷；校园卡设置页保持默认 true，进页行为不变。
+     */
+    private val autoFetch: Boolean = true,
+) : ViewModel() {
 
     /** 取数失败时的排查提示按它分支：开着代理点名关掉，没开就换一条网络（口径见 `NetworkHint`）。 */
     private val isVpnActive: () -> Boolean = { JwVpnDetector.isVpnActive(appContext) }
@@ -1083,7 +1090,9 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         // 开关关时绝不发起任何一卡通网络动作
         if (credentialStore.read() != null) {
             viewModelScope.launch {
-                fetchBalance(notify = true)
+                // 进页首拉吃 60 秒缓存：手动刷新与到账核对仍走 force = true。
+                // 侧栏 / 充值宿主那份 autoFetch = false，冷启动不在这里发请求。
+                if (autoFetch) fetchBalance(notify = true, force = false)
                 // 恢复未确认充值（进程被杀场景，DESIGN §4.19「充值」）：窗口内重启轮询，超窗清除。
                 // 基线一并从记录里恢复，重启后余额口径照常可用（只靠流水口径会漏判到账）
                 val pending = runCatching { prefs.pendingRecharge.first() }.getOrNull()
@@ -1607,10 +1616,10 @@ class CampusCardViewModel(private val appContext: Context) : ViewModel() {
         /** 返回前台后「确认中」弹窗的延迟（ms）：避开返回动画期的窗口/insets 重排。 */
         private const val PENDING_CONFIRM_DELAY_MS = 800L
 
-        fun Factory(context: Context) = object : ViewModelProvider.Factory {
+        fun Factory(context: Context, autoFetch: Boolean = true) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                CampusCardViewModel(context.applicationContext) as T
+                CampusCardViewModel(context.applicationContext, autoFetch) as T
         }
     }
 }

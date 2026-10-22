@@ -255,6 +255,11 @@ class QzxyViewModel(
     private val debugStore: QzxyDebugStore,
     private val clearStore: QzxyClearStore,
     private val wateringStore: QzxyWateringStore,
+    /**
+     * 是否在 init 里自动拉学校名与余额。侧栏那份实例传 false：冷启动没人看，等侧栏展开
+     * 或趣智面板打开时由宿主显式刷新；页面实例保持默认 true，进页行为不变。
+     */
+    private val autoLoad: Boolean = true,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -384,7 +389,7 @@ class QzxyViewModel(
         // 只拉学校名与余额：今日页那张半行卡要用。
         // 消费记录不在这里拉——Activity 作用域这份实例只为卡片服务，账单它从来不显示，
         // 拉一次纯属白花；进趣智校园页时由页面调 [loadBillsOnce]。
-        if (_uiState.value.loggedIn) {
+        if (autoLoad && _uiState.value.loggedIn) {
             refreshAccount()
         }
         // 用水状态是唯一真相源：开阀、结算、手动标记都写 store，页面与今日页卡片
@@ -2279,6 +2284,7 @@ class QzxyViewModel(
         private val debugStore: QzxyDebugStore,
         private val clearStore: QzxyClearStore,
         private val wateringStore: QzxyWateringStore,
+        private val autoLoad: Boolean = true,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -2291,6 +2297,7 @@ class QzxyViewModel(
                 debugStore,
                 clearStore,
                 wateringStore,
+                autoLoad,
             ) as T
     }
 

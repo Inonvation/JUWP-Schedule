@@ -173,6 +173,7 @@ class AiChatViewModel(
     override fun onCleared() {
         // 退出页面也要清图片：会话级、不留痕。viewModelScope 此刻已取消，走 appScope。
         val store = imageStore
+        clearAiImageCache()
         Graph.appScope.launch { store.clear() }
         super.onCleared()
     }
@@ -235,6 +236,7 @@ class AiChatViewModel(
         sessionSeq++
         _draft.value = ""
         _attachments.value = emptyList()
+        clearAiImageCache()
         viewModelScope.launch { imageStore.clear() }
     }
 

@@ -57,7 +57,14 @@ private object AttachmentImageCache {
     fun put(key: String, bitmap: Bitmap) {
         cache.put(key, bitmap)
     }
+
+    fun clear() {
+        cache.evictAll()
+    }
 }
+
+/** 内存压力/离开笔记时清空附件位图缓存；下次显示重新按需解码。 */
+internal fun clearAttachmentImageCache() = AttachmentImageCache.clear()
 
 /** 按目标宽度（px）解码附件；文件不存在或解码失败返回 null。 */
 suspend fun loadAttachmentBitmap(

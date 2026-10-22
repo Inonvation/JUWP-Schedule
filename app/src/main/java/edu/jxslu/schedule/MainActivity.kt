@@ -77,7 +77,9 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
 import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
@@ -961,6 +963,8 @@ internal fun JuwApp(
         factory = WaterViewModel.Factory(
             Graph.qiekj(context),
             Graph.qiekjWatering(context),
+            // 侧栏实例不在冷启动取数：展开侧栏 / 打开面板时由宿主显式刷新
+            autoLoad = false,
         ),
     )
 
@@ -977,14 +981,26 @@ internal fun JuwApp(
             Graph.qzxyDebug(context),
             Graph.qzxyClear(context),
             Graph.qzxyWatering(context),
+            // 侧栏实例不在冷启动取数：展开侧栏 / 打开面板时由宿主显式刷新
+            autoLoad = false,
         ),
     )
 
     // ── 侧栏里的三个入口弹窗（2026-10-20）──
     // 用户口径：U净 / 胖乖生活 / 趣智校园点开的是**原来的弹窗**，不是整页。
     // 弹窗与趣智校园页共用同一份 ViewModel，面板里开的阀在页面上状态一致。
-    val waterEntryState by waterViewModel.uiState.collectAsStateWithLifecycle()
-    val qzxyEntryState by qzxyViewModel.uiState.collectAsStateWithLifecycle()
+    // 侧栏只订阅余额这一片：全量 uiState 里含出水计时（每秒变），在壳层订阅会让
+    // JuwApp / 侧栏 / NavHost 跟着每秒重组。面板打开时才在各自 Host 里收全量。
+    val waterBalanceText by remember(waterViewModel) {
+        waterViewModel.uiState
+            .map { s -> s.balance?.takeIf { s.loggedIn }?.let { "¥${it.ticketText}" } }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = null)
+    val qzxyBalanceText by remember(qzxyViewModel) {
+        qzxyViewModel.uiState
+            .map { s -> s.balance?.takeIf { s.loggedIn }?.let { "¥${it.text}" } }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = null)
     val qzxyLoggedIn by remember { Graph.qzxy(context).loggedIn }.collectAsStateWithLifecycle()
     var showWaterSheet by remember { mutableStateOf(false) }
     var showQzxySheet by remember { mutableStateOf(false) }
@@ -1036,14 +1052,11 @@ internal fun JuwApp(
         val now = System.currentTimeMillis()
         if (now - sideBalanceRefreshedAt < SIDE_BALANCE_REFRESH_TTL_MILLIS) return@LaunchedEffect
         sideBalanceRefreshedAt = now
-        if (waterEntryState.loggedIn) waterViewModel.refreshBalance()
-        if (qzxyLoggedIn) qzxyViewModel.refreshAccount()
+        // 两个 refresh 内部都自判登录态；未登录时是空跑。
+        waterViewModel.refreshBalance()
+        qzxyViewModel.refreshAccount()
         wenquRepo.refreshHoursIfStale()
     }
-    val waterBalanceText = waterEntryState.balance?.takeIf { waterEntryState.loggedIn }
-        ?.let { "¥${it.ticketText}" }
-    val qzxyBalanceText = qzxyEntryState.balance?.takeIf { qzxyLoggedIn }
-        ?.let { "¥${it.text}" }
 
     // ── 侧栏四行服务的「进行中」高亮（2026-10-21）──
     // 各真相源在壳层收一份投影：快趣 = Graph.kvcxRide 单例 state（账号在案订单）+ 免费计时
@@ -1497,26 +1510,16 @@ internal fun JuwApp(
             // 侧栏三个入口弹窗（2026-10-20）：与对应页面共用同一份 ViewModel。
             // 放在外壳层而不是侧栏里——侧栏是 300dp 宽的 Surface，弹层挂在它下面会跟着被裁。
             if (showWaterSheet) {
-                WaterEntrySheet(
-                    state = waterEntryState,
-                    onUnlock = { waterViewModel.unlock() },
-                    onDismissFlow = { waterViewModel.dismissFlow() },
-                    onToggleUsePoints = { waterViewModel.toggleUsePoints() },
-                    onEndSession = { waterViewModel.endSession() },
+                WaterEntrySheetHost(
+                    viewModel = waterViewModel,
                     onDismiss = { showWaterSheet = false },
                 )
             }
             if (showQzxySheet) {
-                QzxyEntrySheet(
-                    state = qzxyEntryState,
+                QzxyEntrySheetHost(
+                    viewModel = qzxyViewModel,
                     loggedIn = qzxyLoggedIn,
                     onStart = startQzxyValve,
-                    onResend = { qzxyViewModel.resendOpenData() },
-                    onStop = { qzxyViewModel.stopWater() },
-                    onAbandon = { qzxyViewModel.abandonWatering() },
-                    onClearDeviceRecord = { qzxyViewModel.clearDeviceRecord() },
-                    onClearAndOpen = { qzxyViewModel.clearAndOpen() },
-                    onDismissSettlement = { qzxyViewModel.dismissSettlement() },
                     onOpenDiagnostics = { address ->
                         drawer.close()
                         SubpageActivity.start(
@@ -1604,6 +1607,62 @@ internal fun JuwApp(
                 .padding(bottom = bottomReserveDp),
         )
     }
+}
+
+/**
+ * 侧栏入口面板的宿主：全量 uiState 只在这里收集。
+ *
+ * 放在独立 composable 里而不是 JuwApp 的 if 块内——直接在外层读 State 会让整个壳层
+ * 跟着面板里的秒表每秒重组；独立函数把重组范围收在面板子树内。
+ */
+@Composable
+private fun WaterEntrySheetHost(
+    viewModel: WaterViewModel,
+    onDismiss: () -> Unit,
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) {
+        val current = viewModel.uiState.value
+        if (!current.balanceLoaded) viewModel.refreshBalance()
+        if (current.devices.isEmpty()) viewModel.refreshDevices()
+    }
+    WaterEntrySheet(
+        state = state,
+        onUnlock = { viewModel.unlock() },
+        onDismissFlow = { viewModel.dismissFlow() },
+        onToggleUsePoints = { viewModel.toggleUsePoints() },
+        onEndSession = { viewModel.endSession() },
+        onDismiss = onDismiss,
+    )
+}
+
+@Composable
+private fun QzxyEntrySheetHost(
+    viewModel: QzxyViewModel,
+    loggedIn: Boolean,
+    onStart: () -> Unit,
+    onOpenDiagnostics: (String?) -> Unit,
+    onOpenPage: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) {
+        if (!viewModel.uiState.value.balanceLoaded) viewModel.refreshAccount()
+    }
+    QzxyEntrySheet(
+        state = state,
+        loggedIn = loggedIn,
+        onStart = onStart,
+        onResend = { viewModel.resendOpenData() },
+        onStop = { viewModel.stopWater() },
+        onAbandon = { viewModel.abandonWatering() },
+        onClearDeviceRecord = { viewModel.clearDeviceRecord() },
+        onClearAndOpen = { viewModel.clearAndOpen() },
+        onDismissSettlement = { viewModel.dismissSettlement() },
+        onOpenDiagnostics = onOpenDiagnostics,
+        onOpenPage = onOpenPage,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable

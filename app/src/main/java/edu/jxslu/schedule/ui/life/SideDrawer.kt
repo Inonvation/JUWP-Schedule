@@ -128,6 +128,9 @@ private const val UJING_FREE_CONCURRENCY = 4
 /** 侧栏寝室电费读数的刷新节流（2026-10-22：旧生活页删除后，侧栏是它的唯一展示位）。 */
 private const val DRAWER_POWER_REFRESH_TTL_MILLIS = 60_000L
 
+/** 侧栏校园卡余额的刷新节流（余额仓库自身还有 60 秒缓存）。 */
+private const val DRAWER_CAMPUS_REFRESH_TTL_MILLIS = 60_000L
+
 /**
  * 拉收藏洗衣房的洗衣机空闲聚合（侧栏 U净 行右侧的展示数）。
  * 多店求和（free / total），数据源与 U净 页看板同源：`stores/near?keyword=<店名>`
@@ -254,7 +257,8 @@ fun SideDrawerContent(
     val avatarText = profileName.firstOrNull()?.toString() ?: "水"
 
     val campusVm: CampusCardViewModel = viewModel(
-        factory = CampusCardViewModel.Factory(context.applicationContext),
+        // 侧栏是常驻组合：不在冷启动取数，展开时由下面的 effect 显式刷新
+        factory = CampusCardViewModel.Factory(context.applicationContext, autoFetch = false),
     )
     val lifeVm: LifeViewModel = viewModel(factory = LifeViewModel.Factory(context))
     val campusEnabled by campusVm.enabled.collectAsStateWithLifecycle()
@@ -335,6 +339,17 @@ fun SideDrawerContent(
         if (now - powerRefreshedAt < DRAWER_POWER_REFRESH_TTL_MILLIS) return@LaunchedEffect
         powerRefreshedAt = now
         lifeVm.refreshPower(force = false)
+    }
+
+    // 校园卡余额：侧栏展开时静默补一轮（60 秒节流，仓库自身还有 60 秒缓存）。
+    // 侧栏 VM 的 autoFetch=false，冷启动不再为没人看的卡片打两条请求。
+    var campusRefreshedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(drawerVisible, resumeTick, campusEnabled) {
+        if (!drawerVisible || !campusEnabled) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        if (now - campusRefreshedAt < DRAWER_CAMPUS_REFRESH_TTL_MILLIS) return@LaunchedEffect
+        campusRefreshedAt = now
+        campusVm.refreshBalance(force = false)
     }
 
     var showShortcutSheet by remember { mutableStateOf(false) }

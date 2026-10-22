@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.net
 
 
+import edu.jxslu.schedule.BuildConfig
 import okhttp3.Dispatcher
 import okhttp3.Dns
 import okhttp3.Interceptor
@@ -59,6 +60,11 @@ object AppHttp {
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .callTimeout(120, TimeUnit.SECONDS)
+        .apply {
+            // debug 体检：按 host 计数并打 logcat，方便核对冷启动/进页请求数。
+            // release 不挂 EventListener，零额外开销。
+            if (BuildConfig.DEBUG) eventListener(DebugRequestCounter)
+        }
         .build()
 
     /** 常用派生快捷式：默认超时 + callTimeout（下单/支付这类要总上限的链路用）。 */

@@ -2,13 +2,17 @@ package edu.jxslu.schedule
 
 import android.app.Application
 import android.app.NotificationManager
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.os.StrictMode
 import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.repo.UpdateCheckClient
 import edu.jxslu.schedule.data.repo.UpdateCheckResult
 import edu.jxslu.schedule.data.session.AutoSyncRules
 import edu.jxslu.schedule.domain.UpdateCheck
+import edu.jxslu.schedule.ui.ai.clearAiImageCache
+import edu.jxslu.schedule.ui.common.clearAttachmentImageCache
 import edu.jxslu.schedule.ui.ebike.EbikeFreeRideReminder
 import edu.jxslu.schedule.ui.me.hub.UpdateAvailableBus
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
@@ -20,6 +24,7 @@ import edu.jxslu.schedule.ui.reminder.ScoreAlertReminder
 import edu.jxslu.schedule.ui.reminder.SelectionAlertReminder
 import edu.jxslu.schedule.ui.reminder.WenquWeeklyAlertReminder
 import edu.jxslu.schedule.ui.wenqu.WenquPreregReminder
+import edu.jxslu.schedule.ui.week.clearBackgroundBitmapCache
 import edu.jxslu.schedule.ui.week.warmScheduleBackground
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.widget.TodayWidgetRefresh
@@ -38,6 +43,18 @@ class JuwApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // debug 体检：把主线程磁盘/网络读打成 logcat。只装线程策略，不崩进程；
+        // release 不执行，避免给正式包加任何检查开销。
+        if (BuildConfig.DEBUG) {
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .detectNetwork()
+                    .penaltyLog()
+                    .build(),
+            )
+        }
         // 进程级 context 注入（Graph.appContext）：后台协程落盘等场景免持 Activity 引用
         Graph.contextProvider = { this }
         // 预报名仪表板的前台判定（DESIGN §4.45，2026-10-21）：started 计数，进程内只装一次
@@ -122,6 +139,8 @@ class JuwApplication : Application() {
         // 内直接返回不发请求；超出才探一次会话（一个轻量 GET）。失败静默——打开 WebView
         // 时还会再试，而且用户在页面上手登永远可以。
         appScope.launch {
+            // 首帧后再碰网络：CAS 校验与五条同步链都不参与首帧渲染，先让 UI 抢到 CPU/IO。
+            delay(STARTUP_CAS_DEFER_MILLIS)
             runCatching {
                 Graph.casSession(this@JuwApplication).ensureValid()
                 // 会话可用就补抓学业数据（DESIGN §4.29）：首次（库里没数据）立即抓，
@@ -159,6 +178,7 @@ class JuwApplication : Application() {
         // 未到期是零网络空跑；学年没变不重复下载图；失败静默（内置兜底图顶上）。
         // 与教务自动导入互不相干，独立一条不进 CAS 会话那组
         appScope.launch {
+            delay(STARTUP_CALENDAR_DEFER_MILLIS)
             runCatching { Graph.campusCalendar(this@JuwApplication).refresh() }
         }
         // 启动自动检查更新（DESIGN §3.3，2026-10-08）：进程冷启动静默查一次
@@ -166,10 +186,25 @@ class JuwApplication : Application() {
         // 发现新版本经 UpdateAvailableBus 交主界面根层弹窗（用户关掉弹窗才消费）。
         // 开关（默认开）关时零网络空跑；已忽略的版本不弹（手动检查不受影响）；
         // 已最新 / 失败都静默——与校历同纪律。logcat `JuwApplication` 有每次结论。
+        //
+        // 失败退避（2026-10-22）：仓库转私有后清单源可能长期不可达，逐源 10 秒超时
+        // 会让每次冷启动都烧掉最多 30 秒后台网络。失败后 24 小时内不再自动尝试；
+        // 成功即清掉退避标记，手动「检查更新」始终不受影响。
         appScope.launch {
+            delay(STARTUP_UPDATE_DEFER_MILLIS)
             runCatching {
                 if (!repo.autoUpdateCheckEnabled.first()) return@runCatching
-                when (val result = UpdateCheckClient().check()) {
+                val gate = getSharedPreferences(UPDATE_CHECK_PREFS, Context.MODE_PRIVATE)
+                val now = System.currentTimeMillis()
+                if (now - gate.getLong(KEY_LAST_UPDATE_FAILURE, 0L) < UPDATE_FAILURE_BACKOFF_MILLIS) {
+                    android.util.Log.i("JuwApplication", "update check: recent failure, skipped")
+                    return@runCatching
+                }
+                val result = UpdateCheckClient().check()
+                if (result !is UpdateCheckResult.Failed) {
+                    gate.edit().remove(KEY_LAST_UPDATE_FAILURE).apply()
+                }
+                when (result) {
                     is UpdateCheckResult.UpdateAvailable -> {
                         val latest = result.latest
                         if (UpdateCheck.shouldAutoPrompt(latest.version, repo.ignoredUpdateVersion())) {
@@ -181,8 +216,10 @@ class JuwApplication : Application() {
                     }
                     is UpdateCheckResult.UpToDate ->
                         android.util.Log.i("JuwApplication", "update check: up to date (${result.latest.version})")
-                    is UpdateCheckResult.Failed ->
-                        android.util.Log.i("JuwApplication", "update check: failed (network)")
+                    is UpdateCheckResult.Failed -> {
+                        gate.edit().putLong(KEY_LAST_UPDATE_FAILURE, System.currentTimeMillis()).apply()
+                        android.util.Log.i("JuwApplication", "update check: failed (network), backoff 24h")
+                    }
                 }
             }.onFailure { android.util.Log.w("JuwApplication", "update auto-check failed", it) }
         }
@@ -212,6 +249,8 @@ class JuwApplication : Application() {
         // 笔记正文 + 作业详情读进内存做正则，条目一多就是冷启动一次全表扫；一天扫一次
         // 足够——增量清理已覆盖绝大多数场景，这里只是兜底。
         appScope.launch {
+            // 不在启动链里延后：清扫要在用户开始编辑前跑完，否则可能把「文件已落盘、
+            // 正文还没写引用」的新图当孤儿删掉。
             runCatching {
                 val prefs = getSharedPreferences(ATTACHMENT_SWEEP_PREFS, Context.MODE_PRIVATE)
                 val now = System.currentTimeMillis()
@@ -230,6 +269,7 @@ class JuwApplication : Application() {
         // 目录里任何残留都是上一次进程没清干净的（杀进程走不到 onCleared），冷启动直接清空。
         // 与笔记附件不同：这里不做引用追踪，也没有频次闸门——目录通常就是空的。
         appScope.launch {
+            // 同样不延后：这是会话级清空，晚跑会与用户刚导入的图片抢同一个目录。
             runCatching { Graph.aiImageStore(this@JuwApplication).sweep() }
                 .onFailure { android.util.Log.w("JuwApplication", "ai image sweep failed", it) }
         }
@@ -239,6 +279,8 @@ class JuwApplication : Application() {
         // 能看到一次闪入（该页对首帧闪动的容忍度很低，Pager 与底部抽屉都为这件事改过）。
         // 解码目标按设备长边算，与渲染路径同一口径，命中率才是 100%。
         appScope.launch {
+            // 不在启动链里延后：sweep 会删掉「不是当前名字」的文件，晚跑可能与用户
+            // 刚换图的写入抢跑（文件已落盘、偏好还没提交）。
             runCatching {
                 val displayPrefs = Graph.repository(this@JuwApplication).displayPrefs.first()
                 Graph.scheduleBackground(this@JuwApplication).sweep(displayPrefs.bgImageName)
@@ -259,6 +301,25 @@ class JuwApplication : Application() {
         }
     }
 
+    /**
+     * 内存压力下回收位图缓存：附件 16MB + AI 12MB + 课表背景一张整屏图。
+     * 只清内存，不删文件；下次显示由 produceState/loadAttachmentBitmap 重新解码。
+     */
+    @Suppress("DEPRECATION") // minSdk 26 仍用这组档位；API 34 的弃用不影响回调语义
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        when (level) {
+            ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW,
+            ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL,
+            ComponentCallbacks2.TRIM_MEMORY_MODERATE,
+            ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                clearAttachmentImageCache()
+                clearAiImageCache()
+                clearBackgroundBitmapCache()
+            }
+        }
+    }
+
     /** 删掉调课检测的通知 channel（功能已移除；已存在才删，幂等）。 */
     private fun deleteLegacyDetectChannel(context: Context) {
         runCatching {
@@ -272,3 +333,16 @@ class JuwApplication : Application() {
 private const val ATTACHMENT_SWEEP_PREFS = "maintenance_gates"
 private const val KEY_LAST_ATTACHMENT_SWEEP = "last_attachment_sweep"
 private const val ATTACHMENT_SWEEP_INTERVAL_MILLIS = 24L * 60 * 60 * 1000
+
+/**
+ * 冷启动非首帧必需任务的延迟（ms）：首帧只留小组件、闹钟、免扰补发，
+ * CAS / 同步、校历、更新检查、清扫、背景预热都让出前几秒。
+ */
+private const val STARTUP_CAS_DEFER_MILLIS = 2_000L
+private const val STARTUP_CALENDAR_DEFER_MILLIS = 3_000L
+private const val STARTUP_UPDATE_DEFER_MILLIS = 3_000L
+
+/** 更新检查失败退避：仓库私有后源可能长期不可达，失败后一天内不再自动重试。 */
+private const val UPDATE_CHECK_PREFS = "update_check_gate"
+private const val KEY_LAST_UPDATE_FAILURE = "last_update_failure_at"
+private const val UPDATE_FAILURE_BACKOFF_MILLIS = 24L * 60 * 60 * 1000

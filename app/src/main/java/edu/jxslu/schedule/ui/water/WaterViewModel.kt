@@ -98,6 +98,11 @@ class WaterViewModel(
      * 今日页服务卡与开水页各持一份 ViewModel，只有它能在两个窗口之间同步状态。
      */
     private val wateringStore: QiekjWateringStore,
+    /**
+     * 是否在 init 里自动拉余额与设备。侧栏那份实例传 false：冷启动没人看，等侧栏展开
+     * 或开水面板打开时由宿主显式刷新；页面实例保持默认 true，进页行为不变。
+     */
+    private val autoLoad: Boolean = true,
 ) : ViewModel() {
 
     private val unlockMutex = Mutex()
@@ -139,7 +144,7 @@ class WaterViewModel(
         viewModelScope.launch {
             repo.loggedIn.collect { syncLoginState(it) }
         }
-        if (_uiState.value.loggedIn) {
+        if (autoLoad && _uiState.value.loggedIn) {
             refreshBalance()
             refreshDevices()
         }
@@ -286,6 +291,8 @@ class WaterViewModel(
 
     fun refreshBalance() = viewModelScope.launch {
         if (!_uiState.value.loggedIn) return@launch
+        // 冷启动、侧栏展开、面板打开可能在同一拍触发：在途时不再叠第二条。
+        if (_uiState.value.loadingBalance) return@launch
         runCatching {
             _uiState.update { it.copy(loadingBalance = true) }
             repo.queryBalance()
@@ -655,9 +662,10 @@ class WaterViewModel(
     class Factory(
         private val repo: QiekjRepository,
         private val wateringStore: QiekjWateringStore,
+        private val autoLoad: Boolean = true,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            WaterViewModel(repo, wateringStore) as T
+            WaterViewModel(repo, wateringStore, autoLoad) as T
     }
 }
