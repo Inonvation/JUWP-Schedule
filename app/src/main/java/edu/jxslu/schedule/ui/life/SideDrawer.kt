@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +46,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -84,8 +86,15 @@ import edu.jxslu.schedule.ui.common.ShortcutLauncher
 import edu.jxslu.schedule.ui.common.ShortcutPinner
 import edu.jxslu.schedule.ui.common.ShortcutSheet
 import edu.jxslu.schedule.ui.common.rememberResumeTick
+import edu.jxslu.schedule.ui.common.rememberSheetDismisser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bolt
@@ -106,11 +115,15 @@ import me.rerere.hugeicons.stroke.WashingMachine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 private enum class WalletDetail { Campus, Power }
 
 /** 侧栏 U净 行右侧空闲状态的刷新节流：空闲看板本身约 30 秒滞后，刷更勤没意义。 */
 private const val UJING_FREE_REFRESH_TTL_MILLIS = 30_000L
+
+/** 侧栏 U净 聚合的并发上限（与 U净 页看板同口径，别一次打满收藏店）。 */
+private const val UJING_FREE_CONCURRENCY = 4
 
 /** 侧栏寝室电费读数的刷新节流（2026-10-22：旧生活页删除后，侧栏是它的唯一展示位）。 */
 private const val DRAWER_POWER_REFRESH_TTL_MILLIS = 60_000L
@@ -128,11 +141,23 @@ private suspend fun loadUjingFreeText(
     if (!repo.loggedIn.value) return null
     val houses = houseStore.list()
     if (houses.isEmpty()) return null
-    val lines = houses.mapNotNull { house ->
-        runCatching { repo.storeCounts(house.name) }
-            .getOrNull()
-            ?.let { groups -> repo.boardLine(groups) }
-    }
+    // 多店并发、单店失败只算这一家不参与求和（`runCatching` 会把取消一起吞掉，
+    // 这里手写 catch：侧栏收起时必须照常向上抛，不把取消当失败）。
+    val limiter = Semaphore(UJING_FREE_CONCURRENCY)
+    val lines = coroutineScope {
+        houses.map { house ->
+            async {
+                try {
+                    val groups = limiter.withPermit { repo.storeCounts(house.name) }
+                    repo.boardLine(groups)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }.awaitAll()
+    }.filterNotNull()
     val free = lines.sumOf { it.free }
     val total = lines.sumOf { it.total }
     if (lines.isEmpty() || total <= 0) return null
@@ -249,9 +274,12 @@ fun SideDrawerContent(
         ?.let { "¥%.2f".format(it / 100.0) }
         ?: "—"
     val powerText = when {
-        power.loading -> "读取中…"
+        // 有读数就先留着：刷新期间不再退回「读取中…」（侧栏展开即静默刷一轮，
+        // 每次把已显示的电量抹掉再填回来，读起来像在闪）。无凭证 / 未绑定房间
+        // 是终态，优先于旧读数——那份读数已经不属于当前房间。
         power.noCredentials || power.roomNotBound -> "—"
         remain != null -> "%.1f 度".format(remain)
+        power.loading -> "读取中…"
         power.error != null -> "读取失败"
         else -> "—"
     }
@@ -268,21 +296,31 @@ fun SideDrawerContent(
     var ujingFreeText by remember { mutableStateOf<String?>(null) }
     var ujingFreeLoading by remember { mutableStateOf(false) }
     var ujingFreeRefreshedAt by remember { mutableStateOf(0L) }
+    // 在途请求的序号：侧栏收起会取消这个 effect，`finally` 里只有「仍是最新一次请求」
+    // 才能把 loading 抹掉——否则收起瞬间取消，转圈会一直挂到下一次节流窗口结束。
+    val ujingFreeRequest = remember { AtomicInteger() }
     LaunchedEffect(ujingLoggedIn, resumeTick, drawerVisible) {
         if (!drawerVisible) return@LaunchedEffect
         if (!ujingLoggedIn) {
             ujingFreeText = null
+            // 退出登录清掉节流起点：重新登录后应立刻能取到空闲数，不等旧的 30 秒窗口
+            ujingFreeRefreshedAt = 0
             return@LaunchedEffect
         }
         val now = System.currentTimeMillis()
         // 节流窗口内不重拉（resumeTick 驱动的回来刷新也走同一道闸）
         if (now - ujingFreeRefreshedAt < UJING_FREE_REFRESH_TTL_MILLIS) return@LaunchedEffect
-        ujingFreeRefreshedAt = now
+        val token = ujingFreeRequest.incrementAndGet()
         ujingFreeLoading = true
-        ujingFreeText = withContext(Dispatchers.IO) {
-            loadUjingFreeText(ujingRepo, ujingHouseStore)
+        try {
+            ujingFreeText = withContext(Dispatchers.IO) {
+                loadUjingFreeText(ujingRepo, ujingHouseStore)
+            }
+            // 只在正常走完时落节流时刻：侧栏收起取消掉的请求不算数，下次展开要补拉
+            ujingFreeRefreshedAt = now
+        } finally {
+            if (ujingFreeRequest.get() == token) ujingFreeLoading = false
         }
-        ujingFreeLoading = false
     }
 
     // 寝室电费读数：旧生活页删除后，侧栏是它唯一的常驻展示位——展开侧栏时静默刷一轮
@@ -381,8 +419,8 @@ fun SideDrawerContent(
                     )
                     // 三张卡（2026-10-21 用户口径）：**行本体直接进二级页**，右侧状态 / 余额
                     // 才开原来的入口弹窗——「看状态」与「进页操作」是两个动作，不再让
-                    // 整行都落在弹窗上。U净 无登录 / 无收藏店时右侧没有状态可点，
-                    // 弹窗入口随行内隐藏；数据侧同样等有数据才拉（见 ujingFreeText）。
+                    // 整行都落在弹窗上。U净 无登录 / 无收藏店时右侧没有状态文字，但箭头
+                    // 仍是入口（在案订单 / 扫码），命中区按 48dp 给足；数据侧等登录才拉。
                     DrawerRow(
                         label = "胖乖生活",
                         brandIcon = R.drawable.ic_brand_pangguai,
@@ -487,13 +525,13 @@ fun SideDrawerContent(
             powerRoom = power.snapshot?.meter?.room?.room,
             powerAt = power.snapshot?.meter?.fetchedAtMs,
             onDismiss = { detail = null },
+            // 弹层退场由 WalletDetailSheet 的 dismisser 负责，这里只做动作
             onOpenBill = {
-                detail = null
                 if (which == WalletDetail.Campus) onOpenStatement() else onOpenPowerBill()
             },
+            // 详情弹层已经知道是哪一项：直接进对应充值，不再多问一次「充哪个」
             onRecharge = {
-                detail = null
-                showRechargeChoice = true
+                if (which == WalletDetail.Campus) onOpenCampusRecharge() else onOpenPowerRecharge()
             },
         )
     }
@@ -801,7 +839,10 @@ private fun WalletDetailSheet(
     val isCampus = detail == WalletDetail.Campus
     val primary = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 按钮动作先播完弹层退场再执行（账单页 / 充值弹层不会和这张弹层重叠一帧）
+    val sheetState = rememberModalBottomSheetState()
+    val dismissThen = rememberSheetDismisser(sheetState, onDismiss)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -854,8 +895,14 @@ private fun WalletDetailSheet(
                 modifier = Modifier.padding(top = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                OutlinedButton(onClick = onOpenBill, modifier = Modifier.weight(1f)) { Text("账单") }
-                Button(onClick = onRecharge, modifier = Modifier.weight(1f)) { Text("充值") }
+                OutlinedButton(
+                    onClick = { dismissThen(onOpenBill) },
+                    modifier = Modifier.weight(1f),
+                ) { Text("账单") }
+                Button(
+                    onClick = { dismissThen(onRecharge) },
+                    modifier = Modifier.weight(1f),
+                ) { Text("充值") }
             }
         }
     }
@@ -886,7 +933,9 @@ private fun RechargeChoiceSheet(
     onPickCampus: () -> Unit,
     onPickPower: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val sheetState = rememberModalBottomSheetState()
+    val dismissThen = rememberSheetDismisser(sheetState, onDismiss)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -906,14 +955,15 @@ private fun RechargeChoiceSheet(
                     subtitle = "正式卡 / 电子账户",
                     icon = HugeIcons.Wallet01,
                     modifier = Modifier.weight(1f),
-                    onClick = onPickCampus,
+                    // 退场播完再弹下一张，两张弹层不叠在同一帧
+                    onClick = { dismissThen(onPickCampus) },
                 )
                 RechargeTile(
                     title = "寝室电费充值",
                     subtitle = "缴费平台 · 房间电表",
                     icon = HugeIcons.Bolt,
                     modifier = Modifier.weight(1f),
-                    onClick = onPickPower,
+                    onClick = { dismissThen(onPickPower) },
                 )
             }
         }
@@ -986,6 +1036,8 @@ private fun DrawerSection(title: String, content: @Composable ColumnScope.() -> 
  *   这行最该被看到的信息，也是可点的目标，视觉上要立得住；
  * - 状态与箭头**收在同一列右缘**（2026-10-21）：金额一律右对齐、箭头始终在最右，
  *   各行扫下来是一条竖线（此前可点状态多一层 8dp 内边距，金额比不可点的行缩进一截）；
+ *   右侧命中区**至少 48dp 宽**（U净未登录 / 无收藏店时只剩一枚箭头，16dp 宽点不准），
+ *   内容仍贴右缘（`Arrangement.End`），箭头位置不因加宽而左移；
  * - [active] = 对应服务**正在进行中**（骑行 / 开水 / 用水 / 洗烘）：整行加主色描边 +
  *   浅 tonal 底（180ms 过渡，与 `AppCard.highlighted` 同族口径），展开侧栏一眼即见
  *   「这行有事在跑」——右侧状态数字只是信息，描边才是「现在就值得看」的信号；
@@ -1123,6 +1175,7 @@ private fun DrawerRow(
         if (onTrailingClick != null) {
             Row(
                 modifier = Modifier
+                    .widthIn(min = 48.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable(
                         onClickLabel = "$label 余额与入口",
@@ -1130,6 +1183,8 @@ private fun DrawerRow(
                     )
                     // 20sp 文本 + 上下 14dp = 48dp 命中区（行内容高度正好 48dp）
                     .padding(vertical = 14.dp),
+                // 内容贴右缘：补出来的宽度只长在左侧，箭头仍与其它行对齐
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 trailingSlot()

@@ -17,7 +17,7 @@ import edu.jxslu.schedule.ui.life.PowerBankPayScreen
  * 不进日志、也没有全局状态可查（进程被杀就是重下单，见 [LifeViewModel] 那头）。
  *
  * 支付完成后回到商户域（`charge.juwp.edu.cn`）即关闭本窗口：剩下的「查单确认到账」
- * 由生活页弹层的等待步接管（`PowerRechargeSheet` 的 BankPay 步）。
+ * 由电费充值弹层的等待步接管（`PowerRechargeSheet` 的 BankPay 步）。
  */
 class PowerBankPayActivity : ComponentActivity() {
 

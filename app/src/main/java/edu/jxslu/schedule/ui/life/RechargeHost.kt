@@ -133,25 +133,27 @@ fun RechargeHost(
         }
     }
 
-    // 每次侧栏发起充值：先把电费读数/一卡通余额拉一轮（走缓存/闸门）。
-    // **必须排在下面的 pending 判定之前**：`refreshPower` 会同步把 loading 置 true，
-    // 后面的自动开弹层才能等到「房间是否已绑定」判出来，不会抢跑。
+    // 每次侧栏发起充值：只补这一项要用的数据（都走缓存/闸门）。
+    // 一卡通充值不需要电费读数——顺手刷它只会让侧栏电费栏无谓地进入 loading；
+    // 电费充值要一卡通余额，是因为弹层里还有「去充值电子账户」的联动。
     LaunchedEffect(pending) {
-        if (pending == null) return@LaunchedEffect
-        viewModel.refreshPower(force = false)
-        campusViewModel.refreshBalance(force = false)
+        when (pending) {
+            null -> Unit
+            RechargeKind.Campus -> campusViewModel.refreshBalance(force = false)
+            RechargeKind.Power -> {
+                viewModel.refreshPower(force = false)
+                campusViewModel.refreshBalance(force = false)
+            }
+        }
     }
 
-    // 等静默窗口与电费状态都就绪，再直接接上对应流程。
-    LaunchedEffect(
-        pending,
-        disclaimerSuppressUntil,
-        disclaimerSeenAt,
-        state.power.loading,
-    ) {
+    // 等免责声明的静默窗口读到（DataStore 首帧）就直接接上对应流程。
+    // **不等电费读数**：冷启动的登录 → 项目详情 → 读表要几秒，等它会把「点了充值
+    // 没反应」演给用户；房间未绑定的兜底在弹层里（下单时服务端判 RoomNotBound，
+    // 报在弹层内并把侧栏切到「未设置」态），不会因为抢跑走进死路。
+    LaunchedEffect(pending, disclaimerSuppressUntil, disclaimerSeenAt) {
         val kind = pending ?: return@LaunchedEffect
         if (disclaimerSuppressUntil == null || disclaimerSeenAt == null) return@LaunchedEffect
-        if (kind == RechargeKind.Power && state.power.loading) return@LaunchedEffect
         onConsumed()
         openRecharge(kind)
     }
