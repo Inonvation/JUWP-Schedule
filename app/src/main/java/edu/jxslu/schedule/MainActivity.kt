@@ -276,7 +276,10 @@ internal const val EXTRA_ROUTE = "edu.jxslu.schedule.extra.ROUTE"
 /** [EXTRA_ROUTE] 的取值：课表 Tab。 */
 internal const val ROUTE_WEEK = "week"
 
-/** [EXTRA_ROUTE] 的取值：生活 Tab（余额提醒通知的落点，DESIGN §3.10 / §3.13）。 */
+/**
+ * [EXTRA_ROUTE] 的取值：旧版「生活」Tab（2026-10-22 页面已删）。
+ * 只留着兼容升级前已发出去的余额通知 PendingIntent；收到后统一落今日页。
+ */
 internal const val ROUTE_LIFE = "life"
 
 /** [EXTRA_ROUTE] 的取值：我的 Tab（登录失效通知的落点，DESIGN §3.16）。 */
@@ -840,7 +843,8 @@ internal fun JuwApp(
     // 直接弹对应充值弹层；弹层关掉就结束，不离开当前 Tab。
     var pendingRecharge by remember { mutableStateOf<RechargeKind?>(null) }
 
-    // 小组件网格区点击 → 切到课表 Tab；余额提醒通知 → 切到生活 Tab（DESIGN §3.6 / §3.10）。
+    // 小组件网格区点击 → 切到课表 Tab；旧版余额提醒通知（带 ROUTE_LIFE）→ 今日页
+    // （2026-10-22 生活页删除，DESIGN §3.6 / §3.10）。
     // 跳转后消费掉 extra，否则每次重组/返回都会把用户弹回那个 Tab。
     //
     // 判据写成「route 等于某个非空常量」而不是先算出目标再判空：Kotlin 的智能转换
@@ -1144,14 +1148,14 @@ internal fun JuwApp(
     val bottomReserveDp = navBarInsetDp +
         if (floatingNavBar) FloatingPillHeight + FloatingBarBottomMargin else PlainBottomBarHeight
     // 悬浮球只在主窗口三个 Tab 显示（二级页是独立 Activity 窗口，本就看不到它；
-    // 充值页是从侧栏临时推入的隐藏路由，不算 Tab，不挂球）
+    // 充值弹层挂在壳层、没有独立路由，不涉及挂球判定）
     val floatingBallOnTab = currentRoute == Routes.TODAY || currentRoute == Routes.WEEK ||
         currentRoute == Routes.JW
 
     // 侧栏里点普通入口**不收侧栏**（2026-10-21 用户口径，与设置同一个姿势）：
     // 二级页是独立窗口，直接盖在侧栏上；返回时侧栏还开着，用户接着点下一项。
     // 此前先 close() 再起窗口，收起动画与窗口推入叠在一起，观感很别扭。
-    // 例外只有两类「动作」而不是「入口」：扫一扫、充值（充值不走窗口，直接由壳层 RechargeHost 弹弹层）。
+    // 例外只有扫一扫：先收侧栏再出取景窗口。充值弹层直接盖在侧栏上，不收（2026-10-22 用户口径）。
     val openFromDrawer: (SubpageScreen, String?) -> Unit = { screen, focus ->
         openSubpage(context, SubpageRequest(screen = screen, focusItemId = focus))
     }
@@ -1577,14 +1581,6 @@ internal fun JuwApp(
                 snackbar = shellSnackbar,
                 scope = shellScope,
             )
-            // 外壳级提示通道（悬浮球「别家码」等播报）：贴底、让开底栏。画在页面之上、
-            // 底栏之下——球被 inset 顶在底栏之上，这条提示与它同一带，互不遮挡。
-            AppSnackbarHost(
-                shellSnackbar,
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = bottomReserveDp),
-            )
             // 应用内悬浮球（DESIGN §3.1）：主窗口三个 Tab 常驻。显示设置面板打开时
             // （bottomBarVisible 为 false）一并收起，免得压在面板上。
             // 单击在「预报名执行期间」（DESIGN §4.45，2026-10-21）临时变为弹出抢活动仪表板
@@ -1614,6 +1610,16 @@ internal fun JuwApp(
         }
     }
         }
+        // 外壳级提示通道（悬浮球「别家码」、充值下单 / 支付失败、房间绑定结果）：
+        // 挂在**根层**、画在卡片与侧栏之上——侧栏展开时主卡被推到屏幕右侧，卡内的
+        // SnackbarHost 会跟着跑出可视区；充值弹层开在侧栏上时，失败提示必须看得见。
+        // 贴底、让开底栏，位置与卡内时一致。
+        AppSnackbarHost(
+            shellSnackbar,
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = bottomReserveDp),
+        )
     }
 }
 

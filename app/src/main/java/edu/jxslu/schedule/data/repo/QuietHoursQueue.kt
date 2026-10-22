@@ -21,7 +21,7 @@ import kotlinx.serialization.json.Json
  *
  * 三种落点对应通知链既有的三种 contentIntent 构建（见各 Reminder 文件）：
  * - [Kind.MAIN_PLAIN]：裸 `MainActivity`（上课提醒）；
- * - [Kind.MAIN_ROUTE]：`MainActivity + EXTRA_ROUTE`（余额 → 生活页、登录失效 → 我的页）；
+ * - [Kind.MAIN_ROUTE]：`MainActivity + EXTRA_ROUTE`（余额 → 不带路由、落启动页；登录失效 → 账号与登录）；
  * - [Kind.SUBPAGE]：`subpageLaunchIntent(SubpageRequest)`（成绩/考试/选课/调课/U净/骑行/作业）。
  *
  * requestCode 逐条存档——PendingIntent 的身份是「requestCode + filterEquals」，
@@ -31,7 +31,7 @@ import kotlinx.serialization.json.Json
 data class PendingLaunch(
     val kind: String,
     val requestCode: Int,
-    /** [Kind.MAIN_ROUTE] 专用：`ROUTE_LIFE` / `ROUTE_ME`。 */
+    /** [Kind.MAIN_ROUTE] 专用：`ROUTE_ME` 等（旧 `ROUTE_LIFE` 已随生活页删除）。 */
     val route: String? = null,
     /** [Kind.SUBPAGE] 专用：`SubpageScreen.name`。 */
     val screen: String? = null,

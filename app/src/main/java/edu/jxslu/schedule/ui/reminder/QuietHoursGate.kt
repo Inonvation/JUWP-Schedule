@@ -205,8 +205,8 @@ object QuietHoursGate {
     /** 按 [PendingLaunch] 重建落点（三种形态与原发送点逐字对应）。 */
     private fun contentIntent(context: Context, launch: PendingLaunch): PendingIntent {
         val intent = when (launch.kind) {
-            // route 为 null 的语义 = 落今日页（原链路：生活 Tab 关闭时不给 extra，
-            // 免得落在一个被用户隐藏的 Tab 上）——不能兜成 ROUTE_LIFE
+            // route 为 null 的语义 = 按用户的启动页打开（默认今日页；余额提醒走这条）。
+            // 不能兜成已删除的 ROUTE_LIFE——那会落到一个没有页面的路由。
             PendingLaunch.Kind.MAIN_ROUTE -> Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 launch.route?.let { putExtra(EXTRA_ROUTE, it) }

@@ -17,10 +17,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import edu.jxslu.schedule.EXTRA_ROUTE
 import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.MainActivity
-import edu.jxslu.schedule.ROUTE_LIFE
 import edu.jxslu.schedule.R
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.power.PowerReadingSource
@@ -171,14 +169,13 @@ object BalanceAlertReminder {
             if (!powerOn && !yktOn) return
             val credentials = Graph.yktCredentialStore(context).read() ?: return
             val nowMillis = System.currentTimeMillis()
-            // 通知落点：生活页已收进左侧栏（2026-10-20），不再给 ROUTE_LIFE——
-            // 那会落到一个没有底栏入口的隐藏页。统一落今日页，侧栏就在那儿。
-            val toLife = false
+            // 通知落点：不带路由 = 主窗口按用户的启动页打开（默认今日页）。
+            // 生活页 2026-10-22 删除后不再有 ROUTE_LIFE；余额在侧栏与账单页都能看。
             // 通知总开关只拦「发通知」，不拦核对本身（2026-10-06 收件箱 §4.38）：
             // 状态消解（回升移除消息）与入箱都靠这条核对链，通知全关也得照跑。
             val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
-            if (powerOn) checkPower(context, prefs, credentials, nowMillis, toLife, notificationsEnabled)
-            if (yktOn) checkYkt(context, prefs, credentials, nowMillis, toLife, notificationsEnabled)
+            if (powerOn) checkPower(context, prefs, credentials, nowMillis, notificationsEnabled)
+            if (yktOn) checkYkt(context, prefs, credentials, nowMillis, notificationsEnabled)
         }.onFailure { Log.w(TAG, "check failed", it) }
     }
 
@@ -191,7 +188,6 @@ object BalanceAlertReminder {
         prefs: DisplayPrefsStore,
         credentials: YktCredentialStore.Credentials,
         nowMillis: Long,
-        toLife: Boolean,
         notificationsEnabled: Boolean,
     ) {
         val intervalHours = BalanceAlert.coerceIntervalHours(prefs.powerAlertIntervalHours.first())
@@ -264,25 +260,24 @@ object BalanceAlertReminder {
                 launch = PendingLaunch(
                     kind = PendingLaunch.Kind.MAIN_ROUTE,
                     requestCode = POWER_REQUEST_CODE,
-                    route = if (toLife) ROUTE_LIFE else null,
+                    route = null,
                 ),
             ),
         )
         // 「偏低期间只提醒一次」的置位点：通知真发出去（或拦下入队待补发）就算这条
         // 提醒已送达，标记亮住直到回升清除——不置位的话小时级周期核对每一轮都重发
-        if (held || (notificationsEnabled && postedPower(context, text, toLife))) {
+        if (held || (notificationsEnabled && postedPower(context, text))) {
             prefs.setBalanceAlertNotified(BalanceAlertSource.Power, true)
         }
     }
 
     /** 电费通知的即时发送（返回是否成功），与置位判断拆开保持原来 post 的吞错口径。 */
-    private fun postedPower(context: Context, text: String, toLife: Boolean): Boolean = post(
+    private fun postedPower(context: Context, text: String): Boolean = post(
         context = context,
         channelTag = POWER_NOTIFICATION_TAG,
         notificationId = POWER_NOTIFICATION_ID,
         title = "寝室电费偏低",
         text = text,
-        toLife = toLife,
     )
 
     // ------------------------------------------------------------------
@@ -294,7 +289,6 @@ object BalanceAlertReminder {
         prefs: DisplayPrefsStore,
         credentials: YktCredentialStore.Credentials,
         nowMillis: Long,
-        toLife: Boolean,
         notificationsEnabled: Boolean,
     ) {
         val intervalHours = BalanceAlert.coerceIntervalHours(prefs.yktAlertIntervalHours.first())
@@ -316,7 +310,7 @@ object BalanceAlertReminder {
         // 桌面生活小组件（DESIGN §3.6 二条目改版）：日检本来就取到了余额，顺手推一次
         // （零额外请求）
         runCatching { LifeWidgetSync.pushCampusBalance(context, cardFen) }
-        evaluateYkt(context, prefs, cardFen, toLife, notificationsEnabled)
+        evaluateYkt(context, prefs, cardFen, notificationsEnabled)
     }
 
     /**
@@ -337,7 +331,6 @@ object BalanceAlertReminder {
                 context = context,
                 prefs = prefs,
                 cardFen = cardFen,
-                toLife = false,
                 notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled(),
             )
         }.onFailure { Log.w(TAG, "evaluateYktBalance failed", it) }
@@ -354,7 +347,6 @@ object BalanceAlertReminder {
         context: Context,
         prefs: DisplayPrefsStore,
         cardFen: Long,
-        toLife: Boolean,
         notificationsEnabled: Boolean,
     ) {
         val cardYuan = cardFen / 100.0
@@ -389,24 +381,23 @@ object BalanceAlertReminder {
                 launch = PendingLaunch(
                     kind = PendingLaunch.Kind.MAIN_ROUTE,
                     requestCode = YKT_REQUEST_CODE,
-                    route = if (toLife) ROUTE_LIFE else null,
+                    route = null,
                 ),
             ),
         )
         // 「偏低期间只提醒一次」的置位点（同电费）
-        if (held || (notificationsEnabled && postedYkt(context, text, toLife))) {
+        if (held || (notificationsEnabled && postedYkt(context, text))) {
             prefs.setBalanceAlertNotified(BalanceAlertSource.Ykt, true)
         }
     }
 
     /** 一卡通通知的即时发送（返回是否成功），口径同 [postedPower]。 */
-    private fun postedYkt(context: Context, text: String, toLife: Boolean): Boolean = post(
+    private fun postedYkt(context: Context, text: String): Boolean = post(
         context = context,
         channelTag = YKT_NOTIFICATION_TAG,
         notificationId = YKT_NOTIFICATION_ID,
         title = "校园卡余额偏低",
         text = text,
-        toLife = toLife,
     )
 
     // ------------------------------------------------------------------
@@ -423,7 +414,6 @@ object BalanceAlertReminder {
         notificationId: Int,
         title: String,
         text: String,
-        toLife: Boolean,
     ): Boolean {
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -437,7 +427,6 @@ object BalanceAlertReminder {
                 contentIntent(
                     context,
                     if (notificationId == POWER_NOTIFICATION_ID) POWER_REQUEST_CODE else YKT_REQUEST_CODE,
-                    toLife,
                 ),
             )
             .build()
@@ -448,19 +437,18 @@ object BalanceAlertReminder {
     }
 
     /**
-     * 点通知落**生活页**（余额卡与电费卡都在那一页）。
+     * 点通知落**主窗口的启动页**（默认今日页；余额在侧栏与账单页都能看）。
      *
-     * 用 `NEW_TASK | CLEAR_TASK` 且 extra 走 [EXTRA_ROUTE]，与桌面小组件跳课表 Tab 同一套
+     * 不带 `EXTRA_ROUTE`。用 `NEW_TASK | CLEAR_TASK`，与桌面小组件跳课表 Tab 同一套
      * （`ScheduleWidget.widgetIntent`，真机实测过）：`MainActivity` 是 standard，
      * `CLEAR_TOP` 匹配不上纯显式 intent，清不掉二级页；`CLEAR_TASK` 与匹配无关、行为确定。
      * requestCode 必须逐条不同（3005/3006，与通知 id 分离）——PendingIntent 的身份是
-     * 「requestCode + Intent.filterEquals」，两者 Intent 只差 extra，会被系统视为同一个，
+     * 「requestCode + Intent.filterEquals」，两条通知的 Intent 若完全相同会被系统视为同一个，
      * `FLAG_UPDATE_CURRENT` 会让两条通知的落点互相改写。
      */
-    private fun contentIntent(context: Context, requestCode: Int, toLife: Boolean): PendingIntent {
+    private fun contentIntent(context: Context, requestCode: Int): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            if (toLife) putExtra(EXTRA_ROUTE, ROUTE_LIFE)
         }
         return PendingIntent.getActivity(
             context,
