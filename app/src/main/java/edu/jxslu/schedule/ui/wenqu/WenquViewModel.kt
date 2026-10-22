@@ -18,6 +18,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import edu.jxslu.schedule.data.prefs.setWenquAppliedOnly
+import edu.jxslu.schedule.data.prefs.setWenquHideFull
+import edu.jxslu.schedule.data.prefs.setWenquSort
+import edu.jxslu.schedule.data.prefs.setWenquStatusFilter
+import edu.jxslu.schedule.data.prefs.wenquAppliedOnly
+import edu.jxslu.schedule.data.prefs.wenquHideFull
+import edu.jxslu.schedule.data.prefs.wenquPreregId
+import edu.jxslu.schedule.data.prefs.wenquPreregOpensAt
+import edu.jxslu.schedule.data.prefs.wenquPreregTitle
+import edu.jxslu.schedule.data.prefs.wenquSort
+import edu.jxslu.schedule.data.prefs.wenquStatusFilter
 
 /**
  * 问渠页状态机（DESIGN §3.28 / §4.45）。

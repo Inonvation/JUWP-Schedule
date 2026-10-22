@@ -33,6 +33,9 @@ import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.subpageLaunchIntent
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.first
+import edu.jxslu.schedule.data.prefs.wenquActivityAlertEnabled
+import edu.jxslu.schedule.data.prefs.wenquActivityIntervalHours
+import edu.jxslu.schedule.data.prefs.wenquGrabPinnedId
 
 /**
  * 成绩/考试变动提醒（DESIGN §4.33）：新出分、复查改分、考试发布/调整时发一条通知。

@@ -28,13 +28,34 @@
 | 登录 / 凭证 / 会话 / 自动填表 / 首启引导 | `.agents/rules/login-session.md` |
 | 笔记 / 作业 / Markdown / 公式 / 课程备注 | `.agents/rules/notes-homework.md` |
 | 共享单车 / 地图 / 免费时长提醒 / 自动还车 | `.agents/rules/ebike.md` |
+| 快趣账号登录 / 用车 / 卡券 / 设置 | `.agents/rules/ebike-account.md` |
 | 充值弹层 / 一卡通 / 电费 / 胖乖生活 | `.agents/rules/life-power.md` |
-| 宿舍空调遥控（今日页 · 江水生活，红外） | `.agents/rules/ac-remote.md` |
+| 宿舍空调遥控（侧栏 · 江水生活，红外） | `.agents/rules/ac-remote.md` |
 | 天气（今日页顶栏提示 · 天气页） | `.agents/rules/weather.md` |
 | 百宝箱（图片水印 / 拼接 / 菜鸟批量查） | `.agents/rules/toolbox.md` |
 | U净 洗衣房（美的校园洗衣） | `.agents/rules/ujing.md` |
 | 问渠（志愿服务 / 劳动教育） | `.agents/rules/wenqu.md` |
+| 问渠提醒 / 蹲点 / 预报名 | `.agents/rules/wenqu-alerts.md` |
 | 学工表单 / 盖章成绩单 | `.agents/rules/xg-transcript.md` |
+| 拿不准术语 / 两个相似实现选哪个 | `.agents/rules/README.md`（领域词典） |
+
+**文档分工（同一事实只留一处）**
+
+| 文件 | 只写 | 不写 |
+|------|------|------|
+| `AGENTS.md` | 入口路由、工程实况、命令、硬性禁止 | 领域细节、实现流水账 |
+| `.agents/rules/` | 动手前读什么、改哪里、怎么验、踩过的坑 | 产品决策、历史编年 |
+| `design/` | 决策与规格：为什么这样做、边界在哪 | 函数实现、字段清单、测试用例 |
+| `docs/devlog.md` | 历史、原因、事故复盘（本地，不入库） | 当前行为承诺 |
+| 代码 KDoc | 当前不变量、失败模式、唯一实现 | 日期流水、用户反馈原文 |
+
+- 改规则文件先看上面的路由表；新增规则文件必须同时更新路由表。
+- 不把 `AGENTS.md` 的命令/工程实况复制进 rules，用链接指回来。
+- 不把 `design/` 的规格复制进代码注释；代码只写「为什么不能改成别的」。
+- 文档与代码冲突时：**代码 + 测试 > design > AGENTS 描述**；先修文档，再继续改代码。
+
+**AI 改动顺序**：定位唯一实现 → 读对应 rule / design 章节 → 先写或改测试 → 改代码 →
+目标测试 + 全量测试 → 收尾一行 `未验 / 风险`。
 
 其他只读参考：
 
@@ -192,7 +213,7 @@ adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 | `fetch_textbooks.py` | 学生教材确认（`--term` 可选，缺省教务当前学期；JSON 接口 `/jsxsd/nxsjc/xsjcqr`） | `scripts/out/textbooks.json` |
 | `fetch_selections.py` | 选课记录 + 选课轮次（`--term` 可重复，缺省当前学期+下一学期；layui JSON；**只读**，退课接口绝不碰） | `scripts/out/selections.json` |
 | `fetch_curriculum.py` | 培养方案「课程设置总表」（全量 84 门级别，含开设学期 1–8；服务端渲染 HTML，不随学期；另有 `curriculum.md` 按学年可读版） | `scripts/out/curriculum.json` |
-| `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9A101`） | `scripts/out/power.json` |
+| `fetch_power.py` | 寝室电费（新开普缴费平台 `charge.juwp.edu.cn`，**非教务**；`--history` / `--room 9Z999`） | `scripts/out/power.json` |
 | `fetch_transcript.py` | 教务处**盖章成绩单**（金格签章系统 `jwxyxx.juwp.edu.cn`，**非强智教务**；`--list` / `--term` 可多个 / `--out`） | `scripts/out/transcript_<标签>.pdf` |
 | `sync_calendar.py` | 校历镜像同步（教务处官网通知公告 → 抓高清原图 → 学年/文件名/sha256 比对，变更才落盘并自动 commit & push；**免登录免凭证**） | `docs-public/calendar/`（更新仓库镜像）；**2026-10-07 后 App 已直取官网为主，本脚本为应急工具** |
 
@@ -240,178 +261,34 @@ adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 ## 架构（改代码前对齐）
 
 ```
-MainActivity → 底栏今日/课表/教务（2026-10-20 起 3 Tab；生活与我的收进左侧栏）
-               + 层叠左侧栏（StackedDrawerState + ui/life/SideDrawer：身份 / 钱包 / 生活 / 江水生活
-                 / 学习 / 设置 / 付款码；右滑展开，主页面在前、缩到 94%，侧栏是静态后层，DESIGN §3.1）
-               + 路由 jw_import；SettingsActivity（独立窗口，2026-10-20，不再是隐藏「我的」路由）；
-               JwImportActivity 的 Browse 模式（各业务页顶栏「网页」只读核对：复用导入窗口的
-               电脑版/手机版、统一认证、返回先关弹层与错误处理）；
-                SubpageActivity 承载二级页（含成绩查询 SCORES / 成绩设置 SCORE_SETTINGS、
-                考试安排 EXAMS / 考试设置 EXAM_SETTINGS、选课 SELECTIONS·SELECTION_WISHES、
-               笔记/作业 7 个二级页 NOTES·NOTES_COURSE·NOTE_DETAIL·HOMEWORK·HOMEWORK_COURSE·
-               HOMEWORK_DETAIL·HOMEWORK_TODO，DESIGN §3.11；U净 三页 UJING·UJING_ORDER·
-               UJING_HISTORY，下单选择走 UjingDraftStore 跨窗口交接，§4.37；
-               调课处置页 SCHEDULE_CHANGES，§4.17；账号与登录 ACCOUNTS（全量账号状态与
-               补登入口，2026-10-20），§3.3；AI 调课 AI_SCHEDULE + 配置 AI_SETTINGS，§4.39；
-                培养方案 CURRICULUM + 实习基地 INTERNSHIP_BASES + 教材 TEXTBOOKS +
-                理论课表 THEORY_SCHEDULE + 实验课表 LAB_SCHEDULE（原生**日程流**：某一周 × 按天
-                分段，横滑翻周默认本周，走 coursesOnDay 含调休/停课；顶栏外链教务页，2026-10-21）
-                + 学籍信息 STUDENT_INFO（入口在左侧栏身份区）+ 教学日历
-                TEACHING_CALENDAR，§3.26 / §3.27；问渠 WENQU +
-               志愿服务记录 WENQU_RECORDS（记录列表是页、记录详情才是弹层）+ 问渠设置
-                WENQU_SETTINGS + 蹲点抢活动 WENQU_GRAB（命中弹确认，不自动提交）+ 预报名
-                （详情弹层入口 · **唯一自动提交路径** · 精确闹钟 4008 + shortService，§4.45），
-               §3.28；天气详情 WEATHER + 天气设置 WEATHER_SETTINGS（今日页顶栏那行提示的
-               落点与开关，默认关，§3.29）；学生评教走
-                JwImportActivity 的 TeachingEval 模式（§4.44）；教务 Tab JwHubScreen（§3.26 入口汇总，
-                摘要卡带实时数字：成绩门数/加权 · 考试场次 · 教材本数 · 本周节数；快捷四格 =
-                理论课表 / 实验课表 / 成绩查询 / 考试安排；网页核对按钮已收进各业务页顶栏，
-                首页不再重复挂「网页」入口）；
-               百宝箱 TOOLBOX +
-              图片水印 TOOLBOX_WATERMARK + 图片拼接 TOOLBOX_STITCH +
-              菜鸟批量查 TOOLBOX_CAINIAO（左侧栏「百宝箱」入口，
-               受「设置 → 功能」开关控制，默认开，§4.47）；空调遥控 AC_REMOTE（左侧栏「空调遥控」入口，
-               寝室美的空调红外，§3.31 / §4.48）；宿舍报修进度 DORM_REPAIR（今日页报修卡 /
-               收件箱办结通知的落点，原生只读，§4.49））
-domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMapper·Score·ScholarProgress（纯逻辑，可 JVM 测）
-                 + ScheduleDiff（调课差异指纹/配对/冲突，§4.17）+ ScheduleCourseRow·SchedulePendingChanges（可序列化影子）
-                 + Note·Homework·Markdown·MarkdownEdit·MarkdownImages·MathTex·HomeworkCenter（§4.20）
-                 + Textbook（§4.31：挂 courseName 带 term，教务教材确认）
-                 + EbikeQr·EbikeFreeRide·BikeNearby·EbikeUseMode（§3.9：出码车号口径、免费时长、
-                 附近车辆解析、使用方式=小程序/账号两档 + `EbikeCapabilities` 能力矩阵）
-                 + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
- + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
- + QzxyClData·QzxySessionLink·QzxyPhoneMask·QzxyWatering（会话串 · 手机号遮蔽 · 用水记账）
- + AiSchedulePrompt·AiScheduleTool·AiScheduleConfig（AI 调课：prompt/脱敏/学期日历 ·
- 工具 schema 与解析 · 默认服务配置，§4.39）
- + ScheduleOverride·ScheduleOverrides（日期覆盖：调休 / 停课，§4.40——`coursesOnDay` 的
- 覆盖查表，渲染层叠加不写 courses 表）
- + ScheduleUndo·AppliedEntry（撤销的反向规划，§4.39——纯函数，仓储只按 Action 落库）
- + Curriculum·CurriculumRules（培养方案课程设置：全量课程 + 开设学期 1–8 ·
- 学年分组/校验/标签，§4.41）
- + TeachingCalendar·TeachingCalendarRules / InternshipBase·InternshipBaseRules（§4.42 / §4.43：
- 教学日历→第 1 周周一推导 · 实习基地与类别分组）
- + WenquRules（问渠：token 续期时机 · 验证码 5 分钟冷却 · 手机号/密码校验 · 星级与工时文案 ·
- 活动状态文案 · 时间戳/时间段与名额文案 · **本地搜索**（关键词匹配 `matchesKeyword` · 命中高亮
- `keywordRanges` · 索引翻页判据 `shouldContinueIndexing`）· **排序档位 `Sort` 与截止排序键** ·
-  **每周日 12:00 提醒点 `next/lastWeeklyAlertPoint`** · **蹲点**（`grabInBurst` 窗口 ·
-  `grabNextDelayMs` 四档节奏（窗口内失败也快试）· `jitteredDelayMs` 抖动 · `grabWindowEndAt`
-  窗口锚定 · `grabFirstMatch` 命中 · `grabShouldStop` 收工）· **预报名**（`preregAlarmAt` /
-  `preregTryStartAt` 服务器钟试发 · `preregShouldStop` 三闸 · `classifyPreregReject` 话术分类 ·
-  `parseHttpDate` / `clockOffsetMs` 时钟偏移），§4.45）
- + Weather·WeatherAdvice（天气：WMO 码 → emoji/中文短语 · **18:00 分界**与话术优先级
- （正在下雨 > 雪/雷暴 > 有雨 > 降水概率 > 雾 > 防晒 > 防暑 > 添衣 > 大风 > 兜底），§3.29）
- + ScheduleTips（顶栏课表句：**一条只讲一件事**——实验课 > 南北楼往返跑 > 楼变化/同楼 ·
- 快下课有雨独占整行；≥2 节课且楼解析得出才说，否则整句丢弃，§3.29）
- + TodayTip（顶栏提示类型：`kind` 决定点击落点——天气句进天气页、课表句进课表页，§3.29）
- + ToolboxImage（百宝箱图片排版：水印字号/密度三档 · 拼接取宽与
- 像素上限，纯函数，§4.47）
- + StitchScan（智能拼接匹配核：公共头尾 · 滚动重叠逐行验证 · 容差三档 · **精修取最优对齐**，
- 纯函数；默认开，只适合同页连续滚动的一批截图，§4.47）
- + CainiaoQuery（菜鸟批量查：三方路由链接拼装 · 多单号输入清洗拆分与丢弃计数 ·
- 历史编解码，纯函数，§4.47）
- + MideaR05d（美的 R05D 空调红外：开关 / 模式 / 温度 / 风速 + 摆风 / 强劲 / ECO ·
- 48 位帧 · ConsumerIrManager 脉冲序列生成，纯函数，§3.31 / §4.48）
- + DormRepair·DormRepairRules（宿舍报修进度：状态 / 完成判定 / 3 天保留 / 卡片选记录 /
- 过渡通知，§4.49）
- + SelectionCourse·SelectionQuery·SelectionCourseTypes·SelectionWish·SelectionWishes·
- SelectionWishHits（选课中心：候选课程 / 服务端查询条件与类别表 / 预选清单与命中归组，
- §3.20 / §4.36——自动抢课已下线，v3 起写操作只剩用户逐次确认）
-data/local/      Room v20：courses / time_slots / semester_config / timetables（term 列，v14）/ scores
-                 / scholar_groups / scholar_courses / ykt_turnovers / notes / homework
-                 / power_readings（v12 起；房号显示名 roomName）/ textbooks（v14）
-                 / ride_records（v16）/ course_selections（v17，选课记录按学期替换，§4.35）
-                 / inbox_messages（v18，收件箱，dedupeKey 唯一索引，§4.38）
-                 / date_overrides（v19，日期覆盖：调休 / 停课，§4.40）
-                 / curriculum_courses（v20，培养方案课程设置，§4.41）
-data/repo/       ScheduleRepository + JSON 导入校验；ScoreRepository（成绩按学期替换）
-                 ScholarProgressRepository；ScoreSync / ScholarProgressSync（自动导入，DESIGN §4.29）
-                 CurriculumRepository / CurriculumSync（培养方案课程设置，§4.41——同学业一套纪律）
-                 TeachingCalendarSync（导入课表后按学期校准开学日，§4.42）
-                 TextbookSync（导入课表后抓教材 + 冷启动补抓，§4.31）
-                 InternshipBasesLoader（实习基地直取 + 按页循环，不落库，§4.43）
-                 SelectionRepository / SelectionSync / SelectionRoundsStore（选课记录与轮次，§4.35）
-                 SelectionCenterClient / SelectionCenterHttpClient（选课中心真身：列表/提交/退课，
-                 §4.36——自动抢课整条链 2026-10-08 v3 下线，写操作只剩用户逐次确认）
-                 NoteRepository / HomeworkRepository / AttachmentStore（笔记作业图片，§4.20）
-                 AiImageStore（AI 调课图片，§4.39——filesDir/ai_img/，**会话级**，
-                 口径 1600 / q80 / 强制 JPEG / 上限 4 张，新会话与冷启动清空）
-                 ScheduleSync（课表直取 + 首启自动导入 + 调课检查）/ ScheduleBaselineStore
-                 （调课基线 filesDir JSON，§4.17）
-                 InboxRepository（收件箱留痕层，旁路不发网络请求，§4.38；规则见 .agents/rules/inbox.md）
-                 DormRepairStore / DormRepairSync（报修快照 filesDir/dorm_repair.json + 只读同步：
-                 WebView office 会话优先、CAS 12 小时窗口回退，§4.49）
-data/prefs/      DataStore 显示偏好（含 slotSchemaVersion）+ 空调遥控状态（ac_remote_prefs，§4.48）
-data/jw/         JwUrls + QiangzhiScheduleParser（理论 xskb）+ SyjxScheduleParser（实验 syjx）
-                 + ExamScheduleParser / ScoreParser（考试·成绩 = 同源 fetch JSON，非 DOM 解析）
-                 + ScholarProgressParser（学业完成情况 = 教务返 HTML，按表头名映射，非 JSON）
-                 + CurriculumParser（培养方案课程设置 = 教务返 HTML 整页，正则抠节点，§4.41）
-                 + TextbookParser（教材 = layui JSON 接口，§4.31）
-                 + SelectionParser（选课日志与轮次 = layui JSON，§4.35）
-                 + SelectionCenterParser（选课中心 = DataTables/JSON，主键拼串/验证码开关/错误页，§4.36）
-                 + TeachingCalendarParser（教学日历 = 教务返 HTML，只取第 1 周周一，§4.42）
-                 + InternshipBaseParser（实习基地 = layui JSON，§4.43）
-                 + JwTeachingEval（学生评教：token 注入脚本 · 平台域判据 · 日志脱敏，§4.44）
-data/xg/         XgUrls（学工表单清单 / 只读记录列表地址）+ DormRepairParser（报修列表 JSON，
-                 按 label 取字段、个人信息解析阶段丢弃）+ DormRepairWebClient（WebView office
-                 会话回退，§4.26 / §4.49）
-data/qiekj/      胖乖生活 API（登录/开水/余额/订单）
-data/ykt/        一卡通（新中新慧新e校）登录与付款码（DESIGN §4.19；凭证 ykt_credentials.xml
-                 已排除备份；token 仅内存；无日志拦截器；8002/8003 验证码绝不重试）
-data/kqcx/       快趣出行（DESIGN §4.23 / §4.32）：附近车辆接口（无鉴权、无凭证、只发坐标）
-                 + KqcxAuthClient / KqcxSessionRepository / KqxCredentialStore（账号登录与
-                 用车；token 仅内存、凭证 secure_kqcx.xml 已排除备份）
-                 + KvcxRideSession（用车编排的业务接口）+ ZoneCacheStore（图层缓存）
-data/power/      寝室电费（新开普缴费平台 charge.juwp.edu.cn，DESIGN §4.24；凭证复用一卡通的
-                 学号 + 查询密码；token 仅内存、无日志拦截器。充值两渠道：电子账户
-                 App 内 6 位密码；农行支付 = 内嵌手机版收银台 PowerBankPayActivity，
-                 取链接那一跳必须发微信 UA）
-data/qzxy/       趣智校园开热水（DESIGN §4.30 / UI §3.18；真机闭环：开阀 + 结束用水结算）
-                 QzxyWateringStore = 「用水中」状态（StateFlow + 落盘，今日页卡片与页面共享）
-                 QzxyWaterFlow = 协议状态机（纯 JVM 可测，单测在 QzxyWaterFlowTest）
-data/ai/         AI 调课（DESIGN §4.39；OpenAI 兼容 /chat/completions + /models）：
-                 AiScheduleClient（流式；tools + tool_choice；档位关时 DeepSeek 端点带
-                 thinking disabled；带图时 content 升多模态数组；**无日志拦截器**）
-                 + AiCredentialStore（API Key，secure_ai.xml 已排除备份）
-                 规则见 .agents/rules/ai-schedule.md
-data/wenqu/      问渠（志愿服务 / 劳动教育，DESIGN §4.45 / UI §3.28；**手机号 + 密码**登录，
-                 不走微信——code / cache_key 只有微信运行时能生成，App 造不出来）：
-                 WenquApi（裸 OkHttp；请求头是 CRMEB 错拼的 Authori-zation；无日志拦截器）
-                 + WenquCredentialStore（secure_wenqu.xml **含密码**，已排除备份）
-                 + WenquRepository（3 天 JWT，快到期自动重登；工时影子 30 分钟 TTL；
-                 搜索走**本地全量索引** `activityIndex`：按页抓全量快照 + 30 分钟缓存，
-                 服务端 `keyword` 只在不完整时兜底，§4.45）
-                 + WenquTtlCache（进程内 TTL 缓存：工时 / 星级 / 活动列表 / **搜索索引**各一份，
-                 进页不重复取数）
-                 活动列表 = `volunteer/v2`（平台上有的，与「我的记录」`volunteer/my` 是两张表）
-                 + `volunteer/detail/{id}`（工时 / 群号只有详情有）
-                 + scanActivities（新增活动提醒的扫描口：一次取 100 条，**不写任何缓存**；
-                 要拿新数据走 `invalidateActivities()` + 下次进页增量同步）
-                 + grabProbe（蹲点探测：一轮只拉第一页、6 秒 / 窗口内 3 秒短超时、结果并进快照）
-                 + preregSnapshot / preregApplyOnce / preregAppliedNow（预报名校对与试发，
-                 2026-10-16——**全 App 唯一允许自动提交的路径**）
-                 + prewarmSession（开蹲前把 token 换新）
-                 WenquServerClock（HTTP `Date` 头 → 服务器时钟偏移，预报名试发窗口按它折算）
-                 蹲点页 ui/wenqu/WenquGrabScreen.kt + WenquGrabViewModel.kt（手动开始 ·
-                 命中弹确认**不自动提交** · 离开页面即停，§4.45）
-                 预报名 ui/wenqu/WenquPreregReminder.kt + WenquPreregRunner.kt +
-                 WenquPreregService.kt（shortService · 闹钟 4008 · 通知 1017 · 单条点名，§4.45）
-                 新增活动提醒见 ui/reminder/WenquActivityAlertReminder.kt（第五路周期链）
-                 每周日 12:00 抢活动提醒见 ui/reminder/WenquWeeklyAlertReminder.kt（零网络，§4.45）
-                 规则见 .agents/rules/wenqu.md
-data/weather/    天气（DESIGN §3.29 / §4.46；**Open-Meteo 免 Key 免注册**，CC BY 4.0 要署名）：
-                 WeatherApi（裸 OkHttp，无日志拦截器；查询点 = 校区坐标，WGS84 口径）
-                 + WeatherRepository（30 分钟 TTL · 同刻只放一个请求 · 刷新失败回退旧快照）
-                 规则见 .agents/rules/weather.md
-data/ir/         空调红外发射（今日页「江水生活」图标入口，DESIGN §4.48）：
-                 AcIrBlaster（ConsumerIrManager 薄封装；TRANSMIT_IR 普通权限，无发射器机型
-                 进页只给提示）；协议纯逻辑见 domain/MideaR05d（只走 R05D），
-                 状态见 AcRemotePrefsStore
-                 规则见 .agents/rules/ac-remote.md
-ui/today|week|life|me|jw|water|qzxy|campus|jwvw|score|exam|scholar|curriculum|internship|selection|timetable|common|theme|widget|ebike|notes|homework|ujing|wenqu|weather|inbox|reminder|ai|toolbox
-Graph.kt         单例 Repository
-JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
+MainActivity
+├─ 底栏：今日 / 课表 / 教务（3 Tab）
+├─ 左侧栏：身份 / 钱包 / 生活 / 江水生活 / 学习 / 设置 / 付款码（StackedDrawerState）
+└─ 独立窗口：Settings / JwImport（含 Browse 与 TeachingEval）/ Transcript / XgForm /
+   PowerBankPay / Onboarding / SubpageActivity（二级页，路由枚举见 SubpageScreen）
+
+domain/       纯 JVM 逻辑：课程/作息/学期/成绩/考试/调课差异/笔记作业/单车/水控/AI prompt/
+              问渠规则/天气/百宝箱/空调红外/报修/选课（按主题分文件，单测在 app/src/test）
+data/local    Room v20（表清单见「工程实况」；迁移只加不删，实体索引必须与迁移对齐）
+data/repo     ScheduleRepository（备份模型在 ScheduleBackup）+ 各业务 Repository / Sync
+data/prefs    DataStore 显示偏好（DisplayPrefsStore + 按功能拆出的扩展文件）
+data/jw       强智教务：URL / 课表 / 考试 / 成绩 / 学业 / 培养方案 / 教材 / 选课 / 日历 / 评教
+data/xg       学工表单与宿舍报修（只读）
+data/qiekj    胖乖生活（登录/开水/余额/订单）
+data/ykt      一卡通（登录/付款码/流水；凭证与 token 口径见 rules/login-session.md）
+data/kqcx     快趣出行（附近车辆/账号用车/图层缓存）
+data/power    寝室电费（新开普；读数/账单/充值）
+data/qzxy     趣智校园（蓝牙水控协议与状态机）
+data/ai       AI 调课（OpenAI 兼容流式 + 工具调用）
+data/wenqu    问渠（JWT/活动/记录/蹲点/预报名）
+data/weather  天气（Open-Meteo，30 分钟 TTL）
+data/ir       空调红外发射（R05D）
+ui/           页面按业务包：today/week/life/me/jw/water/qzxy/campus/...；公共件在 ui/common
+Graph.kt      单例装配（新增依赖从这里进）
+JuwApplication ensureDefaults（节次/学期；课表不预置）+ 小组件冷启动刷新
 ```
+
+细节口径：二级页枚举以 `SubpageScreen` 为准；业务规格查 `design/`；操作手册查 `.agents/rules/`。
 
 - 课表 JSON 字段对齐 DESIGN 4.3 / 拾光互通；解析层见 `scripts/fetch_courses.py` 与 `data/jw/`
 - 教务：强智 `https://jiaowu.juwp.edu.cn:81/` → SSO service 必须是 `http://jiaowu.juwp.edu.cn/sso.jsp`（**不要带 :81/:8080**）→ 课表 `http://jiaowu.juwp.edu.cn:8080/jsxsd/xskb/xskb_list.do?viweType=0`

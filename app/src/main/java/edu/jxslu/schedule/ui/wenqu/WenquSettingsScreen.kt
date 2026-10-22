@@ -58,6 +58,18 @@ import me.rerere.hugeicons.stroke.Certificate01
 import me.rerere.hugeicons.stroke.Logout03
 import me.rerere.hugeicons.stroke.Note01
 import me.rerere.hugeicons.stroke.Notification03
+import edu.jxslu.schedule.data.prefs.setWenquActivityAlertEnabled
+import edu.jxslu.schedule.data.prefs.setWenquActivityIntervalHours
+import edu.jxslu.schedule.data.prefs.setWenquHideFull
+import edu.jxslu.schedule.data.prefs.setWenquSort
+import edu.jxslu.schedule.data.prefs.setWenquWeeklyAlertEnabled
+import edu.jxslu.schedule.data.prefs.setWenquWeeklyAlertOffsetMinutes
+import edu.jxslu.schedule.data.prefs.wenquActivityAlertEnabled
+import edu.jxslu.schedule.data.prefs.wenquActivityIntervalHours
+import edu.jxslu.schedule.data.prefs.wenquHideFull
+import edu.jxslu.schedule.data.prefs.wenquSort
+import edu.jxslu.schedule.data.prefs.wenquWeeklyAlertEnabled
+import edu.jxslu.schedule.data.prefs.wenquWeeklyAlertOffsetMinutes
 
 /**
  * 问渠设置页（DESIGN §3.28）——问渠页顶栏那枚齿轮进来的二级页。

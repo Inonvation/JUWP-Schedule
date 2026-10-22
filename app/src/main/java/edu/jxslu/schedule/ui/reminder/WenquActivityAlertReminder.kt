@@ -23,6 +23,16 @@ import edu.jxslu.schedule.domain.InboxKind
 import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.subpageLaunchIntent
 import kotlinx.coroutines.flow.first
+import edu.jxslu.schedule.data.prefs.setWenquActivityCheckMillis
+import edu.jxslu.schedule.data.prefs.setWenquActivityLastSeenId
+import edu.jxslu.schedule.data.prefs.setWenquGrabPinnedAlertedId
+import edu.jxslu.schedule.data.prefs.setWenquGrabPinnedId
+import edu.jxslu.schedule.data.prefs.wenquActivityAlertEnabled
+import edu.jxslu.schedule.data.prefs.wenquActivityCheckMillis
+import edu.jxslu.schedule.data.prefs.wenquActivityIntervalHours
+import edu.jxslu.schedule.data.prefs.wenquActivityLastSeenId
+import edu.jxslu.schedule.data.prefs.wenquGrabPinnedAlertedId
+import edu.jxslu.schedule.data.prefs.wenquGrabPinnedId
 
 /**
  * 新增志愿活动提醒（DESIGN §4.45，2026-10-08）：问渠平台上出现新的**可报名**活动时发一条通知。

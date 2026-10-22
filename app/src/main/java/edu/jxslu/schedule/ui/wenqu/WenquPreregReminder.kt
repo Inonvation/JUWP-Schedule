@@ -24,6 +24,11 @@ import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.ui.reminder.ReminderVibration
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
+import edu.jxslu.schedule.data.prefs.clearWenquPrereg
+import edu.jxslu.schedule.data.prefs.setWenquPrereg
+import edu.jxslu.schedule.data.prefs.wenquPreregId
+import edu.jxslu.schedule.data.prefs.wenquPreregOpensAt
+import edu.jxslu.schedule.data.prefs.wenquPreregTitle
 
 /**
  * 预报名（准点自动抢，DESIGN §4.45，2026-10-16；用户拍板）。

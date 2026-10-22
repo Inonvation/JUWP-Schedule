@@ -855,7 +855,7 @@ URL Link/scheme 需运营方 access_token，本项目个人开发者两条都不
 - `data/ykt/`：`YktCredentialStore`（EncryptedSharedPreferences，prefs 文件 `ykt_credentials`，
   照 `JwCredentialStore`）、`YktModels`（响应解析 + BOM 剥离 + 错误码）、`YktClient`（裸 OkHttp，
   `Dispatchers.IO`，Basic 凭据 + `synjones-auth` 头）、`YktRepository`（登录编排 + 取码）。
-- `ui/campus/`：`CampusCardSettingsScreen` + `PayCodeScreen` + 各自 ViewModel（WaterViewModel
+- `ui/campus/`：`CampusCardSettingsScreen` + `CampusCardViewModel` + `PayCodeScreen` + 各自 ViewModel（WaterViewModel
   的 UiState/Channel 模式）。
 - 安全红线：**token 仅内存缓存不落盘**（70 天有效期也不缓存，换更小的泄露面）；无
   HttpLoggingInterceptor；凭证/密码/token 不进日志、不进 git；`backup_rules.xml` /

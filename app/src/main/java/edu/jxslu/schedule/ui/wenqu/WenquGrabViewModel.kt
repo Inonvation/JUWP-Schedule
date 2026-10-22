@@ -21,6 +21,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.random.Random
+import edu.jxslu.schedule.data.prefs.setWenquGrabKeyword
+import edu.jxslu.schedule.data.prefs.setWenquGrabPinnedAlertedId
+import edu.jxslu.schedule.data.prefs.setWenquGrabPinnedId
+import edu.jxslu.schedule.data.prefs.setWenquHideFull
+import edu.jxslu.schedule.data.prefs.wenquGrabKeyword
+import edu.jxslu.schedule.data.prefs.wenquGrabPinnedId
+import edu.jxslu.schedule.data.prefs.wenquHideFull
+import edu.jxslu.schedule.data.prefs.wenquPreregId
+import edu.jxslu.schedule.data.prefs.wenquPreregOpensAt
+import edu.jxslu.schedule.data.prefs.wenquPreregTitle
 
 /**
  * 蹲点抢活动页状态机（DESIGN §3.28 / §4.45，2026-10-11；用户口径）。

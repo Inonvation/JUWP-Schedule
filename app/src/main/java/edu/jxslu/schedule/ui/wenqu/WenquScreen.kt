@@ -94,6 +94,8 @@ import me.rerere.hugeicons.stroke.Medal02
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Settings01
 import me.rerere.hugeicons.stroke.Target01
+import edu.jxslu.schedule.data.prefs.setWenquGrabPinnedAlertedId
+import edu.jxslu.schedule.data.prefs.setWenquGrabPinnedId
 
 /**
  * 问渠 · 志愿服务页（DESIGN §3.28 / §4.45）。

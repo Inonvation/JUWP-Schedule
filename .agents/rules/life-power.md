@@ -109,7 +109,7 @@
     抛错，退回设备端提示继续轮询；受理后等 `REMOTE_END_WAIT_MS`（20 秒）回报结束（`status==5`
     + `identify` 非空，`shouldSettleOnManualStop`），等不到才抛 `UnlockStoppedException`
     （「已请求结束用水，设备未回报结束，账单以平台为准」）。
-  - **不支持**（`supportAppUserFinish=false`，本校直饮水机 13B309 即此档）：**不发**
+  - **不支持**（`supportAppUserFinish=false`，本校部分直饮水机即此档）：**不发**
     `goods/endWater`——平台必回 `4072「结束失败，请在设备端操作结束」`（2026-10-16 18:20
     真机样本）。仓库改提示「该机型不支持 App 结束：请在设备上点击『结束』，等待设备回报」，
     并**继续轮询**等设备回报结束，照常建单读账单。

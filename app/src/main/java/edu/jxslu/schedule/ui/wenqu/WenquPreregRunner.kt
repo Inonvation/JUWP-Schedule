@@ -18,6 +18,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
+import edu.jxslu.schedule.data.prefs.clearWenquPrereg
+import edu.jxslu.schedule.data.prefs.setWenquPrereg
+import edu.jxslu.schedule.data.prefs.wenquPreregId
+import edu.jxslu.schedule.data.prefs.wenquPreregOpensAt
+import edu.jxslu.schedule.data.prefs.wenquPreregTitle
 
 /**
  * 预报名执行器（DESIGN §4.45，2026-10-16；用户拍板）：到点后「校对 → 限次试发 → 只读核对 → 通知」。

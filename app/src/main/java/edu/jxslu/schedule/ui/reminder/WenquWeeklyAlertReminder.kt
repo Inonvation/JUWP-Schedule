@@ -25,6 +25,10 @@ import edu.jxslu.schedule.data.repo.PendingNotification
 import edu.jxslu.schedule.domain.WenquRules
 import edu.jxslu.schedule.subpageLaunchIntent
 import kotlinx.coroutines.flow.first
+import edu.jxslu.schedule.data.prefs.setWenquWeeklyAlertLastFiredAt
+import edu.jxslu.schedule.data.prefs.wenquWeeklyAlertEnabled
+import edu.jxslu.schedule.data.prefs.wenquWeeklyAlertLastFiredAt
+import edu.jxslu.schedule.data.prefs.wenquWeeklyAlertOffsetMinutes
 
 /**
  * 「每周日 12:00 抢活动」提醒（DESIGN §4.45，2026-10-11；用户口径）。
