@@ -46,7 +46,6 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ChevronRight
-import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Repair
 
 /**
@@ -111,11 +110,12 @@ fun InboxTodayCard(
             .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
         val haptics = rememberAppHaptics()
-        // 标题行：「收件箱」+ 今日条数 + 查看更多（右缘）
+        // 标题行：「收件箱」+ 今日条数 + 查看更多（右缘）。不摆图标（2026-10-22 用户口径：
+        // 收件箱前的图标去掉），标题直接与页边距对齐，列表行自己带来源图标。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 32.dp)
+                .heightIn(min = 40.dp)
                 // 整行命中区点开收件箱页；「查看更多」是行尾的视觉指引，不再单独一小块
                 .clickable(onClickLabel = "打开收件箱") {
                     haptics.tap()
@@ -123,13 +123,6 @@ fun InboxTodayCard(
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = HugeIcons.Inbox,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(10.dp))
             Text(
                 text = "收件箱",
                 style = MaterialTheme.typography.titleSmall,
@@ -202,7 +195,8 @@ fun InboxTodayCard(
                             haptics.tap()
                             onOpenInbox()
                         }
-                        .padding(start = 30.dp, top = 8.dp, bottom = 4.dp),
+                        .heightIn(min = 40.dp)
+                        .padding(start = 30.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -216,11 +210,11 @@ fun InboxTodayCard(
     }
 }
 
-/** 列表行之间的发丝线：从文字列起（图标 18 + 间距 12 = 30dp），与消息行左缘对齐。 */
+/** 列表行之间的发丝线：与列表同宽（左右对称；页边距由外层 Column 统一给）。 */
 @Composable
 private fun InboxListDivider(modifier: Modifier = Modifier) {
     HorizontalDivider(
-        modifier = modifier.padding(start = 30.dp),
+        modifier = modifier,
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
     )
 }
