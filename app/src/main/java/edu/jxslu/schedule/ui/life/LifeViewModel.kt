@@ -5,11 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.data.local.JuwDatabase
-import edu.jxslu.schedule.data.local.YktTurnoverEntity
 import edu.jxslu.schedule.data.power.PowerException
 import edu.jxslu.schedule.data.power.PowerEntryState
-import edu.jxslu.schedule.data.power.PowerHistoryCache
 import edu.jxslu.schedule.data.power.PowerOrderState
 import edu.jxslu.schedule.data.power.PowerPayChallenge
 import edu.jxslu.schedule.data.power.PowerPayModels
@@ -18,16 +15,9 @@ import edu.jxslu.schedule.data.power.PowerModels
 import edu.jxslu.schedule.data.power.PowerRepository
 import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerSnapshot
-import edu.jxslu.schedule.data.power.PowerTurnover
 import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
-import edu.jxslu.schedule.data.ykt.YktRepository
-import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
-import edu.jxslu.schedule.domain.LifeFeed
-import edu.jxslu.schedule.domain.LifeFeedItem
-import edu.jxslu.schedule.domain.LifeFeedKind
-import edu.jxslu.schedule.domain.LifeFeedSections
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.CancellationException
@@ -38,17 +28,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * 生活页状态（DESIGN §3.13）。
+ * 侧栏电费卡状态（DESIGN §3.13）。
  *
  * 电费卡片的数据全在这里；一卡通余额与付款码复用 [edu.jxslu.schedule.ui.campus] 的
  * ViewModel（余额快照、取码、充值、到账判定都在那边，本页只做入口与展示）。
@@ -76,30 +64,9 @@ data class PowerCardState(
     val roomNotBound: Boolean = false,
 )
 
-/** 生活页 UI 状态。 */
+/** 生活卡 UI 状态（生活页已删，只剩侧栏电费卡）。 */
 data class LifeUiState(
     val power: PowerCardState = PowerCardState(),
-    /** 最近流水，按来源分两段，出口各自落在段标题上（DESIGN §3.13）。 */
-    val feed: LifeFeedSections = LifeFeedSections(),
-    /**
-     * 一卡通段是否还在等本地库首帧（Room 流还没发射）。
-     *
-     * 初值 true：进页第一帧本地库还没回。为 true 时一卡通段渲染骨架行，高度与真实行一致，
-     * 避免先按「还没有消费记录」渲染一次再跳（2026-09-26 用户报的「寝室电费流水卡片要等
-     * 加载再跳出来」，一卡通段同理）。本地库是毫秒级响应，这个标志实际上只在头一两帧为 true。
-     */
-    val campusFeedLoading: Boolean = true,
-    /**
-     * 电费段是否还在等平台流水链路跑完一次（成功失败都算）。
-     *
-     * 单独一个标志的理由：[PowerCardState.loading] 只管读数那一段，流水与读数并行请求
-     * （2026-09-30 起，此前串行）它完全不覆盖，拿它当「流水就绪」会不准。
-     *
-     * 与 [campusFeedLoading] **分段就绪**（2026-09-26 用户报「最近流水加载太慢」）：
-     * 整卡共用一个 loading 时，本地一卡通要陪电费的网络请求一起挂骨架。现在谁就绪谁先
-     * 上数据，慢的那段自己继续骨架。
-     */
-    val powerFeedLoading: Boolean = true,
 )
 
 /** 一次性事件。 */
@@ -118,12 +85,8 @@ sealed interface LifeEvent {
 
 class LifeViewModel(
     private val powerRepo: PowerRepository,
-    private val yktRepo: YktRepository,
     private val credentialStore: YktCredentialStore,
-    private val db: JuwDatabase,
-    /** 上次成功流水的落盘缓存：冷启动先进页再等网络的种子，见 [init]。 */
-    private val historyCache: PowerHistoryCache,
-    /** 本机读数（Room）：生活页电费卡首屏种子的来源，见 [seedPowerFromReadings]。 */
+    /** 本机读数（Room）：侧栏电费卡首屏种子的来源，见 [seedPowerFromReadings]。 */
     private val readingStore: PowerReadingStore,
     /**
      * VPN / 代理探测（默认不探测，测试与不关心网络的调用点不必给）。
@@ -135,30 +98,13 @@ class LifeViewModel(
     private val isVpnActive: () -> Boolean = { false },
 ) : ViewModel() {
 
-    private val syncer = YktTurnoverSyncer(yktRepo, db)
-
     private val _power = MutableStateFlow(PowerCardState())
-
-    private val _powerTurnovers = MutableStateFlow<List<PowerTurnover>>(emptyList())
 
     private val _events = Channel<LifeEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
     init {
-        // 冷启动先用上次落盘的流水把电费段顶起来：进页读数链是 登录 → 项目详情 → 读表
-        // 三条串行（流水与读数并行，2026-09-30 起），进程刚起时 token 与内存缓存
-        // （120 秒 TTL）全空，手机网络上要好几秒，
-        // 这段时间电费段只能挂骨架（2026-09-26 用户报「一打开一直是骨架屏，手动一刷新反而
-        // 秒出」——刷新快是因为那时 token 已经热了）。刷新到货后原地替换。
-        // 链路已经跑完（powerFeedLoaded = true，含没开凭证的短路）就不用旧数据盖新的。
-        viewModelScope.launch(Dispatchers.IO) {
-            val cached = historyCache.load()
-            if (cached.isNotEmpty() && !powerFeedLoaded.value) {
-                _powerTurnovers.value = cached
-                powerFeedLoaded.value = true
-            }
-            seedPowerFromReadings()
-        }
+        viewModelScope.launch(Dispatchers.IO) { seedPowerFromReadings() }
     }
 
     /**
@@ -180,54 +126,12 @@ class LifeViewModel(
         }
     }
 
-    /** 本地一卡通库是否出过第一份数据（Room 流的首帧）。 */
-    private val campusFeedLoaded = MutableStateFlow(false)
-
-    /**
-     * 电费流水这条链路是否跑完过一次（成功或失败都算）。
-     *
-     * 单独一个标志的理由：[PowerCardState.loading] 只管读数那一段，流水与读数并行请求
-     * （2026-09-30 起，此前串行）它完全不覆盖，拿它当「流水就绪」会不准。
-     */
-    private val powerFeedLoaded = MutableStateFlow(false)
-
-    /** 本地一卡通流水（Room 响应式，同步后自动刷新）。 */
-    private val campusFeed = db.yktTurnoverDao().observeRecent(RECENT_ROOM_ROWS)
-        .map { rows -> rows.map { it.toFeedItem() } }
-        .onEach { campusFeedLoaded.value = true }
-
     val uiState: StateFlow<LifeUiState> =
-        combine(
-            _power,
-            _powerTurnovers,
-            campusFeed,
-            campusFeedLoaded,
-            powerFeedLoaded,
-        ) { power, powerRows, campus, campusLoaded, powerLoaded ->
-            LifeUiState(
-                power = power,
-                feed = LifeFeed.sections(campus, powerRows.map { it.toFeedItem() }),
-                // 分段就绪：一卡通来自本地库（快），电费来自平台（慢），谁就绪谁先转数据，
-                // 不让整卡陪着最慢的一段挂骨架
-                campusFeedLoading = !campusLoaded,
-                powerFeedLoading = !powerLoaded,
-            )
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LifeUiState())
+        _power.map { LifeUiState(power = it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LifeUiState())
 
     /**
-     * 进页刷新：电费读数 + 一卡通流水增量同步（互不牵连，各自失败各自提示）。
-     *
-     * [force] = false 是**进页**那条路：电费走仓库内存缓存，一卡通流水走 10 分钟闸门，
-     * 切 Tab 来回不重复打平台（DESIGN §4.24「请求节流」）。
-     * 下拉刷新传 true（用户主动要看最新）。
-     */
-    fun refreshAll(force: Boolean = true) {
-        refreshPower(force = force)
-        syncTurnovers(force = force)
-    }
-
-    /**
-     * 电费读数 + 电费流水（点卡片、右上刷新、充值成功后都走它）。
+     * 电费读数（点卡片、右上刷新、充值成功后都走它）。
      *
      * [force] = true 时绕过仓库内存缓存并重取；进页那条路传 false。
      */
@@ -235,28 +139,10 @@ class LifeViewModel(
         val credentials = credentialStore.read()
         if (credentials == null) {
             _power.value = PowerCardState(noCredentials = true)
-            _powerTurnovers.value = emptyList()
-            // 没有凭证就没有电费流水可等，别再挂着骨架
-            powerFeedLoaded.value = true
             return
         }
         _power.update { it.copy(loading = true, error = null, noCredentials = false) }
         viewModelScope.launch {
-            // 流水与读数并行（2026-09-30）：两条只共享 token（并发冷启动由 PowerRepository
-            // 的登录互斥去重，只登一次），没有数据依赖；串行只是让流水段白等一条读表的时间。
-            // 流水是附加信息：取不到不影响读数，也不额外打扰用户
-            launch {
-                runCatching { powerRepo.history(credentials.username, credentials.password, force = force) }
-                    .onSuccess { turnovers ->
-                        _powerTurnovers.value = turnovers
-                        // 落盘给下次冷启动当种子（IO 线程写；空结果不写，见 PowerHistoryCache.save）
-                        if (turnovers.isNotEmpty()) {
-                            viewModelScope.launch(Dispatchers.IO) { historyCache.save(turnovers) }
-                        }
-                    }
-                // 成功或失败都算「问过一次」：失败时卡片落到空态提示，不再无限骨架
-                powerFeedLoaded.value = true
-            }
             try {
                 val snapshot = powerRepo.snapshot(credentials.username, credentials.password, force = force)
                 _power.update { it.copy(loading = false, snapshot = snapshot, error = null, roomNotBound = false) }
@@ -280,25 +166,6 @@ class LifeViewModel(
                 _power.update { it.copy(loading = false, error = e.message ?: "电费读取失败") }
             } catch (e: Exception) {
                 _power.update { it.copy(loading = false, error = "电费读取失败：${e.message ?: "未知错误"}") }
-            }
-        }
-    }
-
-    /**
-     * 一卡通流水增量同步（同步成功即由 Room 流刷新列表）。
-     *
-     * [force] = false 是**进页**那条路，受 `YktSyncGate` 的 10 分钟闸门管，
-     * 切 Tab 来回不会重复拉；用户要看最新就点刷新或下拉（那条路传 true）。
-     */
-    fun syncTurnovers(force: Boolean = false) {
-        val credentials = credentialStore.read() ?: return
-        viewModelScope.launch {
-            try {
-                syncer.sync(credentials.username, credentials.password, maxPages = 1, force = force)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 本地已有流水照常展示，网络问题不打扰（DESIGN §4.19 L3 同款口径）
             }
         }
     }
@@ -394,7 +261,7 @@ class LifeViewModel(
      * 打开电费充值弹层时调用（DESIGN §4.24）：重置流程状态 + 清一遍未支付订单。
      *
      * 为什么在这里清：未支付单只可能由本流程产生（下单后没付完就退出），而堆积会让
-     * 新下单 500。放在这个点，既是用户主动动作，又正好在真正需要之前——生活页刷新
+     * 新下单 500。放在这个点，既是用户主动动作，又正好在真正需要之前——侧栏刷新
      * 不必再为它多打 1 + N 条请求。失败静默：清不掉不该挡用户看弹层，下单失败时
      * 服务端原话会照实显示。
      */
@@ -746,44 +613,7 @@ class LifeViewModel(
         }
     }
 
-    private fun YktTurnoverEntity.toFeedItem(): LifeFeedItem {
-        val time = jndatetimeStr.take(16)
-        val title = if (income) {
-            turnoverType.ifBlank { "充值" }
-        } else {
-            locationName?.takeIf { it.isNotBlank() } ?: turnoverType.ifBlank { "消费" }
-        }
-        return LifeFeedItem(
-            kind = LifeFeedKind.CampusCard,
-            epochMs = jndatetime,
-            timeText = time,
-            title = title,
-            subtitle = if (time.isBlank()) "一卡通" else "一卡通 · $time",
-            amountFen = tranamtFen,
-            income = income,
-        )
-    }
-
-    private fun PowerTurnover.toFeedItem(): LifeFeedItem {
-        val time = dateText.take(16)
-        val room = PowerModels.roomLabelOf(room)
-        return LifeFeedItem(
-            kind = LifeFeedKind.Power,
-            epochMs = epochMs,
-            timeText = time,
-            title = if (refund) "电费退款" else "电费充值",
-            subtitle = listOfNotNull(room, time.takeIf { it.isNotBlank() }).joinToString(" · ")
-                .ifBlank { "寝室电费" },
-            amountFen = amountFen,
-            // 方向看 refund（`tranamt` 符号），不看金额大小——金额已统一取绝对值
-            income = !refund,
-        )
-    }
-
     companion object {
-        /** 本地一卡通取几条：每段展示 [LifeFeed.SECTION_LIMIT] 条，多取一条做余量。 */
-        private const val RECENT_ROOM_ROWS = LifeFeed.SECTION_LIMIT + 1
-
         /**
          * 受理后等多久查一次单。记账是平台侧同步完成的，留一点余量避免查得太早拿到
          * 还没落库的 `status=0`（查到 0 也不报错，只是文案停在「已受理」）。
@@ -800,10 +630,7 @@ class LifeViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = LifeViewModel(
                 Graph.powerRepository(context.applicationContext),
-                Graph.yktRepository(context.applicationContext),
                 Graph.yktCredentialStore(context.applicationContext),
-                JuwDatabase.get(context.applicationContext),
-                Graph.powerHistoryCache(context.applicationContext),
                 Graph.powerReadingStore(context.applicationContext),
                 isVpnActive = { JwVpnDetector.isVpnActive(context.applicationContext) },
             ) as T

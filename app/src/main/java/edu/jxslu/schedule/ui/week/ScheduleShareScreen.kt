@@ -1,6 +1,5 @@
 package edu.jxslu.schedule.ui.week
 
-import android.content.Intent
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -83,6 +82,7 @@ import edu.jxslu.schedule.ui.common.GallerySaveResult
 import edu.jxslu.schedule.ui.common.GridCellStyle
 import edu.jxslu.schedule.ui.common.LoadingHint
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.shareFile
 import edu.jxslu.schedule.ui.common.saveBitmapToGallery
 import edu.jxslu.schedule.ui.common.showNotice
 import kotlinx.coroutines.Dispatchers
@@ -262,13 +262,7 @@ fun ScheduleShareScreen(
             if (uri == null) {
                 notice("分享失败：无法写出图片", NoticeTone.Error)
             } else {
-                val send = Intent(Intent.ACTION_SEND)
-                    .setType("image/png")
-                    .putExtra(Intent.EXTRA_STREAM, uri)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                val ok = runCatching {
-                    context.startActivity(Intent.createChooser(send, "分享课表图片"))
-                }.isSuccess
+                val ok = shareFile(context, uri, "image/png", "分享课表图片")
                 if (!ok) notice("没有可用的分享目标", NoticeTone.Warning)
             }
             busy = false

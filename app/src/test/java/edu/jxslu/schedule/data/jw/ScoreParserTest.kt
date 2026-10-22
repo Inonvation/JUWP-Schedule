@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.jw
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -66,21 +67,7 @@ class ScoreParserTest {
         val e = assertThrows(IllegalStateException::class.java) {
             ScoreParser.parseFetchJson("""<html>系统功能暂未开放</html>""")
         }
-        assert(e.message!!.contains("暂未开放"))
-    }
-
-    @Test
-    fun nonZeroCodeIsReadableError() {
-        assertThrows(IllegalStateException::class.java) {
-            ScoreParser.parseFetchJson("""{"code":-1,"msg":"error"}""")
-        }
-    }
-
-    @Test
-    fun invalidJsonIsReadableError() {
-        assertThrows(IllegalStateException::class.java) {
-            ScoreParser.parseFetchJson("not json")
-        }
+        assertTrue(e.message!!.contains("暂未开放"))
     }
 
     @Test
@@ -88,7 +75,7 @@ class ScoreParserTest {
         val js = ScoreParser.fetchJs(term = "", page = 2)
         assertTrue(js.contains("kksj=' + encodeURIComponent('')"))
         assertTrue(js.contains("pageNum=2"))
-        assert(!js.contains("__TERM__"))
-        assert(!js.contains("__PAGE__"))
+        assertFalse(js.contains("__TERM__"))
+        assertFalse(js.contains("__PAGE__"))
     }
 }

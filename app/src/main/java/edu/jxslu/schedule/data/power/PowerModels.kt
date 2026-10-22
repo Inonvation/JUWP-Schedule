@@ -294,7 +294,7 @@ object PowerModels {
     }
 
     /**
-     * `sceneinfo` 解析：`campus:0#南昌工程学院;building:0#9A;room:14600#9A101`。
+     * `sceneinfo` 解析：`campus:0#南昌工程学院;building:0#9Z;room:99999#9Z999`。
      * 名字里的校区是学校旧名（南昌工程学院），房间名以读数返回的 `data` 为准。
      */
     fun parseSceneInfo(raw: String?): List<PowerSceneKey> {
@@ -328,7 +328,7 @@ object PowerModels {
     /**
      * 选择结果 → `sceneinfo` 串（**唯一口径**，与官方前端逐字一致，2026-10-08 从
      * `app.7abec7aa….js` 的 `addSceneInfo()` 与真实样本双向核对）：
-     * `code:id#name` 各层分号相连，如 `campus:0#X;building:79#13B;room:14686#13B309`。
+     * `code:id#name` 各层分号相连，如 `campus:0#X;building:0#9Z;room:99999#9Z999`。
      * 官方就是逐层取 `level.code + ":" + value + "#" + name` 再 `join(";")`。
      */
     fun sceneinfoOf(choices: List<Pair<PowerSceneLevel, PowerSceneOption>>): String =
@@ -395,7 +395,7 @@ object PowerModels {
 
     /**
      * 流水里的房间标签：`abstracts` 形如
-     * `校区-江西水利电力大学;楼栋-9A;房间-9A101`，取「房间-」那一段的值。
+     * `校区-江西水利电力大学;楼栋-9Z;房间-9Z999`，取「房间-」那一段的值。
      */
     fun roomLabelOf(abstracts: String?): String? {
         val text = abstracts.orEmpty()

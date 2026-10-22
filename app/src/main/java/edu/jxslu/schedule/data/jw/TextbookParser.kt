@@ -1,11 +1,7 @@
 package edu.jxslu.schedule.data.jw
 
 import edu.jxslu.schedule.domain.Textbook
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * 学生教材确认抓取（DESIGN §4.31）。
@@ -19,8 +15,6 @@ import kotlinx.serialization.json.jsonPrimitive
  * 没有教材名称的行（教务未定教材）丢弃。
  */
 object TextbookParser {
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     const val PAGE_SIZE = 200
 
@@ -42,41 +36,22 @@ object TextbookParser {
 
     /** 解析一页接口 JSON；[term] 填进每条结果。失败抛 [IllegalStateException]（由同步器转成结果）。 */
     fun parseFetchJson(jsonText: String, term: String): TextbookPage {
-        if (jsonText.startsWith("ERR:")) {
-            throw IllegalStateException("请求失败：${jsonText.removePrefix("ERR:")}")
-        }
-        if ("系统功能暂未开放" in jsonText) {
-            throw IllegalStateException("教务教材查询功能暂未开放（no-open 页）")
-        }
-        val root = try {
-            json.parseToJsonElement(jsonText).jsonObject
-        } catch (e: Exception) {
-            throw IllegalStateException("返回的不是有效 JSON（可能未登录教务）：${e.message}")
-        }
-        val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
-        if (code != 0) {
-            throw IllegalStateException("教务返回 code=$code，msg=${root["msg"]?.jsonPrimitive?.content ?: ""}")
-        }
-        val count = root["count"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        val rows = root["data"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
-        return TextbookPage(count = count, books = rows.mapNotNull { rowToBook(it, term) })
+        val root = JwLayuiJson.parseRoot(jsonText, "教材查询")
+        return TextbookPage(count = root.count, books = root.rows.mapNotNull { rowToBook(it, term) })
     }
 
     private fun rowToBook(row: JsonObject, term: String): Textbook? {
-        val course = row.str("kcmc") ?: return null
-        val title = row.str("jcmc") ?: return null
+        val course = row.strOrNull("kcmc") ?: return null
+        val title = row.strOrNull("jcmc") ?: return null
         return Textbook(
             term = term,
             courseName = course,
             title = title,
-            author = row.str("jczz").orEmpty(),
-            press = row.str("cbsmc").orEmpty(),
-            edition = row.str("jcbc").orEmpty(),
-            isbn = row.str("isbn").orEmpty(),
-            price = row.str("jcdj").orEmpty(),
+            author = row.strOrNull("jczz").orEmpty(),
+            press = row.strOrNull("cbsmc").orEmpty(),
+            edition = row.strOrNull("jcbc").orEmpty(),
+            isbn = row.strOrNull("isbn").orEmpty(),
+            price = row.strOrNull("jcdj").orEmpty(),
         )
     }
-
-    private fun JsonObject.str(key: String): String? =
-        this[key]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
 }

@@ -25,6 +25,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 
 /**
+ * 今日页底部固定区「快速入口卡」的最小高度：两行文本（bodyMedium + bodySmall）+
+ * 上下 11dp 内边距。整块 dock 的入口卡（快趣出行 / 胖乖 / 趣智）都取它，
+ * 高度恒定；系统大字体时自然高度超过 min 也不受影响（min 只是下限）。
+ */
+val QuickCardMinHeight = 58.dp
+
+/**
  * 全 App「描边卡片」的唯一规格出处（DESIGN §3.2）。
  *
  * 2026-09-22 之前两套规格并存：12dp 圆角 + `outline` 22% 描边（笔记 / 作业 / 课程库 /

@@ -3,11 +3,7 @@ package edu.jxslu.schedule.ui.today
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -61,6 +57,7 @@ import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppCardDivider
+import edu.jxslu.schedule.ui.common.BreathingDot
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.ebike.KvcxRideState
 import edu.jxslu.schedule.ui.ebike.unlockCooldownSecondsLeft
@@ -314,28 +311,6 @@ private val EnterRow = fadeIn(tween(220)) +
     expandVertically(tween(220, easing = FastOutSlowInEasing), expandFrom = Alignment.Top)
 private val ExitRow = fadeOut(tween(160)) +
     shrinkVertically(tween(160), shrinkTowards = Alignment.Top)
-
-/** 进行中行首的呼吸圆点（`WateringBadge` 同手法：只改透明度，绘制阶段读值不重组）。 */
-@Composable
-private fun BreathingDot() {
-    val scheme = MaterialTheme.colorScheme
-    val transition = rememberInfiniteTransition(label = "active-service-dot")
-    val dotAlpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "active-service-dot-alpha",
-    )
-    Box(
-        modifier = Modifier
-            .size(8.dp)
-            .graphicsLayer { alpha = dotAlpha }
-            .background(scheme.primary, CircleShape),
-    )
-}
 
 /** 品牌图标：与侧栏同款位图，24dp。**必须用 `Image`**——`Icon(painter)` 会把位图整体
  *  染成 LocalContentColor（真机上呈黑色块），侧栏同款位图就是用 `Image` 渲染的。 */

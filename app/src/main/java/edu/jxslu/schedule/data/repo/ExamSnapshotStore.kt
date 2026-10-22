@@ -24,22 +24,7 @@ class ExamSnapshotStore(context: Context) {
     data class Snapshot(
         /** 快照对应的学年学期（如 2026-2027-1）；空 = 未记。 */
         val term: String = "",
-        val exams: List<Row> = emptyList(),
-    )
-
-    /** [ExamEntry] 的可序列化影子（本体不是 @Serializable，字段一一对应）。 */
-    @Serializable
-    data class Row(
-        val courseNo: String = "",
-        val name: String = "",
-        val teacher: String = "",
-        val room: String = "",
-        val campus: String = "",
-        val date: String = "",
-        val startTime: String = "",
-        val endTime: String = "",
-        val seatNo: String = "",
-        val sessionNo: String = "",
+        val exams: List<ExamEntry> = emptyList(),
     )
 
     fun load(): Snapshot = runCatching {
@@ -56,31 +41,5 @@ class ExamSnapshotStore(context: Context) {
 
     companion object {
         private const val SNAPSHOT_FILE = "exam_snapshot.json"
-
-        fun rowOf(entry: ExamEntry) = Row(
-            courseNo = entry.courseNo,
-            name = entry.name,
-            teacher = entry.teacher,
-            room = entry.room,
-            campus = entry.campus,
-            date = entry.date,
-            startTime = entry.startTime,
-            endTime = entry.endTime,
-            seatNo = entry.seatNo,
-            sessionNo = entry.sessionNo,
-        )
-
-        fun rowToEntry(row: Row) = ExamEntry(
-            courseNo = row.courseNo,
-            name = row.name,
-            teacher = row.teacher,
-            room = row.room,
-            campus = row.campus,
-            date = row.date,
-            startTime = row.startTime,
-            endTime = row.endTime,
-            seatNo = row.seatNo,
-            sessionNo = row.sessionNo,
-        )
     }
 }

@@ -3,6 +3,15 @@ package edu.jxslu.schedule.domain
 import java.time.LocalDate
 
 /**
+ * 「下一节」焦点卡准入窗口（分钟）。
+ *
+ * 2026-09-21 改（DESIGN §3.3）：下一节课距开始超过该窗口时不进焦点卡——
+ * 凌晨看下午的课、上午看下午第一节的课，都不该冒充「下一节」挂一整天。
+ * 正在上课不受窗口约束（focus=正在上的课，上完它下一节再按窗口接棒）。
+ */
+const val NEXT_COURSE_WINDOW_MINUTES = 60
+
+/**
  * 今日课表状态。
  *
  * 核心取舍：
@@ -17,15 +26,6 @@ import java.time.LocalDate
  * 需要与今日页**完全同源**的状态推导，而 domain 侧不得引用 ui 包，故整体下移；
  * 今日页的 `TodayViewModel` 仍在此状态之上做 ViewModel 封装。
  */
-/**
- * 「下一节」焦点卡准入窗口（分钟）。
- *
- * 2026-09-21 改（DESIGN §3.3）：下一节课距开始超过该窗口时不进焦点卡——
- * 凌晨看下午的课、上午看下午第一节的课，都不该冒充「下一节」挂一整天。
- * 正在上课不受窗口约束（focus=正在上的课，上完它下一节再按窗口接棒）。
- */
-const val NEXT_COURSE_WINDOW_MINUTES = 60
-
 data class TodayState(
     val loading: Boolean = true,
     val semester: SemesterConfig? = null,
@@ -122,7 +122,7 @@ fun buildTodayState(
     val plan = ScheduleOverrides.plan(overrides, semester)
     val day = today.dayOfWeek.value
     val week = semester?.let { ScheduleCalculator.weekNumberOf(it, today) } ?: 0
-    val inTerm = semester != null && week in 1..semester.totalWeeks
+    val inTerm = semester != null && ScheduleCalculator.isWeekInTerm(semester, week)
 
     val dayCourses = if (inTerm) {
         ScheduleCalculator.coursesOnDay(courses, week, day, plan)
@@ -161,7 +161,7 @@ fun buildTodayState(
     val tomorrow = today.plusDays(1)
     val tomorrowDay = tomorrow.dayOfWeek.value
     val tomorrowWeek = semester?.let { ScheduleCalculator.weekNumberOf(it, tomorrow) } ?: 0
-    val tomorrowInTerm = semester != null && tomorrowWeek in 1..semester.totalWeeks
+    val tomorrowInTerm = semester != null && ScheduleCalculator.isWeekInTerm(semester, tomorrowWeek)
 
     return TodayState(
         loading = false,

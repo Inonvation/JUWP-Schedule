@@ -88,11 +88,8 @@ class TranscriptHistoryTest {
         val millis = ZonedDateTime.of(2026, 9, 24, 19, 28, 0, 0, zone).toInstant().toEpochMilli()
         assertEquals("2026-09-24 19:28", TranscriptHistory.timeLabel(millis, zone))
 
+        // 格式化细节在 SizeTextTest，这里只钉委托没断
         assertEquals("371 KB", TranscriptHistory.sizeLabel(380_479))
-        assertEquals("1 KB", TranscriptHistory.sizeLabel(1024))
-        assertEquals("1023 KB", TranscriptHistory.sizeLabel(1_048_575))
-        assertEquals("1.5 MB", TranscriptHistory.sizeLabel(1_572_864))
-        assertEquals("512 B", TranscriptHistory.sizeLabel(512))
     }
 
     private fun entry(name: String, at: Long) =

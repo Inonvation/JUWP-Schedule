@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.ui.water
 
+import edu.jxslu.schedule.startActivityOutsideApp
+
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -48,7 +50,7 @@ object QiekjRecharge {
      *   `alipays` scheme 的声明——趣智充值时已加过，这里共用一条。
      */
     fun open(context: Context): Boolean = try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, uri()))
+        context.startActivityOutsideApp(Intent(Intent.ACTION_VIEW, uri()))
         true
     } catch (_: ActivityNotFoundException) {
         false

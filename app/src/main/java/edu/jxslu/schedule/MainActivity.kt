@@ -390,8 +390,8 @@ internal fun JuwRoot(content: @Composable () -> Unit) {
         // 字体缩放锁定（「固定字体大小」，默认开）：全 App 唯一的字形缩放覆盖点。
         // 立即生效：开关一动，displayPrefs 发射，这里跟着重组
         ProvideFixedFontScale(locked = fontScaleLocked) {
-            // 预报名仪表板（DESIGN §4.45，2026-10-21）：执行期间在主窗口任何界面上弹。
-            // 与内容同级（在 content 外层），弹层压在页面之上；设置窗口另挂一份。
+            // 预报名仪表板（DESIGN §4.45，2026-10-21）：JuwRoot 是全 App 共用根，
+            // 主窗口与设置等独立窗口都会弹；与内容同级，弹层压在页面之上。
             edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost()
             content()
         }

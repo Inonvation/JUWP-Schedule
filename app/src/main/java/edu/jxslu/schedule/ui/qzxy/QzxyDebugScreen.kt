@@ -1,7 +1,5 @@
 package edu.jxslu.schedule.ui.qzxy
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -44,6 +42,7 @@ import edu.jxslu.schedule.domain.QzxyProtocol
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.copyPlainText
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.postNotice
@@ -109,10 +108,7 @@ fun QzxyDebugScreen(
 
     // 协议排查要精确字节，截图会丢字符，所以给一个整段复制的出口
     val copyDiagnostic: () -> Unit = {
-        val clipboard = context.getSystemService(ClipboardManager::class.java)
-        clipboard?.setPrimaryClip(
-            ClipData.newPlainText("趣智校园诊断", viewModel.diagnosticText()),
-        )
+        copyPlainText(context, "趣智校园诊断", viewModel.diagnosticText())
         scope.launch {
             snackbar.showNotice(
                 AppNoticeVisuals("诊断信息已复制，可直接粘贴发出来", tone = NoticeTone.Success),
@@ -135,8 +131,7 @@ fun QzxyDebugScreen(
                 )
             }
         } else {
-            val clipboard = context.getSystemService(ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(ClipData.newPlainText("趣智校园会话", text))
+            copyPlainText(context, "趣智校园会话", text)
             scope.launch {
                 snackbar.showNotice(
                     AppNoticeVisuals(

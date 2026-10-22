@@ -189,16 +189,21 @@ fun QzxyScreen(
     // 开阀与结算是一串「连蓝牙 → 下单 → 写设备」的动作，中途退出会把协程掐断：
     // 服务端可能已经预扣，设备却没收到开阀数据。处理期间拦一下返回，只提示不退出；
     // 真卡住了流程会自己超时，几秒后按钮就回来了。
-    BackHandler(enabled = state.flow is QzxyFlowState.Working) {
-        scope.launch {
-            snackbar.showNotice(
-                AppNoticeVisuals(
-                    "正在处理，等这一步跑完再退出（卡住的话它会自己超时）",
-                    tone = NoticeTone.Warning,
-                ),
-            )
+    val requestBack: () -> Unit = {
+        if (state.flow is QzxyFlowState.Working) {
+            scope.launch {
+                snackbar.showNotice(
+                    AppNoticeVisuals(
+                        "正在处理，等这一步跑完再退出（卡住的话它会自己超时）",
+                        tone = NoticeTone.Warning,
+                    ),
+                )
+            }
+        } else {
+            onBack()
         }
     }
+    BackHandler(enabled = state.flow is QzxyFlowState.Working) { requestBack() }
 
     // 账单只在页面里拉：卡片那份实例不需要它，见 QzxyViewModel.loadBillsOnce。
     // 跟着登录态跑：首启引导里登录过之后进页面、或在页面里登录，都要拉到当月账单
@@ -243,7 +248,7 @@ fun QzxyScreen(
             TopAppBar(
                 title = { Text("趣智校园") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = requestBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },

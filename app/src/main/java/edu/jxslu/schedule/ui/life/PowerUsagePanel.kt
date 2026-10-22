@@ -152,7 +152,7 @@ private fun UsageSummaryCard(
                         color = onSurface.copy(alpha = 0.55f),
                     )
                 }
-                // 折算口径与生活页电费卡同一处（domain/BalanceAlert.remainingYuan）：
+                // 折算口径与侧栏电费卡同一处（domain/BalanceAlert.remainingYuan）：
                 // 单价缺失就不给金额，不按默认单价编一个数
                 BalanceAlert.remainingYuan(latest.remainKwh, latest.priceYuan.takeIf { it > 0 })
                     ?.let { yuan ->

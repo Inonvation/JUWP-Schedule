@@ -172,23 +172,6 @@ class JwHttpSession private constructor(
             if (v4.isEmpty()) return all
             return v4 + all.filterNot { it is Inet4Address }
         }
-
-        /**
-         * 从理论课表页 HTML 抽学期下拉的选中项 value（xnxq01id 口径，如 2026-2027-1）。
-         * 抓不到 selected 时退第一个 option（浏览器默认行为），再抓不到为 null。
-         */
-        fun extractSelectedTerm(html: String): String? {
-            val select = Regex("(?is)<select[^>]*id\\s*=\\s*[\"']?xnxq01id[^>]*>([\\s\\S]*?)</select>")
-                .find(html)?.groupValues?.get(1) ?: return null
-            val option = Regex("(?is)<option\\b[^>]*>").findAll(select).map { it.value }
-                .firstOrNull { "selected" in it.lowercase() }
-                ?: Regex("(?is)<option\\b[^>]*>").find(select)?.value
-                ?: return null
-            Regex("(?i)value\\s*=\\s*[\"']([^\"']*)[\"']").find(option)?.groupValues?.get(1)?.let {
-                if (it.isNotBlank()) return it
-            }
-            return null
-        }
     }
 
     /** 当前会话里的 cookie 快照，用于注入 WebView（DESIGN §4.27）。 */

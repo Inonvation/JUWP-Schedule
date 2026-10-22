@@ -47,7 +47,7 @@ data class PowerReadingEntity(
     /** 房间标识（`map.data.roomid`，缺了退房间名）。 */
     val roomId: String,
     /**
-     * 房间显示名（`map.data.room`，形如 `9A101`）；缺了存空串。
+     * 房间显示名（`map.data.room`，形如 `9Z999`）；缺了存空串。
      *
      * 与 [roomId] 分开存：`roomId` 是平台的**数字内部 id**，只能当去重键与统计分组键，
      * 显示出来是一串 5 位数字。生活页冷启动拿最新读数当首屏种子时要写房号，

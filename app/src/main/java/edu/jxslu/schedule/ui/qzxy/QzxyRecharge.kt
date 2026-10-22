@@ -1,5 +1,7 @@
 package edu.jxslu.schedule.ui.qzxy
 
+import edu.jxslu.schedule.startActivityOutsideApp
+
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -44,7 +46,7 @@ object QzxyRecharge {
      *   `alipays` scheme 的声明，缺了这条会恒返回 false。
      */
     fun open(context: Context): Boolean = try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, uri()))
+        context.startActivityOutsideApp(Intent(Intent.ACTION_VIEW, uri()))
         true
     } catch (_: ActivityNotFoundException) {
         false

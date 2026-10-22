@@ -2,6 +2,7 @@ package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.jw.ExamScheduleParser
+import edu.jxslu.schedule.data.jw.JwHtml
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.AutoSyncRules
@@ -126,12 +127,12 @@ class ExamSync(
         val snapshot = snapshotStore.load()
         val baselineUsable = snapshot.term == term && snapshot.exams.isNotEmpty()
         val changes = if (baselineUsable) {
-            ExamChangeDetector.detect(snapshot.exams.map(ExamSnapshotStore::rowToEntry), exams)
+            ExamChangeDetector.detect(snapshot.exams, exams)
         } else {
             emptyList()
         }
 
-        snapshotStore.save(ExamSnapshotStore.Snapshot(term = term, exams = exams.map(ExamSnapshotStore::rowOf)))
+        snapshotStore.save(ExamSnapshotStore.Snapshot(term = term, exams = exams))
         prefs.setExamAlertCheckMillis(nowMillis())
         // 收件箱留痕（DESIGN §4.38）：手动「更新」与周期检查同源，谁先发现都入箱。
         // 去重键 = 考试身份（courseNo|date），同一场考试反复 sync 只刷新那一条；
@@ -194,19 +195,9 @@ class ExamSync(
          * 正则而不是 DOM：教务壳页结构简单，和脚本侧 BeautifulSoup 的口径一致；
          * 抽不到返回 null（调用方报失败，不猜学期）。
          */
-        fun termFromShell(html: String): String? {
-            val attr = Regex("""<option[^>]*selected[^>]*>""", RegexOption.IGNORE_CASE)
-            for (tag in attr.findAll(html)) {
-                // value 属性存在取 value；教务下拉的 value 与文本相同（2026-2027-1），文本兜底
-                val value = Regex("""value\s*=\s*["']([^"']+)["']""").find(tag.value)
-                    ?.groupValues?.get(1)?.trim()
-                if (!value.isNullOrBlank()) return value
-                // `<option selected>2026-2027-1</option>`：取闭合标签前的文本
-                val after = html.substringAfter(tag.value, "").substringBefore("</option>").trim()
-                if (after.isNotEmpty()) return after
-            }
-            return null
-        }
+        fun termFromShell(html: String): String? =
+            JwHtml.selectedTerm(html, selectId = "xnxqid")
+                ?: JwHtml.selectedTerm(html, selectId = null)
 
         fun listUrl(term: String, page: Int): String =
             "${JwUrls.EXAM_LIST_API}?xnxqid=${java.net.URLEncoder.encode(term, "UTF-8")}&xqlb=&pageNum=$page&pageSize=${ExamScheduleParser.PAGE_SIZE}"

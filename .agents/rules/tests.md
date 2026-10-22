@@ -2,14 +2,25 @@
 
 作用域：找「某个行为被哪个测试钉住」时读。跑法与结果汇总见 `AGENTS.md`「常用命令」。
 
-现数（2026-10-19 实测）：**185 个测试类 / 1991 个 `@Test`**。改动后现查，不要照抄这个数字：
+现数（2026-10-22 实测）：**193 个测试类 / 2045 个 `@Test`**。改动后现查，不要照抄这个数字：
 
 ```powershell
 (Get-ChildItem -Recurse app\src\test -Filter *.kt).Count
 (Get-ChildItem -Recurse app\src\test -Filter *.kt | Select-String -Pattern '@Test').Count
 ```
 
+只跑一类 / 一个用例（改一处时先跑它，最后再跑全量）：
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --offline --tests "edu.jxslu.schedule.domain.WeeksTextTest"
+```
+
 新增测试放 `app/src/test/java/edu/jxslu/schedule/`，类名以 `Test` 结尾。
+
+**写不写测试**：新增分支 / 循环 / 解析 / 金额 / 安全 / 新脚本 → 至少一个小测试；纯文案 / 常量 / 资源 / 纯 UI 接线 → 不写。
+
+**共享件归位**：行为抽到 `JwLayuiJson` / `JwHtml` / `WeeksText` / `CampusPaySign` 这类公共件后，
+边界与错误分支只写在公共件的测试里；调用方测试只留一条接线烟测，不重复铺同一组错误形态。
 
 ## 清单
 
@@ -23,7 +34,11 @@
 `CookieBridgeTest`（cookie 拼接：hostOnly 不写 Domain/Secure/HttpOnly/Path）、
 `MemoryCookieJarTest`（分桶/快照/回灌/路径匹配）、`ProfileSyncRulesTest`（学籍卡补抓闸门：班级空/今日试过/隔日重试）、`TokenFreshnessTest`（落盘 token 新鲜度：过期/时钟回拨）、
 `OneClickImportTest`（一键导入：页面形态判定/合成/警示文案/脏字段容错）、
-`ImportJsonShapeTest`（导入 JSON：课程字段契约，以及成绩/学期作息/学业完成情况三段可选备份的往返与降级）、`TodayStateTest`、`ParseWeeksInputTest`、`QiekjSignTest`、
+`ImportJsonShapeTest`（导入 JSON：课程字段契约，以及成绩/学期作息/学业完成情况三段可选备份的往返与降级）、`TodayStateTest`、`QiekjSignTest`、
+`WeeksTextTest`（周次文本：压缩区间 / 范围·全角·顿号·`至` / 单双周后缀 / 脏 token 抠数字 / 40 周上限）、
+`ParseWeeksInputTest`（课程编辑页周次输入：单双周预设按钮 + 委托 `WeeksText` 的接线）、
+`JwHtmlTest`（教务壳页学期下拉：按 id/name 收窄 / value 优先文本兜底 / 学期格式校验）、
+`JwLayuiJsonTest`（layui 外壳：ERR / no-open / 未登录 / 非 JSON / code 字符串与数字 / data null / count 默认）、
 `CourseTweakTest`（调课规划：拆分/覆盖/交换/同格去重）、`TodayBoundaryTest`（小组件边界闹钟时刻）、
 `WidgetModelTest`（小组件：尺寸分档/行数预算/**明日接棒**/周网格列序与去重叠/旧 JSON 兼容）、
 `LifeWidgetModelsTest`（生活卡纯逻辑：2 小时取数闸门含时钟回拨/分转元与度数格式化/电费副行宽窄两档文案/合并快照 codec round-trip/窄档排版阈值）、
@@ -57,7 +72,7 @@
 `JsStringDecodeTest`（evaluateJavascript 返回值解码）、`JwImportDiagnosisTest`（导入失败诊断契约）、
 `JwUrlsTest`（教务 URL 判定：成绩页不并进课表页 / 各类页面归类）、
 `QiekjModelsTest`（胖乖响应包脏数据容错）、`YktPayCodeTest`（付款码矩阵参数）、
-`YktRechargeSignTest`（充值下单签名）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
+`YktRechargeSignTest`（校园卡 / 电费共用的 `CampusPaySign`：独立复算 / 空值剔除 / 排序 / 时间戳与 nonce）、`YktTurnoverSyncerTest`（流水增量同步纯逻辑）
 、`ScheduleBackgroundTest`（背景图：默认值/模糊档位到解码尺寸/文件名白名单）
 、`XgUrlsTest`（学工：域判定不退化成子串匹配/状态条三档/统一认证入口钉子）
 、`BikeNearbyTest`（附近单车：响应容错/聚簇/距离/状态推导）、
@@ -67,16 +82,14 @@
 `Gcj02Test`（WGS84→GCJ-02：境外不偏移/境内量级/相对距离不变）、
 `PowerModelsTest`（电费响应解析：项目/读数/流水 + 500 与 401 外壳 + 剩余电量键回退）、
 `PowerUsageTest`（用电统计：差分/充值折算/退款扣回/单价缺失两分支/算不出的段跳过/跨天均摊/周月桶/房间过滤）、
-`LifeFeedTest`（一卡通与电费流水分段：按来源分组、段内倒序、限量按段算、同刻稳定、
-解析失败沉底、只有一段有内容不算空态）、
-`DisplayPrefsDefaultsTest`（生活页默认开 + 既有开关默认值契约 + 字体缩放默认锁定）、
+`DisplayPrefsDefaultsTest`（既有开关默认值契约 + 字体缩放默认锁定 + 启动页默认今日 + 默认配色晴空蓝）、
 `FontScalePolicyTest`（字体缩放锁定：锁定 = 固定 0.9× / 解锁 = 透传系统）、
-`StartPageTest`（启动页：显示名/选项顺序/生活页关掉时不列/落回今日/脏值回退）、
+`StartPageTest`（启动页：显示名/选项顺序/旧生活与我的选择落回今日/脏值回退）、
 `PowerClientUrlTest`（缴费页/账单页深链形态与 feeitemid 钉子）、
 `BalanceAlertTest`（余额提醒：档位表/夹取/下标/文案、电费元换算三态、阈值边界、每日闸门）
 、`TranscriptParsingTest`（盖章成绩单：应答解析与脏数据容错/学期归并/分页换算/魔数/失败归类/表单字段/文件命名）
 、`TranscriptClientTest`（导出编排：翻页收学期/MAX_PAGES 兜底/令牌回传/三条失败路径/网络错分类）
-、`TranscriptHistoryTest`（最近导出：`.part` 半成品不进列表/标签反推/同秒稳定排序/保留 10 份裁边/文案/文件名越界防护）、`AccountMaskTest`（学号遮罩：保留前后各两位/恰好六位/短于六位与空值返回 null）
+、`TranscriptHistoryTest`（最近导出：`.part` 半成品不进列表/标签反推/同秒稳定排序/保留 10 份裁边/文案/文件名越界防护）、`SizeTextTest`（体积文案：B/KB/MB 边界与 Locale.US 小数点）、`AccountMaskTest`（学号遮罩：保留前后各两位/恰好六位/短于六位与空值返回 null）
 、`CalendarSyncerPickTest`（日历同步挑目标日历：可写优先/隐藏让位给可见/只读跳过）
 、`JwAutoLoginTest`（自动填表脚本生成：字段定位与提交、原生 setter、特殊字符转义）
 、`JwWebFitTest`（教务 WebView 页面适配：电脑版覆盖必须整串替换 content 且**必须自带
@@ -127,4 +140,4 @@
     flowUser 只留审批节点、当前节点按 nodeUniqueId 匹配 / 个人字段不落模型 / 排序·空表·坏 JSON）
     、`DormRepairRulesTest`（报修规则：完成判定（审批终点或表单已完成）/ 完成 3 天保留 /
     用户隐藏 / 在途优先 / 只有状态过渡才通知 / finishedSeenAt 首次值保持 / 状态与语气映射）
-    等 **185 个测试类 / 1991 个用例**（2026-10-19 实测，两组计数命令见文首）。
+    等 **193 个测试类 / 2045 个用例**（2026-10-22 实测，计数命令见文首）。

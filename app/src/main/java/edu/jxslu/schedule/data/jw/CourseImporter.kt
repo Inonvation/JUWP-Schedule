@@ -139,12 +139,6 @@ object JwUrls {
      */
     const val SSO_WARMUP = "http://jiaowu.juwp.edu.cn/sso.jsp"
 
-    /** 强智独立登录（教务单独账号，非统一认证）备用 */
-    const val QZ_DIRECT_ENTRY = "http://jiaowu.juwp.edu.cn/"
-
-    /** HTTPS 备用（:81） */
-    const val HTTPS_ENTRY = "https://jiaowu.juwp.edu.cn:81/"
-
     /** SSO 成功后学生端（端口 8080，HTTP） */
     const val XSD_BASE = "http://jiaowu.juwp.edu.cn:8080"
 

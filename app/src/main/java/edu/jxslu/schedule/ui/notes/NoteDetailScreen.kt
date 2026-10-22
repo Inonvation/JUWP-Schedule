@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.domain.Note
 import edu.jxslu.schedule.domain.imageRefs
 import edu.jxslu.schedule.domain.removeImageRef
@@ -407,7 +408,7 @@ fun NoteDetailScreen(
                         onImageClick = { viewer = it },
                         onLinkClick = { url ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                            runCatching { context.startActivity(intent) }
+                            runCatching { context.startActivityOutsideApp(intent) }
                                 .onFailure { showNotice("打不开这个链接", NoticeTone.Warning) }
                         },
                     )

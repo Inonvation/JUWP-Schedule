@@ -1,28 +1,29 @@
 package edu.jxslu.schedule.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
- * 凭证推导。短信 secret 用公开文档给的手机号-摘要对做锚点；
+ * 凭证推导。短信 secret 用合成号码钉住摘要算法（前 3 位 + 后 4 位 + "klcx" 的 MD5）；
  * 密码取位口径以两个参考实现的**代码**为准（都取 MD5 后 10 位），
  * linyu 文档里那条 `mypassword → C854BC85B3` 的示例与它自己的代码对不上，不采信。
  */
 class QzxyCredentialTest {
 
     @Test
-    fun `短信 secret 与公开文档的样例一致`() {
+    fun `短信 secret 算法输出固定`() {
         assertEquals(
-            "e3d2220b920cca13499ea76328e24a4e",
-            QzxyCredential.smsSecret("18582613960"),
+            "f000554d9cb90c44bd0ae2ded9a847aa",
+            QzxyCredential.smsSecret("13800138000"),
         )
     }
 
     @Test
-    fun `短信 secret 只跟手机号有关`() {
-        assertEquals(
+    fun `不同手机号得到不同 secret`() {
+        assertNotEquals(
             QzxyCredential.smsSecret("13800138000"),
-            QzxyCredential.smsSecret("13800138000"),
+            QzxyCredential.smsSecret("13900139000"),
         )
     }
 

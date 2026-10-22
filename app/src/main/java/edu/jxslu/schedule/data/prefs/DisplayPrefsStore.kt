@@ -53,13 +53,6 @@ import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 import java.time.ZoneId
 
-/**
- * 显示偏好（对 UI 的合并视图）。
- *
- * 2026-09-19 起（DESIGN §4.9）**全部字段都是全局项**：视图偏好与主题一样存 DataStore
- * （`view_prefs_json`，同一 [TimetablePrefs] JSON 结构），不再按课表分开——换课表不换观感。
- * ScheduleRepository 把全局视图偏好组装成本类，WeekScreen 等调用点不感知存储位置。
- */
 /** 上课提醒的「已发键」类别（DESIGN §3.7）：提前量通知与上课开始通知各自独立去重。 */
 enum class ReminderKeyKind(val prefix: String) {
     /** 提前量通知（上课前 N 分钟）。 */
@@ -69,6 +62,13 @@ enum class ReminderKeyKind(val prefix: String) {
     Start("start|"),
 }
 
+/**
+ * 显示偏好（对 UI 的合并视图）。
+ *
+ * 2026-09-19 起（DESIGN §4.9）**全部字段都是全局项**：视图偏好与主题一样存 DataStore
+ * （`view_prefs_json`，同一 [TimetablePrefs] JSON 结构），不再按课表分开——换课表不换观感。
+ * ScheduleRepository 把全局视图偏好组装成本类，WeekScreen 等调用点不感知存储位置。
+ */
 data class DisplayPrefs(
     /** 应用主题模式。System = 跟随系统深浅色。全局项。 */
     val themeMode: ThemeMode = ThemeMode.System,

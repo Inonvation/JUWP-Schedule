@@ -3,12 +3,12 @@ package edu.jxslu.schedule.ui.ebike
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.domain.SizeText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.modules.SqlTileWriter
 import java.io.File
-import java.util.Locale
 
 /**
  * 「地图缓存」的统计与清除（DESIGN §3.9，2026-09-28 用户口径）。
@@ -75,12 +75,8 @@ internal object EbikeMapCache {
         purged
     }
 
-    /** 体积文案。口径与 `TranscriptHistory.sizeLabel` 一致：Locale.US 固定小数点。 */
-    fun sizeLabel(bytes: Long): String = when {
-        bytes >= 1L shl 20 -> "%.1f MB".format(Locale.US, bytes / 1024.0 / 1024.0)
-        bytes >= 1024L -> "%d KB".format(Locale.US, bytes / 1024)
-        else -> "$bytes B"
-    }
+    /** 体积文案（口径见 [SizeText]）。 */
+    fun sizeLabel(bytes: Long): String = SizeText.format(bytes)
 
     /**
      * 把瓦片库的空闲页还给系统。[dbFile] 不存在（从没打开过地图）直接跳过——

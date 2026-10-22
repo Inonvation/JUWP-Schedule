@@ -64,7 +64,7 @@ fun TeachingCalendarScreen(onBack: () -> Unit) {
     val weeks = remember(config) { config?.let(::weekRanges).orEmpty() }
     val currentWeek = config?.let {
         ScheduleCalculator.weekNumberOf(it, LocalDate.now()).takeIf { week ->
-            week in 1..it.totalWeeks
+            ScheduleCalculator.isWeekInTerm(it, week)
         }
     }
     val webUrl = term?.let { JwUrls.teachingCalendarUrl(it) } ?: JwUrls.JXZL_QUERY
@@ -152,7 +152,8 @@ private data class WeekRange(
 )
 
 private fun weekRanges(config: SemesterConfig): List<WeekRange> {
-    val start = runCatching { LocalDate.parse(config.startDate) }.getOrNull() ?: return emptyList()
+    val start = runCatching { ScheduleCalculator.parseDate(config.startDate) }.getOrNull()
+        ?.let(ScheduleCalculator::startOfWeek) ?: return emptyList()
     return (1..config.totalWeeks).map { week ->
         val monday = start.plusWeeks((week - 1).toLong())
         WeekRange(week = week, start = monday, end = monday.plusDays(6))

@@ -52,24 +52,13 @@ object TeachingCalendarParser {
      * 按 id/name 收窄定位；选择器整块缺失时退化为全页扫 `<option selected>`（本页只有这一个
      * select，风险可控，等值校验在后面兜底）。抽不到返回 null。
      */
-    private fun selectedOptionTerm(html: String): String? {
-        val scoped = SELECT_RE.find(html)?.groupValues?.getOrNull(1) ?: html
-        for (option in OPTION_RE.findAll(scoped)) {
-            val attrs = option.groupValues[1]
-            if (!attrs.contains("selected", ignoreCase = true)) continue
-            valueOf(attrs)?.let { return it }
-            option.groupValues[2].trim().takeIf { it.isNotEmpty() }?.let { return it }
-        }
-        return null
-    }
+    private fun selectedOptionTerm(html: String): String? =
+        JwHtml.selectedTerm(html, selectId = "xnxq01id", requireTermPattern = false)
+            ?: JwHtml.selectedTerm(html, selectId = null, requireTermPattern = false)
 
     /** 页脚「周历编制 | <学期>」的学期串（选中项缺失时的兜底）。 */
     private fun footerTerm(html: String): String? =
         Regex("""周历编制[\s\S]{0,400}?(\d{4}-\d{4}-\d)""").find(html)?.groupValues?.get(1)
-
-    private fun valueOf(attrs: String): String? =
-        Regex("""value\s*=\s*["']([^"']*)["']""").find(attrs)
-            ?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
 
     private fun clean(raw: String): String =
         TAG_RE.replace(raw, "")
@@ -79,11 +68,6 @@ object TeachingCalendarParser {
             .replace("&gt;", ">")
             .trim()
 
-    private val SELECT_RE = Regex(
-        """<select[^>]*(?:id|name)\s*=\s*["']xnxq01id["'][^>]*>([\s\S]*?)</select>""",
-        RegexOption.IGNORE_CASE,
-    )
-    private val OPTION_RE = Regex("""<option([^>]*)>([\s\S]*?)</option>""", RegexOption.IGNORE_CASE)
     private val ROW_RE = Regex("""<tr[^>]*>[\s\S]*?</tr>""")
     private val CELL_RE = Regex("""<td[^>]*>([\s\S]*?)</td>""")
     private val DATE_RE = Regex("""(\d{1,2})月(\d{1,2})日""")

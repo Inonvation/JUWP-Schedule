@@ -98,7 +98,7 @@ object AiSchedulePrompt {
         val week = runCatching { ScheduleCalculator.weekNumberOf(semester, today) }.getOrNull() ?: 0
         return buildString {
             append("今天是 ").append(today).append("（")
-            if (week in 1..semester.totalWeeks) {
+            if (ScheduleCalculator.isWeekInTerm(semester, week)) {
                 append("第").append(week).append("周 ").append(weekdayLabel(today.dayOfWeek.value))
             } else {
                 append("不在学期内")
@@ -194,22 +194,5 @@ object AiSchedulePrompt {
         }
 
     /** 周次压缩：连续段写「a-b」，零散段用逗号。 */
-    fun weeksLabel(weeks: Set<Int>): String {
-        if (weeks.isEmpty()) return "周次未定"
-        val sorted = weeks.sorted()
-        val parts = mutableListOf<String>()
-        var start = sorted.first()
-        var prev = start
-        for (week in sorted.drop(1)) {
-            if (week == prev + 1) {
-                prev = week
-                continue
-            }
-            parts += if (start == prev) "$start" else "$start-$prev"
-            start = week
-            prev = week
-        }
-        parts += if (start == prev) "$start" else "$start-$prev"
-        return "第" + parts.joinToString(",") + "周"
-    }
+    fun weeksLabel(weeks: Set<Int>): String = WeeksText.label(weeks)
 }

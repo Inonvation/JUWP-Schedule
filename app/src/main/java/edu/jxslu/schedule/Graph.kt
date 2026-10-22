@@ -16,7 +16,6 @@ import edu.jxslu.schedule.ui.ebike.KvcxNotice
 import edu.jxslu.schedule.ui.ebike.KvcxRideController
 import edu.jxslu.schedule.data.power.PowerClient
 import edu.jxslu.schedule.data.power.PowerDebugDump
-import edu.jxslu.schedule.data.power.PowerHistoryCache
 import edu.jxslu.schedule.data.power.PowerReadingStore
 import edu.jxslu.schedule.data.power.PowerRepository
 import edu.jxslu.schedule.data.ir.AcIrBlaster
@@ -298,9 +297,6 @@ object Graph {
 
     @Volatile
     private var powerReadingStore: PowerReadingStore? = null
-
-    @Volatile
-    private var powerHistoryCache: PowerHistoryCache? = null
 
     @Volatile
     private var acRemotePrefsStore: AcRemotePrefsStore? = null
@@ -933,13 +929,6 @@ object Graph {
         powerReadingStore ?: synchronized(this) {
             powerReadingStore ?: PowerReadingStore(JuwDatabase.get(context.applicationContext).powerReadingDao())
                 .also { powerReadingStore = it }
-        }
-
-    /** 电费流水落盘缓存（DESIGN §3.13「最近流水」）：上次成功结果给下次冷启动当种子。 */
-    fun powerHistoryCache(context: Context): PowerHistoryCache =
-        powerHistoryCache ?: synchronized(this) {
-            powerHistoryCache ?: PowerHistoryCache(context.applicationContext)
-                .also { powerHistoryCache = it }
         }
 
     /** 空调遥控状态（DESIGN §4.48）：虚拟遥控的最后设定，本机持久化、跨窗口共用一份。 */

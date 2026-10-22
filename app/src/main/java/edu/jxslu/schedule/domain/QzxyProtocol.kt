@@ -22,17 +22,8 @@ object QzxyProtocol {
     /** 结束费率。 */
     const val END_RATE: Int = 0x22
 
-    /** 开始交易。 */
-    const val START_DEAL: Int = 0x31
-
-    /** 结束交易。 */
-    const val STOP_DEAL: Int = 0x32
-
     /** 清除已采集的消费数据（官方类名 fanhuicunchu）。 */
     const val CLEAR_CONSUME: Int = 0x86
-
-    /** 设置密钥（官方类名 settingKey）。 */
-    const val SETTING_KEY: Int = 0x88
 
     // ── 设备主类型（mayDeviceType）──
 

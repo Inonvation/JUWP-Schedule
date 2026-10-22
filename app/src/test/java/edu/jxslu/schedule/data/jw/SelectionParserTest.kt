@@ -74,30 +74,6 @@ class SelectionParserTest {
     }
 
     @Test
-    fun loginPageIsReadableError() {
-        val e = assertThrows(IllegalStateException::class.java) {
-            SelectionParser.parseFetchJson("<html>用户没有登录</html>")
-        }
-        assertTrue(e.message!!.contains("会话已失效"))
-    }
-
-    @Test
-    fun noOpenPageIsReadableError() {
-        val e = assertThrows(IllegalStateException::class.java) {
-            SelectionParser.parseFetchJson("<html>系统功能暂未开放，敬请等待</html>")
-        }
-        assertTrue(e.message!!.contains("暂未开放"))
-    }
-
-    @Test
-    fun errorPrefixIsReadableError() {
-        val e = assertThrows(IllegalStateException::class.java) {
-            SelectionParser.parseFetchJson("ERR:net::ERR_CONNECTION_TIMED_OUT")
-        }
-        assertTrue(e.message!!.contains("请求失败"))
-    }
-
-    @Test
     fun nonZeroCodeIsReadableError() {
         val e = assertThrows(IllegalStateException::class.java) {
             SelectionParser.parseFetchJson("""{"code":500,"msg":"未知异常","count":0,"data":[]}""")

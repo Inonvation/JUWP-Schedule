@@ -33,8 +33,6 @@ object ScheduleCalculator {
     /** 与 ui 层调色板条数一致。12→16：理论 + 实验课的不同课名常超 12 个，12 桶取模回绕必撞色。 */
     const val PALETTE_SIZE = 16
 
-    fun isBigSectionStart(section: Int): Boolean = BIG_SECTIONS.any { it.first == section }
-
     /** 该小节是不是所在大节的最后一节（决定它后面画 20 分钟间隔还是 5 分钟间隔）。 */
     fun isBigSectionEnd(section: Int): Boolean = BIG_SECTIONS.any { it.last == section }
 
@@ -50,17 +48,23 @@ object ScheduleCalculator {
         return ChronoUnit.WEEKS.between(startMonday, startOfWeek(date)).toInt() + 1
     }
 
-    fun isInTerm(config: SemesterConfig, date: LocalDate): Boolean =
-        weekNumberOf(config, date) in 1..config.totalWeeks
+    /** 周次是否落在学期内（1..totalWeeks）。所有「在不在学期内」的判定都走这里。 */
+    fun isWeekInTerm(config: SemesterConfig, week: Int): Boolean = week in 1..config.totalWeeks
 
-    fun currentSection(slots: List<TimeSlot>, now: LocalTimeLike): Int? {
-        val minutes = now.toMinutes()
-        for (slot in slots) {
-            if (minutes in toMinutes(slot.startTime) until toMinutes(slot.endTime)) {
-                return slot.number
-            }
-        }
-        return null
+    /** 周次 + 星期 → 日期；学期缺失 / 参数越界时 null。 */
+    fun dateOf(config: SemesterConfig?, week: Int, day: Int): LocalDate? {
+        if (config == null) return null
+        val startMonday = runCatching { startOfWeek(parseDate(config.startDate)) }.getOrNull()
+            ?: return null
+        return dateOf(startMonday, week, day)
+    }
+
+    /** 已算好第 1 周周一时用这个，避免每门课重复解析开学日。 */
+    fun dateOf(startMonday: LocalDate, week: Int, day: Int): LocalDate? {
+        if (week < 1 || day !in 1..7) return null
+        return runCatching {
+            startMonday.plusWeeks((week - 1).toLong()).plusDays((day - 1).toLong())
+        }.getOrNull()
     }
 
     /**
@@ -204,19 +208,6 @@ object ScheduleCalculator {
             .mapNotNull { courseEndMinutes(slots, it) }
             .maxOrNull()
 
-    fun nextCourse(
-        courses: List<Course>,
-        slots: List<TimeSlot>,
-        day: Int,
-        week: Int,
-        now: LocalTimeLike,
-    ): Course? {
-        val cur = now.toMinutes()
-        return coursesOnDay(courses, week, day)
-            .filter { c -> courseStartMinutes(slots, c)?.let { it > cur } == true }
-            .minByOrNull { courseStartMinutes(slots, it) ?: Int.MAX_VALUE }
-    }
-
     fun toMinutes(hhmm: String): Int {
         val parts = hhmm.trim().split(':')
         val h = parts.getOrNull(0)?.toIntOrNull() ?: 0
@@ -296,24 +287,7 @@ object ScheduleCalculator {
     }
 
     /** 周次压缩显示：`[6,7,8,9,10,11,14,15]` → `6-11,14-15`。 */
-    fun formatWeeks(weeks: Collection<Int>): String {
-        val sorted = weeks.filter { it in 1..40 }.distinct().sorted()
-        if (sorted.isEmpty()) return ""
-        val parts = mutableListOf<String>()
-        var start = sorted.first()
-        var prev = start
-        for (w in sorted.drop(1)) {
-            if (w == prev + 1) {
-                prev = w
-                continue
-            }
-            parts += if (start == prev) "$start" else "$start-$prev"
-            start = w
-            prev = w
-        }
-        parts += if (start == prev) "$start" else "$start-$prev"
-        return parts.joinToString(",")
-    }
+    fun formatWeeks(weeks: Collection<Int>): String = WeeksText.format(weeks)
 
     fun sectionStart(slots: List<TimeSlot>, section: Int): String? =
         slots.firstOrNull { it.number == section }?.startTime

@@ -12,7 +12,7 @@ import kotlinx.serialization.json.Json
  *
  * 匹配口径（[SelectionWishes.matches]）：
  * - [nameKeyword] 必填，课程名**包含**它（去首尾空白、忽略大小写）；
- * - [teacherKeyword] 可空，填了就要求教师串同样包含（如「曾」可匹配「曾刚,李四」）。
+ * - [teacherKeyword] 可空，填了就要求教师串同样包含（如「王」可匹配「王五,李四」）。
  *
  * [priority] 数值越大越先展示（高=2 / 中=1 / 低=0）；同档保持录入顺序（[sorted] 稳定排序）。
  * 只在本机保存，不上传。

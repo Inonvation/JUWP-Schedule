@@ -23,7 +23,7 @@ import java.io.File
  * （判定全在 domain 层，本类只负责读写）。
  *
  * 读写都在 IO 线程（本类自己调度）；两端 runCatching——缓存坏了等于没有缓存，不影响主链路。
- * **只存公开的图层数据**：不含 token、不含账号信息（与 `PowerHistoryCache` 同一纪律）。
+ * **只存公开的图层数据**：不含 token、不含账号信息（与本地快照类缓存同一纪律）。
  *
  * 文件可注入（主构造收 [File]）：缓存文件格式是隐式契约，用临时文件往返一遍钉在单测里，
  * 改字段名这类"读旧文件读空"的静默回归当场就红。
@@ -59,7 +59,7 @@ class ZoneCacheStore(private val file: File) {
         runCatching { file.delete() }
     }
 
-    // ---------- 序列化影子（本体不是 @Serializable，字段一一对应；与 PowerHistoryCache 同手法） ----------
+    // ---------- 序列化影子（本体不是 @Serializable，字段一一对应；与本地快照类缓存同手法） ----------
 
     private fun decode(text: String): List<ZoneCacheEntry> =
         json.decodeFromString<List<EntryRow>>(text).map { row ->

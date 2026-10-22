@@ -87,8 +87,8 @@ sealed interface PowerBillEvent {
 /**
  * 缴费账单页（DESIGN §3.13「缴费账单页」）。
  *
- * 数据来自 `PowerRepository.history`（与生活页「最近流水」同一份，仓库内存缓存 2 分钟）：
- * 从生活页点进来时通常**一次请求都不发**。月切换、汇总、柱状全在本地算，零网络。
+ * 数据来自 `PowerRepository.history`（与侧栏电费卡「最近流水」同一份，仓库内存缓存 2 分钟）：
+ * 从侧栏点进来时通常**一次请求都不发**。月切换、汇总、柱状全在本地算，零网络。
  *
  * 第二个分页「用电统计」的数据源完全不同：本机的电表读数（`power_readings`，Room 响应式）
  * + 同一份流水（用来把充值加进去的电扣掉）。读数落库、流水不落库——流水条数少、
@@ -109,11 +109,11 @@ class PowerBillViewModel(
     private val _events = Channel<PowerBillEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    /** 本机记录的电表读数（Room 响应式：生活页记下一条，这里立刻重算）。 */
+    /** 本机记录的电表读数（Room 响应式：侧栏记下一条，这里立刻重算）。 */
     private val readings = MutableStateFlow<List<PowerReading>>(emptyList())
 
     init {
-        // 进页走缓存：从生活页过来时那份数据刚取过，不重复打平台（DESIGN §4.24「请求节流」）
+        // 进页走缓存：从侧栏过来时那份数据刚取过，不重复打平台（DESIGN §4.24「请求节流」）
         load(force = false)
         viewModelScope.launch {
             readingStore.observeAll().collect { rows ->
@@ -270,7 +270,7 @@ class PowerBillViewModel(
 
     /**
      * 页脚兜底入口：把带登录态的账单页深链交给调用方打开（平台改版或要看别的项目时用）。
-     * 与生活页那条路同一份实现口径——先拿深链，失败给一次性提示。
+     * 与侧栏电费卡那条路同一份实现口径——先拿深链，失败给一次性提示。
      */
     fun openPlatformPage(onReady: (String) -> Unit) {
         val credentials = credentialStore.read()

@@ -26,8 +26,8 @@ class SelectionWishTest {
 
     @Test
     fun matchesWithTeacherKeyword() {
-        val w = wish("机械", teacher = "曾")
-        assertTrue(SelectionWishes.matches(w, "机械制造基础A", "曾刚,李四"))
+        val w = wish("机械", teacher = "王")
+        assertTrue(SelectionWishes.matches(w, "机械制造基础A", "王五,李四"))
         assertFalse(SelectionWishes.matches(w, "机械制造基础A", "张三"))
         // 教师关键词为空时只看课程名
         assertTrue(SelectionWishes.matches(wish("机械"), "机械制造基础A", "张三"))
@@ -53,7 +53,7 @@ class SelectionWishTest {
 
     @Test
     fun validateRequiresNameKeyword() {
-        assertNull(SelectionWishes.validate(wish("机械", teacher = "曾")))
+        assertNull(SelectionWishes.validate(wish("机械", teacher = "王")))
         assertEquals("请填写课程名关键词", SelectionWishes.validate(wish("   ")))
     }
 
@@ -66,7 +66,7 @@ class SelectionWishTest {
 
     @Test
     fun encodeDecodeRoundTrip() {
-        val wishes = listOf(wish("机械设计", teacher = "曾", priority = SelectionWishes.PRIORITY_HIGH))
+        val wishes = listOf(wish("机械设计", teacher = "王", priority = SelectionWishes.PRIORITY_HIGH))
         assertEquals(wishes, SelectionWishes.decode(SelectionWishes.encode(wishes)))
     }
 

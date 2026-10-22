@@ -22,7 +22,7 @@ fun nextTodayBoundaryMinutes(
 ): Int? {
     if (semester == null) return null
     val week = ScheduleCalculator.weekNumberOf(semester, today)
-    if (week !in 1..semester.totalWeeks) return null
+    if (!ScheduleCalculator.isWeekInTerm(semester, week)) return null
     val day = today.dayOfWeek.value
     val nowMinutes = now.toMinutes()
     return ScheduleCalculator.coursesOnDay(

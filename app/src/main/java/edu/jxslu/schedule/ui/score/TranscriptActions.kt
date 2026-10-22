@@ -3,7 +3,9 @@ package edu.jxslu.schedule.ui.score
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import edu.jxslu.schedule.startActivityOutsideApp
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.shareFile
 
 /** 成绩单的 MIME（打开与分享共用）。 */
 internal const val PDF_MIME = "application/pdf"
@@ -19,18 +21,12 @@ internal fun openPdf(context: Context, uri: Uri, notify: (String, NoticeTone) ->
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(uri, PDF_MIME)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    val ok = runCatching { context.startActivity(intent) }.isSuccess
+    val ok = runCatching { context.startActivityOutsideApp(intent) }.isSuccess
     if (!ok) notify("没有能打开 PDF 的应用，可以改用「分享」", NoticeTone.Warning)
 }
 
 /** 分享成绩单：走系统分享面板（微信、QQ、邮件都在这条路上）。 */
 internal fun sharePdf(context: Context, uri: Uri, notify: (String, NoticeTone) -> Unit) {
-    val send = Intent(Intent.ACTION_SEND)
-        .setType(PDF_MIME)
-        .putExtra(Intent.EXTRA_STREAM, uri)
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    val ok = runCatching {
-        context.startActivity(Intent.createChooser(send, "分享成绩单"))
-    }.isSuccess
+    val ok = shareFile(context, uri, PDF_MIME, "分享成绩单")
     if (!ok) notify("没有可用的分享目标", NoticeTone.Warning)
 }

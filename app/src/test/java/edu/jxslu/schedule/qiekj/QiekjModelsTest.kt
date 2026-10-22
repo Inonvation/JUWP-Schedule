@@ -193,7 +193,7 @@ class QiekjModelsTest {
     fun orderList_分页信封与字段解码() {
         val env = QiekjJson.json.decodeFromString<ApiEnvelope<ItemsList<ServerOrderItem>>>(
             """{"code":0,"msg":"成功","data":{"total":37,"items":[
-                {"id":"9001","orderNo":"NO1","machineName":"13B309","shopName":"直饮水",
+                {"id":"9001","orderNo":"NO1","machineName":"9Z999","shopName":"直饮水",
                  "markPrice":"0.16","payPrice":"0.00","createTime":"2026-10-14 12:00","orderStatus":2,
                  "extraField":"ignored"}]}}""",
         )
@@ -202,7 +202,7 @@ class QiekjModelsTest {
         val first = data.items.single()
         assertEquals("9001", first.id)
         assertEquals("NO1", first.orderNo)
-        assertEquals("13B309", first.machineName)
+        assertEquals("9Z999", first.machineName)
         assertEquals("0.16", first.markPrice)
         assertEquals("2026-10-14 12:00", first.createTime)
     }

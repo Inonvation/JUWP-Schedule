@@ -17,29 +17,29 @@ class PowerModelsTest {
 
     private val feeItemJson = """
         {"msg":"success","view":"choose","code":200,
-         "sceneinfo":"campus:0#南昌工程学院;building:0#9A;room:14600#9A101",
+         "sceneinfo":"campus:0#南昌工程学院;building:0#9Z;room:99999#9Z999",
          "feeitem":{"feeitemid":181,"name":"房间电费","price":0.62,"billing_unit":"度",
            "impl_interface":"iECSceneServiceImpl","feetypeBean":{"feetypeid":142,"name":"生活缴费"}}}
     """.trimIndent()
 
     private val meterJson = """
         {"msg":"success","code":200,"map":{"showData":{"当前剩余电量":"55.57"},
-         "data":{"campus":"江西水利电力大学","tsmAbstract":"校区#江西水利电力大学;楼栋#9A;房间#9A101",
-          "campusid":"0","yktmercacc":"1000001","remark":"{\"当前剩余电量\":\"55.57\"}","sroomid":2887,
-          "building":"9A","roomid":"14600","room":"9A101","buildingid":"0"},"dataType":"IEC"}}
+         "data":{"campus":"江西水利电力大学","tsmAbstract":"校区#江西水利电力大学;楼栋#9Z;房间#9Z999",
+          "campusid":"0","yktmercacc":"1000001","remark":"{\"当前剩余电量\":\"55.57\"}","sroomid":9999,
+          "building":"9Z","roomid":"99999","room":"9Z999","buildingid":"0"},"dataType":"IEC"}}
     """.trimIndent()
 
     private val turnoverJson = """
         {"msg":"success","code":200,"list":[
           {"turnoverid":4964633,"feeitemid":181,"payid":4,"feerange":"202608","tranamt":20,
            "createdate":"2026-08-25 12:20:23","refund_flag":1,
-           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
+           "abstracts":"校区-江西水利电力大学;楼栋-9Z;房间-9Z999"},
           {"turnoverid":3955331,"feeitemid":181,"payid":4,"feerange":"202507","tranamt":50,
            "createdate":"2025-07-03 13:08:57","refund_flag":1,
-           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
+           "abstracts":"校区-江西水利电力大学;楼栋-9Z;房间-9Z999"},
           {"turnoverid":3955332,"feeitemid":181,"payid":4,"feerange":"202507","tranamt":-10,
            "createdate":"2025-07-04 09:00:00","refund_flag":1,
-           "abstracts":"校区-江西水利电力大学;楼栋-9A;房间-9A101"},
+           "abstracts":"校区-江西水利电力大学;楼栋-9Z;房间-9Z999"},
           {"turnoverid":5091738,"feeitemid":181,"payid":59,"feerange":"202609","tranamt":24,
            "createdate":"2026-09-28 11:54:33","refund_flag":1,"abstracts":null}]}
     """.trimIndent()
@@ -54,8 +54,8 @@ class PowerModelsTest {
         assertEquals("生活缴费", item.feetypeName)
         assertEquals(listOf("campus", "building", "room"), item.scene.map { it.code })
         // sceneinfo 里的校区名是学校旧名，房间名照抄；真实房间名以读数返回为准
-        assertEquals("14600", item.room?.id)
-        assertEquals("9A101", item.room?.name)
+        assertEquals("99999", item.room?.id)
+        assertEquals("9Z999", item.room?.name)
     }
 
     @Test
@@ -63,10 +63,10 @@ class PowerModelsTest {
         val meter = PowerModels.parseMeter(meterJson, nowMs = 1234L)
         assertEquals(55.57, meter.remain!!, 1e-9)
         assertEquals("当前剩余电量", meter.remainField)
-        assertEquals("9A101", meter.room.room)
-        assertEquals("9A", meter.room.building)
+        assertEquals("9Z999", meter.room.room)
+        assertEquals("9Z", meter.room.building)
         assertEquals("江西水利电力大学", meter.room.campus)
-        assertEquals("14600", meter.room.roomId)
+        assertEquals("99999", meter.room.roomId)
         assertEquals(1234L, meter.fetchedAtMs)
         // 原始字段整份留着：平台加字段时只多键，展示层仍能拿到
         assertEquals(mapOf("当前剩余电量" to "55.57"), meter.fields)
@@ -81,10 +81,10 @@ class PowerModelsTest {
     fun meterKeepsDataJsonVerbatim() {
         val meter = PowerModels.parseMeter(meterJson, nowMs = 1234L)
         assertEquals(
-            "{\"campus\":\"江西水利电力大学\",\"tsmAbstract\":\"校区#江西水利电力大学;楼栋#9A;房间#9A101\"," +
+            "{\"campus\":\"江西水利电力大学\",\"tsmAbstract\":\"校区#江西水利电力大学;楼栋#9Z;房间#9Z999\"," +
                 "\"campusid\":\"0\",\"yktmercacc\":\"1000001\"," +
                 "\"remark\":\"{\\\"当前剩余电量\\\":\\\"55.57\\\"}\"," +
-                "\"sroomid\":2887,\"building\":\"9A\",\"roomid\":\"14600\",\"room\":\"9A101\",\"buildingid\":\"0\"}",
+                "\"sroomid\":9999,\"building\":\"9Z\",\"roomid\":\"99999\",\"room\":\"9Z999\",\"buildingid\":\"0\"}",
             meter.dataJson,
         )
     }
@@ -105,7 +105,7 @@ class PowerModelsTest {
         // 升序：早的在前
         assertEquals("2025-07-03 13:08:57", rows[0].dateText)
         assertEquals(5000L, rows[0].amountFen)
-        assertEquals("9A101", PowerModels.roomLabelOf(rows[0].room))
+        assertEquals("9Z999", PowerModels.roomLabelOf(rows[0].room))
         assertEquals(2000L, rows[2].amountFen)
         assertEquals("202608", rows[2].month)
         assertTrue("充值时间应能解析成 epoch 毫秒", rows[2].epochMs > 0L)
@@ -194,19 +194,19 @@ class PowerModelsTest {
 
     private fun reading(
         price: Double = 0.62,
-        roomName: String = "9A101",
+        roomName: String = "9Z999",
         remain: Double = 55.57,
         at: Long = 1_756_000_000_000L,
-    ) = PowerReading(epochMs = at, remainKwh = remain, priceYuan = price, roomId = "14600", roomName = roomName)
+    ) = PowerReading(epochMs = at, remainKwh = remain, priceYuan = price, roomId = "99999", roomName = roomName)
 
     @Test
     fun `种子快照照抄读数：房号取显示名而不是 roomId`() {
         val snapshot = PowerModels.snapshotSeedOf(reading())
         assertEquals(55.57, snapshot.meter.remain!!, 1e-9)
         assertEquals(1_756_000_000_000L, snapshot.meter.fetchedAtMs)
-        assertEquals("9A101", snapshot.meter.room.room)
+        assertEquals("9Z999", snapshot.meter.room.room)
         // 去重键仍带着，统计分组不受展示名影响
-        assertEquals("14600", snapshot.meter.room.roomId)
+        assertEquals("99999", snapshot.meter.room.roomId)
         assertEquals(0.62, snapshot.feeItem.priceYuan!!, 1e-9)
         // 单价已知：副行走折算金额，不给字段名兜底文案
         assertNull(snapshot.meter.remainField)
@@ -226,7 +226,7 @@ class PowerModelsTest {
     fun `历史读数没有房号名：种子里留空，不拿数字 id 顶替`() {
         val snapshot = PowerModels.snapshotSeedOf(reading(roomName = ""))
         assertNull(snapshot.meter.room.room)
-        assertEquals("14600", snapshot.meter.room.roomId)
+        assertEquals("99999", snapshot.meter.room.roomId)
     }
 
     // ------------------------------------------------------------------
@@ -257,20 +257,20 @@ class PowerModelsTest {
         val raw = """
             {"code":200,"map":{"total":[{"code":"room","name":"房间","level":3},
              {"name":"缺 code","level":2},{"code":"campus","name":"校区","level":1}],
-             "data":[{"name":"1A101","value":10101},{"name":null,"value":"x"},{"name":"y"}]}}
+             "data":[{"name":"1Z101","value":10101},{"name":null,"value":"x"},{"name":"y"}]}}
         """.trimIndent()
         val root = PowerModels.parseSceneRoot(raw)
         // 按 level 升序（平台自己给的是 1 起编号）
         assertEquals(listOf("campus", "room"), root.levels.map { it.code })
         // value 数字形态也收（平台两种都用过）；缺 name / value 的项丢掉
-        assertEquals(listOf("1A101"), root.options.map { it.name })
+        assertEquals(listOf("1Z101"), root.options.map { it.name })
         assertEquals(listOf("10101"), root.options.map { it.value })
     }
 
     @Test
     fun sceneOptionsParseDeeperLevel() {
         val raw = """
-            {"code":200,"map":{"data":[{"name":"1A101","value":"10101"},{"name":"1A102","value":"10102"}]}}
+            {"code":200,"map":{"data":[{"name":"1Z101","value":"10101"},{"name":"1Z102","value":"10102"}]}}
         """.trimIndent()
         assertEquals("10102", PowerModels.parseSceneOptions(raw)[1].value)
     }
@@ -282,10 +282,10 @@ class PowerModelsTest {
         val picks = listOf(
             levels[0] to PowerSceneOption("示例校区", "0"),
             levels[1] to PowerSceneOption("1A", "11"),
-            levels[2] to PowerSceneOption("1A101", "10101"),
+            levels[2] to PowerSceneOption("1Z101", "10101"),
         )
         assertEquals(
-            "campus:0#示例校区;building:11#1A;room:10101#1A101",
+            "campus:0#示例校区;building:11#1A;room:10101#1Z101",
             PowerModels.sceneinfoOf(picks),
         )
     }

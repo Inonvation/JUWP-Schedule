@@ -135,7 +135,6 @@ import edu.jxslu.schedule.domain.calculateActualCost
 import edu.jxslu.schedule.ui.common.ResumedTickerEffect
 import edu.jxslu.schedule.ui.common.AppCardRow
 import edu.jxslu.schedule.ui.common.QuickCardMinHeight
-import edu.jxslu.schedule.ui.common.QuickEntryCard
 import edu.jxslu.schedule.ui.common.AppCardDefaults
 import edu.jxslu.schedule.ui.common.AppNoticeVisuals
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect

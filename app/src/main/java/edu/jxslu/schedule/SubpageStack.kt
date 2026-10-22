@@ -3,6 +3,7 @@ package edu.jxslu.schedule
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import edu.jxslu.schedule.ui.common.LaunchGate
 
 /**
  * 二级页的 extra 键。**只有这一份字面量**：`SubpageActivity` 解析它，
@@ -204,6 +205,7 @@ internal fun subpageLaunchIntent(context: Context, request: SubpageRequest): Int
  * [Activity] context 才有窗口动画可言，非 Activity 只保证页面起得来。
  */
 internal fun openSubpage(context: Context, request: SubpageRequest) {
+    if (!LaunchGate.allow()) return
     // 不带 NEW_TASK：从 Activity 启动时二级页要留在**当前** task 里（MainActivity 之上），
     // 带上了会先做一次 task 查找，行为虽等价但语义绕
     context.startActivity(request.applyTo(Intent(context, SubpageActivity::class.java)))

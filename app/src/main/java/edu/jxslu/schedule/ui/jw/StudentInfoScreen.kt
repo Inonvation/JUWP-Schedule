@@ -61,7 +61,7 @@ fun StudentInfoScreen(onBack: () -> Unit) {
     var refreshing by remember { mutableStateOf(false) }
     val currentWeek = semester?.let {
         ScheduleCalculator.weekNumberOf(it, LocalDate.now()).takeIf { week ->
-            week in 1..it.totalWeeks
+            ScheduleCalculator.isWeekInTerm(it, week)
         }
     }
 

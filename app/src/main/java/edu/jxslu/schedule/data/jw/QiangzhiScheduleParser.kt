@@ -2,6 +2,7 @@ package edu.jxslu.schedule.data.jw
 
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.ScheduleCalculator
+import edu.jxslu.schedule.domain.WeeksText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -195,47 +196,7 @@ object QiangzhiScheduleParser {
         return null
     }
 
-    fun parseWeeks(text: String): Set<Int> {
-        val weeks = mutableSetOf<Int>()
-        val cleaned = text
-            .removeSuffix("周次")
-            .removeSuffix("周")
-            .trim()
-        if (cleaned.isEmpty()) return emptySet()
-        // 「单周 / 双周」标注（2026-10-07 复核在 2025-2026-2 实测到 `1,11单周` / `2,6双周`，
-        // 挂在整串末尾）：数字照解析，最后按奇偶过滤（`1-16单周` 这类区间标注自然得到奇数周）。
-        // 此前带标注的 token 会被 toIntOrNull 拒掉、整段周次被**静默丢弃**——课会少排几周。
-        val oddOnly = cleaned.endsWith("单")
-        val evenOnly = cleaned.endsWith("双")
-        val body = if (oddOnly || evenOnly) cleaned.dropLast(1).trim() else cleaned
-        for (part in body.split(',', '，', '、', ' ')) {
-            val p = part.trim()
-            if (p.isEmpty()) continue
-            val range = p.split('-', '—', '~', '至')
-            if (range.size == 2) {
-                val a = range[0].trim().toIntOrNull()
-                val b = range[1].trim().toIntOrNull()
-                if (a != null && b != null && a in 1..40 && b >= a) {
-                    weeks += (a..b.coerceAtMost(40))
-                    continue
-                }
-            }
-            val single = p.toIntOrNull()
-            if (single != null) {
-                if (single in 1..40) weeks += single
-            } else {
-                // 兜底（与 scripts 侧 `parse_weeks` 同一口径）：从脏 token 里抠数字
-                Regex("\\d+").findAll(p).forEach { m ->
-                    m.value.toIntOrNull()?.let { if (it in 1..40) weeks += it }
-                }
-            }
-        }
-        return when {
-            oddOnly -> weeks.filter { it % 2 == 1 }.toSet()
-            evenOnly -> weeks.filter { it % 2 == 0 }.toSet()
-            else -> weeks
-        }
-    }
+    fun parseWeeks(text: String): Set<Int> = WeeksText.parse(text)
 
     /**
      * 单元测试 / 备用路径：从完整 HTML 文本按表格列序抽 li。

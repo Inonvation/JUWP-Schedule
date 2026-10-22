@@ -249,7 +249,10 @@ fun StitchScreen(onBack: () -> Unit) {
         }
     }
 
-    BackHandler(enabled = busy) {}
+    val requestBack: () -> Unit = {
+        if (busy) notice("正在保存，请稍候", NoticeTone.Warning) else onBack()
+    }
+    BackHandler(enabled = busy) { requestBack() }
 
     Scaffold(
         topBar = {
@@ -257,7 +260,7 @@ fun StitchScreen(onBack: () -> Unit) {
                 windowInsets = pinnedStatusBars(),
                 title = { Text("图片拼接") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = requestBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },

@@ -207,7 +207,7 @@ fun PowerRechargeSheet(
 private fun AmountStep(
     state: LifeViewModel.PowerRechargeUi,
     accountFen: Long?,
-    /** 绑定房间号（读数里的 room，如 13B309）；二次确认弹窗要加粗它。 */
+    /** 绑定房间号（读数里的 room，如 9Z999）；二次确认弹窗要加粗它。 */
     roomLabel: String?,
     onSelectChannel: (LifeViewModel.PowerRechargeUi.Channel) -> Unit,
     onPlaceOrder: (String) -> Unit,

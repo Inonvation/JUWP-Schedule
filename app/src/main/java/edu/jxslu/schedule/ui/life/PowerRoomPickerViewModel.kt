@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
  * → 用户确认后 [PowerRepository.bindScene] 写一次。全部由用户动作驱动：
  * 不开缓存、不轮询、失败不重试（错误留在弹层里，点「重试」才再发）。
  *
- * 弹层是宿主（生活页 / 校园卡设置页）里挂的常驻组件，[start] 会在每次打开时重置。
+ * 弹层是宿主（侧栏电费卡 / 校园卡设置页）里挂的常驻组件，[start] 会在每次打开时重置。
  */
 class PowerRoomPickerViewModel(
     private val powerRepo: PowerRepository,

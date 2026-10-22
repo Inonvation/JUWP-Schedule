@@ -30,8 +30,9 @@ import java.io.File
  * - **校历海报图**（campus_calendar/）：只删图**不删 prefs**——prefs 里的文件名悬空时
  *   `CampusCalendarStore.fileFor` 因 `isFile` 守卫返回 null，页面自动回落内置兜底图。
  * - **debug 协议样本**（4 个 *_debug/ 目录）：release 包通常不存在，debug 包自动重写。
- * - **实习基地快照 / 电费流水缓存**（internship_bases.json / power_history_cache.json）：
- *   7 天闸门 / 下次查询时重拉。
+ * - **实习基地快照**（internship_bases.json）：7 天闸门 / 下次查询时重拉。
+ * - **旧版电费流水缓存**（power_history_cache.json，2026-10-22 删除功能后只留清入口）：
+ *   老版本留下的孤儿文件，清缓存时一并删掉。
  *
  * **绝不清（用户数据 / 凭证 / 变动检测基准，动了就是事故）**
  * - Room 数据库与 DataStore、全部凭证 prefs（备份都排除的那批）。
@@ -63,7 +64,7 @@ object AppCacheCleaner {
             dirBytes(File(app.filesDir, CALENDAR_DIR)) +
             DEBUG_DIRS.sumOf { dirBytes(File(app.filesDir, it)) } +
             fileBytes(File(app.filesDir, INTERNSHIP_SNAPSHOT_FILE)) +
-            fileBytes(File(app.filesDir, POWER_HISTORY_FILE)) +
+            fileBytes(File(app.filesDir, LEGACY_POWER_HISTORY_FILE)) +
             dirBytes(File(app.applicationInfo.dataDir, WEBVIEW_DATA_DIR))
     }
 
@@ -109,7 +110,7 @@ object AppCacheCleaner {
         clearDir(File(app.filesDir, CALENDAR_DIR))
         DEBUG_DIRS.forEach { clearDir(File(app.filesDir, it)) }
         runCatching { File(app.filesDir, INTERNSHIP_SNAPSHOT_FILE).delete() }
-        runCatching { File(app.filesDir, POWER_HISTORY_FILE).delete() }
+        runCatching { File(app.filesDir, LEGACY_POWER_HISTORY_FILE).delete() }
         Unit
     }
 
@@ -133,7 +134,8 @@ object AppCacheCleaner {
     private const val AI_IMG_DIR = "ai_img" // AiImageStore.DIR_NAME
     private const val CALENDAR_DIR = "campus_calendar" // CampusCalendarStore.DIR_NAME
     private const val INTERNSHIP_SNAPSHOT_FILE = "internship_bases.json" // InternshipSnapshotStore.SNAPSHOT_FILE
-    private const val POWER_HISTORY_FILE = "power_history_cache.json" // PowerHistoryCache.CACHE_FILE（companion private，镜像）
+    /** 已删除的 PowerHistoryCache 留下的文件（老版本升级上来的设备）。 */
+    private const val LEGACY_POWER_HISTORY_FILE = "power_history_cache.json"
 
     /** debug 包协议样本目录（定义散在 Graph.kt，各处 `File(filesDir, 名)` 直建）。 */
     private val DEBUG_DIRS = listOf("ujing_debug", "qiekj_debug", "power_debug", "selection_debug")

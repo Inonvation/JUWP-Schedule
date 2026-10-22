@@ -20,7 +20,6 @@ import edu.jxslu.schedule.data.prefs.ReminderKeyKind
 import edu.jxslu.schedule.domain.AiScheduleConfig
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.courseRemarksCarriedOver
-import edu.jxslu.schedule.domain.mergeKey
 import edu.jxslu.schedule.domain.CourseFilter
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.CourseTweaker
@@ -148,10 +147,6 @@ data class CourseExport(
     val timeSlots: List<TimeSlotBackupJson> = emptyList(),
 )
 
-/**
- * 备份文件里的单条成绩。字段与 [ScoreRecord] 对齐、全带默认值：
- * 手工编辑或旧格式缺字段时降级为空值而不是解码失败。
- */
 /** 备份文件里的学期配置段（DESIGN §4.3）：全带默认值，异构文件缺字段时降级而不是解码失败。 */
 @Serializable
 data class SemesterBackupJson(
@@ -169,6 +164,10 @@ data class TimeSlotBackupJson(
     val endTime: String = "",
 )
 
+/**
+ * 备份文件里的单条成绩。字段与 [ScoreRecord] 对齐、全带默认值：
+ * 手工编辑或旧格式缺字段时降级为空值而不是解码失败。
+ */
 @Serializable
 data class ScoreBackupJson(
     val term: String = "",
@@ -449,6 +448,84 @@ internal fun validateCourseJson(index: Int, c: CourseJson): String? {
 
 /** 目标课表的导入统计：弹窗按所选目标实时展示（覆盖会清掉 existing 门，合并新增 newCount 门）。 */
 data class ImportStats(val existing: Int, val newCount: Int)
+
+/** 备份文件的统一校验产物：预览与真导入共用，避免两条校验链漂移。 */
+internal data class ValidatedBackup(
+    val courses: List<Course>,
+    val scores: List<ScoreRecord>,
+    val scholarGroups: List<ScholarGroup>,
+    val scholarCourses: List<ScholarCourse>,
+    val curriculum: List<CurriculumCourse>,
+    val textbooks: List<Textbook>,
+    val semester: SemesterConfig?,
+    val slots: List<TimeSlot>,
+)
+
+internal sealed interface BackupCheck {
+    data class Ok(val value: ValidatedBackup) : BackupCheck
+    data class Error(val message: String) : BackupCheck
+}
+
+/** 全量校验备份：任何一段有脏数据都整体拒绝，预览与真导入必须走同一份。 */
+internal fun validateBackup(export: CourseExport): BackupCheck {
+    if (export.courses.isEmpty()) return BackupCheck.Error("文件中没有课程（courses 为空）")
+    export.courses.forEachIndexed { index, c ->
+        validateCourseJson(index, c)?.let { return BackupCheck.Error(it) }
+    }
+    val scores = export.scores.map { it.toScoreRecord() }
+    scores.forEachIndexed { index, s ->
+        if (s.term.isBlank() || s.name.isBlank()) {
+            return BackupCheck.Error("第 ${index + 1} 条成绩缺少 term 或 name")
+        }
+    }
+    val scholarGroups = export.scholarGroups.map { it.toScholarGroup() }
+    val scholarCourses = export.scholarCourses.map { it.toScholarCourse() }
+    scholarGroups.forEachIndexed { index, g ->
+        if (g.dimension.isBlank() || g.name.isBlank()) {
+            return BackupCheck.Error("第 ${index + 1} 条学业分组缺少 dimension 或 name")
+        }
+    }
+    scholarCourses.forEachIndexed { index, c ->
+        if (c.dimension.isBlank() || c.name.isBlank()) {
+            return BackupCheck.Error("第 ${index + 1} 条学业课程缺少 dimension 或 name")
+        }
+    }
+    val curriculum = export.curriculumCourses.map { it.toCurriculumCourse() }
+    curriculum.forEachIndexed { index, c ->
+        if (c.name.isBlank()) {
+            return BackupCheck.Error("第 ${index + 1} 条培养方案课程缺少 name")
+        }
+    }
+    val textbooks = export.textbooks.map { it.toTextbook() }
+    textbooks.forEachIndexed { index, b ->
+        if (b.term.isBlank() || b.courseName.isBlank() || b.title.isBlank()) {
+            return BackupCheck.Error("第 ${index + 1} 条教材缺少 term、courseName 或 title")
+        }
+    }
+    val semester = export.semester?.let { s ->
+        val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
+            ?: return BackupCheck.Error("备份里的开学日期格式不正确：${s.startDate}")
+        SemesterConfig(date.toString(), s.totalWeeks.coerceIn(1, 30), s.firstDayOfWeek)
+    }
+    val slots = export.timeSlots.map { TimeSlot(it.number, it.startTime, it.endTime) }
+    if (slots.isNotEmpty()) {
+        TimeSlotRules.validate(slots)?.let {
+            return BackupCheck.Error("备份里的作息表有问题：$it")
+        }
+    }
+    return BackupCheck.Ok(
+        ValidatedBackup(
+            courses = export.courses.map { it.toDomain() },
+            scores = scores,
+            scholarGroups = scholarGroups,
+            scholarCourses = scholarCourses,
+            curriculum = curriculum,
+            textbooks = textbooks,
+            semester = semester,
+            slots = slots,
+        ),
+    )
+}
 
 class ScheduleRepository(
     private val db: JuwDatabase,
@@ -1218,10 +1295,13 @@ class ScheduleRepository(
         // 否则用户写过的课程备注会在一次"覆盖导入"后凭空消失（DESIGN §4.3「备注的存活口径」）
         val existing = getTimetableCourses(ttId)
         val withRemarks = courseRemarksCarriedOver(existing, courses)
-        db.courseDao().clearForTimetable(ttId)
-        db.courseDao().insertAll(
-            withSortedNameColors(withRemarks).map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
-        )
+        // clear + insert 必须同事务：中途失败（磁盘满/进程被杀）不能留下空课表
+        db.withTransaction {
+            db.courseDao().clearForTimetable(ttId)
+            db.courseDao().insertAll(
+                withSortedNameColors(withRemarks).map { CourseEntity.fromDomain(it).copy(timetableId = ttId) },
+            )
+        }
     }
 
     /**
@@ -1238,17 +1318,20 @@ class ScheduleRepository(
     suspend fun mergeCourses(courses: List<Course>, timetableId: Long? = null): Int {
         val ttId = timetableId ?: currentTimetableId.first()
         val existing = getTimetableCourses(ttId)
-        val keys = existing.map { it.mergeKey() }.toHashSet()
+        // 判重必须看「同一课块 + 周次有交集」：只比 mergeKey 会把单双周/补课的另一块
+        // 静默丢掉（见 ScheduleDiff.duplicateOf 的 KDoc，2026-10-20 复核）
+        val accepted = existing.toMutableList()
         val used = existing.map { it.colorIndex }.toMutableList()
         var added = 0
-        for (c in courses) {
-            val key = c.mergeKey()
-            if (key in keys) continue
-            val colored = c.copy(colorIndex = ScheduleCalculator.nextColorIndex(used))
-            db.courseDao().upsert(CourseEntity.fromDomain(colored).copy(timetableId = ttId))
-            used += colored.colorIndex
-            keys += key
-            added++
+        db.withTransaction {
+            for (c in courses) {
+                if (ScheduleDiff.duplicateOf(c, accepted) != null) continue
+                val colored = c.copy(colorIndex = ScheduleCalculator.nextColorIndex(used))
+                db.courseDao().upsert(CourseEntity.fromDomain(colored).copy(timetableId = ttId))
+                used += colored.colorIndex
+                accepted += colored
+                added++
+            }
         }
         return added
     }
@@ -1898,61 +1981,18 @@ class ScheduleRepository(
         } catch (e: Exception) {
             return ImportResult.Failure("JSON 解析失败：${e.message ?: "格式不正确"}")
         }
-        val courses = export.courses
-        if (courses.isEmpty()) {
-            return ImportResult.Failure("文件中没有课程（courses 为空）")
+        val validated = when (val check = validateBackup(export)) {
+            is BackupCheck.Error -> return ImportResult.Failure(check.message)
+            is BackupCheck.Ok -> check.value
         }
-        courses.forEachIndexed { index, c ->
-            val err = validateCourseJson(index, c)
-            if (err != null) return ImportResult.Failure(err)
-        }
-        // 成绩在校验阶段一并挡下：课程写了一半才发现成绩段脏数据，等于留下半套备份
-        val scoreRecords = export.scores.map { it.toScoreRecord() }
-        scoreRecords.forEachIndexed { index, s ->
-            if (s.term.isBlank() || s.name.isBlank()) {
-                return ImportResult.Failure("第 ${index + 1} 条成绩缺少 term 或 name")
-            }
-        }
-        // 学业完成情况同样在校验阶段挡下（DESIGN §4.29）：缺维度或课程名的行一律整体拒绝
-        val scholarGroups = export.scholarGroups.map { it.toScholarGroup() }
-        val scholarCourses = export.scholarCourses.map { it.toScholarCourse() }
-        scholarGroups.forEachIndexed { index, g ->
-            if (g.dimension.isBlank() || g.name.isBlank()) {
-                return ImportResult.Failure("第 ${index + 1} 条学业分组缺少 dimension 或 name")
-            }
-        }
-        scholarCourses.forEachIndexed { index, c ->
-            if (c.dimension.isBlank() || c.name.isBlank()) {
-                return ImportResult.Failure("第 ${index + 1} 条学业课程缺少 dimension 或 name")
-            }
-        }
-        // 培养方案段同样在校验阶段挡下（DESIGN §4.41）：缺课程名的行一律整体拒绝
-        val backupCurriculum = export.curriculumCourses.map { it.toCurriculumCourse() }
-        backupCurriculum.forEachIndexed { index, c ->
-            if (c.name.isBlank()) {
-                return ImportResult.Failure("第 ${index + 1} 条培养方案课程缺少 name")
-            }
-        }
-        // 教材段同样先全量校验（DESIGN §4.31）：缺学期/课程名/书名的行没意义，一律整体拒绝
-        val backupTextbooks = export.textbooks.map { it.toTextbook() }
-        backupTextbooks.forEachIndexed { index, b ->
-            if (b.term.isBlank() || b.courseName.isBlank() || b.title.isBlank()) {
-                return ImportResult.Failure("第 ${index + 1} 条教材缺少 term、courseName 或 title")
-            }
-        }
-        // 学期/作息段同样先全量校验（DESIGN §4.3）：宁可整体拒绝，不留「课程对了时间错」的半套
-        val backupSemester = export.semester?.let { s ->
-            val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
-                ?: return ImportResult.Failure("备份里的开学日期格式不正确：${s.startDate}")
-            SemesterConfig(date.toString(), s.totalWeeks.coerceIn(1, 30), s.firstDayOfWeek)
-        }
-        val backupSlots = export.timeSlots.map { TimeSlot(it.number, it.startTime, it.endTime) }
-        if (backupSlots.isNotEmpty()) {
-            TimeSlotRules.validate(backupSlots)?.let {
-                return ImportResult.Failure("备份里的作息表有问题：$it")
-            }
-        }
-        val domain = courses.map { it.toDomain() }
+        val domain = validated.courses
+        val scoreRecords = validated.scores
+        val scholarGroups = validated.scholarGroups
+        val scholarCourses = validated.scholarCourses
+        val backupCurriculum = validated.curriculum
+        val backupTextbooks = validated.textbooks
+        val backupSemester = validated.semester
+        val backupSlots = validated.slots
         val restoredScores = if (scoreRecords.isEmpty()) {
             0
         } else {
@@ -2078,65 +2118,36 @@ class ScheduleRepository(
         } catch (e: Exception) {
             return ImportPreview.Error("JSON 解析失败：${e.message ?: "格式不正确"}")
         }
-        if (export.courses.isEmpty()) {
-            return ImportPreview.Error("文件中没有课程（courses 为空）")
-        }
-        export.courses.forEachIndexed { index, c ->
-            validateCourseJson(index, c)?.let { return ImportPreview.Error(it) }
-        }
-        val domain = export.courses.map { it.toDomain() }
-        val scores = export.scores.map { it.toScoreRecord() }
-        val scholarGroups = export.scholarGroups.map { it.toScholarGroup() }
-        val scholarCourses = export.scholarCourses.map { it.toScholarCourse() }
-        scholarGroups.forEachIndexed { index, g ->
-            if (g.dimension.isBlank() || g.name.isBlank()) {
-                return ImportPreview.Error("第 ${index + 1} 条学业分组缺少 dimension 或 name")
-            }
-        }
-        scholarCourses.forEachIndexed { index, c ->
-            if (c.dimension.isBlank() || c.name.isBlank()) {
-                return ImportPreview.Error("第 ${index + 1} 条学业课程缺少 dimension 或 name")
-            }
-        }
-        // 培养方案段同口径（DESIGN §4.41）：弹窗阶段就把坏备份挡下
-        val backupCurriculum = export.curriculumCourses.map { it.toCurriculumCourse() }
-        backupCurriculum.forEachIndexed { index, c ->
-            if (c.name.isBlank()) {
-                return ImportPreview.Error("第 ${index + 1} 条培养方案课程缺少 name")
-            }
-        }
-        // 学期/作息段也先验一遍（与 importJson 同口径）：弹窗阶段就把坏备份挡下
-        val backupSemester = export.semester?.let { s ->
-            val date = runCatching { ScheduleCalculator.parseDate(s.startDate) }.getOrNull()
-                ?: return ImportPreview.Error("备份里的开学日期格式不正确：${s.startDate}")
-            SemesterConfig(date.toString(), s.totalWeeks.coerceIn(1, 30), s.firstDayOfWeek)
-        }
-        val backupSlots = export.timeSlots.map { TimeSlot(it.number, it.startTime, it.endTime) }
-        if (backupSlots.isNotEmpty()) {
-            TimeSlotRules.validate(backupSlots)?.let {
-                return ImportPreview.Error("备份里的作息表有问题：$it")
-            }
+        val validated = when (val check = validateBackup(export)) {
+            is BackupCheck.Error -> return ImportPreview.Error(check.message)
+            is BackupCheck.Ok -> check.value
         }
         return ImportPreview.Ok(
-            courses = domain,
-            sample = domain.take(5).joinToString { it.name },
+            courses = validated.courses,
+            sample = validated.courses.take(5).joinToString { it.name },
             term = export.term?.takeIf { it.isNotBlank() },
-            scores = scores,
-            scholarCourseCount = scholarCourses.size,
-            curriculumCourseCount = backupCurriculum.size,
-            semester = backupSemester,
-            slotCount = backupSlots.size,
+            scores = validated.scores,
+            scholarCourseCount = validated.scholarCourses.size,
+            curriculumCourseCount = validated.curriculum.size,
+            textbookCount = validated.textbooks.size,
+            semester = validated.semester,
+            slotCount = validated.slots.size,
         )
     }
 
     /** 给定目标课表计算覆盖/合并统计（弹窗里随目标切换刷新）。 */
     suspend fun importStatsFor(courses: List<Course>, timetableId: Long): ImportStats {
         val existing = getTimetableCourses(timetableId)
-        val keys = existing.map { it.mergeKey() }.toHashSet()
-        return ImportStats(
-            existing = existing.size,
-            newCount = courses.count { it.mergeKey() !in keys },
-        )
+        // 与 mergeCourses 同一判重口径：同课块 + 周次交集，否则弹窗会少算新增块
+        val accepted = existing.toMutableList()
+        var newCount = 0
+        for (c in courses) {
+            if (ScheduleDiff.duplicateOf(c, accepted) == null) {
+                accepted += c
+                newCount++
+            }
+        }
+        return ImportStats(existing = existing.size, newCount = newCount)
     }
 
 }
@@ -2175,6 +2186,8 @@ sealed interface ImportPreview {
         val scholarCourseCount: Int = 0,
         /** 文件携带的培养方案课程条数（DESIGN §4.41）：导入时整体替换；0 = 没带。 */
         val curriculumCourseCount: Int = 0,
+        /** 文件携带的教材条数（DESIGN §4.31）：导入时整体替换；0 = 没带。 */
+        val textbookCount: Int = 0,
         /** 文件带的学期配置（null = 没有）；随预览展示到确认弹窗注记。 */
         val semester: SemesterConfig? = null,
         /** 文件带的作息条数（0 = 没有）。 */

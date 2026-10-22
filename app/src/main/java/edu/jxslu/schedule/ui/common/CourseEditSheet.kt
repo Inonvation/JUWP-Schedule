@@ -41,6 +41,7 @@ fun CourseEditSheet(
     }
     var remark by remember(course) { mutableStateOf(course?.remark ?: "") }
     var nameError by remember(course) { mutableStateOf<String?>(null) }
+    var weeksError by remember(course) { mutableStateOf<String?>(null) }
     val haptics = rememberAppHaptics()
 
     // 键盘弹起时弹层「缓慢爬升」的根因（2026-10-07 用户报）：裸 ModalBottomSheet 默认
@@ -83,10 +84,14 @@ fun CourseEditSheet(
                 endSection = end.toIntOrNull() ?: 1,
                 onEnd = { end = it.toString() },
                 weeksText = weeks,
-                onWeeks = { weeks = it },
+                onWeeks = {
+                    weeks = it
+                    if (weeksError != null) weeksError = null
+                },
                 remark = remark,
                 onRemark = { remark = it },
                 nameError = nameError,
+                weeksError = weeksError,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -111,7 +116,11 @@ fun CourseEditSheet(
                         val d = (day.toIntOrNull() ?: 1).coerceIn(1, 7)
                         val s = (start.toIntOrNull() ?: 1).coerceIn(1, 11)
                         val e = (end.toIntOrNull() ?: s).coerceIn(s, 11)
-                        val w = parseWeeksInput(weeks).ifEmpty { setOf(1) }
+                        val w = parseWeeksInput(weeks)
+                        if (w.isEmpty()) {
+                            weeksError = "请填写有效周次，如 1-16 或 1,3,5"
+                            return@TextButton
+                        }
                         onSave(
                             Course(
                                 id = course?.id ?: 0,

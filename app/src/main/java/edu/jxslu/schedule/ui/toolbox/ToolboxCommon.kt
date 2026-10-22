@@ -1,7 +1,6 @@
 package edu.jxslu.schedule.ui.toolbox
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -47,6 +46,7 @@ import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.GallerySaveResult
 import edu.jxslu.schedule.ui.common.ImageViewerDialog
 import edu.jxslu.schedule.ui.common.saveBitmapToGallery
+import edu.jxslu.schedule.ui.common.shareFile
 import java.io.ByteArrayOutputStream
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -94,13 +94,7 @@ object ToolboxExport {
                 store.uriOf(store.save(bytes, fileName))
             }.getOrNull()
         } ?: return "分享失败：无法写出图片"
-        val send = Intent(Intent.ACTION_SEND)
-            .setType("image/jpeg")
-            .putExtra(Intent.EXTRA_STREAM, uri)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        val ok = runCatching {
-            context.startActivity(Intent.createChooser(send, "分享图片"))
-        }.isSuccess
+        val ok = shareFile(context, uri, "image/jpeg", "分享图片")
         return if (ok) null else "没有可用的分享目标"
     }
 }

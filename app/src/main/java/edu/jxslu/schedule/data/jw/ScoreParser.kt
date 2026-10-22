@@ -1,11 +1,7 @@
 package edu.jxslu.schedule.data.jw
 
 import edu.jxslu.schedule.domain.ScoreRecord
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * 课程成绩抓取（DESIGN §4.15）。
@@ -15,8 +11,6 @@ import kotlinx.serialization.json.jsonPrimitive
  * `kksj` 传空 = 全部学期。分页 `pageNum/pageSize`；`count` 超过单页时由调用方翻页。
  */
 object ScoreParser {
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     const val PAGE_SIZE = 200
 
@@ -68,54 +62,29 @@ object ScoreParser {
 
     /** 解析一页接口 JSON；失败抛 [IllegalStateException]（由 UI 转成可读提示）。 */
     fun parseFetchJson(jsonText: String): ScorePage {
-        if (jsonText.startsWith("ERR:")) {
-            throw IllegalStateException("请求失败：${jsonText.removePrefix("ERR:")}")
-        }
-        if ("系统功能暂未开放" in jsonText) {
-            throw IllegalStateException("教务成绩查询功能暂未开放（no-open 页）")
-        }
-        val root = try {
-            json.parseToJsonElement(jsonText).jsonObject
-        } catch (e: Exception) {
-            throw IllegalStateException("返回的不是有效 JSON（可能未登录教务）：${e.message}")
-        }
-        val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
-        if (code != 0) {
-            throw IllegalStateException("教务返回 code=$code，msg=${root["msg"]?.jsonPrimitive?.content ?: ""}")
-        }
-        val count = root["count"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        val rows = root["data"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
-        return ScorePage(count = count, records = rows.mapNotNull { rowToRecord(it) })
+        val root = JwLayuiJson.parseRoot(jsonText, "成绩查询")
+        return ScorePage(count = root.count, records = root.rows.mapNotNull { rowToRecord(it) })
     }
 
     private fun rowToRecord(row: JsonObject): ScoreRecord? {
-        val name = row.str("kc_mc")
+        val name = row.strOrNull("kc_mc")
         if (name.isNullOrBlank()) return null
         return ScoreRecord(
-            term = row.str("xnxqid").orEmpty(),
-            courseNo = row.str("kch").orEmpty(),
+            term = row.strOrNull("xnxqid").orEmpty(),
+            courseNo = row.strOrNull("kch").orEmpty(),
             name = name,
-            unit = row.str("ksdw").orEmpty(),
-            credit = row.dbl("xf") ?: 0.0,
-            hours = row.dbl("zxs") ?: 0.0,
-            examForm = row.str("ksfs").orEmpty(),
-            courseAttr = row.str("kcsx").orEmpty(),
-            category = row.str("kcxzmc").orEmpty(),
-            score = row.dbl("zcj"),
-            scoreStr = row.str("zcjstr").orEmpty(),
-            gradePoint = row.dbl("jd"),
-            status = row.str("ksxz").orEmpty(),
-            pendingReview = row.str("kz") == "1",
+            unit = row.strOrNull("ksdw").orEmpty(),
+            credit = row.doubleOrNull("xf") ?: 0.0,
+            hours = row.doubleOrNull("zxs") ?: 0.0,
+            examForm = row.strOrNull("ksfs").orEmpty(),
+            courseAttr = row.strOrNull("kcsx").orEmpty(),
+            category = row.strOrNull("kcxzmc").orEmpty(),
+            score = row.doubleOrNull("zcj"),
+            scoreStr = row.strOrNull("zcjstr").orEmpty(),
+            gradePoint = row.doubleOrNull("jd"),
+            status = row.strOrNull("ksxz").orEmpty(),
+            pendingReview = row.strOrNull("kz") == "1",
         )
-    }
-
-    private fun JsonObject.str(key: String): String? =
-        this[key]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
-
-    private fun JsonObject.dbl(key: String): Double? = try {
-        this[key]?.jsonPrimitive?.content?.toDoubleOrNull()
-    } catch (_: Exception) {
-        null
     }
 
     /**

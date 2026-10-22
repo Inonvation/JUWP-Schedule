@@ -208,8 +208,7 @@ private fun buildRows(
     changes: Map<String, ExamChangeDetector.Kind>,
 ): List<ExamRow> {
     val today = LocalDate.now()
-    val dated = snapshot.exams.map { row ->
-        val entry = ExamSnapshotStore.rowToEntry(row)
+    val dated = snapshot.exams.map { entry ->
         Dated(entry, parseExamDate(entry.date))
     }
     val upcoming = dated

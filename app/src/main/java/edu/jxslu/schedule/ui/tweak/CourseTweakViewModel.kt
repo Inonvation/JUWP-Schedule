@@ -196,7 +196,7 @@ class CourseTweakViewModel(
         val day = date.dayOfWeek.value
         val semester = config.semester
         val week = semester?.let { ScheduleCalculator.weekNumberOf(it, date) }
-            ?.takeIf { it in 1..semester.totalWeeks }
+            ?.takeIf { ScheduleCalculator.isWeekInTerm(semester, it) }
         val courses = if (week == null) {
             emptyList()
         } else {

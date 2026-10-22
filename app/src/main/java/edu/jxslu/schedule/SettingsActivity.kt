@@ -6,8 +6,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import edu.jxslu.schedule.ui.common.LaunchGate
 import edu.jxslu.schedule.ui.me.SettingsScreen
-import edu.jxslu.schedule.ui.theme.JuwTheme
 
 /**
  * 设置（2026-10-20）：**独立窗口**，不再是主窗口里的隐藏路由。
@@ -27,10 +27,9 @@ class SettingsActivity : ComponentActivity() {
         enableEdgeToEdge()
         enablePredictiveBackTransitions()
         setContent {
-            JuwTheme {
-                // 预报名仪表板（DESIGN §4.45，2026-10-21）：设置是独立窗口，也要能弹
-                // ——执行期间用户停在设置页时同样看得见进度与操作。
-                edu.jxslu.schedule.ui.wenqu.WenquPreregDashboardHost()
+            // 主题/字体缩放走全 App 同一个根（JuwRoot 自带预报名仪表板），
+            // 否则设置窗口会绕过深浅色与固定字号（2026-10-22 审计）
+            JuwRoot {
                 SettingsScreen(
                     onOpenAppearanceSettings = {
                         SubpageActivity.start(this, SubpageScreen.APPEARANCE_SETTINGS)
@@ -66,6 +65,7 @@ class SettingsActivity : ComponentActivity() {
 
     companion object {
         fun start(context: Context) {
+            if (!LaunchGate.allow()) return
             context.startActivity(Intent(context, SettingsActivity::class.java))
         }
     }

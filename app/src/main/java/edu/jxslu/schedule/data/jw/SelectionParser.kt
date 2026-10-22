@@ -3,12 +3,10 @@ package edu.jxslu.schedule.data.jw
 import edu.jxslu.schedule.domain.CourseSelection
 import edu.jxslu.schedule.domain.SelectionRound
 import edu.jxslu.schedule.domain.SelectionRounds
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -26,8 +24,6 @@ import kotlinx.serialization.json.jsonPrimitive
  * 教务页面自己调用。
  */
 object SelectionParser {
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     /** 单页行数；`count` 超过它由调用方翻页（同考试/成绩口径）。 */
     const val PAGE_SIZE = 200
@@ -59,29 +55,27 @@ object SelectionParser {
      * 未登录时教务返回的是 HTML 登录页，这里会落到「不是有效 JSON」分支。
      */
     fun parseFetchJson(jsonText: String): Page {
-        val root = parseLayuiRoot(jsonText, "选课结果")
-        val count = root["count"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        val rows = root["data"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
-        return Page(count = count, rows = rows.mapNotNull { rowToSelection(it) })
+        val root = JwLayuiJson.parseRoot(jsonText, "选课结果")
+        return Page(count = root.count, rows = root.rows.mapNotNull { rowToSelection(it) })
     }
 
     private fun rowToSelection(row: JsonObject): CourseSelection? {
-        val name = row.str("kc_mc") ?: return null
+        val name = row.strOrNull("kc_mc") ?: return null
         return CourseSelection(
-            term = row.str("xnxqid").orEmpty(),
-            courseNo = row.str("kch").orEmpty(),
+            term = row.strOrNull("xnxqid").orEmpty(),
+            courseNo = row.strOrNull("kch").orEmpty(),
             name = name,
-            teacher = row.str("xm").orEmpty(),
-            credit = row.dbl("xf") ?: 0.0,
-            hours = row.dbl("zxs") ?: 0.0,
-            attribute = row.str("kclb_mc").orEmpty(),
-            category = row.str("kcxz_mc").orEmpty(),
-            className = row.str("ktmc").orEmpty(),
-            college = row.str("yx_mc").orEmpty(),
+            teacher = row.strOrNull("xm").orEmpty(),
+            credit = row.doubleOrNull("xf") ?: 0.0,
+            hours = row.doubleOrNull("zxs") ?: 0.0,
+            attribute = row.strOrNull("kclb_mc").orEmpty(),
+            category = row.strOrNull("kcxz_mc").orEmpty(),
+            className = row.strOrNull("ktmc").orEmpty(),
+            college = row.strOrNull("yx_mc").orEmpty(),
             timeText = row.multiline("sksj"),
             placeText = row.multiline("skdd"),
-            status = row.str("shzt").orEmpty(),
-            remark = row.str("yy").orEmpty(),
+            status = row.strOrNull("shzt").orEmpty(),
+            remark = row.strOrNull("yy").orEmpty(),
         )
     }
 
@@ -101,20 +95,18 @@ object SelectionParser {
      * 缺 `jx0502zbid`（进选课的键）或名称的行直接丢弃——没有它这行不可操作。
      */
     fun parseRounds(jsonText: String): RoundsPage {
-        val root = parseLayuiRoot(jsonText, "选课轮次")
-        val count = root["count"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        val rows = root["data"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
-        return RoundsPage(count = count, rounds = rows.mapNotNull { rowToRound(it) })
+        val root = JwLayuiJson.parseRoot(jsonText, "选课轮次")
+        return RoundsPage(count = root.count, rounds = root.rows.mapNotNull { rowToRound(it) })
     }
 
     private fun rowToRound(row: JsonObject): SelectionRound? {
-        val id = row.str("jx0502zbid") ?: return null
-        val name = row.str("xklc_mc") ?: return null
-        val timeText = row.str("xksj").orEmpty()
+        val id = row.strOrNull("jx0502zbid") ?: return null
+        val name = row.strOrNull("xklc_mc") ?: return null
+        val timeText = row.strOrNull("xksj").orEmpty()
         val (startAt, endAt) = SelectionRounds.parseTimeRange(timeText)
         return SelectionRound(
             id = id,
-            term = row.str("xqmc").orEmpty(),
+            term = row.strOrNull("xqmc").orEmpty(),
             name = name,
             timeText = timeText,
             startAt = startAt,
@@ -130,17 +122,8 @@ object SelectionParser {
      * **不猜学期**（猜错会把别的学期的记录当成本学期的）。这里额外先定位 `select#xnxqid`：
      * 该页有两个 select（搜索表单里还有别的），按 id 收窄比全文扫 `<option selected>` 稳。
      */
-    fun shellTerm(html: String): String? {
-        val selectBody = SELECT_RE.find(html)?.groupValues?.getOrNull(1) ?: return null
-        for (option in OPTION_RE.findAll(selectBody)) {
-            val attrs = option.groupValues[1]
-            if (!attrs.contains("selected", ignoreCase = true)) continue
-            // value 属性优先；教务下拉的 value 与文本相同，文本兜底
-            valueOf(attrs)?.let { return it }
-            option.groupValues[2].trim().takeIf { it.isNotEmpty() }?.let { return it }
-        }
-        return null
-    }
+    fun shellTerm(html: String): String? =
+        JwHtml.selectedTerm(html, selectId = "xnxqid")
 
     /**
      * 壳页学期下拉的全量选项（value 优先、文本兜底，保序去重）。
@@ -161,54 +144,12 @@ object SelectionParser {
     // 内部
     // ------------------------------------------------------------------
 
-    /**
-     * layui JSON 的三道检查（照 `ScoreParser` 的口径）：
-     * 注入/OkHttp 失败前缀、no-open 页、非 JSON（未登录时是 HTML 登录页）、code != 0。
-     */
-    private fun parseLayuiRoot(jsonText: String, what: String): JsonObject {
-        if (jsonText.startsWith("ERR:")) {
-            throw IllegalStateException("请求失败：${jsonText.removePrefix("ERR:")}")
-        }
-        if ("系统功能暂未开放" in jsonText) {
-            throw IllegalStateException("教务${what}功能暂未开放（no-open 页）")
-        }
-        if ("用户没有登录" in jsonText) {
-            throw IllegalStateException("教务会话已失效，请重新登录")
-        }
-        val root = try {
-            json.parseToJsonElement(jsonText).jsonObject
-        } catch (e: Exception) {
-            throw IllegalStateException("返回的不是有效 JSON（可能未登录教务）：${e.message}")
-        }
-        val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
-        if (code != 0) {
-            throw IllegalStateException(
-                "教务返回 code=$code，msg=${root["msg"]?.jsonPrimitive?.content ?: ""}",
-            )
-        }
-        return root
-    }
-
-    private fun JsonObject.str(key: String): String? {
-        // JsonNull 要走这里挡掉：它的 `content` 是字符串 "null"，不挡就会把
-        // 「教务没给」渲染成界面上的 "null"（实测 shzt/yy/xnxqid 整列 null）
-        val value = this[key] ?: return null
-        if (value is JsonNull) return null
-        return value.jsonPrimitive.content.trim().takeIf { it.isNotEmpty() }
-    }
-
-    private fun JsonObject.dbl(key: String): Double? = try {
-        (this[key] as? JsonPrimitive)?.content?.toDoubleOrNull()
-    } catch (_: Exception) {
-        null
-    }
-
     /** 教务多行字段用 `<br>` 分隔（如「星期四 0708节<br>星期五 0708节」）：转 `\n` 并清掉残余标签。 */
     private fun JsonObject.multiline(key: String): String {
-        val value = this[key] ?: return ""
-        if (value is JsonNull) return ""
-        val raw = value.jsonPrimitive.content
-        return raw
+        val raw = this[key]
+        if (raw is JsonNull) return ""
+        val text = (raw as? JsonPrimitive)?.contentOrNull ?: return ""
+        return text
             .replace(BR_RE, "\n")
             .replace(TAG_RE, "")
             .trim()

@@ -238,7 +238,7 @@ class WeekViewModel(
             val semester = repo.semester.first()
             if (semester != null) {
                 val week = ScheduleCalculator.weekNumberOf(semester, todayProvider())
-                if (week in 1..semester.totalWeeks) {
+                if (ScheduleCalculator.isWeekInTerm(semester, week)) {
                     weekFlow.value = week
                 }
             }

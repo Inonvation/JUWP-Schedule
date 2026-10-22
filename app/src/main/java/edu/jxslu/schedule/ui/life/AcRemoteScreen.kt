@@ -61,7 +61,7 @@ import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.Power
 
 /**
- * 生活页 → 校园服务 → 空调遥控（DESIGN §3.31 / §4.48）。
+ * 侧栏「空调遥控」入口（DESIGN §3.31 / §4.48）。
  *
  * 页面结构（自上而下，全走描边卡）：主控卡（电源圆钮 · 状态行 · 温度 ±）→
  * 模式 / 风速卡 → 附加功能卡（摆风 / 强劲 / ECO 切换芯片）→ 底部说明。

@@ -486,14 +486,5 @@ internal fun EmptyScheduleHint(
     }
 }
 
-internal fun weekDate(semester: SemesterConfig?, week: Int, day: Int): LocalDate? {
-    if (semester == null || week < 1 || day !in 1..7) return null
-    return runCatching {
-        val startMonday = ScheduleCalculator.startOfWeek(
-            ScheduleCalculator.parseDate(semester.startDate),
-        )
-        startMonday
-            .plusWeeks((week - 1).toLong())
-            .plusDays((day - 1).toLong())
-    }.getOrNull()
-}
+internal fun weekDate(semester: SemesterConfig?, week: Int, day: Int): LocalDate? =
+    ScheduleCalculator.dateOf(semester, week, day)

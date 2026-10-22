@@ -3,7 +3,6 @@ package edu.jxslu.schedule.domain
 import edu.jxslu.schedule.data.DefaultData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,15 +38,31 @@ class ScheduleCalculatorTest {
     }
 
     @Test
-    fun isInTerm() {
-        assertTrue(ScheduleCalculator.isInTerm(config, LocalDate.parse("2026-09-20")))
-        assertFalse(ScheduleCalculator.isInTerm(config, LocalDate.parse("2026-09-06")))
-        assertFalse(
-            ScheduleCalculator.isInTerm(
-                config,
-                LocalDate.parse("2026-09-07").plusWeeks(20),
-            ),
-        )
+    fun isWeekInTerm() {
+        assertTrue(ScheduleCalculator.isWeekInTerm(config, 2))
+        assertFalse(ScheduleCalculator.isWeekInTerm(config, 0))
+        assertFalse(ScheduleCalculator.isWeekInTerm(config, config.totalWeeks + 1))
+    }
+
+    @Test
+    fun dateOfMapsWeekDayToCalendarDate() {
+        assertEquals(LocalDate.parse("2026-09-07"), ScheduleCalculator.dateOf(config, 1, 1))
+        assertEquals(LocalDate.parse("2026-09-13"), ScheduleCalculator.dateOf(config, 1, 7))
+        assertEquals(LocalDate.parse("2026-09-14"), ScheduleCalculator.dateOf(config, 2, 1))
+        assertEquals(LocalDate.parse("2026-10-14"), ScheduleCalculator.dateOf(config, 6, 3))
+        // 非法周次 / 星期 / 配置都返回 null，调用方据此不画日期
+        assertNull(ScheduleCalculator.dateOf(config, 0, 1))
+        assertNull(ScheduleCalculator.dateOf(config, 1, 0))
+        assertNull(ScheduleCalculator.dateOf(config, 1, 8))
+        assertNull(ScheduleCalculator.dateOf(null, 1, 1))
+        assertNull(ScheduleCalculator.dateOf(SemesterConfig(startDate = "not-a-date", totalWeeks = 20), 1, 1))
+    }
+
+    @Test
+    fun dateOfWithPrecomputedMondaySkipsParsing() {
+        val monday = LocalDate.parse("2026-09-07")
+        assertEquals(LocalDate.parse("2026-09-16"), ScheduleCalculator.dateOf(monday, 2, 3))
+        assertNull(ScheduleCalculator.dateOf(monday, -1, 3))
     }
 
     @Test
@@ -59,21 +74,6 @@ class ScheduleCalculatorTest {
         val week2 = ScheduleCalculator.coursesInWeek(listOf(c1, c2), 2)
         assertEquals(1, week2.size)
         assertEquals("英语", week2.first().name)
-    }
-
-    /** 节次判定按小节 1–11；课间与午休不在任何一节内 */
-    @Test
-    fun currentSection() {
-        assertEquals(1, ScheduleCalculator.currentSection(slots, LocalTimeLike(8, 30)))
-        assertEquals(2, ScheduleCalculator.currentSection(slots, LocalTimeLike(9, 50)))
-        assertEquals(5, ScheduleCalculator.currentSection(slots, LocalTimeLike(14, 0)))
-        // 10:00 落在第 2 节（09:55 结束）与第 3 节（10:15 开始）之间
-        assertNull(ScheduleCalculator.currentSection(slots, LocalTimeLike(10, 0)))
-        // 午休
-        assertNull(ScheduleCalculator.currentSection(slots, LocalTimeLike(12, 0)))
-        // 晚自习段
-        assertEquals(11, ScheduleCalculator.currentSection(slots, LocalTimeLike(21, 0)))
-        assertNull(ScheduleCalculator.currentSection(slots, LocalTimeLike(21, 30)))
     }
 
     @Test
@@ -119,35 +119,6 @@ class ScheduleCalculatorTest {
         assertNull(ScheduleCalculator.courseStartMinutes(slots, orphan))
         assertNull(ScheduleCalculator.courseEndMinutes(slots, orphan))
         assertEquals(CoursePhase.Unknown, ScheduleCalculator.coursePhase(slots, orphan, LocalTimeLike(9, 0)))
-    }
-
-    @Test
-    fun nextCourse() {
-        val c1 = Course(1, "早课", "", "", 1, 1, 1, setOf(1))
-        val c2 = Course(2, "午课", "", "", 1, 3, 3, setOf(1))
-        val next = ScheduleCalculator.nextCourse(listOf(c1, c2), slots, 1, 1, LocalTimeLike(8, 50))
-        assertNotNull(next)
-        assertEquals("午课", next!!.name)
-    }
-
-    /** 自定义时间的课按有效时刻参与 nextCourse：18:00 那门不该在 08:00 时被当成「下一节」。 */
-    @Test
-    fun nextCourse_respectsCustomStartTime() {
-        val early = Course(1, "早课", "", "", 1, 1, 1, setOf(1)) // 08:30
-        val custom = Course(
-            2, "晚课", "", "", 1, 1, 1, setOf(1),
-            isCustomTime = true, customStartTime = "18:00", customEndTime = "20:00",
-        )
-        // 07:00：下一节是 08:30 的早课，而不是 startSection 同为 1 但实际 18:00 的自定义课
-        assertEquals(
-            "早课",
-            ScheduleCalculator.nextCourse(listOf(custom, early), slots, 1, 1, LocalTimeLike(7, 0))?.name,
-        )
-        // 09:00（早课已开始）：下一节是 18:00 的自定义课
-        assertEquals(
-            "晚课",
-            ScheduleCalculator.nextCourse(listOf(custom, early), slots, 1, 1, LocalTimeLike(9, 0))?.name,
-        )
     }
 
     /**

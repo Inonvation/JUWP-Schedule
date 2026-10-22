@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.jxslu.schedule.domain.Course
 import edu.jxslu.schedule.domain.CourseKind
+import edu.jxslu.schedule.domain.MONTH_DAY_FORMAT
+import edu.jxslu.schedule.domain.WeeksText
 import edu.jxslu.schedule.domain.compactPosition
 import edu.jxslu.schedule.domain.dayLabel
 import me.rerere.hugeicons.HugeIcons
@@ -433,6 +435,7 @@ fun CourseEditorFields(
     onRemark: (String) -> Unit,
     maxSection: Int = 11,
     nameError: String? = null,
+    weeksError: String? = null,
 ) {
     var dayPickerOpen by remember { mutableStateOf(false) }
     var startPickerOpen by remember { mutableStateOf(false) }
@@ -496,6 +499,8 @@ fun CourseEditorFields(
         value = weeksText,
         onValueChange = onWeeks,
         label = { Text("周次，如 1-16 或 1,3,5") },
+        isError = weeksError != null,
+        supportingText = { weeksError?.let { Text(it) } },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
     )
@@ -594,23 +599,18 @@ private fun SelectorField(
 fun oddWeeks(): String = (1..16 step 2).joinToString(",")
 fun evenWeeks(): String = (2..16 step 2).joinToString(",")
 
-fun parseWeeksInput(text: String): Set<Int> {
-    val result = mutableSetOf<Int>()
-    for (part in text.split(',', '，')) {
-        val p = part.trim()
-        if (p.isEmpty()) continue
-        val range = p.split('-', '—', '~')
-        if (range.size == 2) {
-            val a = range[0].trim().toIntOrNull()
-            val b = range[1].trim().toIntOrNull()
-            if (a != null && b != null && a in 1..40 && b in a..40) {
-                result += (a..b)
-            }
-        } else {
-            p.toIntOrNull()?.let { if (it in 1..40) result += it }
-        }
-    }
-    return result
-}
+fun parseWeeksInput(text: String): Set<Int> = WeeksText.parse(text)
 
-fun weeksToInput(weeks: Set<Int>): String = weeks.sorted().joinToString(",")
+fun weeksToInput(weeks: Set<Int>): String = WeeksText.format(weeks)
+
+/** 笔记/作业课程库的课程色：同名课程取当前课表配色，课表里没有就给中性色。 */
+@Composable
+fun courseTint(courses: List<Course>, courseName: String): Color =
+    courses.firstOrNull { it.name == courseName }?.let { courseColor(it.colorIndex) }
+        ?: MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+
+/** 时间戳 → `9月21日`（课程库「最近更新」文案口径）。 */
+fun epochMonthDay(millis: Long): String =
+    MONTH_DAY_FORMAT.format(
+        java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
+    )

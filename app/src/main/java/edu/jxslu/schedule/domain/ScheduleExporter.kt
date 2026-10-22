@@ -49,9 +49,8 @@ object ScheduleExporter {
         }.getOrNull() ?: return Expansion()
         val plan = ScheduleOverrides.plan(overrides, semester)
 
-        fun dateOf(week: Int, day: Int) = termStart
-            .plusWeeks((week - 1).toLong())
-            .plusDays((day - 1).toLong())
+        fun dateOf(week: Int, day: Int): LocalDate? =
+            ScheduleCalculator.dateOf(termStart, week, day)
 
         fun eventOf(course: Course, date: LocalDate, startMinutes: Int, endMinutes: Int) =
             CourseEvent(
@@ -75,14 +74,14 @@ object ScheduleExporter {
                     if (week < 1 || week > semester.totalWeeks) continue
                     // 被覆盖的槽位不按常规导出：放假不导出、补课那天由下面那一路单独展开
                     if (plan.containsKey(ScheduleOverrides.Slot(week, course.day))) continue
-                    add(eventOf(course, dateOf(week, course.day), startMinutes, endMinutes))
+                    add(eventOf(course, dateOf(week, course.day) ?: continue, startMinutes, endMinutes))
                 }
             }
             // 调休补课（§4.40）：把源槽位的课导到目标日期上
             plan.forEach { (slot, directive) ->
                 if (directive !is ScheduleOverrides.Directive.Follow) return@forEach
                 if (slot.week < 1 || slot.week > semester.totalWeeks) return@forEach
-                val date = dateOf(slot.week, slot.day)
+                val date = dateOf(slot.week, slot.day) ?: return@forEach
                 for (course in courses) {
                     if (course.day != directive.weekday || directive.week !in course.weeks) continue
                     val startMinutes = ScheduleCalculator.courseStartMinutes(slots, course) ?: continue

@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.SkeletonBox
+import edu.jxslu.schedule.ui.common.SkeletonLine
 import edu.jxslu.schedule.ui.common.lineHeightDp
 
 /**
@@ -80,29 +81,3 @@ private fun WenquCardSkeleton() {
         SkeletonLine(style = MaterialTheme.typography.bodySmall, widthFraction = 0.5f)
     }
 }
-
-/**
- * 一根骨架条：包在**整行行高**的盒子里垂直居中，条高 = 行高 × [SKELETON_LINE_RATIO]。
- * 实心条按整行行高画的话，上下两条会贴死成一块（2026-09-26 用户报过）。
- */
-@Composable
-private fun SkeletonLine(
-    style: TextStyle,
-    widthFraction: Float = 1f,
-    width: Dp? = null,
-) {
-    val line = lineHeightDp(style)
-    Box(
-        modifier = Modifier.height(line),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        val box = Modifier.height(line * SKELETON_LINE_RATIO)
-        SkeletonBox(
-            modifier = if (width != null) box.width(width) else box.fillMaxWidth(widthFraction),
-            shape = RoundedCornerShape(4.dp),
-        )
-    }
-}
-
-/** 骨架条占行盒高的比例：一行文字的字形大约只画行盒中间的六成。 */
-private const val SKELETON_LINE_RATIO = 0.62f

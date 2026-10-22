@@ -29,7 +29,7 @@ class PowerUsageTest {
         text: String,
         kwh: Double,
         price: Double = 0.62,
-        room: String = "9A101",
+        room: String = "9Z999",
     ) = PowerReading(epochMs = at(text), remainKwh = kwh, priceYuan = price, roomId = room)
 
     private fun recharge(text: String, amountFen: Long) =
@@ -257,12 +257,12 @@ class PowerUsageTest {
     @Test
     fun `统计只看最新读数那个房间，换寝室从新房间重新开始`() {
         val readings = listOf(
-            reading("2026-09-01 09:00", 30.0, room = "9A101"),
-            reading("2026-09-02 09:00", 20.0, room = "9A101"),
-            reading("2026-09-20 09:00", 99.0, room = "1A101"),
+            reading("2026-09-01 09:00", 30.0, room = "9Z999"),
+            reading("2026-09-02 09:00", 20.0, room = "9Z999"),
+            reading("2026-09-20 09:00", 99.0, room = "1Z101"),
         )
         val kept = PowerUsage.readingsOfLatestRoom(readings)
-        assertEquals(listOf("1A101"), kept.map { it.roomId }.distinct())
+        assertEquals(listOf("1Z101"), kept.map { it.roomId }.distinct())
         assertEquals(1, kept.size)
         // 新房间只有一条读数，算不出用量，也不会把旧房间那条算进来
         val summary = PowerUsage.summarize(

@@ -5,27 +5,18 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 考试安排壳页学期解析（DESIGN §4.33）：缺省学期以教务为准，抽不到不猜。
+ * 考试安排壳页学期解析的**调用点**（DESIGN §4.33）：缺省学期以教务为准，抽不到不猜。
+ * value / 文本 / 格式校验等通用形态在 `JwHtmlTest`，这里只钉 `xnxqid` 收窄与兜底。
  */
 class ExamSyncTermFromShellTest {
 
     @Test
-    fun `从 value 属性抽出选中项`() {
+    fun `xnxqid 收窄：页面另有别的下拉时不串`() {
         val html = """
+            <select id="xqlb"><option selected>全部</option></select>
             <select id="xnxqid">
               <option value="2024-2025-2">2024-2025-2</option>
               <option value="2026-2027-1" selected="selected">2026-2027-1</option>
-            </select>
-        """.trimIndent()
-        assertEquals("2026-2027-1", ExamSync.termFromShell(html))
-    }
-
-    @Test
-    fun `没有 value 属性时取闭合标签前的文本`() {
-        val html = """
-            <select id="xnxqid">
-              <option>2025-2026-1</option>
-              <option selected>2026-2027-1</option>
             </select>
         """.trimIndent()
         assertEquals("2026-2027-1", ExamSync.termFromShell(html))

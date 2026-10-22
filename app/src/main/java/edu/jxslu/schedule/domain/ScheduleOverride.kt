@@ -103,23 +103,13 @@ object ScheduleOverrides {
     fun slotOf(semester: SemesterConfig, date: LocalDate): Slot? {
         val week = runCatching { ScheduleCalculator.weekNumberOf(semester, date) }.getOrNull()
             ?: return null
-        if (week !in 1..semester.totalWeeks) return null
+        if (!ScheduleCalculator.isWeekInTerm(semester, week)) return null
         return Slot(week, date.dayOfWeek.value)
     }
 
-    /**
-     * 槽位 → 日期（表头日期、覆盖文案用）。
-     * 与 `ui/week/WeekGrid.weekDate` 同一算法——那份是 UI 私有实现，这里给出 domain 版本，
-     * 新增调用方一律用这个，别再抄第三份。
-     */
-    fun dateOf(semester: SemesterConfig?, week: Int, day: Int): LocalDate? {
-        if (semester == null || week < 1 || day !in 1..7) return null
-        return runCatching {
-            ScheduleCalculator.startOfWeek(ScheduleCalculator.parseDate(semester.startDate))
-                .plusWeeks((week - 1).toLong())
-                .plusDays((day - 1).toLong())
-        }.getOrNull()
-    }
+    /** 槽位 → 日期（表头日期、覆盖文案用）。唯一实现在 [ScheduleCalculator.dateOf]。 */
+    fun dateOf(semester: SemesterConfig?, week: Int, day: Int): LocalDate? =
+        ScheduleCalculator.dateOf(semester, week, day)
 
     /** 某槽位是不是放假/停课。 */
     fun isSuspended(plan: Map<Slot, Directive>, week: Int, day: Int): Boolean =

@@ -191,29 +191,11 @@ class PowerPayTest {
     }
 
     @Test
-    fun signatureIsDeterministicAndUpperHex() {
-        val signed = PowerPaySign.signed(
-            mapOf("feeitemid" to "181", "tranamt" to "0.01", "paystep" to "0"),
-            timestamp = "20260923214712000",
-            nonce = "abc123xyz00",
-        )
+    fun delegatesToCampusPaySign() {
+        val signed = PowerPaySign.signed(mapOf("feeitemid" to "181"), timestamp = "T", nonce = "N")
+        assertEquals(edu.jxslu.schedule.domain.CampusPaySign.APP_ID, signed["APP_ID"])
         assertEquals(64, signed["SIGN"]!!.length)
         assertEquals(signed["SIGN"], PowerPaySign.signOf(signed))
-        // 空值不参与签名
-        val withBlank = PowerPaySign.signed(mapOf("a" to "1", "b" to ""), timestamp = "20260923214712000", nonce = "abc123xyz00")
-        assertEquals(
-            PowerPaySign.signOf(mapOf("a" to "1", "APP_ID" to "56321", "TIMESTAMP" to "20260923214712000",
-                "NONCE" to "abc123xyz00", "SIGN_TYPE" to "SHA256")),
-            withBlank["SIGN"],
-        )
-    }
-
-    @Test
-    fun timestampAndNonceFormats() {
-        val ts = PowerPaySign.buildTimestamp(1790171232000L)
-        assertEquals(17, ts.length)
-        assertTrue(ts.all { it.isDigit() })
-        assertEquals(11, PowerPaySign.buildNonce().length)
     }
 
     // ------------------------------------------------------------------
@@ -226,13 +208,13 @@ class PowerPayTest {
 
     /** 2026-09-29 官网真实订单的 third_party 原文（= getThirdData `map.data` 的 JSON）。 */
     private val thirdPartyJson =
-        "{\"campus\":\"江西水利电力大学\",\"tsmAbstract\":\"校区#江西水利电力大学;楼栋#13B;房间#13B309\"," +
+        "{\"campus\":\"江西水利电力大学\",\"tsmAbstract\":\"校区#江西水利电力大学;楼栋#9Z;房间#9Z999\"," +
             "\"campusid\":\"0\",\"yktmercacc\":\"1000001\",\"remark\":\"{\\\"当前剩余电量\\\":\\\"15.67\\\"}\"," +
-            "\"sroomid\":2887,\"building\":\"13B\",\"roomid\":\"14686\",\"room\":\"13B309\",\"buildingid\":\"79\"}"
+            "\"sroomid\":9999,\"building\":\"9Z\",\"roomid\":\"99999\",\"room\":\"9Z999\",\"buildingid\":\"0\"}"
 
-    /** 形状取自真实读数响应的读数（房间 13B309）。 */
+    /** 形状取自真实读数响应（房间号已换成合成值）。 */
     private val orderMeter = PowerMeter(
-        room = PowerRoom(campus = "江西水利电力大学", building = "13B", room = "13B309", roomId = "14686"),
+        room = PowerRoom(campus = "江西水利电力大学", building = "9Z", room = "9Z999", roomId = "99999"),
         fields = mapOf("当前剩余电量" to "15.67"),
         remain = 15.67,
         remainField = "当前剩余电量",
@@ -252,7 +234,7 @@ class PowerPayTest {
         assertEquals("0", form["paystep"])
         assertEquals("h5", form["synAccessSource"])
         // 与官方账单摘要行同格式（分隔符 - 与 ;）
-        assertEquals("校区-江西水利电力大学;楼栋-13B;房间-13B309", form["abstracts"])
+        assertEquals("校区-江西水利电力大学;楼栋-9Z;房间-9Z999", form["abstracts"])
         assertEquals(thirdPartyJson, form["third_party"])
     }
 
@@ -284,8 +266,8 @@ class PowerPayTest {
     @Test
     fun abstractsKeepsThreePartFormatWithPartialNames() {
         assertEquals(
-            "校区-;楼栋-13B;房间-13B309",
-            PowerOrderForm.abstractsOf(PowerRoom(campus = null, building = "13B", room = "13B309", roomId = null)),
+            "校区-;楼栋-9Z;房间-9Z999",
+            PowerOrderForm.abstractsOf(PowerRoom(campus = null, building = "9Z", room = "9Z999", roomId = null)),
         )
     }
 

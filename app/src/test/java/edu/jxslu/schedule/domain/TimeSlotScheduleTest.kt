@@ -79,24 +79,18 @@ class TimeSlotScheduleTest {
         assertEquals(flat.size, flat.distinct().size)
     }
 
-    /** 大节首末判定 */
+    /** 大节末判定（决定课后画 20 分钟还是 5 分钟间隔） */
     @Test
-    fun bigSectionBoundaries() {
-        assertTrue(ScheduleCalculator.isBigSectionStart(1))
-        assertFalse(ScheduleCalculator.isBigSectionStart(2))
+    fun bigSectionEndBoundaries() {
         assertTrue(ScheduleCalculator.isBigSectionEnd(2))
         assertFalse(ScheduleCalculator.isBigSectionEnd(3))
-        assertTrue(ScheduleCalculator.isBigSectionStart(9))
         assertTrue(ScheduleCalculator.isBigSectionEnd(11))
     }
 
-    /** 周次压缩显示 */
+    /** 周次压缩显示（规则在 `WeeksTextTest`，这里只钉委托没断） */
     @Test
     fun weeksAreCompacted() {
         assertEquals("6-11,14-15", ScheduleCalculator.formatWeeks(setOf(6, 7, 8, 9, 10, 11, 14, 15)))
-        assertEquals("1", ScheduleCalculator.formatWeeks(setOf(1)))
-        assertEquals("1,3,5", ScheduleCalculator.formatWeeks(setOf(5, 1, 3)))
-        assertEquals("", ScheduleCalculator.formatWeeks(emptySet()))
     }
 
     /** 顺序占位不与已有颜色重复 */

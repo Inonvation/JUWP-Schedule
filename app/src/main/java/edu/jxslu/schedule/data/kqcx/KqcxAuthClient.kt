@@ -211,11 +211,10 @@ class KqcxAuthClient private constructor(private val http: OkHttpClient) {
     /**
      * 还车点 / 禁停区图层。参数逐字对齐官方：`{lat, lng, carNum, page:1, rows:15}`
      * （`carNum` 是"以哪辆车为上下文"，官方在还车点页传选中车、在地图页传最近一辆车）。
-     */
-    /**
-     * 还车点 / 禁停区图层。`token` 允许空串（2026-10-01 实测：这个接口**不需要凭证**，
-     * 不带 `token` 头也回 `resultCode=1`）——小程序方式没有会话，就空着发，
-     * 不要为了它按需登一次账号（见 `KvcxRideSession.queryZones` 的注释）。
+     *
+     * `token` 允许空串（2026-10-01 实测：这个接口**不需要凭证**，不带 `token` 头也回
+     * `resultCode=1`）——小程序方式没有会话，就空着发，不要为了它按需登一次账号
+     * （见 `KvcxRideSession.queryZones` 的注释）。
      */
     suspend fun zonesJson(token: String, lat: Double, lng: Double, carNum: String): String =
         withContext(Dispatchers.IO) {

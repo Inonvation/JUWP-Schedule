@@ -3,6 +3,8 @@ package edu.jxslu.schedule.domain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -177,7 +179,7 @@ class ScheduleDiffTest {
         // 不能报成「删除整门课 + 两条新增」（2026-10-20 用户实报）
         val old = course(
             name = "人机交互技术",
-            teacher = "曾刚",
+            teacher = "王五",
             position = "南B106",
             day = 4,
             startSection = 7,
@@ -313,5 +315,15 @@ class ScheduleDiffTest {
         }
         val advanced = ScheduleDiff.baselineAfter(base, entries)
         assertTrue(ScheduleDiff.detect(advanced, remote).isEmpty())
+    }
+
+    /** 合并导入的判重口径：同课块但周次不相交是两块课，不能静默吞掉。 */
+    @Test
+    fun `同课块周次不相交不算重复`() {
+        val existing = course(weeks = setOf(1, 2, 3))
+        val nextWeeks = existing.copy(weeks = setOf(4, 5, 6))
+        assertNull(ScheduleDiff.duplicateOf(nextWeeks, listOf(existing)))
+        // 周次有交集才算重复：同一块课被重复导入时不能加第二行
+        assertNotNull(ScheduleDiff.duplicateOf(existing.copy(weeks = setOf(3, 4)), listOf(existing)))
     }
 }

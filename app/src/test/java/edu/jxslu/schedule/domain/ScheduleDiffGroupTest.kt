@@ -43,17 +43,17 @@ class ScheduleDiffGroupTest {
     fun `三条单周调课通知分成三组`() {
         val hci = course(
             name = "人机交互技术",
-            teacher = "曾刚",
+            teacher = "王五",
             position = "南B106",
             day = 4,
             startSection = 7,
             endSection = 8,
             weeks = setOf(1, 2, 4, 5, 6, 7, 8, 9, 10),
         )
-        val mechThu = course(name = "机械制造基础A", teacher = "洪琦", position = "南B206", day = 4)
+        val mechThu = course(name = "机械制造基础A", teacher = "李四", position = "南B206", day = 4)
         val mechFri = course(
             name = "机械制造基础A",
-            teacher = "洪琦",
+            teacher = "李四",
             position = "北B111",
             day = 5,
             startSection = 1,

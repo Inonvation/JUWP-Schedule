@@ -48,11 +48,6 @@ object OpenSourceLicenses {
             url = "https://github.com/square/okhttp",
         ),
         LicenseEntry(
-            name = "Jsoup",
-            license = "MIT",
-            url = "https://jsoup.org/license",
-        ),
-        LicenseEntry(
             name = "ZXing core（二维码生成）",
             license = "Apache-2.0",
             url = "https://github.com/zxing/zxing",

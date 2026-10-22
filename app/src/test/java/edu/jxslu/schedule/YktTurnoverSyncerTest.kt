@@ -3,6 +3,7 @@ package edu.jxslu.schedule
 import edu.jxslu.schedule.data.ykt.YktTurnover
 import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer.Companion.toEntity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -68,9 +69,5 @@ class YktTurnoverSyncerTest {
         val entity = record("2026-09-19 10:00:00", fen = 10000, orderId = "PO-2")
             .copy(income = true).toEntity()
         assertTrue(entity.income)
-    }
-
-    private fun assertNull(actual: Any?) {
-        org.junit.Assert.assertNull(actual)
     }
 }

@@ -1127,7 +1127,7 @@ millis 缺省时的读取回退，不再写入；**不进 `DisplayPrefs` 合并�
 
 | 项 | 规格 |
 |----|------|
-| 入口 | 生活页流水段「寝室电费」标题右侧的「用电统计 · 缴费账单 ›」→ 二级页 `POWER_BILL`（独立窗口，返回即关，进页默认显示用电统计） |
+| 入口 | 侧栏钱包详情「电费」→「用电统计 · 缴费账单 ›」→ 二级页 `POWER_BILL`（独立窗口，返回即关，进页默认显示用电统计） |
 | 数据源 | `GET /charge/turnover/personal_data?feeitemid=181&flag=3`（充值/退款记录，§4.24 已实测）。**没有第二条接口**：平台的 `/bill` 网页给的是同一批记录的按月合计，本地算即可 |
 | 充值 / 退款 | 方向**只看 `tranamt` 的符号**（负 = 退款），金额统一取绝对值。`refund_flag` 恒为 1，不能当判据（§4.24「退款判据」） |
 | 月份归属 | 取**缴费日期**（`createdate`）的年月，不取 `feerange`（费用所属月）：9 月 1 日交 8 月的费，用户问的是「这个月花了多少」。日期解析不出来才退回 `feerange`（`202608` 形态），两者都没有的归到「月份未知」 |
@@ -1216,5 +1216,5 @@ Activity 窗口的 `LocalFocusManager` / `LocalSoftwareKeyboardController` / ins
 容器高度、每帧重启那条锚点动画，观感就是一帧一帧往上爬。换 `ImeAwareModalBottomSheet` 后
 进场即 Expanded、无半高锚点可重启，爬升消失；退场「先收键盘再滑走」的时序也一并接上。
 
-落位：`ui/life/LifeScreen.kt` + `LifeViewModel`（电费读数、电费流水、最近流水分段）、
-`data/power/`（§4.24）、`domain/LifeFeed.kt`（分段与排序的纯逻辑）。
+落位：`ui/life/LifeViewModel`（电费读数与充值）、`ui/life/PowerBillScreen.kt`（用电统计 / 缴费账单）、
+`data/power/`（§4.24）。最近流水随生活页删除，`domain/LifeFeed.kt` 已移除。

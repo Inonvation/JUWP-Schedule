@@ -2,6 +2,7 @@ package edu.jxslu.schedule.domain
 
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlinx.serialization.Serializable
 
 /**
  * 考试安排 → 课表 `Course(kind = Exam)` 的映射（DESIGN §4.14）。
@@ -31,6 +32,7 @@ object ExamMapper {
     }
 
     /** 与 `scripts/out/exams.json` 及注入 JS fetch 输出对齐的考试条目。 */
+    @Serializable
     data class ExamEntry(
         val courseNo: String = "",
         val name: String,
@@ -92,7 +94,7 @@ fun weekAndDay(
 ): Pair<Int, Int>? {
     val date = parseDate(dateStr) ?: return null
     val week = ScheduleCalculator.weekNumberOf(config, date)
-    if (week !in 1..config.totalWeeks) return null
+    if (!ScheduleCalculator.isWeekInTerm(config, week)) return null
     // Java DayOfWeek: MONDAY=1 … SUNDAY=7，与「1=周一 … 7=周日」口径一致
     return week to date.dayOfWeek.value
 }
@@ -133,12 +135,10 @@ private fun locate(dateStr: String, config: SemesterConfig?, term: String?): Pai
     }
     val start = estimatedTermStart(term) ?: return null
     val date = parseDate(dateStr) ?: return null
-    val week = ((startOfWeek(date).toEpochDay() - startOfWeek(start).toEpochDay()) / 7 + 1).toInt()
+    val week = ((ScheduleCalculator.startOfWeek(date).toEpochDay() -
+        ScheduleCalculator.startOfWeek(start).toEpochDay()) / 7 + 1).toInt()
     return if (week in 1..ESTIMATED_MAX_WEEKS) week to date.dayOfWeek.value else null
 }
-
-private fun startOfWeek(date: LocalDate): LocalDate =
-    date.minusDays((date.dayOfWeek.value - 1).toLong())
 
 private fun parseDate(dateStr: String): LocalDate? = try {
     LocalDate.parse(dateStr.trim(), dateFmt)

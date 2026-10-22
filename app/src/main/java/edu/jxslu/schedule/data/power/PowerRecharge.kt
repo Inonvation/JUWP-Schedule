@@ -1,9 +1,6 @@
 package edu.jxslu.schedule.data.power
 
-import java.security.MessageDigest
-import java.time.LocalDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import edu.jxslu.schedule.domain.CampusPaySign
 import kotlin.random.Random
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -22,55 +19,25 @@ import kotlinx.serialization.json.jsonPrimitive
 object PowerPaySign {
 
     /** 前端硬编码的应用标识与签名密钥（公开 JS 常量，非逆向所得）。 */
-    const val APP_ID = "56321"
-    const val SECRET_KEY = "0osTIhce7uPvDKHz6aa67bhCukaKoYl4"
-
-    private const val KEY_SIGN = "SIGN"
-    private const val KEY_SECRET = "SECRET_KEY"
+    const val APP_ID = CampusPaySign.APP_ID
+    const val SECRET_KEY = CampusPaySign.SECRET_KEY
 
     /** 给业务参数补元参数与 SIGN（新 map）。[timestamp]/[nonce] 可注入（单测定死）。 */
     fun signed(
         params: Map<String, String>,
         timestamp: String = buildTimestamp(),
         nonce: String = buildNonce(),
-    ): Map<String, String> {
-        val merged = LinkedHashMap<String, String>(params.size + 4)
-        merged.putAll(params)
-        merged["APP_ID"] = APP_ID
-        merged["TIMESTAMP"] = timestamp
-        merged["NONCE"] = nonce
-        merged["SIGN_TYPE"] = "SHA256"
-        merged[KEY_SIGN] = signOf(merged)
-        return merged
-    }
+    ): Map<String, String> = CampusPaySign.signed(params, timestamp, nonce)
 
     /** key 字典序、跳过空值与 SIGN/SECRET_KEY，拼 `k=v&` + `SECRET_KEY=…`，SHA256 大写。 */
-    fun signOf(params: Map<String, String>): String {
-        val keys = params.keys
-            .filter { it != KEY_SIGN && it != KEY_SECRET }
-            .filter { (params[it] ?: "").isNotEmpty() }
-            .sorted()
-        val sb = StringBuilder()
-        for (k in keys) sb.append(k).append('=').append(params.getValue(k)).append('&')
-        sb.append(KEY_SECRET).append('=').append(SECRET_KEY)
-        return sha256Hex(sb.toString()).uppercase()
-    }
+    fun signOf(params: Map<String, String>): String = CampusPaySign.signOf(params)
 
     /** `yyyyMMddHHmmssSSS`（本地时区；前端 `new Date()` 口径）。 */
-    fun buildTimestamp(now: Long = System.currentTimeMillis()): String {
-        val ldt = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(now), ZoneId.systemDefault())
-        return ldt.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS"))
-    }
+    fun buildTimestamp(now: Long = System.currentTimeMillis()): String =
+        CampusPaySign.buildTimestamp(now)
 
-    /** 11 位小写字母数字（前端 `Math.random().toString(36).substring(2)` 口径，2026-09-23 实测两种都通过）。 */
-    fun buildNonce(random: Random = Random): String {
-        val alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
-        return buildString { repeat(11) { append(alphabet[random.nextInt(alphabet.length)]) } }
-    }
-
-    private fun sha256Hex(text: String): String =
-        MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+    /** 11 位小写字母数字（前端 `Math.random().toString(36).substring(2)` 口径）。 */
+    fun buildNonce(random: Random = Random): String = CampusPaySign.buildNonce(random)
 }
 
 /**

@@ -365,7 +365,7 @@ object AiScheduleTool {
                 val week = obj.int("sourceWeek") ?: return null
                 val weekday = obj.int("sourceWeekday") ?: return null
                 if (weekday !in 1..7) return null
-                if (semester != null && week !in 1..semester.totalWeeks) return null
+                if (semester != null && !ScheduleCalculator.isWeekInTerm(semester, week)) return null
                 // follow 是单日的：区间形态只取起日，不猜「区间里每天都照搬」
                 ScheduleOverride(
                     fromDate = from,

@@ -1,5 +1,6 @@
 package edu.jxslu.schedule.ui.common
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -8,10 +9,16 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -19,6 +26,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -67,3 +77,56 @@ fun SkeletonBox(
             },
     )
 }
+
+/** 进行中行首的呼吸圆点：只改透明度，动画值在绘制阶段读，不触发重组。 */
+@Composable
+fun BreathingDot(
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.primary,
+    size: Dp = 8.dp,
+) {
+    val transition = rememberInfiniteTransition(label = "breathingDot")
+    val alpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "breathingDotAlpha",
+    )
+    Box(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer { this.alpha = alpha }
+            .background(color, CircleShape),
+    )
+}
+
+/**
+ * 行内一根骨架条：包在**整行行高**的盒子里垂直居中，条高 = 行高 × [SKELETON_LINE_RATIO]。
+ * 行高走 [lineHeightDp]（跟随当前生效的字体缩放），不写死 dp。
+ */
+@Composable
+fun SkeletonLine(
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    width: Dp? = null,
+    widthFraction: Float = 1f,
+    centered: Boolean = false,
+) {
+    val line = lineHeightDp(style)
+    Box(
+        modifier = modifier.height(line),
+        contentAlignment = if (centered) Alignment.Center else Alignment.CenterStart,
+    ) {
+        val box = Modifier.height(line * SKELETON_LINE_RATIO)
+        SkeletonBox(
+            modifier = if (width != null) box.width(width) else box.fillMaxWidth(widthFraction),
+            shape = RoundedCornerShape(4.dp),
+        )
+    }
+}
+
+/** 骨架条占行盒高的比例：一行文字的字形大约只画行盒中间的六成。 */
+private const val SKELETON_LINE_RATIO = 0.62f

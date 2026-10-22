@@ -62,6 +62,7 @@ import edu.jxslu.schedule.domain.dayLabel
 import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.EmptyHint
 import edu.jxslu.schedule.ui.common.SkeletonBox
+import edu.jxslu.schedule.ui.common.SkeletonLine
 import edu.jxslu.schedule.ui.common.lineHeightDp
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import me.rerere.hugeicons.HugeIcons
@@ -576,9 +577,6 @@ private fun updatedAtText(millis: Long): String? {
 // 骨架：与成品同一套卡片与行高，数据回来直接替换、不跳
 // ---------------------------------------------------------------------------
 
-/** 骨架条高占行盒的比例：一行文字的字形本来只占行盒中间约六成（见 ui-common 规则）。 */
-private const val SKELETON_LINE_RATIO = 0.62f
-
 @Composable
 private fun WeatherSkeleton() {
     Column(
@@ -681,27 +679,5 @@ private fun SkeletonDetailCell(modifier: Modifier = Modifier) {
                 SkeletonLine(width = 68.dp, style = MaterialTheme.typography.bodyMedium)
             }
         }
-    }
-}
-
-/**
- * 行内一根骨架条：包在**整行行高**的盒子里垂直居中，条高 = 行高 × [SKELETON_LINE_RATIO]。
- * 行高走 [lineHeightDp]（跟随当前生效的字体缩放），不写死 dp。
- */
-@Composable
-private fun SkeletonLine(
-    width: Dp,
-    style: TextStyle,
-    centered: Boolean = false,
-) {
-    val line = lineHeightDp(style, 16.dp)
-    Box(
-        modifier = Modifier.height(line),
-        contentAlignment = if (centered) Alignment.Center else Alignment.CenterStart,
-    ) {
-        SkeletonBox(
-            Modifier.width(width).height(line * SKELETON_LINE_RATIO),
-            RoundedCornerShape(4.dp),
-        )
     }
 }

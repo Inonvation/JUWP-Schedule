@@ -193,7 +193,10 @@ fun WatermarkScreen(onBack: () -> Unit) {
     }
 
     // 生成 / 写盘期间不接受退出（与课表导出同一口径）
-    BackHandler(enabled = busy) {}
+    val requestBack: () -> Unit = {
+        if (busy) notice("正在处理，请稍候", NoticeTone.Warning) else onBack()
+    }
+    BackHandler(enabled = busy) { requestBack() }
 
     Scaffold(
         topBar = {
@@ -201,7 +204,7 @@ fun WatermarkScreen(onBack: () -> Unit) {
                 windowInsets = pinnedStatusBars(),
                 title = { Text("图片水印") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = requestBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },

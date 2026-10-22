@@ -82,12 +82,19 @@ Get-ChildItem -Recurse -Include *.md,*.kt | Select-String -Pattern '<旧说法>'
 ```powershell
 # 构建 + 测试（本机依赖已齐备，加 --offline 后秒级完成）
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline
+# 只跑一类（改一处时先跑它，最后再跑全量）
+.\gradlew.bat :app:testDebugUnitTest --offline --tests "edu.jxslu.schedule.domain.WeeksTextTest"
 # APK: app\build\outputs\apk\debug\app-debug.apk
 # release（R8 压缩 + 签名，约 1.5 分钟）：app\build\outputs\apk\release\app-release.apk
 .\gradlew.bat :app:assembleRelease --offline
 ```
 
-- 用例数从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总（Gradle 成功时不打印用例数），读 XML 用 `-Encoding UTF8`。
+- 用例数从 `app/build/test-results/testDebugUnitTest/*.xml` 汇总（Gradle 成功时不打印用例数）：
+
+```powershell
+$r = Get-ChildItem app\build\test-results\testDebugUnitTest\*.xml | ForEach-Object { ([xml](Get-Content $_ -Encoding UTF8)).testsuite }
+"{0} tests / {1} failures / {2} errors / {3} skipped" -f (($r | Measure-Object tests -Sum).Sum), (($r | Measure-Object failures -Sum).Sum), (($r | Measure-Object errors -Sum).Sum), (($r | Measure-Object skipped -Sum).Sum)
+```
 - 改过混淆规则要装 release 包冒烟，理由与已踩的坑见 `.agents/rules/build-release.md`。
 
 ## 装机与验证路径
@@ -172,11 +179,12 @@ adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 
 ## 爬虫脚本（scripts/）
 
-正式脚本 11 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
+正式脚本 12 个；历史一次性探测脚本在 `scripts/_archive/`（**勿依赖**，仅留档；该目录不入公开仓库）。
 
 | 文件 | 作用 | 产出 |
 |------|------|------|
 | `jw_session.py` | 共享登录（CAS → 教务 SSO → 会话校验） | — |
+| `fetch_all.py` | 一条命令顺序抓全套教务数据（共享会话，只登录一次） | 下列六个抓取脚本的 JSON（`scripts/out/`） |
 | `fetch_courses.py` | 学期理论课表（`--term` 可选） | `scripts/out/courses.json` |
 | `fetch_lab_courses.py` | 实验课表（实践实验 → 实验课表查询，`--term` 可选） | `scripts/out/lab_courses.json` |
 | `fetch_exams.py` | 考试安排（`--term` 可选，缺省取教务当前学期；JSON 接口） | `scripts/out/exams.json` |
@@ -193,6 +201,7 @@ adb -s emulator-<port> exec-out screencap -p > shot.png       # 真渲染截图
 带 `--term` 时脚本会校验「请求学期 = 教务返回学期」，不一致直接报错而不是静默爬错学期。
 
 ```powershell
+.\.venv-scraper\Scripts\python.exe scripts\fetch_all.py          # 一条命令顺序抓全套（共享会话，只登录一次）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py     # 可加 --term 2025-2026-2
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py
@@ -271,7 +280,6 @@ domain/          Course·TimeSlot·SemesterConfig·ScheduleCalculator·ExamMappe
                  + EbikeQr·EbikeFreeRide·BikeNearby·EbikeUseMode（§3.9：出码车号口径、免费时长、
                  附近车辆解析、使用方式=小程序/账号两档 + `EbikeCapabilities` 能力矩阵）
                  + Gcj02（WGS84 → GCJ-02，§4.23 唯一的坐标转换处）
-                 + LifeFeed（一卡通与电费流水分段，§3.13）
  + QzxyFrame·QzxyProtocol·QzxyCredential·QzxySign（趣智校园蓝牙水控，§4.30）
  + QzxyClData·QzxySessionLink·QzxyPhoneMask·QzxyWatering（会话串 · 手机号遮蔽 · 用水记账）
  + AiSchedulePrompt·AiScheduleTool·AiScheduleConfig（AI 调课：prompt/脱敏/学期日历 ·
@@ -424,6 +432,8 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
   归档 / 解包 / 批量导出的条目名先 `lstrip('/\\')` 再 join，并断言解析出的绝对路径位于目标目录
   之下（`os.path.commonpath`），否则直接报错退出；写盘前打印目标绝对路径，写盘后列目录核对
   落点——**不以脚本自报计数为成功依据**。往工作区之外写文件先确认，不默认 CWD 安全。
+- **先找现成的**：新建函数 / Composable 前先看 `ui/common`、`domain/` 和同主题包；能按原用法复用就不新建。
+- **最小改动不砍这些**：信任边界校验（导入 JSON / 各类解析）、防数据丢失的错误处理（Room 迁移）、凭证与安全、无障碍。
 
 ## 沟通与 DoD
 
@@ -432,6 +442,8 @@ JuwApplication   ensureDefaults（节次/学期；课表不预置）+ 小组件�
   走，手机在线就装给用户点验，不在线且够小、有必要才自测（没必要则确认代码后交用户点验），其余写明阻塞；未越权改无关模块
 - 文档同步是收尾动作，排在编译/装机之后。删功能时把引用它的文档、注释、测试一并清掉
 - **文档纪律（2026-10-11 起）**：改动记录只写 `docs/devlog.md`，不进本文件；真机验证由用户日常使用覆盖，不维护「待点验」清单（验出问题直接修，修复记 devlog）；本文件只接受「工程实况 / 路由表 / 硬性规则」三类变更，领域细节进 `.agents/rules/`；本文件目标 ≤ 500 行，超了先拆再改
+- **改动交付的收尾固定一行**：`未验：<没跑到的设备/路径>；风险：<最坏后果>`；全验过写「未验：无」。
+- **临时取巧留痕**：代码里写 `// shortcut: <限制>, <何时升级>`；升级条件到了就改，不留「以后再说」。
 
 ## 阶段状态（见 DESIGN.md §6 里程碑）
 

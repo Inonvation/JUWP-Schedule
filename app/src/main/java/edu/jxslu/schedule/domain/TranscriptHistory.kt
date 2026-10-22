@@ -3,7 +3,6 @@ package edu.jxslu.schedule.domain
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /** 「最近导出」里的一条记录。只带展示与排序要用的字段，不持有 File（纯逻辑层不碰文件系统）。 */
 data class TranscriptEntry(
@@ -83,12 +82,8 @@ object TranscriptHistory {
     fun timeLabel(millis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
         Instant.ofEpochMilli(millis).atZone(zone).format(TIME_FORMATTER)
 
-    /** 体积文案。用 [Locale.US] 固定小数点，避免某些区域把「1.5 MB」写成「1,5 MB」。 */
-    fun sizeLabel(bytes: Long): String = when {
-        bytes >= 1L shl 20 -> "%.1f MB".format(Locale.US, bytes / 1024.0 / 1024.0)
-        bytes >= 1024L -> "%d KB".format(Locale.US, bytes / 1024)
-        else -> "$bytes B"
-    }
+    /** 体积文案（口径见 [SizeText]）。 */
+    fun sizeLabel(bytes: Long): String = SizeText.format(bytes)
 
     /** 文件名末尾的 `-yyyyMMdd-HHmm`（与 `defaultFileName` 的格式一一对应）。 */
     private val STAMP_RE = Regex("""-\d{8}-\d{4}$""")

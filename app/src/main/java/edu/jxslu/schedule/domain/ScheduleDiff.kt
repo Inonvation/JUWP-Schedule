@@ -314,15 +314,6 @@ object ScheduleDiff {
         changes.count { isConflicted(it, current) }
 
     /**
-     * **预览用**（DESIGN §3.25 方案 B）：把勾选的改动套到课程列表上，返回「应用后」的列表，
-     * **不落库**。匹配口径与 `ScheduleRepository.applyChangeSet` 完全一致（按指纹；
-     * ADDED 按 [duplicateOf] 的同课块 + 周次交集），匹配不上的条目跳过——预览必须如实
-     * 反映「应用会发生什么」，不能比真应用更乐观。
-     *
-     * 本机字段（配色 / 备注）与写库同样保留原行；新增条目用负数 id 占位（预览不落库，
-     * 真应用时才由 Room 分配 id 与配色）。
-     */
-    /**
      * 真应用时对 `new` 的收口：保留本机字段（id / 配色 / 备注），并按需清掉自定义时间。
      *
      * **预览与真应用必须共用这一份**（2026-10-06 复核发现）：两边各写一套时，
@@ -345,6 +336,15 @@ object ScheduleDiff {
         )
     }
 
+    /**
+     * **预览用**（DESIGN §3.25 方案 B）：把勾选的改动套到课程列表上，返回「应用后」的列表，
+     * **不落库**。匹配口径与 `ScheduleRepository.applyChangeSet` 完全一致（按指纹；
+     * ADDED 按 [duplicateOf] 的同课块 + 周次交集），匹配不上的条目跳过——预览必须如实
+     * 反映「应用会发生什么」，不能比真应用更乐观。
+     *
+     * 本机字段（配色 / 备注）与写库同样保留原行；新增条目用负数 id 占位（预览不落库，
+     * 真应用时才由 Room 分配 id 与配色）。
+     */
     fun preview(
         courses: List<Course>,
         changes: List<Change>,

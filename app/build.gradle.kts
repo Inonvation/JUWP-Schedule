@@ -33,7 +33,6 @@ android {
         targetSdk = 36
         versionCode = 26
         versionName = "2.12.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -98,7 +97,6 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.00")
     implementation(composeBom)
-    androidTestImplementation(composeBom)
 
     // 1.17.0 起有 NotificationCompat.setRequestPromotedOngoing / setShortCriticalText
     // （倒计时通知上灵动岛用，DESIGN §3.9）。它的 AAR 元数据要求 compileSdk 36 + AGP 8.9.1，
@@ -111,7 +109,6 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.4")
 
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
@@ -122,7 +119,6 @@ dependencies {
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("org.jsoup:jsoup:1.18.1")
 
     // 胖乖 Token 加密存储（DESIGN 4.16 决策 2）：EncryptedSharedPreferences，密钥在 Android Keystore
     implementation("androidx.security:security-crypto:1.1.0")
@@ -163,6 +159,5 @@ dependencies {
     // 瓦片源是自建的高德栅格地址（见 ui/ebike/OsmMapView.kt），不用它的在线默认源。
     implementation("org.osmdroid:osmdroid-android:6.1.18")
 
-    debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

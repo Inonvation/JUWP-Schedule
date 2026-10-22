@@ -1,6 +1,7 @@
 package edu.jxslu.schedule.data.repo
 
 import edu.jxslu.schedule.SubpageScreen
+import edu.jxslu.schedule.data.jw.JwHtml
 import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.jw.OneClickImport
 import edu.jxslu.schedule.data.jw.OneClickResult
@@ -300,17 +301,8 @@ class ScheduleSync(
          * 整页搜 `<option selected>` 会串（同 [ExamSync.termFromShell] 的教训）。
          * value 与文本兜底各一次，抽不到返回 null（调用方报失败，不猜学期）。
          */
-        internal fun termFromHtml(html: String): String? {
-            val block = Regex("(?is)<select[^>]*\\bid\\s*=\\s*[\"']xnxq01id[\"'][^>]*>[\\s\\S]*?</select>")
-                .find(html)?.value
-                ?: return null
-            val selectedTag = Regex("(?is)<option[^>]*selected[^>]*>").find(block) ?: return null
-            val value = Regex("""value\s*=\s*["']([^"']+)["']""")
-                .find(selectedTag.value)?.groupValues?.get(1)?.trim()
-            if (!value.isNullOrBlank() && JwUrls.TERM_PATTERN.matches(value)) return value
-            val after = block.substringAfter(selectedTag.value, "").substringBefore("</option>").trim()
-            return after.takeIf { it.isNotEmpty() && JwUrls.TERM_PATTERN.matches(it) }
-        }
+        internal fun termFromHtml(html: String): String? =
+            JwHtml.selectedTerm(html, selectId = "xnxq01id")
 
         /**
          * 实验课表的学期校验（2026-10-07 复核补）：实验页也带 `select#xnxq01id`

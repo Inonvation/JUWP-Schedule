@@ -26,7 +26,7 @@ class PowerBillTest {
         epochMs = PowerModels.parseTimeMs(date),
         month = feerange,
         amountFen = PowerModels.fen(amountYuan),
-        room = "校区-江西水利电力大学;楼栋-9A;房间-9A101",
+        room = "校区-江西水利电力大学;楼栋-9Z;房间-9Z999",
         refund = refund,
     )
 

@@ -67,7 +67,7 @@ object ScheduleTips {
         if (semester == null) return null
         val week = runCatching { ScheduleCalculator.weekNumberOf(semester, date) }.getOrNull()
             ?: return null
-        if (week !in 1..semester.totalWeeks) return null
+        if (!ScheduleCalculator.isWeekInTerm(semester, week)) return null
         val plan = ScheduleOverrides.plan(overrides, semester)
         val dayCourses = ScheduleCalculator.coursesOnDay(courses, week, date.dayOfWeek.value, plan)
         // 措辞按「参考日是不是今天」定：18:00 前讲今天、18:00 起讲明天
@@ -96,7 +96,7 @@ object ScheduleTips {
         val today = now.toLocalDate()
         val week = runCatching { ScheduleCalculator.weekNumberOf(semester, today) }.getOrNull()
             ?: return null
-        if (week !in 1..semester.totalWeeks) return null
+        if (!ScheduleCalculator.isWeekInTerm(semester, week)) return null
         val plan = ScheduleOverrides.plan(overrides, semester)
         val dayCourses =
             ScheduleCalculator.coursesOnDay(courses, week, today.dayOfWeek.value, plan)

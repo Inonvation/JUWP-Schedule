@@ -73,7 +73,7 @@ class ExamMapperTest {
     private val entry = ExamMapper.ExamEntry(
         courseNo = "050221005",
         name = "跨文化交际英语（中国水文化英译）",
-        teacher = "李红梅",
+        teacher = "张三",
         room = "南C303",
         campus = "瑶湖校区",
         date = "2026-05-18",
@@ -96,7 +96,7 @@ class ExamMapperTest {
         assertEquals("08:30", c.customStartTime)
         assertEquals("09:55", c.customEndTime)
         assertEquals("南C303 瑶湖校区", c.position)
-        assertEquals("李红梅", c.teacher)
+        assertEquals("张三", c.teacher)
         assertEquals(0, c.colorIndex)     // 颜色由导入路径统一重排
     }
 

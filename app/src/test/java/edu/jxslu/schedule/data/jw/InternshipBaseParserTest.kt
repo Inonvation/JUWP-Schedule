@@ -44,21 +44,6 @@ class InternshipBaseParserTest {
     }
 
     @Test
-    fun `非 JSON 抛错（未登录时的登录页）`() {
-        val html = "<html><body>请先登录系统</body></html>"
-        assertThrows(IllegalStateException::class.java) {
-            InternshipBaseParser.parsePage(html)
-        }
-    }
-
-    @Test
-    fun `ERR 前缀抛错`() {
-        assertThrows(IllegalStateException::class.java) {
-            InternshipBaseParser.parsePage("ERR:timeout")
-        }
-    }
-
-    @Test
     fun `空列表合法`() {
         val page = InternshipBaseParser.parsePage("""{"msg":"0","code":0,"count":0,"data":[]}""")
         assertEquals(0, page.count)
@@ -72,19 +57,6 @@ class InternshipBaseParserTest {
         assertEquals(1, page.bases.size)
         assertEquals("", page.bases.first().leader)
         assertEquals("", page.bases.first().no)
-    }
-
-    @Test
-    fun `data 为 null 不抛、按空列表`() {
-        val page = InternshipBaseParser.parsePage("""{"msg":"0","code":0,"count":5,"data":null}""")
-        assertEquals(5, page.count)
-        assertTrue(page.bases.isEmpty())
-    }
-
-    @Test
-    fun `count 缺失按 -1（未知）收`() {
-        val page = InternshipBaseParser.parsePage("""{"code":0,"data":[]}""")
-        assertEquals(-1, page.count)
     }
 
     @Test

@@ -62,7 +62,7 @@ private fun upcomingPlans(
     var date = now.toLocalDate()
     repeat(maxDaysAhead) {
         val week = ScheduleCalculator.weekNumberOf(semester, date)
-        if (week in 1..semester.totalWeeks) {
+        if (ScheduleCalculator.isWeekInTerm(semester, week)) {
             for (course in ScheduleCalculator.coursesOnDay(courses, week, date.dayOfWeek.value, plan)) {
                 val start = ScheduleCalculator.courseStartMinutes(slots, course) ?: continue
                 val startAt = date.atStartOfDay().plusMinutes(start.toLong())

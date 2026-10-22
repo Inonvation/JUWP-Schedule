@@ -315,10 +315,6 @@ class KqcxSessionRepository(
     }
 
     /**
-     * 还车后确认扣款：短轮询 `queryUnPayOrder`（≤3 次、约 2.5 秒间隔，官方同款节奏）。
-     * true = 已结清；false = 仍有欠费或查询失败（调用方提示到官方渠道核对）。
-     */
-    /**
      * 还车点 / 禁停区图层（DESIGN §3.9）：只读、失败静默（图层是装饰，调用方保留上一层）。
      * 没有可当上下文的车号时直接回 null，不发请求。
      *
@@ -340,6 +336,10 @@ class KqcxSessionRepository(
         }
     }
 
+    /**
+     * 还车后确认扣款：短轮询 `queryUnPayOrder`（≤3 次、约 2.5 秒间隔，官方同款节奏）。
+     * true = 已结清；false = 仍有欠费或查询失败（调用方提示到官方渠道核对）。
+     */
     override suspend fun confirmUnpaidSettled(attempts: Int): KqcxAuth.UnpayState? {
         ensureSession()
         var last: KqcxAuth.UnpayState? = null

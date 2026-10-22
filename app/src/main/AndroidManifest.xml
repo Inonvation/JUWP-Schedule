@@ -66,9 +66,9 @@
          申请结果），这里只声明；设备无补光灯时取景页不摆手电筒按钮 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 今日页快捷方式（DESIGN §4.16）：API 30+ 包可见性声明。
-         三个 package 让预设包可见（getLaunchIntentForPackage 不再对已安装的 App
-         误报「未安装」）；MAIN/LAUNCHER 让所有有桌面入口的 App 可见——既是编辑表单
-         「从已安装应用选择」的数据源，也让自定义「只填包名」的快捷方式能拉起。
+         <package> 让预设包（含微信 / 支付宝等）可见（getLaunchIntentForPackage 不再
+         对已安装的 App 误报「未安装」）；MAIN/LAUNCHER 让所有有桌面入口的 App 可见——
+         既是编辑表单「从已安装应用选择」的数据源，也让自定义「只填包名」的快捷方式能拉起。
          仍不可见的（无桌面入口的应用）靠执行层 try/catch 兜底。 -->
     <queries>
         <package android:name="com.xunmeng.pinduoduo" />
@@ -153,8 +153,8 @@
         </activity>
         <!-- 教务导入独立窗口：adjustResize 保证登录表单不被键盘遮住。
              锁竖屏（DESIGN §4.4）：转屏会销毁 WebView 丢掉登录进度、并取消导入协程。
-             App 里锁方向的窗口只有这一个与下面的成绩单导出窗口，两者都因为同一个原因
-             （窗口里有统一认证的 WebView 表单）。 -->
+             含网页表单的窗口（教务导入 / 成绩单 / 学工 / 农行收银台）都锁竖屏；
+             设置、首启引导、单车扫码等窗口也锁竖屏以保持布局稳定。 -->
         <activity
             android:name=".JwImportActivity"
             android:exported="false"

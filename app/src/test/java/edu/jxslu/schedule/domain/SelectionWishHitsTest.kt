@@ -40,12 +40,12 @@ class SelectionWishHitsTest {
     @Test
     fun teacherKeywordIsRecheckedLocally() {
         // 服务端只按课程名查，教师关键词必须本地复核（与清单页防重复对照同一口径）
-        val w = wish("w1", "机械", teacher = "曾")
+        val w = wish("w1", "机械", teacher = "王")
         val hits = SelectionWishHits.group(
             wishes = listOf(w),
             fetched = mapOf(
                 "w1" to listOf(
-                    course("x", "机械设计基础A", teacher = "曾刚,李四"),
+                    course("x", "机械设计基础A", teacher = "王五,李四"),
                     course("y", "机械制造基础A", teacher = "张三"),
                 ),
             ),
