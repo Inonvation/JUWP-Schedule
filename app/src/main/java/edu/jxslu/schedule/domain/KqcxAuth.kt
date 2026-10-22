@@ -169,7 +169,7 @@ object KqcxAuth {
      * 微信支付分「下单授权」错误码（2026-09-28 真机 + 解包双重确认）：
      * 服务端在需要支付分授权时返回它 + `result.package`，小程序跳 preview 页调
      * `wx.openBusinessView({businessType:"wxpayScoreUse"})`——**微信客户端专属 API，
-     * 第三方 App 无法代调**（App SDK 需商户侧配置，水贝贝不是快趣的 App）。
+     * 第三方 App 无法代调**（App SDK 需商户侧配置，JUWPHub 不是快趣的 App）。
      * 账号走「支付分免押」时每笔订单都会命中；出路只有两条：微信内用车，
      * 或（用户自行）缴纳诚信金切换保证金模式。
      */

@@ -75,7 +75,7 @@ import me.rerere.hugeicons.stroke.SoftwareLicense
 import me.rerere.hugeicons.stroke.SystemUpdate01
 
 /** 公开仓库地址（MIT）；「开源仓库」点击后经系统浏览器打开。 */
-private const val REPO_URL = "https://github.com/Inonvation/JUWP-Schedule"
+private const val REPO_URL = "https://github.com/Inonvation/JUWPHub"
 
 /**
  * 设置 → 关于 → 关于与更新：版本、手动 / 自动检查更新、开源仓库与许可。
@@ -152,7 +152,7 @@ fun AboutUpdateScreen(
         ) {
             SettingsSection(title = "应用") {
                 SettingItem(
-                    title = "关于 水贝贝",
+                    title = "关于 JUWPHub",
                     subtitle = "非学校官方应用 · 教务与第三方接口风险自负",
                     icon = HugeIcons.InformationCircle,
                     value = "v${BuildConfig.VERSION_NAME}",
@@ -186,7 +186,7 @@ fun AboutUpdateScreen(
             SettingsSection(title = "开源") {
                 SettingItem(
                     title = "开源仓库",
-                    subtitle = "github.com/Inonvation/JUWP-Schedule",
+                    subtitle = "github.com/Inonvation/JUWPHub",
                     icon = HugeIcons.Github,
                     onClick = { openUrl(context, REPO_URL)?.let(showNotice) },
                 )

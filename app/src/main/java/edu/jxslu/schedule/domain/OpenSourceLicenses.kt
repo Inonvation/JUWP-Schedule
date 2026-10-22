@@ -20,7 +20,7 @@ data class LicenseEntry(
 object OpenSourceLicenses {
 
     /** 本应用自己的许可。 */
-    const val SELF_NAME: String = "水贝贝（本应用）"
+    const val SELF_NAME: String = "JUWPHub（本应用）"
     const val SELF_LICENSE: String = "MIT"
 
     /** HugeIcons 的口径说明，逐字显示在弹窗底部。 */

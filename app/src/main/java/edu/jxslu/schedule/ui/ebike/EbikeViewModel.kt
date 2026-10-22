@@ -359,7 +359,7 @@ class EbikeViewModel(
         viewModelScope.launch {
             when (val result = saveCurrentInternal()) {
                 is EbikeQrBitmaps.SaveResult.Saved ->
-                    _events.send(EbikeEvent.Notice("已保存到相册「水贝贝」", NoticeTone.Success))
+                    _events.send(EbikeEvent.Notice("已保存到相册", NoticeTone.Success))
                 is EbikeQrBitmaps.SaveResult.Failed ->
                     _events.send(EbikeEvent.Notice(result.message, NoticeTone.Error))
                 null -> Unit

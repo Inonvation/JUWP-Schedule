@@ -81,7 +81,7 @@
 
 ## 出口只有两条
 
-- 保存：`ui/common/BitmapSave.saveBitmapToGallery`（MediaStore `Pictures/水贝贝`）；
+- 保存：`ui/common/BitmapSave.saveBitmapToGallery`（MediaStore `Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移）；
 - 分享：`Graph.toolboxShareStore`（`ScheduleShareStore` + `toolbox_share` 目录，
   FileProvider 根在 `res/xml/file_paths.xml`）→ 系统分享面板。
 - 格式 **JPEG q92**（`ToolboxExport`）：产物是截图 / 照片，PNG 体积放大一个量级。

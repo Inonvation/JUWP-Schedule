@@ -8,7 +8,7 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 /**
  * 课表小组件的 receiver（DESIGN §3.6）。
  *
- * **一个条目**（2026-09-20 改版）：选择器里只有「水贝贝 · 课表」，尺寸靠
+ * **一个条目**（2026-09-20 改版）：选择器里只有「JUWPHub · 课表」，尺寸靠
  * `SizeMode.Exact` 自适应（[ScheduleWidget]），不再拆成 2×2 / 4×2 / 4×4 三条——
  * 三条目都能自由拖动，落到同一形态后内容完全相同，纯冗余（用户反馈的原话）。
  *

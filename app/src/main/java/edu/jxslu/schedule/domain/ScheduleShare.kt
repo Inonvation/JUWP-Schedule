@@ -12,9 +12,9 @@ import java.time.LocalDate
  */
 object ScheduleShare {
 
-    /** 导出文件名：`水贝贝课表_20261009_第3周.png`。[dateTag] 形如 `yyyyMMdd`。 */
+    /** 导出文件名：`JUWPHub课表_20261009_第3周.png`。[dateTag] 形如 `yyyyMMdd`。 */
     fun exportFileName(dateTag: String, week: Int): String =
-        "水贝贝课表_${dateTag}_第${week}周.png"
+        "JUWPHub课表_${dateTag}_第${week}周.png"
 
     /**
      * 周次日期范围文案：`10/6 – 10/12`。

@@ -1,10 +1,11 @@
-# JUWP Schedule · Agent 工作规范
+# JUWPHub · Agent 工作规范
 
 本文件给 AI Agent / 结对工具读。人看 `README.md` 与 `DESIGN.md`。
 
 ## 项目身份
 
-- 名称：JUWP Schedule / 显示名「水贝贝」
+- 名称：JUWPHub / 显示名「JUWPHub」
+- 仓库名 JUWPHub；包名不变
 - 学校：江西水利电力大学（**非官方**；对外文案必须免责声明）
 - 包名：`edu.jxslu.schedule`（debug 变体加 `.debug` 后缀，详见「工程实况」）
 - 形态：单模块 `:app` · Kotlin · Compose + Material3 · minSdk 26 / compileSdk 36 / targetSdk 36
@@ -152,7 +153,7 @@ $r = Get-ChildItem app\build\test-results\testDebugUnitTest\*.xml | ForEach-Obje
 # 多台设备在线时加 -s <serial>，用 adb devices -l 分辨真机与模拟器
 ```
 
-debug 与 release 是两个独立应用（桌面名「水贝贝 Debug」/「水贝贝」），可同时安装、数据各一份。改动冲突时改 `app/src/debug/res/values/strings.xml`（仅覆盖 `app_name`）；包名与签名口径见 `.agents/rules/build-release.md`。
+debug 与 release 是两个独立应用（桌面名「JUWPHub Debug」/「JUWPHub」），可同时安装、数据各一份。改动冲突时改 `app/src/debug/res/values/strings.xml`（仅覆盖 `app_name`）；包名与签名口径见 `.agents/rules/build-release.md`。
 
 启动 debug 包**必须写全限定名**——短式 `am start -n <applicationId>/.MainActivity` 会按 applicationId
 补前缀、解析成 `edu.jxslu.schedule.debug.MainActivity` 并报 `Error type 3 ... does not exist`
@@ -272,6 +273,7 @@ domain/       纯 JVM 逻辑：课程/作息/学期/成绩/考试/调课差异/�
 data/local    Room v20（表清单见「工程实况」；迁移只加不删，实体索引必须与迁移对齐）
 data/repo     ScheduleRepository（备份模型在 ScheduleBackup）+ 各业务 Repository / Sync
 data/prefs    DataStore 显示偏好（DisplayPrefsStore + 按功能拆出的扩展文件）
+data/media    相册目录迁移（GalleryMigration：Pictures/水贝贝 → Pictures/JUWPHub）
 data/jw       强智教务：URL / 课表 / 考试 / 成绩 / 学业 / 培养方案 / 教材 / 选课 / 日历 / 评教
 data/xg       学工表单与宿舍报修（只读）
 data/qiekj    胖乖生活（登录/开水/余额/订单）
@@ -296,7 +298,7 @@ JuwApplication ensureDefaults（节次/学期；课表不预置）+ 小组件冷
 
 ## 硬性禁止
 
-- 刷积分/绕过付费/伪造官方身份：**App 与上架模块（`data/qiekj/` 等）仍一律禁止**——App 不接签到/任务/领奖，只保留开水/余额/订单。仓库转私有后（2026-10 起），允许在 `.re-tmp/` 写**个人账号的研究脚本**（自查自用：签到、查活动与积分、复现 App 自身的任务流程）；不用于他人账号，不进 App，不入文档口径
+- 刷积分/绕过付费/伪造官方身份：**App 与上架模块（`data/qiekj/` 等）仍一律禁止**——App 不接签到/任务/领奖，只保留开水/余额/订单。`.re-tmp/` 已 gitignore（2026-10-23 复核），允许在其中写**个人账号的研究脚本**（自查自用：签到、查活动与积分、复现 App 自身的任务流程）；不用于他人账号，不进 App，不入文档口径
 - 禁止把学号/密码/token 写进 git（`scripts/credentials.local.json`、`local.properties`、`release.jks`、`keystore.properties` 已 ignore）
 - 提交与文档中不得出现真实学号、姓名、手机号、token（转私不改这条卫生习惯）；新增抓取产物目录前先确认 `.gitignore` 已覆盖
 - **提交不带个人信息**：提交信息、代码、注释、测试 fixture 里不出现真实学号、姓名、手机号、寝室房号、真实邮箱；作者身份用 noreply 邮箱
@@ -331,9 +333,11 @@ P6 打磨 — **进行中**（2026-09-21 起）。
 
 ## 仓库与发版
 
-- **仓库 2026-10-10 起私有、停止分发**（发 2.7.0 后删除全部旧 release）。连带影响（均未修，用户口径：自用）：
-  应用内「检查更新」失效（源全基于公开镜像）、校历的仓库镜像兜底失效（主源教务处官网仍可用）、
-  关于页「开源仓库」死链、免责声明下载指引悬空。本地提交 / 推送照常。
+- **仓库 2026-10-23 起恢复公开，仓库名改为 `JUWPHub`**；显示名、仓库名与 APK 资产名统一为 `JUWPHub`。
+  旧仓库 `Inonvation/JUWP-Schedule` 由 GitHub 重定向到 `Inonvation/JUWPHub`；旧 release 资产名
+  仍为 `JUWP-Schedule-*.apk`，新 release 用 `JUWPHub-*.apk`。应用内「检查更新」、校历的仓库镜像
+  兜底、关于页「开源仓库」链接随仓库公开恢复可用。改名后的首个 release 同时上传新旧两个资产名，
+  给忽略清单 `apk` 字段的老版本兜底。本地提交 / 推送照常。
 - **不入库**（已 gitignore，本地保留）：`scripts/out/`（含真实学号/姓名/会话）、
   `scripts/_archive/`、`docs/`、`scripts/gen_week_layout_preview.py`、`release.jks`、`keystore.properties`
 - 发版流程见 `.agents/skills/publish-release/SKILL.md`；图标查名见 `.agents/skills/find-hugeicons/SKILL.md`

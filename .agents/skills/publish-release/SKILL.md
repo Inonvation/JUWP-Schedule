@@ -1,9 +1,9 @@
 ---
 name: publish-release
-description: Use this skill when the user asks to publish a release, cut a version, ship an update, or asks about release notes / version numbers for JUWP Schedule (水贝贝).
+description: Use this skill when the user asks to publish a release, cut a version, ship an update, or asks about release notes / version numbers for JUWPHub.
 ---
 
-# 发布新版本（JUWP Schedule / 水贝贝）
+# 发布新版本（JUWPHub）
 
 基于 git log 生成更新日志，构建正式签名 APK，然后用 GitHub CLI 创建 Release。
 
@@ -83,7 +83,7 @@ $apksigner = (Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\build-tools\*\apksign
 & $apksigner verify --print-certs app\build\outputs\apk\release\app-release.apk
 ```
 
-- 证书 DN 应为 `CN=Inonvation, OU=JUWP-Schedule, ...`；
+- 证书 DN 应为 `CN=Inonvation, OU=JUWP-Schedule, ...`（OU 是历史证书值，**不要随仓库改名改**；换证书会破坏覆盖安装）；
   SHA-256 指纹应为 `1b84b65210ed03da0f8761ec7b2d88ace8fe4bf498c2880aa331830f86c78a29`。
 - 若显示 debug 证书或提示 `keystore.properties 缺失，release 回退 debug 签名`：
   **停止发版**，先找回 `release.jks` + `keystore.properties`（二者不入库，需用户离线备份）。
@@ -97,12 +97,16 @@ $aapt = (Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\build-tools\*\aapt2.exe" |
 **重命名 APK**（带上版本号，避免下载后分不清版本）：
 
 ```powershell
-Copy-Item app\build\outputs\apk\release\app-release.apk "JUWP-Schedule-<版本号>.apk"
+Copy-Item app\build\outputs\apk\release\app-release.apk "JUWPHub-<版本号>.apk"
 ```
 
 > **文件名必须用纯 ASCII**（2026-09-18 实测）：GitHub 上传资产时会**静默剥离非 ASCII 字符**，
-> 上传 `水贝贝-0.1.0.apk` 会变成 `-0.1.0.apk`（即便 URL 已正确 percent-encode 也一样）。
-> 用 `JUWP-Schedule-0.1.0.apk`；"水贝贝" 是应用**显示名**，只出现在 Release 日志里，不出现在标题和文件名中。
+> 上传 `中文-0.1.0.apk` 会变成 `-0.1.0.apk`（即便 URL 已正确 percent-encode 也一样）。
+> 用 `JUWPHub-0.1.0.apk`；资产名与显示名一致，仍是纯 ASCII。
+
+> **改名过渡（2026-10-23）**：仓库从 `JUWP-Schedule` 改名 `JUWPHub` 后，首个 release 同时上传
+> `JUWPHub-<版本号>.apk` 和 `JUWP-Schedule-<版本号>.apk`（同一 APK）。老版本若忽略清单的
+> `apk` 字段、仍按旧模板拼链接，也能下载；至少保留一个版本再删旧名。
 
 ## Step 6 · 推送本地提交到远端
 
@@ -129,7 +133,7 @@ git push origin main
 预发布在命令末尾加 `--prerelease`；它只是 GitHub 侧标记，**不改 `latest.json`**（见 Step 7.5）。
 
 ```powershell
-gh release create <版本号> "JUWP-Schedule-<版本号>.apk" `
+gh release create <版本号> "JUWPHub-<版本号>.apk" `
   --title "<版本号>" `
   --notes "<中文更新日志>
 
@@ -143,13 +147,13 @@ gh release create <版本号> "JUWP-Schedule-<版本号>.apk" `
 
 ```powershell
 # 资产名、大小、digest 三项都要核对
-gh api repos/Inonvation/JUWP-Schedule/releases/tags/<版本号> `
+gh api repos/Inonvation/JUWPHub/releases/tags/<版本号> `
   --jq '.assets[] | "\(.name) | \(.size) | \(.digest)"'
 ```
 
 - **用 `digest` 校验完整性**，不要依赖重新下载（本机代理对大文件会中途断流，
   下到一半的文件大小不符会误判成"上传坏了"）。digest 应等于本地
-  `(Get-FileHash "JUWP-Schedule-<版本号>.apk" -Algorithm SHA256).Hash.ToLower()` 加 `sha256:` 前缀。
+  `(Get-FileHash "JUWPHub-<版本号>.apk" -Algorithm SHA256).Hash.ToLower()` 加 `sha256:` 前缀。
 - 上传前先确认 APK 不早于源码：`Get-ChildItem app\src -Recurse -Filter *.kt |
   Where-Object { $_.LastWriteTime -gt (Get-Item app\build\outputs\apk\release\app-release.apk).LastWriteTime }`
   —— 有输出就说明 APK 过期，必须重新 `assembleRelease`。
@@ -168,7 +172,7 @@ jsdelivr → raw 兜底）。发版时必须
 ```json
 {
   "version": "<新版本号>",
-  "apk": "JUWP-Schedule-<版本号>.apk",
+  "apk": "JUWPHub-<版本号>.apk",
   "sha256": "<Step 7 回读的 digest，去掉 sha256: 前缀、小写>",
   "notes": "<Step 4 用户已确认的更新日志原文>",
   "mirrorPrefix": "<沿用现值，除非该镜像已确认失效>"

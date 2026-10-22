@@ -625,11 +625,11 @@ fun WeekScreen(
             onSyncCalendar = { startCalendarSync() },
             onExportCsv = {
                 shareOpen = false
-                csvLauncher.launch("水贝贝课表_$fileDateTag.csv")
+                csvLauncher.launch("JUWPHub课表_$fileDateTag.csv")
             },
             onExportJson = {
                 shareOpen = false
-                jsonExportLauncher.launch("水贝贝课表_$fileDateTag.json")
+                jsonExportLauncher.launch("JUWPHub课表_$fileDateTag.json")
             },
             onShareImage = {
                 // 先关弹层再开二级页：弹层是独立窗口，盖在二级页之上会挡住它

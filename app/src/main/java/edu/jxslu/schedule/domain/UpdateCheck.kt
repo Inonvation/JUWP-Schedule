@@ -10,7 +10,7 @@ import kotlinx.serialization.json.Json
  * 镜像模式），**不请求 api.github.com**——GitHub API 域名国内直连经常不通。清单走
  * [RepoMirror] 的多源轮询（gh-proxy 加速 → jsdelivr → raw 兜底）后第一个可达的源
  * 就能给出版本、日志与直链；直链本身由发版口径推出（tag = versionName、资产名
- * `JUWP-Schedule-<版本>.apk`，见 `.agents/skills/publish-release/SKILL.md`），
+ * `JUWPHub-<版本>.apk`，见 `.agents/skills/publish-release/SKILL.md`），
  * 不需要查 API。
  *
  * 镜像下载链接 = `mirrorPrefix` + GitHub 直链（gh-proxy 类服务的标准拼法）。前缀是
@@ -31,10 +31,10 @@ object UpdateCheck {
 
     /** GitHub 直链前缀：`releases/download/<版本>/<资产名>`。 */
     private const val DOWNLOAD_BASE: String =
-        "https://github.com/Inonvation/JUWP-Schedule/releases/download"
+        "https://github.com/Inonvation/JUWPHub/releases/download"
 
     /** 发版 APK 资产命名（发版流程重命名步骤的口径，纯 ASCII）。 */
-    private const val APK_NAME_TEMPLATE: String = "JUWP-Schedule-%s.apk"
+    private const val APK_NAME_TEMPLATE: String = "JUWPHub-%s.apk"
 
     /** 清单限长：远超实际大小（<2KB），只挡被改坏的巨型响应。 */
     private const val MAX_MANIFEST_BYTES = 512 * 1024
@@ -133,7 +133,7 @@ object UpdateCheck {
 data class UpdateManifest(
     /** 最新版本号，`主.次.修订`（发版口径：tag = versionName，不带 v 前缀）。 */
     val version: String,
-    /** 发版 APK 资产名，如 `JUWP-Schedule-2.2.0.apk`。 */
+    /** 发版 APK 资产名，如 `JUWPHub-2.2.0.apk`。 */
     val apkName: String,
     /** APK 的 SHA-256（十六进制小写）；发版时 `Get-FileHash` 写入，镜像通道的核对凭据。 */
     val sha256: String,

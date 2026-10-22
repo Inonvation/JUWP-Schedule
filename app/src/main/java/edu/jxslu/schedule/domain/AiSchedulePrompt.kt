@@ -21,7 +21,7 @@ object AiSchedulePrompt {
 
     /** 发给模型的 system 提示：角色 + 两类改动的分野 + 纪律。 */
     val SYSTEM: String = """
-        你是「水贝贝」课表 App 的调课助手。用户会给你一条调课通知、他当前的课表清单（带编号），
+        你是「JUWPHub」课表 App 的调课助手。用户会给你一条调课通知、他当前的课表清单（带编号），
         以及学期日历（周次 ↔ 日期对照）。把通知里的安排翻译成结构化改动，调用 propose_schedule_changes 返回。
 
         有**两类**改动，别混：

@@ -506,7 +506,7 @@
   **卡片带进度条**（`ProgressStyle`，填满 = 免费时长还剩满格、随免费时间流干；不设 segment /
   tracker 图标，走默认「按进度着色」，无 segment 时满刻度 100）。**它曾被当成「岛抖」的嫌疑犯
   撤掉过一次（2026-10-16 二轮），用户确认抖动在它之前就有、已按用户要求加回**——别再拿它当
-  抖动的原因。**2026-10-19 用户先报「下拉状态栏时水贝贝图标一闪一闪」，看了 5 秒版后
+  抖动的原因。**2026-10-19 用户先报「下拉状态栏时 JUWPHub 图标一闪一闪」，看了 5 秒版后
   又明确「我要看的就是倒计时」**：HyperOS 3 的芯片不显示 chronometer，岛上逐秒走只能靠
   每秒重发 `setShortCriticalText`；代价是 Live Update 卡片每收到一次更新会重绘头部的
   应用图标。最终口径：**芯片文案与进度条每秒重发**（`EbikeFreeRideService.TICK_MS =
@@ -525,7 +525,7 @@
   记账是**进程内**的（与 `runningStartAt` 同性质）：换车换起点自然失效，进程被杀就丢——重启后
   不该继承上一轮的「别打扰我」。
   **别去碰 `miui.focus.param` / 小米超级岛**——那要小米平台白名单（企业认证 + 上架 + 逐场景审核 +
-  证书指纹），本仓库私有、非官方、不分发，拿不到；参考实现是 RikkaHub（同机型同 ROM 已跑通），
+证书指纹），本仓库非官方、不分发，拿不到；参考实现是 RikkaHub（同机型同 ROM 已跑通），
   它用的就是这套标准 API。官方资格清单现在全满足：Standard/BigText/Call/Progress/Metric 样式之一 ·
   `ongoing` · 有 contentTitle · 无自定义 RemoteViews · 非 group summary · 不 colorized ·
   渠道非 `IMPORTANCE_MIN`——**别加 `setCustomContentView`、别把倒计时渠道降成 IMPORTANCE_MIN**，

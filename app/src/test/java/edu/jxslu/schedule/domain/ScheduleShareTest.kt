@@ -15,8 +15,8 @@ class ScheduleShareTest {
 
     @Test
     fun `file name carries date tag and week`() {
-        assertEquals("水贝贝课表_20261009_第3周.png", ScheduleShare.exportFileName("20261009", 3))
-        assertEquals("水贝贝课表_20261009_第12周.png", ScheduleShare.exportFileName("20261009", 12))
+        assertEquals("JUWPHub课表_20261009_第3周.png", ScheduleShare.exportFileName("20261009", 3))
+        assertEquals("JUWPHub课表_20261009_第12周.png", ScheduleShare.exportFileName("20261009", 12))
     }
 
     @Test

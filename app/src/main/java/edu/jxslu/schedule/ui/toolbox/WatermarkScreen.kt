@@ -87,7 +87,7 @@ fun WatermarkScreen(onBack: () -> Unit) {
 
     var sourceUri by remember { mutableStateOf<Uri?>(null) }
     var previewSource by remember { mutableStateOf<Bitmap?>(null) }
-    var text by remember { mutableStateOf("水贝贝") }
+    var text by remember { mutableStateOf("JUWPHub") }
     var density by remember { mutableStateOf(ToolboxImage.Density.Normal) }
     var alphaPercent by remember { mutableStateOf(35f) }
     var rotationDeg by remember { mutableStateOf(-30f) }
@@ -183,7 +183,7 @@ fun WatermarkScreen(onBack: () -> Unit) {
             } else {
                 when (val result = ToolboxExport.save(context, bitmap, fileName)) {
                     is GallerySaveResult.Saved ->
-                        notice("已保存到相册（Pictures/水贝贝）", NoticeTone.Success)
+                        notice("已保存到相册", NoticeTone.Success)
                     is GallerySaveResult.Failed -> notice(result.message, NoticeTone.Error)
                 }
             }

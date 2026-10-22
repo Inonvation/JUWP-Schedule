@@ -111,7 +111,7 @@ private val BoardFooterHeight = 18.dp
 private val BoardFooterGap = 6.dp
 
 /** 脚注文案（DESIGN §4.12）：仓库纪律「对外文案必须免责声明」，分享出去的图就是对外。 */
-private const val BoardFooterText = "水贝贝 · 非官方课表工具，内容仅供参考"
+private const val BoardFooterText = "JUWPHub · 非官方课表工具，内容仅供参考"
 
 /**
  * 板减掉的「页面底部净空」里与底栏形态无关的那一段：悬浮胶囊高 64 + 离底间距 12
@@ -231,7 +231,7 @@ fun ScheduleShareScreen(
                     }
                 ) {
                     is GallerySaveResult.Saved ->
-                        notice("已保存到相册（Pictures/水贝贝）", NoticeTone.Success)
+                        notice("已保存到相册", NoticeTone.Success)
                     is GallerySaveResult.Failed -> notice(result.message, NoticeTone.Error)
                 }
             }
@@ -398,7 +398,7 @@ fun ScheduleShareScreen(
                         )
                     }
                     ToggleRow(
-                        label = "包含「水贝贝」脚注",
+                        label = "包含「JUWPHub」脚注",
                         checked = includeFooter,
                         enabled = !busy,
                         onChecked = { includeFooter = it },

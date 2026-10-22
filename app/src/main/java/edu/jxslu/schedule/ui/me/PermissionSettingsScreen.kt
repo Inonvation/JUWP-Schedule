@@ -262,7 +262,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             if (AppPermissions.albumWriteNeeded) {
                 SettingsSection(
                     title = "相册",
-                    subtitle = "把共享单车二维码存进相册「水贝贝」；Android 10 起系统相册不再需要权限",
+                    subtitle = "把共享单车二维码存进系统相册；Android 10 起系统相册不再需要权限",
                 ) {
                     PermissionRow(
                         title = "相册写入",

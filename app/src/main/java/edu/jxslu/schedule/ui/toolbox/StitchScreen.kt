@@ -241,7 +241,7 @@ fun StitchScreen(onBack: () -> Unit) {
             } else {
                 when (val saved = ToolboxExport.save(context, bitmap, fileName)) {
                     is GallerySaveResult.Saved ->
-                        notice("已保存到相册（Pictures/水贝贝）", NoticeTone.Success)
+                        notice("已保存到相册", NoticeTone.Success)
                     is GallerySaveResult.Failed -> notice(saved.message, NoticeTone.Error)
                 }
             }

@@ -82,7 +82,7 @@
   底部按钮被挤出屏幕（`decorFitsSystemWindows` 开关无效）；二级页的 Activity 窗口 insets
   是本项目已经跑通的形态（与其余二级页一致）。
 - **板（`ShareBoard`）**：可选背景图 + 板头（课表名 / 第 N 周 / 日期范围）+ `TimeRail` + `WeekPage`
-  + 可选脚注（`水贝贝 · 非官方课表工具，内容仅供参考`——对外文案纪律）。板不画非本周灰态与
+  + 可选脚注（`JUWPHub · 非官方课表工具，内容仅供参考`——对外文案纪律）。板不画非本周灰态与
   当前时刻线、`tapBlankToAdd = false`；其余样式与几何（行高倍率 / 字号 / 圆角 / 不透明度 /
   描边 / 教师 / 网格线）沿用用户显示设置。板对触摸屏蔽（同级覆盖层，不消费事件 → 外层滚动
   照常）：网格课块自带 `clickable`，而预览只是一张图。
@@ -98,10 +98,10 @@
   可用高反推并夹 44–64dp）作废：预览区比课表页的网格区又窄又矮，而字号还是屏幕那一份，
   于是图里文字相对格子明显偏大、长课名多截一行教室（2026-10-10 用户报障根因）。
 - **两个开关**：「保留课表背景图」（**仅设置了背景图时出现**，默认**关**——分享图默认干净、
-  也避免默认带走个人照片）、「包含「水贝贝」脚注」（默认**开**）。背景位图解码中禁用两个动作按钮，
+  也避免默认带走个人照片）、「包含「JUWPHub」脚注」（默认**开**）。背景位图解码中禁用两个动作按钮，
   避免截到半张背景。
 - **出口两条**：保存到相册 = `ui/common/BitmapSave.kt`（`saveBitmapToGallery`，MediaStore
-  `Pictures/水贝贝`，API 29+ 免权限 / 26–28 legacy 直写；与共享单车出码共用同一实现）；
+  `Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移，API 29+ 免权限 / 26–28 legacy 直写；与共享单车出码共用同一实现）；
   分享 = `data/repo/ScheduleShareStore.kt`（`cacheDir/schedule_share/` 落 PNG + FileProvider
   内容 Uri，只留最近 5 份；**落 cache 不进云备份**，也省掉备份排除 xml 的一条）。
 - **红线**：不写 `courses` 表（纯渲染）；不新增权限（相册写入复用 manifest 里已有的
@@ -467,7 +467,7 @@ settle 后结果落盘（`onboarding_sync_outcome_json`），主界面在 `onboa
   `BikeLocator`（一次性定位 + 页面可见期间的连续定位流，§3.9）。
   选中车号不再需要转发层：车号直接填进抽屉的输入框（2026-09-29 起，旧版那条
   `EXTRA_PICKED_CAR_NUM` Activity Result 通道已删）。
-  落相册走 MediaStore `Pictures/水贝贝`（API 29+ 免权限；26–28 需 `WRITE_EXTERNAL_STORAGE` 运行时申请）。
+  落相册走 MediaStore `Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移；API 29+ 免权限；26–28 需 `WRITE_EXTERNAL_STORAGE` 运行时申请）。
 - 打开快趣出行（2026-09-21 首版；2026-09-23 收敛为一级）：只剩
   `getLaunchIntentForPackage("com.kvcoo.go")` → 桌面启动意图（启动页，导出无门槛）；
   未安装给一句 Snackbar。助手通道、`WRITE_SECURE_SETTINGS`、`KILL_BACKGROUND_PROCESSES`、

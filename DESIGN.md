@@ -1,4 +1,4 @@
-# JUWP Schedule 设计说明书
+# JUWPHub 设计说明书
 
 面向 **江西水利电力大学** 的 Android 课表 App。技术栈 Kotlin + Jetpack Compose（Material 3）。
 

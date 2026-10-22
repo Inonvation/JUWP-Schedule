@@ -176,7 +176,7 @@ fun WidgetSettingsScreen(onBack: () -> Unit) {
                 subtitle = if (caps.canPin) {
                     "点「添加」后在系统确认框里一键放到桌面"
                 } else {
-                    "当前桌面不支持应用内添加，请长按桌面空白处 → 小组件 → 水贝贝"
+                    "当前桌面不支持应用内添加，请长按桌面空白处 → 小组件 → JUWPHub"
                 },
             ) {
                 Spacer(Modifier.height(4.dp))
@@ -342,7 +342,7 @@ private data class WidgetEntry(
 
 private val entries = listOf(
     WidgetEntry(
-        label = "水贝贝 · 课表",
+        label = "JUWPHub · 课表",
         description = "小尺寸看正在上 / 下一节，拖到 4×4 变本周课表",
         receiver = ScheduleWidgetReceiver::class.java,
         icon = HugeIcons.Calendar01,
@@ -350,7 +350,7 @@ private val entries = listOf(
         countOf = { it.scheduleAdded },
     ),
     WidgetEntry(
-        label = "水贝贝 · 校园卡 · 电费",
+        label = "JUWPHub · 校园卡 · 电费",
         description = "余额大字 + 电费小字；点卡片出示付款码，点电费行进用电统计",
         receiver = CampusCardWidgetReceiver::class.java,
         icon = HugeIcons.Wallet03,
@@ -358,7 +358,7 @@ private val entries = listOf(
         countOf = { it.campusAdded },
     ),
     WidgetEntry(
-        label = "水贝贝 · 胖乖开水",
+        label = "JUWPHub · 胖乖开水",
         description = "固定 2×2；小票余额大字 + 积分，点「去开水」直达开水",
         receiver = QiekjWaterWidgetReceiver::class.java,
         icon = HugeIcons.Droplet,
@@ -366,7 +366,7 @@ private val entries = listOf(
         countOf = { it.qiekjAdded },
     ),
     WidgetEntry(
-        label = "水贝贝 · 趣智开水",
+        label = "JUWPHub · 趣智开水",
         description = "固定 2×2；余额 / 用水中 + 设备，点「去开水」直达开阀",
         receiver = QzxyWaterWidgetReceiver::class.java,
         icon = HugeIcons.GlassWater,
@@ -807,7 +807,7 @@ private fun IntroDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("把水贝贝放上桌面") },
+        title = { Text("把 JUWPHub 放上桌面") },
         text = {
             Text(
                 text = "课表：小到 2×2 看下一节，拖到 4×4 变本周课表。\n\n" +

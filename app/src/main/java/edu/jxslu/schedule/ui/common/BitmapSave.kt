@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import edu.jxslu.schedule.domain.GalleryPaths
 import java.io.File
 import java.io.FileOutputStream
 
@@ -35,7 +36,8 @@ fun saveBitmapToGallery(
     displayName: String,
     format: Bitmap.CompressFormat = Bitmap.CompressFormat.PNG,
     quality: Int = 100,
-    subDir: String = "水贝贝",
+    // 当前相册目录；旧目录 `Pictures/水贝贝` 由 GalleryMigration 首次冷启动迁移。
+    subDir: String = GalleryPaths.CURRENT_SUBDIR,
 ): GallerySaveResult {
     return try {
         if (Build.VERSION.SDK_INT >= 29) {

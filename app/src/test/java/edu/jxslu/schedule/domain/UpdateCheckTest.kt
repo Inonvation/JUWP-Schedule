@@ -17,14 +17,14 @@ class UpdateCheckTest {
     fun `解析完整清单`() {
         val manifest = UpdateCheck.parseManifest(
             """
-            {"version":"2.3.0","apk":"JUWP-Schedule-2.3.0.apk",
+            {"version":"2.3.0","apk":"JUWPHub-2.3.0.apk",
              "sha256":"ABCD0123abcd0123abcd0123abcd0123abcd0123abcd0123abcd0123abcd0123",
              "notes":"更新内容：\n- 修复若干",
              "mirrorPrefix":"https://ghproxy.example/","extra":"忽略我"}
             """.trimIndent(),
         )!!
         assertEquals("2.3.0", manifest.version)
-        assertEquals("JUWP-Schedule-2.3.0.apk", manifest.apkName)
+        assertEquals("JUWPHub-2.3.0.apk", manifest.apkName)
         // SHA-256 统一转小写
         assertEquals("abcd0123abcd0123abcd0123abcd0123abcd0123abcd0123abcd0123abcd0123", manifest.sha256)
         assertEquals("https://ghproxy.example/", manifest.mirrorPrefix)
@@ -34,7 +34,7 @@ class UpdateCheckTest {
     @Test
     fun `apk 缺省时按发版口径补资产名`() {
         val manifest = UpdateCheck.parseManifest("""{"version":"2.3.0"}""")!!
-        assertEquals("JUWP-Schedule-2.3.0.apk", manifest.apkName)
+        assertEquals("JUWPHub-2.3.0.apk", manifest.apkName)
     }
 
     @Test
@@ -109,7 +109,7 @@ class UpdateCheckTest {
     @Test
     fun `GitHub直链由发版口径拼出`() {
         assertEquals(
-            "https://github.com/Inonvation/JUWP-Schedule/releases/download/2.3.0/JUWP-Schedule-2.3.0.apk",
+            "https://github.com/Inonvation/JUWPHub/releases/download/2.3.0/JUWPHub-2.3.0.apk",
             UpdateCheck.githubDownloadUrl(manifest),
         )
     }
@@ -117,7 +117,7 @@ class UpdateCheckTest {
     @Test
     fun `镜像直链等于前缀加GitHub直链`() {
         assertEquals(
-            "https://ghproxy.example/https://github.com/Inonvation/JUWP-Schedule/releases/download/2.3.0/JUWP-Schedule-2.3.0.apk",
+            "https://ghproxy.example/https://github.com/Inonvation/JUWPHub/releases/download/2.3.0/JUWPHub-2.3.0.apk",
             UpdateCheck.mirrorDownloadUrl(manifest),
         )
     }

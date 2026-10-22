@@ -104,7 +104,7 @@ internal object WidgetCapabilities {
      * 只给文案不给弹法：提示统一由页面（WidgetSettingsScreen）的提示宿主展示，
      * 免得这里再拉一条与页面两套观感的系统 Toast。
      */
-    const val manualAddHint: String = "当前桌面不支持一键添加，请长按桌面空白处 → 小组件 → 水贝贝"
+    const val manualAddHint: String = "当前桌面不支持一键添加，请长按桌面空白处 → 小组件 → JUWPHub"
 
     /**
      * 负一屏说明（DESIGN §3.6「负一屏」）。
@@ -115,7 +115,7 @@ internal object WidgetCapabilities {
      */
     const val launcherNote: String =
         "澎湃OS / MIUI 的负一屏只收录「小米小部件」，本应用是安卓原生小组件，可能搜不到。" +
-            "替代：① 在负一屏右上角「+」搜索里试搜「水贝贝」；" +
+            "替代：① 在负一屏右上角「+」搜索里试搜「JUWPHub」；" +
             "② 打开「我的 → 日历同步」，课程进系统日历后由负一屏的「日历日程」卡片展示。"
 
     private fun tryStart(context: Context, intent: Intent): Boolean =

@@ -54,7 +54,7 @@ object AppPermissions {
 
     /**
      * 相册写入。**只有 Android 9 及以下（API ≤ 28）需要**：10 起二维码走 MediaStore 落
-     * `Pictures/水贝贝`，系统不要求权限（manifest 里也用 `maxSdkVersion="28"` 限定了）。
+     * `Pictures/JUWPHub`（旧目录由 GalleryMigration 首次冷启动迁移），系统不要求权限（manifest 里也用 `maxSdkVersion="28"` 限定了）。
      */
     val albumWriteNeeded: Boolean
         get() = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P

@@ -306,7 +306,7 @@ fun ShareEntrySheet(
             ImportEntryRow(
                 icon = { Icon(HugeIcons.File02, contentDescription = null, modifier = Modifier.size(22.dp)) },
                 title = "导出为 JSON",
-                subtitle = "完整课表数据，可在其他设备导入水贝贝",
+                subtitle = "完整课表数据，可在其他设备导入 JUWPHub",
                 onClick = onExportJson,
             )
             ImportEntryRow(

@@ -154,7 +154,7 @@
   按钮），字却是屏幕那一份，图里文字就相对格子偏大、长课名多截一行教室（2026-10-10 用户报障根因）。
   预览按可用区缩放，**缩放只走 `graphicsLayer`**（不改布局）→ 截图仍是板原始分辨率（整屏级，
   1101×2289 @ 1080 屏），别用会改布局的缩放（`size()`/`requiredSize` 组合错一处，预览与导出图就对不上）。
-- 出口两条：保存到相册 = `ui/common/BitmapSave.kt`（MediaStore `Pictures/水贝贝`，与单车出码共用）；
+- 出口两条：保存到相册 = `ui/common/BitmapSave.kt`（MediaStore `Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移，与单车出码共用）；
   分享 = `data/repo/ScheduleShareStore.kt`（`cacheDir/schedule_share/` + FileProvider 的
   `schedule_share` 根，只留最近 5 份）。
 - **不要把这个页面做成弹层（Dialog）**：实测该 Compose 版本下 Dialog 窗口的内容约束比可视区高一个

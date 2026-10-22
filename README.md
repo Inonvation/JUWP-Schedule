@@ -1,15 +1,17 @@
 <p align="center">
-  <img src="assets/icon.png" width="120" alt="水贝贝 应用图标">
+  <img src="assets/icon.png" width="120" alt="JUWPHub 应用图标">
 </p>
 
-<h1 align="center">水贝贝（JUWP Schedule）</h1>
+<h1 align="center">JUWPHub</h1>
+
+> 2026-10-23 起显示名、仓库名与 APK 文件名改为「JUWPHub」；包名与 App 数据不变，相册旧图首次启动自动迁移到 `Pictures/JUWPHub`。
 
 <p align="center">
   江西水利电力大学校园生活 App —— 从教务一键导入课表，查询成绩与考试安排；顺手把学生每天要开的那些应用、网页和小程序收进一个应用里。免费、无广告、无内购。
 </p>
 
 <p align="center">
-  <a href="https://github.com/Inonvation/JUWP-Schedule/releases/latest"><img src="https://img.shields.io/github/v/release/Inonvation/JUWP-Schedule" alt="Latest Release"></a>
+  <a href="https://github.com/Inonvation/JUWPHub/releases/latest"><img src="https://img.shields.io/github/v/release/Inonvation/JUWPHub" alt="Latest Release"></a>
   <a href="#-下载与安装"><img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
@@ -39,7 +41,7 @@
 
 ## 📥 下载与安装
 
-从 **[Releases](https://github.com/Inonvation/JUWP-Schedule/releases/latest)** 下载最新正式包 `JUWP-Schedule-<版本号>.apk`，Android 8.0 及以上可用，约 5 MB。
+从 **[Releases](https://github.com/Inonvation/JUWPHub/releases/latest)** 下载最新正式包（新版本文件名 `JUWPHub-<版本号>.apk`；2.12.0 及更早版本仍为 `JUWP-Schedule-*`），Android 8.0 及以上可用，约 5 MB。
 
 ## 🔒 数据与隐私
 
@@ -81,7 +83,7 @@
 > - **严禁**刷积分、绕过付费、伪造官方身份、售卖本软件及其脚本、攻击学校网站、爬取售卖敏感数据、逆向学校系统。
 > - 项目**仅供学习交流**；因不正当使用造成的损失**开发者不负责**。如有侵权，请联系删除。
 
-问题、建议或想新增功能，欢迎提 [Issue](https://github.com/Inonvation/JUWP-Schedule/issues)。
+问题、建议或想新增功能，欢迎提 [Issue](https://github.com/Inonvation/JUWPHub/issues)。
 
 ## 📄 License
 

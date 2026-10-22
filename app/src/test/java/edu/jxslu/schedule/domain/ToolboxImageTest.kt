@@ -14,14 +14,14 @@ class ToolboxImageTest {
 
     @Test
     fun `水印密度三档就是尾部空行`() {
-        assertEquals("水贝贝", ToolboxImage.watermarkPattern("水贝贝", ToolboxImage.Density.None))
+        assertEquals("JUWPHub", ToolboxImage.watermarkPattern("JUWPHub", ToolboxImage.Density.None))
         assertEquals(
-            "水贝贝\n",
-            ToolboxImage.watermarkPattern("水贝贝", ToolboxImage.Density.Normal),
+            "JUWPHub\n",
+            ToolboxImage.watermarkPattern("JUWPHub", ToolboxImage.Density.Normal),
         )
         assertEquals(
-            "水贝贝\n\n",
-            ToolboxImage.watermarkPattern("水贝贝", ToolboxImage.Density.Big),
+            "JUWPHub\n\n",
+            ToolboxImage.watermarkPattern("JUWPHub", ToolboxImage.Density.Big),
         )
     }
 

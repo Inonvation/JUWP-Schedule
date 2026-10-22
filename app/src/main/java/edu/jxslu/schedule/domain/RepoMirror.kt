@@ -24,7 +24,7 @@ object RepoMirror {
     /** 仓库默认分支（真实存在；旧 URL 曾写 `master`，别依赖 raw 侧的兼容解析，见类注释）。 */
     const val BRANCH: String = "main"
 
-    private const val REPO = "Inonvation/JUWP-Schedule"
+    private const val REPO = "Inonvation/JUWPHub"
 
     /** raw 直链前缀（gh-proxy 类源基于它加前缀，jsdelivr 类源是另一种拼法）。 */
     private const val RAW_BASE = "https://raw.githubusercontent.com/$REPO/$BRANCH"

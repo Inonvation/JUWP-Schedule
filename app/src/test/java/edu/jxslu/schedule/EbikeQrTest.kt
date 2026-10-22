@@ -338,9 +338,9 @@ class EbikeQrTest {
             EbikeQr.PendingKind.MediaStore to "content://media/external/images/media/123",
             EbikeQr.parsePendingKey(media),
         )
-        val file = EbikeQr.pendingFileKey("/storage/emulated/0/Pictures/水贝贝/ebike-100000669.jpg")
+        val file = EbikeQr.pendingFileKey("/storage/emulated/0/Pictures/JUWPHub/ebike-100000669.jpg")
         assertEquals(
-            EbikeQr.PendingKind.FilePath to "/storage/emulated/0/Pictures/水贝贝/ebike-100000669.jpg",
+            EbikeQr.PendingKind.FilePath to "/storage/emulated/0/Pictures/JUWPHub/ebike-100000669.jpg",
             EbikeQr.parsePendingKey(file),
         )
     }

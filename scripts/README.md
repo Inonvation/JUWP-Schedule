@@ -378,7 +378,7 @@ GET  /charge/turnover/personal_data?feeitemid=181&flag=3   # 电费充值流水
    的 form 编码不同——官方 `$api.post` 没带 `"qs"` 参数即 axios 默认 JSON），`code=200` 即成功；
    upsert 语义、官方允许改绑。同房间重绑探针：`_archive/_probe_power_scene.py`（2026-10-08 实测通过）。
 
-App 端（水贝贝）已在生活页接入电费读数与 App 内充值（`blade-pay` 下单 + 电子账户
+App 端（JUWPHub）已在生活页接入电费读数与 App 内充值（`blade-pay` 下单 + 电子账户
 密码支付 + 农行支付内嵌手机版收银台，DESIGN §4.24），并以同样三接口在 App 内提供
 「选择寝室」流程（未设置寝室时的 CTA 与改绑入口，DESIGN §4.24「未设置寝室与 App 内确认」）。
 **脚本不做充值、也不做绑定**：支付链路留在 App 里，脚本侧只读（探针那一次同房间重绑是
@@ -533,7 +533,7 @@ index.json + `git add/commit/push`（只动 `docs-public/calendar/`；分支非 
 ```powershell
 $a = New-ScheduledTaskAction -Execute "cmd.exe" -Argument '/c "cd /d F:\JUWP-schedule && .venv-scraper\Scripts\python.exe scripts\sync_calendar.py >> scripts\out\sync_calendar.log 2>&1"'
 $t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 20:00
-Register-ScheduledTask -TaskName "JUWP-Schedule-校历同步" -Action $a -Trigger $t `
+Register-ScheduledTask -TaskName "JUWPHub-校历同步" -Action $a -Trigger $t `
   -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
 ```
 

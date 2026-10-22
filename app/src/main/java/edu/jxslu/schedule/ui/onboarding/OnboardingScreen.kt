@@ -361,7 +361,7 @@ fun OnboardingScreen(onFinish: () -> Unit, startAtJw: Boolean = false) {
     // 提供 `LocalContentColor`（这里是 `onBackground`），而 `Modifier.background` 不会。
     // 缺了这层，本屏所有没写 `color` 的 `Text` / `Icon` 会落回 `LocalContentColor` 的默认值
     // 纯黑——浅色主题下与近黑正文几乎没差别所以看不出来，深色主题下标题直接糊进背景
-    // （2026-09-29 模拟器复现：「欢迎使用水贝贝」几乎不可见）。
+    // （2026-09-29 模拟器复现：「欢迎使用 JUWPHub」几乎不可见）。
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -1084,7 +1084,7 @@ private fun WelcomeStep(onNext: () -> Unit, onOpenDisclaimer: () -> Unit) {
     }
 }
 
-/** 品牌头：水滴呼吸 + 三圈涟漪常驻循环，贴「水贝贝」的水意象。 */
+/** 品牌头：水滴呼吸 + 三圈涟漪常驻循环，贴水滴意象。 */
 @Composable
 private fun WelcomeHero() {
     Column(
@@ -1126,7 +1126,7 @@ private fun WelcomeHero() {
         }
         Spacer(Modifier.height(16.dp))
         Text(
-            "欢迎使用水贝贝",
+            "欢迎使用 JUWPHub",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
         )
@@ -2147,7 +2147,7 @@ private fun DoneStep(
             }
         }
         StepActions(
-            primaryText = "进入水贝贝",
+            primaryText = "进入 JUWPHub",
             busy = false,
             busyText = "",
             enabled = true,

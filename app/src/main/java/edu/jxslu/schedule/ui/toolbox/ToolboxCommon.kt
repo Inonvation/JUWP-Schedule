@@ -57,7 +57,7 @@ import kotlinx.coroutines.withContext
  * 百宝箱各工具页的共用装配（DESIGN §4.47）：单图选择器、滑杆行、保存 / 分享出口。
  *
  * 出口口径与课表导出图片（§4.12）逐条对齐：
- * - 保存到相册走 `ui/common/BitmapSave`（MediaStore `Pictures/水贝贝`）；
+ * - 保存到相册走 `ui/common/BitmapSave`（MediaStore `Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移）；
  * - 分享走 `ScheduleShareStore` 的机制（cacheDir 落盘 + FileProvider 临时授权 Uri），
  *   只是目录换成 `toolbox_share`（`Graph.toolboxShareStore`），两边各裁各的 5 份；
  * - 格式统一 JPEG q92：这三样产物多是截图或照片，PNG 会把体积放大一个量级，
@@ -67,9 +67,9 @@ object ToolboxExport {
 
     private val timeFormat = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
-    /** 落盘 / 分享共用的文件名：`水贝贝-百宝箱-<工具>-<时间戳>.jpg`。 */
+    /** 落盘 / 分享共用的文件名：`JUWPHub-百宝箱-<工具>-<时间戳>.jpg`。 */
     fun fileName(tool: String, now: LocalDateTime = LocalDateTime.now()): String =
-        "水贝贝-百宝箱-$tool-${now.format(timeFormat)}.jpg"
+        "JUWPHub-百宝箱-$tool-${now.format(timeFormat)}.jpg"
 
     suspend fun save(context: Context, bitmap: Bitmap, fileName: String): GallerySaveResult =
         withContext(Dispatchers.IO) {

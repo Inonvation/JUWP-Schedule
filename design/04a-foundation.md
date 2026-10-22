@@ -10,7 +10,7 @@
 - Kotlin 2.x + AGP 8.x + Compose BOM
 - minSdk 26（Android 8+，对齐拾光），targetSdk 36（2026-10-16 起；此前 35，为免费倒计时上灵动岛抬到 36）
 - 包名：`edu.jxslu.schedule`（已确认）；debug 构建变体加 `.debug` 后缀，与正式包可共存安装
-- 应用名：**水贝贝**（已确认）/ 工程名 JUWP Schedule；debug 变体显示「水贝贝 Debug」
+- 应用名：**JUWPHub**（2026-10-23 起）/ 工程名 JUWPHub；debug 变体显示「JUWPHub Debug」
 
 ### 4.2 分层
 

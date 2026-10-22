@@ -1,4 +1,4 @@
-# JUWP Schedule · AI 编码提示词包
+# JUWPHub · AI 编码提示词包
 
 按阶段复制对应块到 Cursor / Claude Code / 本体 MiMo 等工具。
 
@@ -12,7 +12,7 @@
 通用粘贴头（每次新会话建议带上）：
 
 ```text
-项目：JUWP Schedule（江西水利电力大学课表 App）
+项目：JUWPHub（江西水利电力大学课表 App）
 根目录：F:\JUWP-schedule
 必读：AGENTS.md（含工程实况与任务路由表）→ 按路由表读 .agents/rules/ 的对应主题文件
       → DESIGN.md 只读与任务相关的章节
@@ -48,7 +48,7 @@
    - applicationId edu.jxslu.schedule（已确认）
    - minSdk 26，Compose 打开
 3. 依赖：Compose BOM、Material3、Navigation、ViewModel、Retrofit、OkHttp、kotlinx-serialization 或 Moshi、DataStore、Room、me.rerere:hugeicons-compose
-4. 主题：Material3 明暗主题，应用名「水贝贝」
+4. 主题：Material3 明暗主题，应用名「JUWPHub」
 5. 三个空页面 + 底部导航：今日 / 课表 / 我的（路由名见 DESIGN 3.1）
 6. 首页占位文案说明后续功能
 7. README 写清：如何用 Android Studio 打开、如何安装 JDK/SDK 要求

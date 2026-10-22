@@ -436,7 +436,7 @@ private fun CodeSettingsSection(prefs: EbikePrefsSnapshot) {
     SettingsSection(title = "乘车码") {
         SettingSwitchRow(
             title = "生成后自动保存到相册",
-            subtitle = "每次生成乘车码就存进相册「水贝贝」",
+            subtitle = "每次生成乘车码就存进系统相册",
             checked = autoSaveChecked,
             onCheckedChange = { checked ->
                 autoSaveChecked = checked
