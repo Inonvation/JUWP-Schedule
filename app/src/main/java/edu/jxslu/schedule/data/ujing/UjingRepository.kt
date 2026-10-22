@@ -186,6 +186,7 @@ class UjingRepository(
      * 数据源：`stores/near?keyword=<店名>` 的 `storeInfo[]`——`category == 1` 洗衣机、
      * 2 烘干机，`access` 空闲、`num` 总数。**不能用不带 keyword 的附近列表**：它只回最近
      * 的几十家，13 栋这类店会被截在 2km 列表外；带 keyword 能直接命中。
+     * 返回的店按店名**精确 → 包含**认；都不中返回空（不回退首条，理由见下）。
      *
      * `devices/reserve` 不再使用：本校服务端对 ZA / BI 两组都回
      * `code=1614「暂不支持预约，请扫码洗衣」`（2026-10-22 实测），不是 token 问题。
@@ -201,9 +202,11 @@ class UjingRepository(
             )
             envelope.requireSuccess()
             val stores = envelope.decodeData<UjingStoreListData>()?.storeList.orEmpty()
-            val store = stores.firstOrNull { it.name == storeName }
-                ?: stores.firstOrNull { it.name.contains(storeName) }
-                ?: stores.firstOrNull()
+            val wanted = storeName.trim()
+            // 精确 → 包含（平台偶尔给店名加前后缀）；**都不中就不取数**——keyword 搜索
+            // 回的第一条可能是别的楼，把它的空闲数挂在这家店上是错的，宁可显示「暂无设备数据」。
+            val store = stores.firstOrNull { it.name.trim().equals(wanted, ignoreCase = true) }
+                ?: stores.firstOrNull { it.name.contains(wanted, ignoreCase = true) }
                 ?: return@withContext emptyList()
             buildList {
                 listOf(1 to "洗衣机", 2 to "烘干机").forEach { (category, label) ->

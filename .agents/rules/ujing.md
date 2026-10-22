@@ -134,9 +134,15 @@
 - **看板数据源（2026-10-22 改）**：`UjingRepository.storeCounts(店名)` 逐店调
   `stores/near?keyword=<店名>`，从 `storeInfo[]` 按 category 1/2 拼洗衣机 / 烘干机组；
   **别再回到 `devices/reserve`**（1614）或**不带 keyword 的附近列表**（截断到最近几十家）。
+  命中规则：店名 `trim` 后**精确 → 包含**；都不中返回空，**不回退列表第一条**——keyword
+  搜索的首条可能是别的楼，张冠李戴比「暂无设备数据」更糟。
   单店失败只影响那一行；`UjingBoardRow.error` 会把失败原因显示出来，不再只写「获取失败」。
+- **看板并发与取消**：多店并发上限 4（`BOARD_CONCURRENCY`，侧栏 `loadUjingFreeText` 同口径）；
+  连点「刷新」取消上一轮（`boardGeneration` 只让最新一轮写回），同一轮的会话过期只提示一次。
+  `runCatching` 会吞掉 `CancellationException`，并发块里必须手写 catch 并重新抛出。
 - **侧栏 U净 状态**：`loadUjingFreeText` 与看板同源（逐店 `storeCounts` → `boardLine`
-  只数洗衣机）；未登录 / 无收藏 / 全失败时不显示。
+  只数洗衣机）；未登录 / 无收藏 / 全失败时不显示。节流时刻只在请求**正常走完**时落，
+  侧栏收起取消的请求不算数（否则再展开 30 秒内不会补拉）。
 - **今日页 U净 弹窗显示洗涤状态**（2026-10-19 自生活页迁入，`ui/ujing/UjingEntrySheet`）：
   弹窗只读 `Graph.ujing().orderState`；**订单对表在打开弹窗那一下做**（`TodayScreen` 的点击处，
   10 秒节流，见 `UJING_ORDER_REFRESH_TTL_MILLIS`——快照只在 U净 页轮询，不这样拿到的是下单时的

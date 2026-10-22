@@ -20,8 +20,13 @@ import edu.jxslu.schedule.data.ujing.UjingStore
 import edu.jxslu.schedule.data.ujing.UjingWashModel
 import edu.jxslu.schedule.domain.UjingState
 import edu.jxslu.schedule.ui.reminder.UjingDoneReminder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +37,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 看板一行：[line] 是洗衣机聚合，[dryerLine] 是烘干机聚合（各自为 null = 该店没有这类
@@ -118,6 +126,10 @@ class UjingViewModel(
 
     private val _uiState = MutableStateFlow(UjingUiState())
     val uiState: StateFlow<UjingUiState> = _uiState.asStateFlow()
+
+    /** 在途的看板刷新：连点「刷新」时取消上一轮，避免旧结果覆盖新结果。 */
+    private var boardJob: Job? = null
+    private var boardGeneration = 0
 
     /** 一次性提示（Snackbar）。 */
     private val _events = Channel<String>(Channel.BUFFERED)
@@ -277,40 +289,67 @@ class UjingViewModel(
      * 拉取全部收藏店的空闲数据（2026-10-22 定稿）：`devices/reserve` 在本校被服务端
      * 关闭（回 1614「暂不支持预约，请扫码洗衣」），改走 `stores/near?keyword=<店名>`
      * 的 `storeInfo[]`——一店一条，按店名精确命中，不受附近列表截断影响。
-     * 单店失败只让那一行显示失败原因，不打断整板。
+     *
+     * 多店并发（上限 [BOARD_CONCURRENCY]）：串行时收藏几家就要依次打几条，刷新要等好几秒。
+     * 单店失败只让那一行显示失败原因，不打断整板；同一轮里会话过期只提示一次。
+     * 连点刷新的旧任务会被取消，且只有最新一轮能写回结果（`boardGeneration`）。
      */
     fun refreshBoard() {
         val houses = houseStore.list()
         _uiState.update { it.copy(houses = houses) }
         if (houses.isEmpty()) {
+            boardJob?.cancel()
+            // 让被取消那一轮的 generation 失效：它不该在清空之后再把旧 rows 写回去
+            boardGeneration++
             _uiState.update { it.copy(board = emptyList(), boardRefreshing = false) }
             return
         }
+        boardJob?.cancel()
+        val generation = ++boardGeneration
         _uiState.update { it.copy(boardRefreshing = true) }
-        viewModelScope.launch {
-            val rows = houses.map { house ->
-                runCatching { repo.storeCounts(house.name) }
-                    .fold(
-                        onSuccess = { groups ->
-                            UjingBoardRow(
-                                house = house,
-                                line = repo.boardLine(groups),
-                                failed = false,
-                                dryerLine = repo.dryerLine(groups),
-                            )
-                        },
-                        onFailure = { error ->
-                            handleFailure(error)
-                            UjingBoardRow(
-                                house = house,
-                                line = null,
-                                failed = true,
-                                error = error.message?.takeIf { it.isNotBlank() } ?: "未知错误",
-                            )
-                        },
-                    )
+        boardJob = viewModelScope.launch {
+            try {
+                val expiryNotified = AtomicBoolean(false)
+                val limiter = Semaphore(BOARD_CONCURRENCY)
+                val rows = coroutineScope {
+                    houses.map { house ->
+                        async {
+                            try {
+                                val groups = limiter.withPermit { repo.storeCounts(house.name) }
+                                UjingBoardRow(
+                                    house = house,
+                                    line = repo.boardLine(groups),
+                                    failed = false,
+                                    dryerLine = repo.dryerLine(groups),
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (error: Exception) {
+                                // 401 一次就清会话；并发下别让每家店各弹一条「登录已过期」
+                                if (error is UjingSessionExpiredException &&
+                                    expiryNotified.compareAndSet(false, true)
+                                ) {
+                                    handleFailure(error)
+                                }
+                                UjingBoardRow(
+                                    house = house,
+                                    line = null,
+                                    failed = true,
+                                    error = error.message?.takeIf { it.isNotBlank() } ?: "未知错误",
+                                )
+                            }
+                        }
+                    }.awaitAll()
+                }
+                if (generation == boardGeneration) {
+                    _uiState.update { it.copy(board = rows, boardRefreshing = false) }
+                }
+            } finally {
+                // 被新一轮取消时不碰 boardRefreshing：那一轮已经把它置 true 了
+                if (generation == boardGeneration) {
+                    _uiState.update { it.copy(boardRefreshing = false) }
+                }
             }
-            _uiState.update { it.copy(board = rows, boardRefreshing = false) }
         }
     }
 
@@ -726,6 +765,9 @@ class UjingViewModel(
          * 登录流程正常在几分钟内走完；留太久的话，用户在别处登录也会被推进一次识别。
          */
         const val PENDING_SCAN_TTL_MILLIS = 10L * 60 * 1000
+
+        /** 看板并发上限（收在 OkHttp 连接池可承受的范围）。 */
+        const val BOARD_CONCURRENCY = 4
 
         /** 订单进行中且页面可见时的轮询间隔（离开页面即停，无后台轮询）。 */
         const val ORDER_POLL_INTERVAL_MILLIS = 15_000L
