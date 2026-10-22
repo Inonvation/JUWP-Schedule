@@ -60,8 +60,9 @@ import me.rerere.hugeicons.stroke.Repair
  *    「发生过的事实」，在途是随时会刷新的当前态），渲染在这里只是**状态展示**；
  *    点行进 `DORM_REPAIR` 详情页。没有可见记录时整行不渲染；
  * 3. **今天的消息**：只列今天（`InboxRules.timeGroupOf` 的 TODAY 桶同口径，本地时区）；
- *    点行 = 标已读 + 按 route 跳二级页（与收件箱页同一套「按枚举名安全解析，认不出就不跳」）；
- * 4. 「还有 N 条」打开收件箱页（完整列表：昨天 / 本周 / 更早 + 一键已读 + 多选删除）。
+ *    点行 = 标已读 + 按 route 跳二级页（与收件箱页同一套「按枚举名安全解析，认不出就不跳」）。
+ *    超出 3 行预览的部分**不再铺「还有 N 条」行**（2026-10-22 用户口径），要看全量走标题行
+ *    「查看更多」（完整列表：昨天 / 本周 / 更早 + 一键已读 + 多选删除）。
  *
  * 今天没有消息时消息区收成一行：「今天没有新消息」+ 查看更多（收件箱可能有更早的消息，
  * 入口不能断——这也是它必须常驻而不是按天显隐的原因）。
@@ -87,7 +88,7 @@ fun InboxTodayCard(
     val todays = messages.orEmpty().filter {
         Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate() == today
     }
-    // 标题计数 = 今天**全部**消息数（2026-10-21 二次口径修正：与「还有 N 条」同一总数，
+    // 标题计数 = 今天**全部**消息数（2026-10-21 二次口径修正：与预览列表同一总数，
     // 数字和列表对得上——此前只数待办类，出现过「今日 1 条」却铺着 5 行的矛盾）。
     // 红点仍只属于待办类：账单是静默留痕（silent），不影响计数口径。
     val headlineCount = todays.size
@@ -97,12 +98,11 @@ fun InboxTodayCard(
     // 卡片整体不再长长一截。可选消息槽不足 3 个时按实际条数铺。
     val repairSlots = if (repair != null) 1 else 0
     val messageSlots = (TODAY_PREVIEW_LIMIT - repairSlots).coerceAtLeast(0)
-    // 待办类优先占位：纯时间截断时，一串账单会把带红点的消息挤进「还有 N 条」（真机踩到）。
+    // 待办类优先占位：纯时间截断时，一串账单会把带红点的消息挤出预览（真机踩到）。
     // 选完槽位再按时间排序渲染，预览里既有最新流水，也一定看得到需要处理的那条。
     val importantShown = important.take(messageSlots)
     val selected = (importantShown + bills.take(messageSlots - importantShown.size))
         .sortedByDescending { it.createdAt }
-    val moreCount = todays.size - selected.size
 
     Column(
         modifier = modifier
@@ -184,27 +184,6 @@ fun InboxTodayCard(
                         }
                     },
                 )
-            }
-            if (moreCount > 0) {
-                // 余量出口：不铺全部，一行收口（点开收件箱页看完整列表）
-                InboxListDivider()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClickLabel = "查看全部消息") {
-                            haptics.tap()
-                            onOpenInbox()
-                        }
-                        .heightIn(min = 40.dp)
-                        .padding(start = 30.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "还有 $moreCount 条",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
         }
     }
