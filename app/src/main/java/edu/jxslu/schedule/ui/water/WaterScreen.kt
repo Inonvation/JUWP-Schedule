@@ -527,8 +527,8 @@ private fun WaterSettingsSection(
 @Composable
 private fun Disclaimer() {
     FooterDisclaimer(
-        body = "胖乖功能模拟客户端操作，仅供学习测试，可能违反平台服务条款；账号与封禁风险自负。" +
-            "本应用与学校、胖乖官方均无关。",
+        body = "**胖乖为第三方非官方功能**，与学校及胖乖官方均无关；" +
+            "模拟客户端操作可能违反平台条款，**账号与封禁风险自负**。",
     )
 }
 

@@ -272,7 +272,7 @@ fun WenquGrabScreen(onBack: () -> Unit) {
                 }
 
                 item(key = "grab-disclaimer") {
-                    FooterDisclaimer(GRAB_DISCLAIMER, modifier = Modifier.padding(top = 4.dp))
+                    FooterDisclaimer(WENQU_GRAB_FOOTER, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
@@ -344,11 +344,6 @@ fun WenquGrabScreen(onBack: () -> Unit) {
         )
     }
 }
-
-private const val GRAB_DISCLAIMER =
-    "蹲点只在打开本页时进行（离开页面即停止）；命中后仍需你点「确认报名」，本页不会自动提交" +
-        "（自动提交只发生在详情里单独开启的「预报名」）。" +
-        "活动数据来自「问渠」实践教育平台（第三方系统，非学校官方功能）。"
 
 /**
  * 控制卡：目标活动名 + 开始 / 停止 + 状态行。

@@ -124,6 +124,7 @@ import edu.jxslu.schedule.ui.common.InlineNoticeRow
 import edu.jxslu.schedule.ui.common.NoticeDialog
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
+import edu.jxslu.schedule.ui.common.emphasizedText
 import edu.jxslu.schedule.ui.jwvw.JwImportResultBus
 import edu.jxslu.schedule.ui.theme.semanticColors
 import kotlinx.coroutines.CoroutineScope
@@ -755,7 +756,7 @@ private fun WhyCard(question: String, body: String, modifier: Modifier = Modifie
         }
         if (open) {
             Text(
-                body,
+                emphasizedText(body),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
@@ -783,7 +784,7 @@ private fun TrustBar(text: String, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.width(9.dp))
         Text(
-            text,
+            emphasizedText(text),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         )
@@ -1326,14 +1327,14 @@ private fun JwStep(
                 WhyCard(
                     question = "为什么要保存密码？",
                     body = "保存后，登录状态过期时 App 会自己重新登录，不用你再输一遍。" +
-                        "密码加密存放在手机本机（Android Keystore），不进云备份、不上传任何服务器，" +
+                        "密码加密存放在手机本机（Android Keystore），**不进云备份，也不经过开发者服务器**；" +
                         "随时可以在「我的」页退出登录并清除。不保存的话，每次进教务都要手动登录。",
                 )
             }
             Spacer(Modifier.height(12.dp))
             StaggerIn(2) {
                 TrustBar("密码加密存在本机（Android Keystore），仅用于学校系统登录；" +
-                    "这是全应用唯一会保存密码的地方。")
+                    "**这是全应用唯一保存教务密码的地方**。")
             }
             Spacer(Modifier.height(16.dp))
             StaggerIn(3) {

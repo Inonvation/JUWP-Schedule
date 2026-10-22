@@ -80,6 +80,7 @@ import edu.jxslu.schedule.ui.common.AppSnackbarHost
 import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.FooterDisclaimer
 import edu.jxslu.schedule.ui.common.HeroTone
+import edu.jxslu.schedule.ui.common.emphasizedText
 import edu.jxslu.schedule.ui.common.ImeAwareModalBottomSheet
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.common.SettingItem
@@ -114,18 +115,17 @@ private const val ORDER_POLL_INTERVAL_MILLIS = 15_000L
 private const val SectionEnterMillis = 220
 private const val SectionExitMillis = 160
 
-/** 使用须知正文（DESIGN §4.37；逐条口径见 docs/ujing-plan.md §3.10，别顺手精简）。 */
+/** 使用须知正文（DESIGN §4.37）：三条事实告知；归属声明由页尾单独承担，避免重复。 */
 private val NoticeItems = listOf(
-    "本功能为 U净（美的校园洗衣）的第三方客户端，与美的集团、无锡小净及相关运营方无任何关联。",
-    "登录凭据（手机号、验证码、令牌）仅保存在本机加密存储，不会经过任何第三方服务器。",
-    "费用与支付全部通过官方渠道完成，本应用不经手资金，不提供任何价格优惠或免费使用。",
-    "第三方接口可能随平台调整而失效，届时请以官方 App / 小程序为准。",
+    "本功能是 **U净（美的校园洗衣）的第三方客户端**，登录凭据只在本机加密保存，" +
+        "登录时只发给 U净 官方接口。",
+    "费用与支付全部走官方渠道，本应用**不经手资金**，也不提供价格优惠或免费使用。",
+    "第三方接口**可能随平台调整而失效**，届时以官方 App / 小程序为准。",
 )
 
 /** 页尾免责声明（DESIGN §3.2「页尾免责声明」：五个第三方账号页统一走 FooterDisclaimer）。 */
 private const val FooterDisclaimerText =
-    "第三方非官方功能：与美的集团、无锡小净及相关运营方均无关联；" +
-        "费用与支付全部通过官方渠道完成，本应用不经手资金。"
+    "**第三方非官方功能**：与美的集团、无锡小净及相关运营方均无关联。"
 
 /**
  * U净 洗衣房主页（DESIGN §3.23 / §4.37）。
@@ -506,7 +506,9 @@ private fun LoginSection(state: UjingUiState, viewModel: UjingViewModel) {
                 Text(if (state.loggingIn) "登录中…" else "登录")
             }
             Text(
-                "登录凭据仅保存在本机加密存储，不会经过任何第三方服务器；只保存登录状态，不保存密码。",
+                emphasizedText(
+                    "登录凭据**只存本机**加密存储，**不经过开发者服务器**；只保存登录状态，不保存密码。",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
@@ -1087,7 +1089,7 @@ private fun UjingNoticeDialog(onConfirm: () -> Unit) {
             ) {
                 NoticeItems.forEachIndexed { index, item ->
                     Text(
-                        "${index + 1}. $item",
+                        emphasizedText("${index + 1}. $item"),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )

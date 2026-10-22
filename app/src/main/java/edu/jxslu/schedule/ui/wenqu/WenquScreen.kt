@@ -227,7 +227,7 @@ fun WenquScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     LoginContent(state = state, vm = vm)
-                    FooterDisclaimer(DISCLAIMER)
+                    FooterDisclaimer(WENQU_FOOTER)
                 }
                 return@Scaffold
             }
@@ -415,7 +415,7 @@ fun WenquScreen(
                     }
 
                     item(key = "disclaimer") {
-                        FooterDisclaimer(DISCLAIMER, modifier = Modifier.padding(top = 4.dp))
+                        FooterDisclaimer(WENQU_FOOTER, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
 
@@ -516,10 +516,6 @@ fun WenquScreen(
 
 /** 回到顶部按钮出现时，提示卡要垫开的高度（按钮 40dp + 上下留白，同底栏那套口径）。 */
 private val BACK_TO_TOP_CLEARANCE = 64.dp
-
-private const val DISCLAIMER =
-    "志愿工时 / 劳动教育数据来自「问渠」实践教育平台（第三方系统，非学校官方功能）。" +
-        "报名 / 取消报名会直接提交到该平台；签到、提交材料等其它操作请到微信小程序内完成。"
 
 /** 条数行文案：浏览说「共 N 条」，搜索说「找到 N 条」，被本地筛选藏掉的都单独说出来。 */
 private fun metaText(state: WenquViewModel.UiState): String = buildString {

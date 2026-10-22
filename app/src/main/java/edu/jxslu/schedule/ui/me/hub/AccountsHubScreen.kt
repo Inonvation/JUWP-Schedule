@@ -66,6 +66,7 @@ import edu.jxslu.schedule.ui.common.DialogWindowFadeEffect
 import edu.jxslu.schedule.ui.common.SettingItem
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.StaggeredReveal
+import edu.jxslu.schedule.ui.common.emphasizedText
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.theme.semanticColors
@@ -629,8 +630,10 @@ private fun TrustNote() {
         )
         Spacer(Modifier.width(9.dp))
         Text(
-            "凭证只保存在本机。用 Android Keystore 加密，不进云备份、不上传任何服务器；" +
-                "退出登录会同时清除密码与网页会话。",
+            emphasizedText(
+                "凭证**只存本机**（Keystore 加密，排除云备份）；登录时只发给对应平台官方接口，" +
+                    "**不经过开发者服务器**。退出登录会同时清除密码与网页会话。",
+            ),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         )

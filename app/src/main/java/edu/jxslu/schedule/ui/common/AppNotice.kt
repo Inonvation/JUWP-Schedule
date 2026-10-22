@@ -348,9 +348,9 @@ fun FooterDisclaimer(
             }
         }
         Text(
-            text = body,
+            text = emphasizedText(body, boldColor = onSurface.copy(alpha = 0.75f)),
             style = MaterialTheme.typography.bodySmall,
-            color = onSurface.copy(alpha = 0.5f),
+            color = onSurface.copy(alpha = 0.6f),
             modifier = Modifier.padding(top = if (title != null) 4.dp else 0.dp),
         )
     }

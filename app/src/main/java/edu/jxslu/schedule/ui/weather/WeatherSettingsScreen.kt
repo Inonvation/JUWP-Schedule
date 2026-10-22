@@ -90,8 +90,8 @@ fun WeatherSettingsScreen(
             }
 
             FooterDisclaimer(
-                "天气数据来自 Open-Meteo（CC BY 4.0），查询点固定为校区" +
-                    "（${WeatherApi.CAMPUS_LABEL}）：不读手机定位，也不上传任何个人或设备信息。预报仅供参考。",
+                "天气数据来自 **Open-Meteo（CC BY 4.0）**；查询点固定为校区" +
+                    "（${WeatherApi.CAMPUS_LABEL}），**不读手机定位**。**预报仅供参考**。",
                 modifier = Modifier.padding(top = 4.dp),
             )
         }

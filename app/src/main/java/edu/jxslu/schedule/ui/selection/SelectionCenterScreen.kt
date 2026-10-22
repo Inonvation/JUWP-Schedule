@@ -579,9 +579,7 @@ fun SelectionCenterScreen(onBack: () -> Unit, focusRoundId: String? = null) {
 
             item {
                 FooterDisclaimer(
-                    body = "打开即浏览本轮全部课程（教务接口要求关键词，App 已自动处理）；" +
-                        "预选命中的课程优先显示，选课 / 退课都由你逐次确认——App 不会自动提交。" +
-                        "数据以教务为准，操作后可用右上角刷新。",
+                    body = "数据以教务为准；**选课 / 退课都由你逐次确认**，App 不会自动提交。",
                 )
             }
         }

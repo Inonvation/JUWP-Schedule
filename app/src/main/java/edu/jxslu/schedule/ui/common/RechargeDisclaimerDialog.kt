@@ -44,7 +44,7 @@ import kotlin.math.ceil
  *
  * AlertDialog（无输入框，不走 ImeAwareModalBottomSheet——那是含输入框弹层的专属口径）；
  * 正文长，给 `verticalScroll` 防小屏裁切。文案在 `domain/RechargeDisclaimer.ITEMS`
- * （「我的 → 关于」的只读查看入口与这里共用一份），别顺手"精简"掉任何一条。
+ * （「我的 → 关于」的只读查看入口与这里共用一份）：三条各有承诺，增删改都要同步口径。
  */
 @Composable
 fun RechargeDisclaimerDialog(
@@ -68,7 +68,7 @@ fun RechargeDisclaimerDialog(
             ) {
                 RechargeDisclaimer.ITEMS.forEachIndexed { index, item ->
                     Text(
-                        text = "${index + 1}. $item",
+                        text = emphasizedText("${index + 1}. $item"),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )

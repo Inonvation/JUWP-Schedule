@@ -468,7 +468,7 @@ fun TermsDeclarationsScreen(
     if (showRechargeNotice) {
         NoticeDialog(
             title = "充值风险提醒",
-            intro = "以下五条在每个充值入口都会再提醒一次；这里是随时可查的全文。",
+            intro = "以下三条在每个充值入口都会再提醒一次；这里是随时可查的全文。",
             items = RechargeDisclaimer.ITEMS,
             onDismiss = { showRechargeNotice = false },
         )

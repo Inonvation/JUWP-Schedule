@@ -1382,8 +1382,7 @@ private fun WateringSettingSection(state: QzxyUiState, viewModel: QzxyViewModel)
 @Composable
 private fun Disclaimer() {
     FooterDisclaimer(
-        body = "趣智校园开热水是第三方非官方功能，通信协议来自公开逆向资料，" +
-            "与校方及设备厂商无关。开阀照常从你的趣智校园账户扣费，本应用不绕过计费。" +
-            "接口或设备固件变更都可能让它失效。",
+        body = "**趣智校园开热水为第三方非官方功能**，协议来自公开逆向资料，与校方及设备厂商无关；" +
+            "开阀照常从你的账户扣费，**本应用不绕过计费**，接口或固件变更可能使其失效。",
     )
 }

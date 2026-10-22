@@ -34,8 +34,8 @@ import kotlin.math.ceil
  * 长文弹窗的正文高度上限：超出后正文自己滚，确认按钮始终留在可见区。
  * 正文一概不给固定高度，字体放大时靠滚动兜住。
  *
- * 取 420dp：免责声明全文（8 条）在 420dpi 档实测约 380dp，380dp 的老上限会把最后一条
- * 压在视口外面——用户以为看完了，其实还差一条。再高就挤到按钮了。
+ * 取 420dp：免责声明全文（4 条）在 420dpi 档留有余量；字体放大时靠滚动兜住，
+ * 不把最后一条压在视口外面。
  */
 private val LegalTextMaxHeight = 420.dp
 
@@ -102,12 +102,12 @@ fun NoticeDialog(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = intro,
+                    text = emphasizedText(intro),
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 items.forEach { item ->
                     Text(
-                        text = "· $item",
+                        text = emphasizedText("· $item"),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 8.dp),
                     )

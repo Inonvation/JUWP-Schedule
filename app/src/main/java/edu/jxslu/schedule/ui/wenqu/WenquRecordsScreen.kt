@@ -159,8 +159,7 @@ fun WenquRecordsScreen(onBack: () -> Unit) {
 
                 item(key = "disclaimer") {
                     FooterDisclaimer(
-                        "记录与工时来自「问渠」实践教育平台（第三方系统，非学校官方功能）。" +
-                            "取消报名会直接提交到该平台；如需申诉或修改，请到微信小程序内联系活动单位。",
+                        WENQU_FOOTER,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }

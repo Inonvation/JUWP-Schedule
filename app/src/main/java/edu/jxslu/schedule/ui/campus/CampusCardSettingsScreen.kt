@@ -88,6 +88,7 @@ import edu.jxslu.schedule.ui.common.SettingsNote
 import edu.jxslu.schedule.ui.common.SettingSwitchRow
 import edu.jxslu.schedule.ui.common.SettingsSection
 import edu.jxslu.schedule.ui.common.WheelValueDialog
+import edu.jxslu.schedule.ui.common.emphasizedText
 import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -338,10 +339,11 @@ fun CampusCardSettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "付款码等同现金，会随时变更，请勿截图或分享给他人，否则可能被盗刷。" +
-                        "学号与密码仅保存在本机（Android Keystore 加密存储），不进入云备份、" +
-                        "不发送到任何第三方服务器；可随时关闭本功能，关闭即清除已保存的凭证。" +
-                        "若因启用本功能造成损失，开发者概不负责。",
+                    emphasizedText(
+                        "**付款码等同现金**，会随时变更，**请勿截图或分享**。" +
+                            "学号与密码**只存本机**（Keystore 加密，排除云备份），登录时只发给学校对应接口；" +
+                            "**启用风险自负**。完整条款见「设置 → 条款与声明」。",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )

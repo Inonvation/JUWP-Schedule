@@ -260,7 +260,7 @@
   系统的（透明 `BasicTextField` 垫在点阵下面，点阵不拦触摸）。进步自动聚焦、失败自动清空、
   受理后自动收键盘。别把 `OutlinedTextField` 加回来——用户明确否掉了那个矩形框。
 - **充值免责声明先过一道**（2026-09-29 用户要求，DESIGN §4.24）：**每个充值入口**（侧栏充值选择、电费弹层「去充值电子账户 ›」、我的 → 校园卡页「充值」）打开弹层前都过
-  `ui/common/RechargeDisclaimerDialog`，五条声明 + 「一周内不再提醒」。**首次（从未确认过）
+  `ui/common/RechargeDisclaimerDialog`，三条声明 + 「一周内不再提醒」。**首次（从未确认过）
   锁 5 秒**（按钮置灰、返回/遮罩无效、确认键倒数），确认（继续或取消）落
   `recharge_disclaimer_seen_at` 后任何一次弹出立即可关；勾选静默 7 天
   （`domain/RechargeDisclaimer` = 窗口与锁时长唯一口径，`RechargeDisclaimerTest` 钉住），

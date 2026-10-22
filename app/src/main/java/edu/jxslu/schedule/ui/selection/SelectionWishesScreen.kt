@@ -248,8 +248,8 @@ fun SelectionWishesScreen(onBack: () -> Unit) {
                 }
                 item {
                     FooterDisclaimer(
-                        body = "清单只保存在本机；进选课中心时按它匹配、命中课程优先显示——" +
-                            "选课 / 退课始终由你逐次确认，App 不会自动提交。",
+                        body = "**清单只存本机**；进选课中心时按它匹配、命中课程优先显示；" +
+                            "**选课 / 退课都由你逐次确认**，App 不会自动提交。",
                     )
                 }
             }
