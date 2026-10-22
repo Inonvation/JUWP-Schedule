@@ -267,6 +267,11 @@ fun SideDrawerContent(
     val toolboxEnabled by prefs.toolboxEnabled.collectAsStateWithLifecycle(initialValue = true)
     val balance by campusVm.balance.collectAsStateWithLifecycle()
     val balanceLoaded by campusVm.balanceLoaded.collectAsStateWithLifecycle()
+    // 到账等待标识（2026-10-22）：旧生活页钱包卡的状态文案随页面删除，挪到侧栏钱包区。
+    // campusVm 与壳层 RechargeHost 是同一个实例（同 key 的默认 viewModel），这里订阅的
+    // 就是充值弹层发起的那条轮询。
+    val arrivalWatching =
+        campusVm.arrivalState.collectAsStateWithLifecycle().value is CampusCardViewModel.ArrivalState.Watching
     val lifeState by lifeVm.uiState.collectAsStateWithLifecycle()
     val power = lifeState.power
     val snapshot = balance
@@ -409,11 +414,11 @@ fun SideDrawerContent(
                     balanceText = balanceText,
                     accountValue = accountValue,
                     powerText = powerText,
+                    arrivalWatching = arrivalWatching,
                     onCampusDetail = { detail = WalletDetail.Campus },
                     onPowerDetail = { detail = WalletDetail.Power },
                     onRecharge = { showRechargeChoice = true },
                 )
-
                 // 2026-10-21 用户口径：百宝箱 / 天气从「工具」并入「生活」（空调遥控之后）；
                 // 快趣 / 胖乖 / 趣智 / U净 / 问渠五张服务卡单列「江水生活」。
                 DrawerSection("生活") {
@@ -544,6 +549,7 @@ fun SideDrawerContent(
             powerRemain = remain,
             powerRoom = power.snapshot?.meter?.room?.room,
             powerAt = power.snapshot?.meter?.fetchedAtMs,
+            campusRechargeLocked = arrivalWatching,
             onDismiss = { detail = null },
             // 弹层退场由 WalletDetailSheet 的 dismisser 负责，这里只做动作
             onOpenBill = {
@@ -678,6 +684,8 @@ private fun WalletHero(
     balanceText: String,
     accountValue: String,
     powerText: String,
+    /** 有充值等待到账（2026-10-22）：「校园卡余额」标签让位给状态文案，恢复旧钱包卡口径。 */
+    arrivalWatching: Boolean,
     onCampusDetail: () -> Unit,
     onPowerDetail: () -> Unit,
     onRecharge: () -> Unit,
@@ -692,7 +700,25 @@ private fun WalletHero(
             .padding(horizontal = 24.dp)
             .padding(top = 12.dp),
     ) {
-        Text("校园卡余额", style = MaterialTheme.typography.labelSmall, color = muted)
+        // 等待到账时小标题行让位给状态文案（旧生活页钱包卡同款口径），正常时还原标签；
+        // animateContentSize 已挂在 Column 上，切换不跳。转圈 + 主色小字与
+        // 校园卡设置页的等待行同族。
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (arrivalWatching) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "有充值正在确认到账…",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = primary,
+                )
+            } else {
+                Text("校园卡余额", style = MaterialTheme.typography.labelSmall, color = muted)
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             AnimatedContent(
                 targetState = balanceText,
@@ -731,7 +757,13 @@ private fun WalletHero(
                 )
             }
             // 与余额数字同一行、垂直居中：上一版挂在「校园卡余额」小标题那一行，看着没对齐。
-            RechargeButton(onClick = onRecharge)
+            RechargeButton(
+                onClick = onRecharge,
+                // 一卡通充值有到账等待时锁入口（2026-10-22）：等待中再下一单会覆盖基线
+                // 与 pendingRecharge，第一笔的到账判定就丢了——与设置页「充值」按钮的
+                // enabled = watching == null 同一道闸。
+                enabled = !arrivalWatching,
+            )
         }
         // 电子账户与寝室电费并成一行（2026-10-21 用户口径）：两项都是可点的余额，
         // 各占一半、中间一道细分隔线；从原来的两行（小字 + 电费行）压到一行，
@@ -814,8 +846,13 @@ private fun WalletStat(
 }
 
 @Composable
-private fun RechargeButton(onClick: () -> Unit) {
+private fun RechargeButton(
+    onClick: () -> Unit,
+    /** 一卡通到账等待中为 false（2026-10-22）：置灰而非隐藏，闸的理由写在调用点。 */
+    enabled: Boolean = true,
+) {
     val primary = MaterialTheme.colorScheme.primary
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "drawerRechargeScale")
@@ -826,19 +863,30 @@ private fun RechargeButton(onClick: () -> Unit) {
                 scaleY = scale
             }
             .clip(RoundedCornerShape(99.dp))
-            .background(primary.copy(alpha = 0.10f))
+            .background(if (enabled) primary.copy(alpha = 0.10f) else primary.copy(alpha = 0.05f))
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
+                enabled = enabled,
                 onClickLabel = "充值",
                 onClick = onClick,
             )
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(HugeIcons.Wallet01, contentDescription = null, tint = primary, modifier = Modifier.size(16.dp))
+        Icon(
+            HugeIcons.Wallet01,
+            contentDescription = null,
+            tint = if (enabled) primary else muted,
+            modifier = Modifier.size(16.dp),
+        )
         Spacer(Modifier.width(4.dp))
-        Text("充值", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = primary)
+        Text(
+            "充值",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (enabled) primary else muted,
+        )
     }
 }
 
@@ -852,6 +900,8 @@ private fun WalletDetailSheet(
     powerRemain: Double?,
     powerRoom: String?,
     powerAt: Long?,
+    /** 一卡通到账等待中锁「充值」（2026-10-22）：与钱包区 RechargeButton 同一道闸。 */
+    campusRechargeLocked: Boolean,
     onDismiss: () -> Unit,
     onOpenBill: () -> Unit,
     onRecharge: () -> Unit,
@@ -922,6 +972,8 @@ private fun WalletDetailSheet(
                 Button(
                     onClick = { dismissThen(onRecharge) },
                     modifier = Modifier.weight(1f),
+                    // 只锁一卡通那格的充值；电费充值没有到账轮询，不受影响
+                    enabled = !isCampus || !campusRechargeLocked,
                 ) { Text("充值") }
             }
         }

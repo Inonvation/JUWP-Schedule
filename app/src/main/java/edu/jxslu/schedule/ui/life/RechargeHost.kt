@@ -321,6 +321,20 @@ fun RechargeHost(
         )
     }
 
+    // 到账窗口超时（30 分钟没检测到）：设置页有安抚提示，侧栏这条链路此前是静默的——
+    // 「正在确认到账」标识悄悄消失，用户不知道结果。照设置页同款给一句，看完即 dismiss
+    // 转回 Idle（只弹一次）。postNotice 单开协程：不卡壳层事件流的收集协程。
+    LaunchedEffect(arrival) {
+        if (arrival is CampusCardViewModel.ArrivalState.Timeout) {
+            scope.postNotice(
+                snackbar,
+                "暂未检测到到账——充值常有延迟，到账后「消费流水」会自动显示",
+                NoticeTone.Info,
+            )
+            campusViewModel.dismissArrival()
+        }
+    }
+
     // 「正在确认充值结果」：从微信返回且余额还没更新时给反馈（关闭不影响后台轮询）。
     // 与成功弹窗互斥——到账那一刻 VM 会先把本弹窗撤下（markArrived），不会两张叠着。
     val pendingConfirm by campusViewModel.pendingConfirmVisible.collectAsStateWithLifecycle()
