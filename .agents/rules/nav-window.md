@@ -179,5 +179,5 @@
   - **手势是两个独立 `pointerInput`**（`detectTapGestures` + `detectDragGesturesAfterLongPress`）：
     单击/双击共存意味着单击有一档 ~300ms 判定延迟；长按原地松手会误判成单击，
     靠「拖动结束时刻」挡掉（`TapSuppressAfterDragMs`）。改手势前先在真机上对一遍手感。
-  - 双击的扫一扫复用 `ui/common/QuickScan.kt`（车码 / 机身码 / 别家码三档，与「+ → 扫一扫」
+  - 双击的扫一扫复用 `ui/common/QuickScan.kt`（车码 / 机身码 / 别家码三档，与侧栏「扫一扫」
     同判据）；「别家码」提示落在壳层 `SnackbarHostState`（页面各自的 Snackbar 够不到壳层）。

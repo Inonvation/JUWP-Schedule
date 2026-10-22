@@ -165,6 +165,35 @@ class EbikeFreeRideTest {
     }
 
     @Test
+    fun `超时从十五分钟整开始计`() {
+        // 免费窗口内：0
+        assertEquals(0, EbikeFreeRide.overtimeSeconds(start, start))
+        assertEquals(0, EbikeFreeRide.overtimeSeconds(start, minutesAfterStart(14)))
+        assertEquals(0, EbikeFreeRide.overtimeSeconds(start, minutesAfterStart(15)))
+        // 过点后逐秒累计；分钟数向上取整（15:00:01 = 已超时 1 分钟）
+        assertEquals(1, EbikeFreeRide.overtimeSeconds(start, minutesAfterStart(15) + 1_000L))
+        assertEquals(60, EbikeFreeRide.overtimeSeconds(start, minutesAfterStart(16)))
+        assertEquals(1, EbikeFreeRide.overtimeMinutes(start, minutesAfterStart(15) + 1_000L))
+        assertEquals(2, EbikeFreeRide.overtimeMinutes(start, minutesAfterStart(16) + 1_000L))
+        assertEquals(0, EbikeFreeRide.overtimeMinutes(start, minutesAfterStart(15)))
+    }
+
+    @Test
+    fun `超时进度条按十五分钟一格增长并在满格后保持`() {
+        assertEquals(0f, EbikeFreeRide.overtimeProgressFraction(start, minutesAfterStart(15)))
+        assertEquals(
+            0.5f,
+            EbikeFreeRide.overtimeProgressFraction(start, minutesAfterStart(15) + 7 * 60_000L + 30_000L),
+            0.001f,
+        )
+        assertEquals(1f, EbikeFreeRide.overtimeProgressFraction(start, minutesAfterStart(30)))
+        // 再久也不超过 1（文案继续报分钟数）
+        assertEquals(1f, EbikeFreeRide.overtimeProgressFraction(start, minutesAfterStart(90)))
+        // 非法起点不出进度
+        assertEquals(0f, EbikeFreeRide.overtimeProgressFraction(0L, start))
+    }
+
+    @Test
     fun `通知进度条刻度与剩余比例同源`() {
         // Android 16 的 ProgressStyle：不设 segment 时满刻度是 100，填充 = 剩余时间
         // （官方要求「填充与剩余时间一致」），所以刻度就是 progressFraction × 100。

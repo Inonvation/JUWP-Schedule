@@ -7,12 +7,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,7 +34,6 @@ import edu.jxslu.schedule.data.local.InboxMessageEntity
 import edu.jxslu.schedule.domain.DormRepairRecord
 import edu.jxslu.schedule.domain.DormRepairRules
 import edu.jxslu.schedule.domain.InboxKind
-import edu.jxslu.schedule.ui.common.AppCard
 import edu.jxslu.schedule.ui.common.formatDormRepairTime
 import edu.jxslu.schedule.ui.common.heroToneAccent
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
@@ -51,16 +50,19 @@ import me.rerere.hugeicons.stroke.Inbox
 import me.rerere.hugeicons.stroke.Repair
 
 /**
- * 今日页收件箱卡（DESIGN §3.24，2026-10-21 收口）：收件箱的**唯一展示入口**。
+ * 今日页收件箱列表（2026-10-21 收口；2026-10-22 改为**不包卡片**的列表式）：
+ * 收件箱的**唯一展示入口**。整段直接铺在页面底色上（页边距 16dp），行间用发丝线分隔，
+ * 不再套 `AppCard`——用户口径「列表式，不包裹在气泡里」。
  *
- * 卡内自上而下：
- * 1. **宿舍报修行**（[DormRepairRules.cardRecord] 口径：在途优先，否则 3 天内已完成且
+ * 自上而下：
+ * 1. **标题行**：「收件箱」+ 今日条数 + 右侧「查看更多」；整行点开收件箱页；
+ * 2. **宿舍报修行**（[DormRepairRules.cardRecord] 口径：在途优先，否则 3 天内已完成且
  *    未被「完成并隐藏」）——在途状态不是 inbox 消息，不写 `inbox_messages`（收件箱只收
  *    「发生过的事实」，在途是随时会刷新的当前态），渲染在这里只是**状态展示**；
  *    点行进 `DORM_REPAIR` 详情页。没有可见记录时整行不渲染；
- * 2. **今天的消息**：只列今天（`InboxRules.timeGroupOf` 的 TODAY 桶同口径，本地时区）；
+ * 3. **今天的消息**：只列今天（`InboxRules.timeGroupOf` 的 TODAY 桶同口径，本地时区）；
  *    点行 = 标已读 + 按 route 跳二级页（与收件箱页同一套「按枚举名安全解析，认不出就不跳」）；
- * 3. 标题行右侧「查看更多」打开收件箱页（完整列表：昨天 / 本周 / 更早 + 一键已读 + 多选删除）。
+ * 4. 「还有 N 条」打开收件箱页（完整列表：昨天 / 本周 / 更早 + 一键已读 + 多选删除）。
  *
  * 今天没有消息时消息区收成一行：「今天没有新消息」+ 查看更多（收件箱可能有更早的消息，
  * 入口不能断——这也是它必须常驻而不是按天显隐的原因）。
@@ -103,8 +105,10 @@ fun InboxTodayCard(
         .sortedByDescending { it.createdAt }
     val moreCount = todays.size - selected.size
 
-    AppCard(
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
         val haptics = rememberAppHaptics()
         // 标题行：「收件箱」+ 今日条数 + 查看更多（右缘）
@@ -156,10 +160,12 @@ fun InboxTodayCard(
             )
         }
 
+        InboxListDivider(Modifier.padding(top = 4.dp))
+
         // 报修在途/近完成置顶：比一般消息更值得关注（提交人自己盯的事）
         if (repair != null) {
-            Spacer(Modifier.height(6.dp))
             RepairTodayRow(record = repair, onClick = onOpenRepair)
+            InboxListDivider()
         }
 
         // 今天有消息才铺行；没有时收成一行副文（入口不能断）
@@ -170,13 +176,11 @@ fun InboxTodayCard(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 30.dp, top = 2.dp),
+                modifier = Modifier.padding(start = 30.dp, top = 8.dp, bottom = 8.dp),
             )
         } else {
-            // 报修行自带上下 6dp 内距；有它时不再叠这层 6dp，否则「报修 → 首条消息」
-            // 是 18dp，比消息之间（6+6=12dp）大出一截（2026-10-21 真机反馈）
-            if (repair == null) Spacer(Modifier.height(6.dp))
-            selected.forEach { msg ->
+            selected.forEachIndexed { index, msg ->
+                if (index > 0) InboxListDivider()
                 InboxTodayRow(
                     msg = msg,
                     onClick = {
@@ -190,6 +194,7 @@ fun InboxTodayCard(
             }
             if (moreCount > 0) {
                 // 余量出口：不铺全部，一行收口（点开收件箱页看完整列表）
+                InboxListDivider()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -197,7 +202,7 @@ fun InboxTodayCard(
                             haptics.tap()
                             onOpenInbox()
                         }
-                        .padding(start = 30.dp, top = 4.dp, bottom = 2.dp),
+                        .padding(start = 30.dp, top = 8.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -209,6 +214,15 @@ fun InboxTodayCard(
             }
         }
     }
+}
+
+/** 列表行之间的发丝线：从文字列起（图标 18 + 间距 12 = 30dp），与消息行左缘对齐。 */
+@Composable
+private fun InboxListDivider(modifier: Modifier = Modifier) {
+    HorizontalDivider(
+        modifier = modifier.padding(start = 30.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+    )
 }
 
 /**

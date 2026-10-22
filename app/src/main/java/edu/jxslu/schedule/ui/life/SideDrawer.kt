@@ -258,6 +258,9 @@ fun SideDrawerContent(
     )
     val lifeVm: LifeViewModel = viewModel(factory = LifeViewModel.Factory(context))
     val campusEnabled by campusVm.enabled.collectAsStateWithLifecycle()
+    // 百宝箱总开关（设置 → 功能）：2026-10-22 顶栏「+」删除后，入口只剩侧栏这一行，
+    // 开关必须继续生效——关掉时整行不渲染（不是置灰）。
+    val toolboxEnabled by prefs.toolboxEnabled.collectAsStateWithLifecycle(initialValue = true)
     val balance by campusVm.balance.collectAsStateWithLifecycle()
     val balanceLoaded by campusVm.balanceLoaded.collectAsStateWithLifecycle()
     val lifeState by lifeVm.uiState.collectAsStateWithLifecycle()
@@ -405,7 +408,9 @@ fun SideDrawerContent(
                         onClick = { showShortcutSheet = true },
                     )
                     DrawerRow("空调遥控", HugeIcons.RemoteControl, onClick = onOpenAcRemote)
-                    DrawerRow("百宝箱", HugeIcons.Toolbox, onClick = onOpenToolbox)
+                    if (toolboxEnabled) {
+                        DrawerRow("百宝箱", HugeIcons.Toolbox, onClick = onOpenToolbox)
+                    }
                     DrawerRow("天气", HugeIcons.Sun01, onClick = onOpenWeather)
                 }
                 DrawerSection("江水生活") {

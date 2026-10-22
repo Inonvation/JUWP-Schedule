@@ -41,8 +41,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -161,7 +159,6 @@ import edu.jxslu.schedule.ui.water.WaterViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.CalendarOff
 import me.rerere.hugeicons.stroke.CheckmarkCircle02
 import me.rerere.hugeicons.stroke.ChevronDown
@@ -172,10 +169,7 @@ import me.rerere.hugeicons.stroke.Menu01
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.RemoteControl
 import me.rerere.hugeicons.stroke.WashingMachine
-import me.rerere.hugeicons.stroke.QrCodeScan
 import me.rerere.hugeicons.stroke.ScooterElectric
-import me.rerere.hugeicons.stroke.Toolbox
-import me.rerere.hugeicons.stroke.Wallet01
 import edu.jxslu.schedule.domain.TodayTip
 import edu.jxslu.schedule.domain.PendingHomework
 import edu.jxslu.schedule.ui.homework.HomeworkTodayCard
@@ -209,7 +203,8 @@ private const val KVCX_RIDE_QUERY_TTL_MILLIS = 60_000L
  * （[LocalBottomBarClearance]）。旧的 dock 组件与 `todayDockExpanded` 偏好一并删除。
  *
  * 收件箱（2026-10-21 收口）：展示入口在页面列表的收件箱卡（[InboxTodayCard]，
- * 只列今天 + 「查看更多」进收件箱页），顶栏「+」不再挂收件箱行与角标。
+ * 只列今天 + 「查看更多」进收件箱页）。顶栏快捷入口已删（2026-10-22）：扫一扫 / 付款码 /
+ * 百宝箱都在左侧栏，顶栏不再挂「+」。
  * 宿舍报修状态（在途优先 / 3 天内完成）是卡内置顶行，原独立报修卡同轮删除。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -227,9 +222,7 @@ fun TodayScreen(
     onOpenQzxyDebug: (String?) -> Unit = {},
     /** 快趣出行 · 骑行页（DESIGN §3.9，SubpageActivity 独立窗口；地图 + 抽屉三态） */
     onOpenEbike: () -> Unit = {},
-    /** 顶栏「+ → 扫一扫」扫到车身码：带完整车号进骑行页（DESIGN §3.9 的 `focusItemId`） */
-    onOpenRideCar: (String) -> Unit = {},
-    /** 顶栏「+ → 扫一扫」扫到洗衣机机身码：原文交给 U净 页识别（DESIGN §3.23） */
+    /** 扫到洗衣机机身码：原文交给 U净 页识别（DESIGN §3.23；江水生活 U净 弹窗的扫码按钮） */
     onOpenUjingScan: (String) -> Unit = {},
     /** 江水生活 U净 弹窗的「查看洗衣房空闲情况」：U净 · 洗衣房页 */
     onOpenUjing: () -> Unit = {},
@@ -241,12 +234,8 @@ fun TodayScreen(
     onOpenAcRemote: () -> Unit = {},
     /** 今日页宿舍报修卡：原生进度页（DESIGN §4.49） */
     onOpenDormRepair: () -> Unit = {},
-    /** 顶栏「+ → 付款码」：校园卡付款码展示页（DESIGN §3.10） */
-    onOpenPayCode: () -> Unit = {},
     /** 收件箱卡「查看更多」：打开收件箱页（DESIGN §3.24，2026-10-21 起唯一入口在卡片上） */
     onOpenInbox: () -> Unit = {},
-    /** 顶栏「+ → 百宝箱」：小工具集合（图片工具 + 菜鸟批量查，DESIGN §4.47，2026-10-12） */
-    onOpenToolbox: () -> Unit = {},
     /** 顶栏天气提示那一行（DESIGN §3.29）：天气句点它进天气详情页 */
     onOpenWeather: () -> Unit = {},
     /** 顶栏课表提示（南北楼 / 实验课）：课表句点它进课表页（2026-10-20） */
@@ -335,10 +324,6 @@ fun TodayScreen(
     // U净 在案订单：落盘快照直接订阅；对表沿用 10s TTL 节流（RESUMED / 下拉时打一拍）
     val ujingRepo = remember(context) { Graph.ujing(context) }
     val ujingOrder by ujingRepo.orderState.collectAsStateWithLifecycle()
-    // 百宝箱入口开关（DESIGN §4.47，默认开）：关掉时「+」菜单里整行不出现
-    val toolboxEnabled by remember(context) { Graph.displayPrefs(context) }
-        .toolboxEnabled
-        .collectAsStateWithLifecycle(initialValue = true)
     var showWaterEntrySheet by remember { mutableStateOf(false) }
     // 趣智校园的余额面板（DESIGN §3.18）：与开水面板同形态，入口也是卡片右侧的余额
     var showQzxyEntrySheet by remember { mutableStateOf(false) }
@@ -491,51 +476,9 @@ fun TodayScreen(
         scope.launch { snackbar.showNotice(AppNoticeVisuals(message, tone = tone)) }
     }
 
-    // ── 顶栏「+ → 扫一扫 / 付款码」（DESIGN §3.3，2026-10-02）──
-    // 扫一扫一枚入口管三种去处：车身码进骑行页、认得准的别家码就地提示、其余给 U净
-    // （三档判据都在 domain/QuickScan，页里不复述）。取景窗口走**原文模式**（MODE_RAW）：
-    // 车号的解析归本地判据、机身码原文归 U净 服务端，本地只负责「去哪一页」这一件事。
-    var quickMenuOpen by remember { mutableStateOf(false) }
-    val quickHaptics = rememberAppHaptics()
-    val quickScanLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val raw = result.data?.getStringExtra(Intents.Scan.RESULT)
-        when (val target = quickScanTargetOf(raw)) {
-            // 空内容 = 取消（没扫到就退出取景页），静默处理，别把放弃扫码报成失败
-            null -> Unit
-            is QuickScanTarget.Ebike -> {
-                quickHaptics.tap()
-                onOpenRideCar(target.carNum)
-            }
-            is QuickScanTarget.Washer -> {
-                quickHaptics.tap()
-                onOpenUjingScan(target.raw)
-            }
-            // 认得准的别家码：就地说明，不跳页（送到 U净 也只会回「未识别到设备信息」）
-            is QuickScanTarget.Foreign -> showNotice(
-                "这是${target.label}的码，不是快趣车身码或洗衣机机身码",
-                NoticeTone.Warning,
-            )
-        }
-    }
-    val startQuickScan: () -> Unit = {
-        quickHaptics.tap()
-        quickScanLauncher.launch(
-            Intent(context, EbikeScanActivity::class.java).apply {
-                putExtra(Intents.Scan.PROMPT_MESSAGE, "对准车身或洗衣机机身上的二维码")
-                putExtra(EbikeScanActivity.EXTRA_RESULT_MODE, EbikeScanActivity.MODE_RAW)
-                // 车身码与机身码都是二维码：限定格式，省得商品一维码也当码送出去。
-                // 键走 Intents.Scan.FORMATS 的**逗号分隔字符串**（DecodeFormatManager 只读
-                // StringExtra 这一种形态，别改传 ArrayList，那样等于没设）
-                putExtra(Intents.Scan.FORMATS, BarcodeFormat.QR_CODE.name)
-            },
-        )
-    }
-
-    // 江水生活 U净 弹窗的扫码按钮：与上方「+ → 扫一扫」同一套判据，
+    // 江水生活 U净 弹窗的扫码按钮：三档判据与侧栏扫一扫同一套（domain/QuickScan），
     // 洗衣机机身码原文交给 U净 页识别；车身码 / 别家码就地提示，不跳页。
+    val quickHaptics = rememberAppHaptics()
     val ujingScanLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -697,65 +640,8 @@ fun TodayScreen(
                         }
                     }
                 },
-                // 「+」快捷入口（2026-10-02）：扫一扫（车码 / 机身码自动分流）+ 付款码
-                // + 百宝箱。与微信首页右上角同一形态：一枚图标 + 下拉，不做页内常驻按钮——
-                // 低频动作不跟页面卡片抢位置。
-                // 收件箱不在这里（2026-10-21 收口）：展示入口移到页面上的收件箱卡
-                // （InboxTodayCard），「+」不再挂角标。
-                actions = {
-                    Box {
-                        IconButton(
-                            onClick = {
-                                quickHaptics.tap()
-                                quickMenuOpen = true
-                            },
-                        ) {
-                            Icon(HugeIcons.Add01, contentDescription = "快捷入口")
-                        }
-                        DropdownMenu(
-                            expanded = quickMenuOpen,
-                            onDismissRequest = { quickMenuOpen = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("扫一扫") },
-                                leadingIcon = {
-                                    Icon(HugeIcons.QrCodeScan, contentDescription = null)
-                                },
-                                onClick = {
-                                    quickMenuOpen = false
-                                    startQuickScan()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("付款码") },
-                                leadingIcon = { Icon(HugeIcons.Wallet01, contentDescription = null) },
-                                onClick = {
-                                    quickMenuOpen = false
-                                    quickHaptics.tap()
-                                    onOpenPayCode()
-                                },
-                            )
-                            // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合
-                            // （水印 / 拼接 / 菜鸟批量查）；总开关在 设置 → 功能，
-                            // 关掉时整行不出现
-                            // （「志愿服务」一行 2026-10-13 删除：问渠已进生活页「校园服务」）
-                            if (toolboxEnabled) {
-                                DropdownMenuItem(
-                                    text = { Text("百宝箱") },
-                                    leadingIcon = {
-                                        Icon(HugeIcons.Toolbox, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        quickMenuOpen = false
-                                        quickHaptics.tap()
-                                        onOpenToolbox()
-                                    },
-                                )
-                            }
-                        }
-                    }
-                },
-                // 一键开水入口不挂顶栏：底部固定区已有开水卡，顶栏图标重复
+                // 顶栏不再挂快捷入口（2026-10-22 用户口径）：扫一扫 / 付款码 / 百宝箱
+                // 在左侧栏都有，顶栏那枚「+」是重复入口；收件箱入口在页面上的收件箱卡。
             )
         },
         snackbarHost = { AppSnackbarHost(snackbar) },
@@ -847,6 +733,8 @@ fun TodayScreen(
                     onOpenRepair = onOpenDormRepair,
                     repair = dormRepair,
                     kvcxRideState = kvcxRideState?.takeIf { kvcxInAppRide && kvcxLoggedIn },
+                    // 账号方式的免费窗口起点：快趣行倒计时 / 超时进度条（小程序方式走下面那一行）
+                    kvcxFreeStartAt = ebikeRideStartAt.takeIf { kvcxInAppRide },
                     waterSession = qiekjWateringSession,
                     waterStopping = (waterEntryState.flow as? UnlockFlowState.Working)?.stopping == true,
                     waterCanStop = waterEntryState.flow is UnlockFlowState.Working,
@@ -1080,6 +968,8 @@ private fun TodayContent(
     // ── 进行中服务卡（2026-10-21）：数据在 TodayScreen 收集，卡片按需渲染 ──
     /** 快趣骑行状态（能力闸 + 登录双闸已在调用侧滤过）；null = 行不出现。 */
     kvcxRideState: KvcxRideState? = null,
+    /** 账号方式的免费窗口起点（`ebikeRideStartAt`）：快趣行倒计时 / 超时进度条用。 */
+    kvcxFreeStartAt: Long? = null,
     /**
      * 微信小程序方式的免费计时起点（`ebikeRideStartAt`；账号方式恒 null——
      * 骑行信息更全的 [kvcxRideState] 那行优先）。
@@ -1108,11 +998,42 @@ private fun TodayContent(
     val sectionColumnWidth = rememberSectionColumnWidth(state.timeline)
     // dock 收进侧栏后，列表最后一项要自己让开悬浮胶囊（2026-10-20）
     val clearance = LocalBottomBarClearance.current
+    // 有在案骑行时把「进行中服务」卡提到课程区之前（2026-10-22 用户口径）：骑行是最需要
+    // 一眼看到的状态，课程 / 作业多的时候原位置会落到首屏之外；没有在案订单时留在原位。
+    val rideInProgress = kvcxRideState?.ride != null
+    val activeServicesCard: @Composable (Modifier) -> Unit = { cardModifier ->
+        ActiveServiceCard(
+            kvcxState = kvcxRideState,
+            kvcxFreeStartAt = kvcxFreeStartAt,
+            freeRideStartAt = freeRideStartAt,
+            waterSession = waterSession,
+            waterStopping = waterStopping,
+            waterCanStop = waterCanStop,
+            qzxyWatering = qzxyWatering,
+            qzxyDeviceEnded = qzxyDeviceEnded,
+            ujingOrder = ujingOrder,
+            kvcxOnUnlock = { onKvcxAction(KvcxAction.RESUME) },
+            kvcxOnLock = { onKvcxAction(KvcxAction.LOCK) },
+            kvcxOnReturn = { onKvcxAction(KvcxAction.RETURN) },
+            waterOnEnd = onWaterEnd,
+            qzxyOnStop = onQzxyStop,
+            onOpenEbike = onOpenEbike,
+            onOpenWater = onOpenWater,
+            onOpenQzxy = onOpenQzxy,
+            onOpenUjing = onOpenUjing,
+            onEndFreeRide = onEndFreeRide,
+            modifier = cardModifier,
+        )
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 16.dp + clearance),
         ) {
+            // 在案骑行：服务卡置顶（见上面 rideInProgress 的说明）。无骑行时它在作业卡之后。
+            if (rideInProgress) {
+                item(key = "active-services") { activeServicesCard(Modifier.animateItem()) }
+            }
             // 今日课程：一列到底。正在上的课**留在原位**、就地套焦点卡形态；最近一节已上完的
             // 课置灰保留（更早的不出现）——三态切换的动画在 TodayCourseCard 里。
             // 今天没课 / 不在学期 / 全部上完：一行状态卡（DoneBlock）。
@@ -1169,29 +1090,9 @@ private fun TodayContent(
 
             // 进行中服务卡（2026-10-21）：快趣骑行 / 胖乖开水 / 趣智洗澡 / U净 洗烘，
             // 谁在进行中谁占一行；全无则整卡不渲染（返回 false 的判据在卡内）。
-            // 位置 = 作业卡与收件箱卡之间：同为「顺带看一眼」的区块，不抢课程区。
-            item(key = "active-services") {
-                ActiveServiceCard(
-                    kvcxState = kvcxRideState,
-                    freeRideStartAt = freeRideStartAt,
-                    waterSession = waterSession,
-                    waterStopping = waterStopping,
-                    waterCanStop = waterCanStop,
-                    qzxyWatering = qzxyWatering,
-                    qzxyDeviceEnded = qzxyDeviceEnded,
-                    ujingOrder = ujingOrder,
-                    kvcxOnUnlock = { onKvcxAction(KvcxAction.RESUME) },
-                    kvcxOnLock = { onKvcxAction(KvcxAction.LOCK) },
-                    kvcxOnReturn = { onKvcxAction(KvcxAction.RETURN) },
-                    waterOnEnd = onWaterEnd,
-                    qzxyOnStop = onQzxyStop,
-                    onOpenEbike = onOpenEbike,
-                    onOpenWater = onOpenWater,
-                    onOpenQzxy = onOpenQzxy,
-                    onOpenUjing = onOpenUjing,
-                    onEndFreeRide = onEndFreeRide,
-                    modifier = Modifier.animateItem(),
-                )
+            // 位置 = 作业卡与收件箱卡之间（没有在案骑行时）；有骑行时已在课程区之前渲染。
+            if (!rideInProgress) {
+                item(key = "active-services") { activeServicesCard(Modifier.animateItem()) }
             }
 
             // 收件箱卡（DESIGN §3.24，2026-10-21 收口）：收件箱的唯一展示入口。

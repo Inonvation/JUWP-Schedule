@@ -413,8 +413,9 @@
   留在 UI——所以 `EbikeQrTest` 能直接喂 `qrMatrix` 渲染出的像素做 round-trip。
   返回结果里的 `SourceData` 是 1×1 占位（`resultIntent` 只读 `Result` 的文本 / 格式 /
   字节），别把它当成"像素要回传"。
-- **今日页顶栏「+ → 扫一扫」是同一个窗口的第二个调用点**（2026-10-02，DESIGN §3.3）：
-  它走 **`MODE_RAW` 原文模式**（本地不解析），去处由 `domain/QuickScan.kt` 的
+- **侧栏「扫一扫」与悬浮球双击是同一个取景窗口的另两个调用点**（侧栏入口 2026-10-20 起；
+  今日页顶栏那枚「+」2026-10-22 已删，别加回来）：
+  它们走 **`MODE_RAW` 原文模式**（本地不解析），去处由 `domain/QuickScan.kt` 的
   `quickScanTargetOf` 判——`EbikeQr.parseScannedCarNum` 过得去就带完整车号进
   `SubpageScreen.RIDE`（`focusItemId` 复用，进页即定位）；过不去的先看是不是认得准的
   别家码（就地提示），剩下的原文才交 U净。
@@ -422,8 +423,8 @@
   别把两条并成一条。
 
 - **扫到车号后「确认可用就自动开锁」**（2026-10-15 用户要求；**确认闸保留**）：
-  两条扫码入口——骑行页「扫车身码」（`focusCar(carNum, autoUnlock = true)`）与今日页
-  「+ → 扫一扫」/ 悬浮球带车号进页（`setPendingFocusCar(carNum, autoUnlock = true)`）——
+  两条扫码入口——骑行页「扫车身码」（`focusCar(carNum, autoUnlock = true)`）与
+  侧栏扫一扫 / 悬浮球带车号进页（`setPendingFocusCar(carNum, autoUnlock = true)`）——
   识别出车号后先回填车号，**确认这辆车可用后**才发一次 `BikeMapEvent.AutoUnlockReady`，
   页面收到事件才摆车辆卡并走**开锁的同一套闸**（`requestKvcxAction`：
   定位前置 + 二次确认），即「识别 → 确认 → 本机开锁」，不再要用户再点一次开锁。

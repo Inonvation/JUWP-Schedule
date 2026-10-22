@@ -26,7 +26,20 @@ data class QiekjWateringSession(
      */
     fun isStale(nowMillis: Long): Boolean = nowMillis - startedAtMillis >= STALE_MILLIS
 
+    /**
+     * 出水进度 0..1（2026-10-22，今日页服务卡用）：按服务端 [AUTO_CLOSE_SECONDS] 秒
+     * 自动关阀兜底，超出按 1 封顶。与开水页 `WaterViewModel.AUTO_SETTLE_SECONDS` 同一口径。
+     */
+    fun progressFraction(nowMillis: Long): Float {
+        val total = AUTO_CLOSE_SECONDS * 1000L
+        val elapsed = (nowMillis - startedAtMillis).coerceAtLeast(0L)
+        return (elapsed.toFloat() / total).coerceIn(0f, 1f)
+    }
+
     companion object {
+        /** 服务端出水自动关阀的兜底秒数（`WaterViewModel` 的自动结算同一口径）。 */
+        const val AUTO_CLOSE_SECONDS = 165
+
         /** 165 秒服务端超时关阀 + 结算/轮询余量。 */
         const val STALE_MILLIS: Long = 5 * 60 * 1000L
     }

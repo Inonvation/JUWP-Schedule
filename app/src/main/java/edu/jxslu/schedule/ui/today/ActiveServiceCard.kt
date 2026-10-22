@@ -14,7 +14,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -32,12 +31,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -48,7 +50,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.jxslu.schedule.data.qiekj.QiekjWateringSession
 import edu.jxslu.schedule.data.ujing.UjingOrderSnapshot
@@ -83,6 +84,10 @@ import me.rerere.hugeicons.stroke.ChevronRight
  * 动效：行的出现/消失走 `AnimatedVisibility`（进 220ms / 退 160ms，ui-common 口径），
  * 卡体 `animateContentSize` 收平高度；计时文案 `tnum` 等宽 + 每秒走（不做 crossfade，
  * 高频数值口径）；进行中行首一枚 900ms 呼吸圆点（同 `WateringBadge` 手法）。
+ *
+ * 快趣骑行中（明确未锁车）把**整张卡片的边缘**点亮（`AppCard.highlighted` +
+ * `highlightedFill = false`：主色 1.5dp 描边、不抬底色，180ms 过渡）：卡内行保持平铺，
+ * 别在行内再套描边 / 竖条——那是气泡套气泡（2026-10-22 用户口径）。临时锁车 / 锁状态未知不点亮。
  */
 @Composable
 internal fun ActiveServiceCard(
@@ -90,6 +95,11 @@ internal fun ActiveServiceCard(
      * 快趣骑行状态（能力闸 + 登录双闸已在调用侧滤过）：null 或无在案订单 = 行不出现。
      */
     kvcxState: KvcxRideState?,
+    /**
+     * 账号方式骑行的免费窗口起点（`ebikeRideStartAt`）：给快趣行的倒计时 / 超时进度条用。
+     * 小程序方式的同一起点走 [freeRideStartAt]（那一行优先）；两档由调用侧按能力档传。
+     */
+    kvcxFreeStartAt: Long? = null,
     /**
      * 微信小程序方式的免费时长计时起点（`ebikeRideStartAt`，DataStore）：
      * `isActive` 为 true = 小程序方式正在骑行（扫码起计时），展示倒计时行——
@@ -129,28 +139,22 @@ internal fun ActiveServiceCard(
 ) {
     val ride = kvcxState?.ride
     val kvcxVisible = ride != null && kvcxOnUnlock != null
+    // 骑行中 = 明确未锁车（2026-10-22）：高亮**外层卡片边缘**（`AppCard.highlighted`），
+    // 行内不再套描边 / 竖条——卡内画高亮只会变成气泡套气泡。临时锁车 / 锁状态未知不点亮。
+    val kvcxRiding = kvcxVisible && kvcxOnLock != null && kvcxOnReturn != null && ride?.locked == false
     val qzxyVisible = qzxyWatering != null
     val ujingLive = ujingOrder?.takeIf { !it.isTerminal }
-    // 秒级走时只在「免费计时 / 开水会话」窗口内跑：到点即停并落最终值——行随之收拢退场。
-    // 此前在组合期算一次 `System.currentTimeMillis()`，父级不重组时计时到点行也不消失。
-    val now by produceState(
-        initialValue = System.currentTimeMillis(),
-        key1 = freeRideStartAt,
-        key2 = waterSession?.startedAtMillis,
-    ) {
-        while (true) {
-            val freeActive = freeRideStartAt?.let { EbikeFreeRide.isActive(it, value) } == true
-            val waterActive = waterSession?.let { !it.isStale(value) } == true
-            if (!freeActive && !waterActive) break
-            delay(1_000)
-            value = System.currentTimeMillis()
-        }
-        value = System.currentTimeMillis()
-    }
-    val freeRideVisible = freeRideStartAt != null && EbikeFreeRide.isActive(freeRideStartAt, now)
+    // 秒级走时按行隔离（2026-10-22）：此前 `now` 读在卡顶层，免费计时 / 开水期间整卡
+    // （含快趣行与按钮）每秒重组。现在时钟收进各自的 Slot，只有那一行每秒重组；
+    // 到点由 Slot 回调父级收行（freeRideExpired / waterExpired），父级不再自己走秒。
+    val freeRideExpired = remember(freeRideStartAt) { mutableStateOf(false) }
+    val waterExpired = remember(waterSession?.startedAtMillis) { mutableStateOf(false) }
+    val freeRideVisible = freeRideStartAt != null && !freeRideExpired.value &&
+        EbikeFreeRide.isActive(freeRideStartAt, System.currentTimeMillis())
     // 胖乖：落盘会话未过期即「出水中」（store 已在读取时清掉过期残留；页面开着跨过
-    // 5 分钟线时靠上面的秒级走时把它收掉）
-    val waterVisible = waterSession != null && !waterSession.isStale(now)
+    // 5 分钟线时由 WaterSlot 的时钟回调把它收掉）
+    val waterVisible = waterSession != null && !waterExpired.value &&
+        !waterSession.isStale(System.currentTimeMillis())
     val anyActive = kvcxVisible || freeRideVisible || waterVisible || qzxyVisible || ujingLive != null
 
     // 整卡壳的显隐也走 AnimatedVisibility：**不能 early return**——组合一卸载，
@@ -162,7 +166,12 @@ internal fun ActiveServiceCard(
         exit = ExitRow,
         modifier = modifier,
     ) {
-        AppCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        AppCard(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            highlighted = kvcxRiding,
+            // 只亮卡边、不抬底色：服务卡本身就在页面底色上，抬高底色会再叠出一层卡片
+            highlightedFill = false,
+        ) {
             AnimatedVisibility(
                 visible = kvcxVisible,
                 enter = EnterRow,
@@ -172,6 +181,7 @@ internal fun ActiveServiceCard(
                     KvcxActiveRow(
                         ride = ride,
                         state = kvcxState ?: KvcxRideState(),
+                        freeStartAt = kvcxFreeStartAt,
                         onUnlock = kvcxOnUnlock,
                         onLock = kvcxOnLock,
                         onReturn = kvcxOnReturn,
@@ -182,31 +192,24 @@ internal fun ActiveServiceCard(
             // 免费时长行（小程序方式）：骑行行不出现时才轮到它（账号方式的骑行信息更全，
             // 两者不会同时成立——能力闸互斥；防御性写法不叠分隔线即可）
             val afterKvcx = kvcxVisible || freeRideVisible
-            AnimatedVisibility(
-                visible = freeRideVisible,
-                enter = EnterRow,
-                exit = ExitRow,
-            ) {
-                freeRideStartAt?.takeIf { EbikeFreeRide.isActive(it, now) }?.let { startAt ->
-                    FreeRideRow(startAtMillis = startAt, onOpen = onOpenEbike, onEndTimer = onEndFreeRide)
-                }
+            if (freeRideStartAt != null) {
+                FreeRideSlot(
+                    startAtMillis = freeRideStartAt,
+                    onOpen = onOpenEbike,
+                    onEndTimer = onEndFreeRide,
+                    onExpired = { freeRideExpired.value = true },
+                )
             }
             AnimatedDivider(visible = afterKvcx && (waterVisible || qzxyVisible || ujingLive != null))
-            AnimatedVisibility(
-                visible = waterVisible,
-                enter = EnterRow,
-                exit = ExitRow,
-            ) {
-                waterSession?.takeIf { !it.isStale(now) }?.let { session ->
-                    WaterActiveRow(
-                        session = session,
-                        now = now,
-                        stopping = waterStopping,
-                        canStop = waterCanStop,
-                        onEnd = waterOnEnd,
-                        onOpen = onOpenWater,
-                    )
-                }
+            waterSession?.let { session ->
+                WaterSlot(
+                    session = session,
+                    stopping = waterStopping,
+                    canStop = waterCanStop,
+                    onEnd = waterOnEnd,
+                    onOpen = onOpenWater,
+                    onExpired = { waterExpired.value = true },
+                )
             }
             AnimatedDivider(visible = waterVisible && (qzxyVisible || ujingLive != null))
             AnimatedVisibility(
@@ -234,6 +237,69 @@ internal fun ActiveServiceCard(
         }
     }
 }
+
+/**
+ * 免费计时行：**行内自己走秒**（每拍只重组这一行），到点回调 [onExpired] 让父级收行。
+ * 父级因此不再持有秒级状态——开水 / 免费计时期间快趣行与按钮不跟着每秒重组。
+ */
+@Composable
+private fun FreeRideSlot(
+    startAtMillis: Long,
+    onOpen: () -> Unit,
+    onEndTimer: () -> Unit,
+    onExpired: () -> Unit,
+) {
+    val now by rememberLiveSecond(startAtMillis) { EbikeFreeRide.isActive(startAtMillis, it) }
+    val active = EbikeFreeRide.isActive(startAtMillis, now)
+    LaunchedEffect(active) { if (!active) onExpired() }
+    AnimatedVisibility(visible = active, enter = EnterRow, exit = ExitRow) {
+        FreeRideRow(
+            startAtMillis = startAtMillis,
+            now = now,
+            onOpen = onOpen,
+            onEndTimer = onEndTimer,
+        )
+    }
+}
+
+/** 开水行：同上，秒级走时留在本行；超过 5 分钟（过期）回调 [onExpired] 撤行。 */
+@Composable
+private fun WaterSlot(
+    session: QiekjWateringSession,
+    stopping: Boolean,
+    canStop: Boolean,
+    onEnd: () -> Unit,
+    onOpen: () -> Unit,
+    onExpired: () -> Unit,
+) {
+    val now by rememberLiveSecond(session.startedAtMillis) { !session.isStale(it) }
+    val active = !session.isStale(now)
+    LaunchedEffect(active) { if (!active) onExpired() }
+    AnimatedVisibility(visible = active, enter = EnterRow, exit = ExitRow) {
+        WaterActiveRow(
+            session = session,
+            now = now,
+            stopping = stopping,
+            canStop = canStop,
+            onEnd = onEnd,
+            onOpen = onOpen,
+        )
+    }
+}
+
+/**
+ * 每秒一拍，**只在 [stillActive] 为 true 时走**：到点落一次最终值后停表，不空转。
+ * key 变化时先落当前值（`produceState` 的 initialValue 只在首次组合生效，重启必须显式赋值）。
+ */
+@Composable
+private fun rememberLiveSecond(key: Any?, stillActive: (Long) -> Boolean): State<Long> =
+    produceState(initialValue = System.currentTimeMillis(), key1 = key) {
+        value = System.currentTimeMillis()
+        while (stillActive(value)) {
+            delay(1_000)
+            value = System.currentTimeMillis()
+        }
+    }
 
 /** 卡内分隔线的显隐也走收拢/淡出：行在退场时分隔线同步收掉，不闪一截硬边。 */
 @Composable
@@ -289,13 +355,16 @@ private fun BrandIcon(resId: Int) {
  * [pulsing] = 圆点是否呼吸（默认是）：「待核对」这类**已结束待处理**的行不呼吸——
  * 呼吸的含义是「正在进行中」，结束时呼吸反而是误导。
  *
- * [highlighted] = 行级高亮描边（2026-10-22）：快趣骑行**未锁车**时整行点亮，与临时锁车
- * 做区分。口径与 `AppCard.highlighted` 同族（主色 1.5dp 描边 + 浅主色底，180ms 过渡），
- * 但这是卡内的一行、不能换成 `AppCard`（会变成气泡套气泡）。
- *
  * 点击反馈（2026-10-22 用户报「矩形的丑陋灰色背景边框」）：不再用默认灰色涟漪——
  * 圆角裁切 + 按下时浅主色底、0.985 轻微回缩（与侧栏行 / 扫一扫同族），松手回弹。
- * [contentInset] 是行内左右留白，有描边时内容不贴线；默认 0 = 与卡内其它行对齐。
+ * 行的「骑行中」高亮**不在这里**：它归外层卡片边缘（`ActiveServiceCard` 的
+ * `AppCard.highlighted`），行内保持平铺，与其它服务行同一轮廓。
+ *
+ * [status] = 标题后的状态词（如「骑行中」，主色 `labelSmall`）：骑行态不只靠卡边描边
+ * 表达，也进无障碍朗读。null = 不显示。
+ *
+ * [progress] = 行底的时长进度条（0..1，可为 null = 不画）：快趣免费窗口倒计时 / 超时增长，
+ * 开水、趣智、U净 的进行中时长。`progressError` 时走 error 色（超时）。
  */
 @Composable
 private fun ActiveRow(
@@ -306,8 +375,10 @@ private fun ActiveRow(
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
     pulsing: Boolean = true,
-    highlighted: Boolean = false,
-    contentInset: Dp = 0.dp,
+    status: String? = null,
+    statusColor: Color? = null,
+    progress: Float? = null,
+    progressError: Boolean = false,
 ) {
     val haptics = rememberAppHaptics()
     val scheme = MaterialTheme.colorScheme
@@ -318,22 +389,12 @@ private fun ActiveRow(
         targetValue = if (pressed) 0.985f else 1f,
         label = "serviceRowPress",
     )
-    // 高亮与按压都走同一族过渡（180ms，与 AppCard.highlighted 同档）
-    val borderColor by animateColorAsState(
-        targetValue = if (highlighted) scheme.primary else Color.Transparent,
-        animationSpec = tween(AppCardDefaults.HighlightTransitionMillis),
-        label = "serviceRowBorder",
-    )
     val containerColor by animateColorAsState(
-        targetValue = when {
-            highlighted -> scheme.primary.copy(alpha = 0.06f)
-            pressed -> scheme.primary.copy(alpha = 0.05f)
-            else -> Color.Transparent
-        },
+        targetValue = if (pressed) scheme.primary.copy(alpha = 0.05f) else Color.Transparent,
         animationSpec = tween(AppCardDefaults.HighlightTransitionMillis),
         label = "serviceRowContainer",
     )
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer {
@@ -342,7 +403,6 @@ private fun ActiveRow(
             }
             .clip(rowShape)
             .background(containerColor)
-            .border(AppCardDefaults.HighlightedBorderWidth, borderColor, rowShape)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(
@@ -360,41 +420,73 @@ private fun ActiveRow(
                 },
             )
             .heightIn(min = 52.dp)
-            .padding(horizontal = contentInset, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(vertical = 8.dp),
     ) {
-        if (pulsing) {
-            BreathingDot()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (pulsing) {
+                BreathingDot()
+                Spacer(Modifier.width(8.dp))
+            } else {
+                // 占位同尺寸的静态点（secondaryContainer 弱色）：布局不跳，语气降下来
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            BrandIcon(brandRes)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        // 标题先让位：状态词是固定宽度的短标签，不能被长标题挤成省略号
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (status != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = status,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                            color = statusColor ?: MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Spacer(Modifier.width(8.dp))
-        } else {
-            // 占位同尺寸的静态点（secondaryContainer 弱色）：布局不跳，语气降下来
-            Box(
+            trailing()
+        }
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
                 modifier = Modifier
-                    .size(8.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant, CircleShape),
-            )
-            Spacer(Modifier.width(8.dp))
-        }
-        BrandIcon(brandRes)
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                    .fillMaxWidth()
+                    .padding(top = 7.dp)
+                    .height(4.dp),
+                color = if (progressError) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
             )
         }
-        Spacer(Modifier.width(8.dp))
-        trailing()
     }
 }
 
@@ -410,6 +502,8 @@ private fun ActiveRow(
 private fun KvcxActiveRow(
     ride: KqcxAuth.Ride,
     state: KvcxRideState,
+    /** 免费窗口起点（`ebikeRideStartAt`）；null / ≤0 = 没有计时，不画进度条。 */
+    freeStartAt: Long?,
     onUnlock: () -> Unit,
     onLock: () -> Unit,
     onReturn: () -> Unit,
@@ -423,15 +517,41 @@ private fun KvcxActiveRow(
     val busy = state.busy != null
     val cooldownLeft = unlockCooldownSecondsLeft(state.unlockCooldownUntil, now)
 
+    // 免费窗口进度（2026-10-22）：15 分钟内倒计时条（与骑行页同一条口径），
+    // 过点后切成 error 色的超时增长条；状态词报「超时 X 分钟」，进度条按 15 分钟一格
+    // 增长（见 EbikeFreeRide.overtimeProgressFraction）。锁车后照挂：计费仍在继续。
+    val freeStart = freeStartAt?.takeIf { it > 0L }
+    val overtime = freeStart != null && !EbikeFreeRide.isActive(freeStart, now)
+    val overtimeMinutes = if (overtime) {
+        EbikeFreeRide.overtimeMinutes(freeStart, now).coerceAtLeast(1)
+    } else {
+        0
+    }
+    val freeProgress = when {
+        freeStart == null -> null
+        overtime -> EbikeFreeRide.overtimeProgressFraction(freeStart, now)
+        else -> EbikeFreeRide.progressFraction(freeStart, now)
+    }
+    val status = when {
+        overtime -> "超时 $overtimeMinutes 分钟"
+        ride.locked == false && freeStart != null ->
+            "骑行中 · " + EbikeFreeRide.formatRemaining(
+                EbikeFreeRide.remainingSeconds(freeStart, now),
+            )
+        ride.locked == false -> "骑行中"
+        else -> null
+    }
+    val statusColor = if (overtime) MaterialTheme.colorScheme.error else null
+
     ActiveRow(
         brandRes = edu.jxslu.schedule.R.drawable.ic_brand_kqcx,
         title = "快趣骑行",
+        status = status,
+        statusColor = statusColor,
+        progress = freeProgress,
+        progressError = overtime,
         onClick = onOpen,
         onClickLabel = "查看骑行详情",
-        // 未锁车 = 正在骑（2026-10-22）：主色描边把「骑行中」与临时锁车区分开；
-        // 锁状态未知按「未锁」以外的状态处理（只有明确未锁才点亮）
-        highlighted = ride.locked == false,
-        contentInset = 8.dp,
         subtitle = buildString {
             append(ride.carNum)
             elapsed?.let { append(" · 已骑 ").append(KqcxAuth.formatRideDuration(it)) }
@@ -482,17 +602,19 @@ private fun KvcxActiveRow(
 @Composable
 private fun FreeRideRow(
     startAtMillis: Long,
+    now: Long,
     onOpen: () -> Unit,
     onEndTimer: () -> Unit,
 ) {
     val haptics = rememberAppHaptics()
-    val now by rememberResumedSecond(key = startAtMillis)
     ActiveRow(
         brandRes = edu.jxslu.schedule.R.drawable.ic_brand_kqcx,
         title = "快趣骑行 · 免费时长",
         subtitle = "剩余 " + EbikeFreeRide.formatRemaining(
             EbikeFreeRide.remainingSeconds(startAtMillis, now),
         ) + "（超时开始计费）",
+        // 免费窗口倒计时条（与骑行页同口径：满格开始、随免费时间流干）
+        progress = EbikeFreeRide.progressFraction(startAtMillis, now),
         onClick = onOpen,
         onClickLabel = "查看骑行页",
         trailing = {
@@ -540,6 +662,8 @@ private fun WaterActiveRow(
             append(" · ")
             append(QzxyWateringFormat.duration((now - session.startedAtMillis).coerceAtLeast(0L)))
         },
+        // 出水进度（与开水页同口径：165 秒自动关阀兜底）
+        progress = session.progressFraction(now),
         trailing = {
             if (canStop) {
                 ActionChip(label = "结束开水", enabled = !stopping, onClick = {
@@ -571,6 +695,19 @@ private fun QzxyActiveRow(
 ) {
     val haptics = rememberAppHaptics()
     val pending = deviceEnded || isQzxyWateringExpired(watering.startedAtMillis)
+    // 只在「用水中」走秒：转「待核对」后停表，别让一行静态文案继续每秒重组
+    val now by produceState(
+        initialValue = System.currentTimeMillis(),
+        key1 = watering.startedAtMillis,
+        key2 = pending,
+    ) {
+        value = System.currentTimeMillis()
+        if (pending) return@produceState
+        while (true) {
+            delay(1_000)
+            value = System.currentTimeMillis()
+        }
+    }
     ActiveRow(
         brandRes = edu.jxslu.schedule.R.drawable.ic_brand_qzxy,
         title = if (pending) "趣智校园 · 待核对" else "趣智校园 · 用水中",
@@ -583,6 +720,13 @@ private fun QzxyActiveRow(
                 QzxyWateringFormat.money(watering.preDeductMilli)
         } else {
             "${watering.deviceName.ifBlank { "热水器" }} · " + rememberQzxyWateringClock(watering.startedAtMillis)
+        },
+        // 用水时长按 1 小时记账窗口推（超过即转「待核对」，不再画进行中的条）
+        progress = if (pending) {
+            null
+        } else {
+            (watering.elapsedMillis(now).toFloat() / QzxyWatering.EXPIRE_MILLIS)
+                .coerceIn(0f, 1f)
         },
         trailing = {
             ActionChip(label = if (pending) "结算核对" else "结束用水", onClick = {
@@ -607,14 +751,25 @@ private fun UjingActiveRow(order: UjingOrderSnapshot, onOpen: () -> Unit) {
             delay(1_000)
         }
     }
+    val liveRemain = if (running) {
+        UjingState.liveRemainSeconds(order.status, order.remainSeconds, order.snapshotAt, now)
+    } else {
+        0
+    }
     ActiveRow(
         brandRes = edu.jxslu.schedule.R.drawable.ic_brand_ujing,
         title = "U净 · " + UjingState.statusLabel(order.status, order.statusRemark),
         subtitle = buildString {
             append(order.deviceName.ifBlank { "洗衣机" })
             if (running && order.remainSeconds > 0) {
-                append(" · 剩 ").append(UjingState.remainText(UjingState.liveRemainSeconds(order.status, order.remainSeconds, order.snapshotAt, now)))
+                append(" · 剩 ").append(UjingState.remainText(liveRemain))
             }
+        },
+        // 洗涤进度（与 U净 页英雄卡同口径：1 - 剩余/总时长；旧快照无时长则不画）
+        progress = if (running && order.durationSeconds > 0) {
+            (1f - liveRemain.toFloat() / order.durationSeconds).coerceIn(0f, 1f)
+        } else {
+            null
         },
         onClick = onOpen,
         onClickLabel = "查看洗衣订单",

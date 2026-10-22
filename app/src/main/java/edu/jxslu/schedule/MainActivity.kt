@@ -1366,15 +1366,6 @@ internal fun JuwApp(
                             // 2026-09-29 结构重构后两档共用同一个页面（地图 + 抽屉三态），
                             // 不再按使用方式路由到两个页面，也不再需要「选车回传」那条通道
                             onOpenEbike = { SubpageActivity.start(context, SubpageScreen.RIDE) },
-                            // 顶栏「+ → 扫一扫」扫到车身码：带完整车号进骑行页（进页即定位，
-                            // DESIGN §3.9 的 focusItemId 复用）
-                            onOpenRideCar = { carNum ->
-                                SubpageActivity.start(
-                                    context,
-                                    SubpageScreen.RIDE,
-                                    focusItemId = carNum,
-                                )
-                            },
                             // 扫到洗衣机机身码：原文走一次性令牌（UjingScanHandoff）交给
                             // U净 页自己识别——「扫码 → 开草稿 → 跳下单页」只有那一条实现
                             onOpenUjingScan = { raw ->
@@ -1399,19 +1390,11 @@ internal fun JuwApp(
                             onOpenDormRepair = {
                                 SubpageActivity.start(context, SubpageScreen.DORM_REPAIR)
                             },
-                            // 付款码（DESIGN §3.10）：校园卡付款码展示页，独立窗口
-                            onOpenPayCode = {
-                                SubpageActivity.start(context, SubpageScreen.PAY_CODE)
-                            },
+                            // 付款码 / 百宝箱入口在左侧栏（2026-10-22：顶栏「+」已删）
                             // 收件箱（DESIGN §3.24，2026-10-21 收口）：今日页收件箱卡
                             // 「查看更多」的落点，独立窗口
                             onOpenInbox = {
                                 SubpageActivity.start(context, SubpageScreen.INBOX)
-                            },
-                            // 百宝箱（DESIGN §4.47，2026-10-12）：小工具集合，
-                            // 「+」菜单里那一行的总开关在「设置 → 功能」（默认开）
-                            onOpenToolbox = {
-                                SubpageActivity.start(context, SubpageScreen.TOOLBOX)
                             },
                             // 天气详情（DESIGN §3.29，2026-10-11）：顶栏天气句的落点
                             onOpenWeather = {

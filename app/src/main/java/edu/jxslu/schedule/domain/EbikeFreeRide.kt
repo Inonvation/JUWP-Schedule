@@ -209,6 +209,36 @@ object EbikeFreeRide {
     }
 
     /**
+     * 超时秒数（免费窗口结束后起算，未超时为 0）。
+     *
+     * 与 [remainingSeconds] 互补：前者描述免费窗口内还剩多久，这里描述窗口结束后又过了多久。
+     * 今日页骑行卡的「超时 X 分钟」与增长进度条都从这里取。
+     */
+    fun overtimeSeconds(startAtMillis: Long, nowMillis: Long): Int {
+        if (startAtMillis <= 0L) return 0
+        val overtime = nowMillis - freeEndMillis(startAtMillis)
+        return if (overtime <= 0L) 0 else (overtime / 1_000L).toInt()
+    }
+
+    /** 超时分钟数（向上取整，至少 1）；未超时为 0。文案用，进度条用 [overtimeProgressFraction]。 */
+    fun overtimeMinutes(startAtMillis: Long, nowMillis: Long): Int {
+        val seconds = overtimeSeconds(startAtMillis, nowMillis)
+        return if (seconds <= 0) 0 else (seconds + 59) / 60
+    }
+
+    /**
+     * 超时进度条比例 0f..1f：以 [FREE_MINUTES] 分钟为一格，填满后保持 1f。
+     *
+     * 超时没有上限，进度条只表达「超了多久」的量级；精确分钟数由文案给。
+     */
+    fun overtimeProgressFraction(startAtMillis: Long, nowMillis: Long): Float {
+        if (startAtMillis <= 0L) return 0f
+        val total = FREE_MINUTES * MINUTE_MS
+        val overtime = (nowMillis - freeEndMillis(startAtMillis)).coerceAtLeast(0L)
+        return (overtime.toFloat() / total).coerceIn(0f, 1f)
+    }
+
+    /**
      * 通知里进度条的刻度 0..100（= [progressFraction] × 100）。
      *
      * 给 Android 16 的 `NotificationCompat.ProgressStyle` 用——不设 segment 时它的满刻度

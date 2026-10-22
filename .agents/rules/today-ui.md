@@ -29,7 +29,10 @@
 
 ## 进行中服务卡（2026-10-21，DESIGN §3.3）
 
-- 位置：**作业卡与收件箱卡之间**，`item(key = "active-services")`；本体 `ui/today/ActiveServiceCard.kt`。
+- 位置：**没有在案骑行时在作业卡与收件箱列表之间**；**有在案骑行（`kvcxRideState?.ride != null`）
+  时提到课程区之前**（列表第一项，2026-10-22 用户口径：骑行是最需要一眼看到的状态）。
+  key 始终是 `item(key = "active-services")`，两处条件渲染、不会同时出现；移动靠
+  `Modifier.animateItem()` 过渡。本体 `ui/today/ActiveServiceCard.kt`。
   快趣骑行 / 胖乖开水 / 趣智洗澡 / U净 洗烘谁在进行中谁占一行（一张 AppCard 平铺 +
   `AppCardDivider` 分隔，行进出场 220/160ms），全无整卡不渲染。
 - 各行真相源与刷新口径（**零新增常驻网络路径**）：
@@ -63,17 +66,41 @@
   新通知（快趣自动还车 / U净洗衣完成已有现成通知）。
 - 行首呼吸圆点 900ms（同 `WateringBadge` 手法）；计时 `tnum` 等宽 + 每秒（不做 crossfade）；
   行图标用侧栏同款品牌位图 24dp。
-- **快趣行的高亮与点击反馈（2026-10-22 用户要求）**：`ride.locked == false`（**明确未锁车**）
-  时整行主色 1.5dp 描边 + 6% 主色底（180ms 过渡，与 `AppCard.highlighted` 同族）；
-  临时锁车 / 锁状态未知不点亮。**别把整张 `ActiveServiceCard` 点亮**——同时可能有别的服务在跑。
+- **秒级走时按行隔离（2026-10-22）**：免费计时 / 开水各自在 `FreeRideSlot` / `WaterSlot` 里
+  走表（`rememberLiveSecond`，到点停表并回调 `onExpired`），父级只保留
+  `freeRideExpired` / `waterExpired` 两个闸。**别把 `now` 再提到 `ActiveServiceCard` 顶层**——
+  那样开水 / 倒计时期间快趣行与按钮会跟着每秒重组。
+- **快趣行的高亮、状态词与点击反馈（2026-10-22 用户要求；同日三次修订）**：
+  `ride.locked == false`（**明确未锁车**）时点亮**整张 `ActiveServiceCard` 的边缘**
+  （`AppCard.highlighted` + **`highlightedFill = false`**：只换主色 1.5dp 描边、不抬底色，
+  180ms 过渡）；临时锁车 / 锁状态未知不点亮。**不要做成行内描边卡片 / 行内竖条**
+  （用户报「卡片内嵌套一个高亮描边卡片」太丑，随后指定改为卡边高亮）——卡内再画一层就是
+  气泡套气泡，行内保持与其它服务行同一轮廓。
+  骑行中同时给标题后的 `status = "骑行中"`（主色 `labelSmall`）：**边框不唯一承担状态**，
+  也进无障碍朗读；锁定 / 未知不显示状态词（已锁由副行「已锁车（计费继续）」交代）。
   点击不再用默认灰色涟漪（用户报「矩形的丑陋灰色背景边框」）：圆角 12dp 裁切 +
   `indication = null`，按下浅主色底 + 0.985 回缩（与侧栏行同族）。**别把默认 indication 加回来**。
-  快趣行始终留 8dp 行内左右空白（`contentInset`），高亮开关不引起文字位移。
+  行内不需要为高亮让位的额外留白，快趣行与其它行左对齐。
+- **行底时长进度条（2026-10-22 用户要求）**：`ActiveRow(progress = …)` 在行内容之下画一条
+  3dp 全宽 `LinearProgressIndicator`，`status` 旁的 `statusColor` / `progressError` 走 error 色。
+  各行的窗口与文案：
+  - **快趣（账号方式，骑行卡）**：起点 `kvcxFreeStartAt` = `ebikeRideStartAt`（订单创建 /
+    开锁时刻，调用侧只在 `kvcxInAppRide` 时传）。免费窗口内 = `progressFraction`（满格递减），
+    状态词 =「骑行中 · mm:ss」（`formatRemaining`）；过点（`!isActive`）切
+    `overtimeProgressFraction`（**15 分钟一格**，满格后保持 1f）+ error 色，状态词换成
+    「超时 X 分钟」（`overtimeMinutes` 向上取整）。**临时锁车照挂进度**：计费仍在继续，
+    不能因为车锁了就藏掉超时。没有计时起点（≤0）则不画条、只留「骑行中」。
+  - **快趣（小程序免费计时行）**：只画 `progressFraction` 倒计时条，到点整行照旧消失——
+    **不显示超时**：本机没有在案订单，无法判断人是还在骑还是已经还车。
+  - **胖乖开水**：`QiekjWateringSession.progressFraction`（165 秒自动关阀兜底，与开水页同口径）。
+  - **趣智用水**：`elapsedMillis / QzxyWatering.EXPIRE_MILLIS`（1 小时记账窗口）；
+    转「待核对」后不画。
+  - **U净**：`1 - liveRemain / durationSeconds`（与 U净 页英雄卡同口径）；旧快照无时长不画。
 
-## 宿舍报修状态行（2026-10-19；2026-10-21 并入收件箱卡，DESIGN §4.49）
+## 宿舍报修状态行（2026-10-19；2026-10-21 并入收件箱列表，DESIGN §4.49）
 
-- 位置：**收件箱卡内置顶行**（`InboxTodayCard`，消息行之上；§3.24）；未开学 / 课表为空的
-  空态也挂收件箱卡——不能只在有课时才出现。原独立报修卡已删，别加回来。
+- 位置：**收件箱列表内置顶行**（`InboxTodayCard`，消息行之上；§3.24）；未开学 / 课表为空的
+  空态也挂收件箱列表——不能只在有课时才出现。原独立报修卡已删，别加回来。
 - 可见性由 `DormRepairRules.cardRecord` 决定：有在途优先（最新提交），没有在途才显示
   3 天内已完成且未被用户隐藏的；完成 3 天后自动不渲染（快照仍保留，收件箱可回查）。
 - 行内只展示状态 / 宿舍 · 故障 / 当前节点或完成时间，**两行**：第一行「宿舍报修 · 状态 · 当前进度」
@@ -87,24 +114,16 @@
 - **在途状态不写 `inbox_messages`**（与办结消息区分）：收件箱只收「发生过的事实」，
   在途是随时刷新的当前态，渲染层直接消费快照（见 `.agents/rules/inbox.md`）。
 
-## 顶栏「+」快捷入口（2026-10-02 建；2026-10-21 收口）
+## 顶栏「+」已删（2026-10-22）
 
-- 顶栏右上角一枚 `Add01` + 下拉三行：「扫一扫」「付款码」「百宝箱」（DESIGN §3.3 / §4.47）。
-  「收件箱」行与「+」角标 2026-10-21 删（展示入口在收件箱卡）；「志愿服务」一行
-  2026-10-13 删除——问渠在生活页是整行入口卡（§3.13），顶栏不再重复。
-  三行**只在 `TodayScreen` 的 `actions` 里组合**，不做常驻按钮——低频动作不跟底部固定区的
-  卡片抢位置。
-- 「百宝箱」= 图片工具集合（水印 / 拼接 / 菜鸟批量查，`SubpageScreen.TOOLBOX`）。
-  **受通用设置「功能 → 百宝箱」开关控制**（`toolbox_enabled`，默认开）：关掉时这一行
-  整行不渲染（不是置灰）；页面直接订阅 `Graph.displayPrefs(context).toolboxEnabled`。
-  规则见 `.agents/rules/toolbox.md`。
-- **「志愿服务」一行 2026-10-13 已删**（问渠在生活页是整行入口卡，见 `.agents/rules/life-power.md` /
-  `.agents/rules/wenqu.md`）。落点就是那一页，**今日页不加载任何问渠数据**（那一页自己管缓存与刷新）。
-- 扫一扫取景走 `EbikeScanActivity` 的 **`MODE_RAW`**（原文模式），**去处只有一个判据**：
-  `domain/QuickScan.kt` 的 `quickScanTargetOf`，三档按顺序判：车身码进 `RIDE`
-  （`focusItemId` = 完整车号）→ 表里认得出的**别家码**（微信支付 / 微信 / 支付宝 / QQ）
-  就地提示不跳页 → 其余原文进 U净。别在页面里另写 `if (车号) … else …`，也别让取景窗口
-  自己解析（解析归本地判据 + U净 服务端，见 `.agents/rules/ujing.md`）。
+- 顶栏右上角那枚 `Add01` + 下拉（扫一扫 / 付款码 / 百宝箱）**已整套删除**，别加回来：
+  三个入口在左侧栏都有（扫一扫是独立按钮、付款码在右下角、百宝箱在「生活」段），
+  顶栏再挂一枚就是重复入口。收件箱入口在页面上的收件箱列表（§3.24）。
+- 扫一扫的三档判据仍唯一收在 `domain/QuickScan.kt`（侧栏扫一扫与悬浮球双击共用
+  `rememberQuickScan`）：车身码进 `RIDE`（`focusItemId` = 完整车号）→ 认得准的别家码
+  就地提示不跳页 → 其余原文进 U净。取景窗口走 `EbikeScanActivity` 的 **`MODE_RAW`**。
+  **别在页面里另写 `if (车号) … else …`**，也别让取景窗口自己解析（解析归本地判据 +
+  U净 服务端，见 `.agents/rules/ujing.md`）。
 - **别家码那张表只收认得准的**（`FOREIGN_CODES`）：多写一条错的，就是把真机身码判成别人的码，
   比漏拦严重（漏拦只是回到旧行为：跳 U净 后回「未识别到设备信息」）。命中用 `contains`
   而不是 `startsWith`，同一家的域名位置不止一处（`u.wechat.com` / `mp.weixin.qq.com`）。

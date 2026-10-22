@@ -645,7 +645,8 @@ class WaterViewModel(
     }
 
     companion object {
-        const val AUTO_SETTLE_SECONDS = 165
+        /** 服务端自动关阀兜底秒数：唯一出处 `QiekjWateringSession.AUTO_CLOSE_SECONDS`。 */
+        const val AUTO_SETTLE_SECONDS = QiekjWateringSession.AUTO_CLOSE_SECONDS
 
         /** 「结束用水」按钮的出场门槛：出水满 5 秒才给（2026-10-05 用户拍板）。 */
         const val END_SESSION_MIN_SECONDS = 5

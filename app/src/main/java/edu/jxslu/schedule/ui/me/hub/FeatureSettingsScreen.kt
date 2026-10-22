@@ -95,7 +95,7 @@ fun FeatureSettingsScreen(
                 )
                 SettingSwitchRow(
                     title = "百宝箱",
-                    subtitle = "今日页「+」里的工具：水印 · 拼接 · 菜鸟批量查",
+                    subtitle = "左侧栏「百宝箱」入口：水印 · 拼接 · 菜鸟批量查",
                     checked = state.displayPrefs.toolboxEnabled,
                     onCheckedChange = viewModel::setToolboxEnabled,
                     icon = HugeIcons.Toolbox,

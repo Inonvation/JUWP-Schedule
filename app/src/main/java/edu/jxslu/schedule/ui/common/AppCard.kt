@@ -66,6 +66,9 @@ object AppCardDefaults {
  * 也用于「卡片即单选项」的场景（如 U净 下单页的档位卡）：
  * 换主色描边 + 抬一档底色。默认 false，不影响既有调用点。
  * 三处颜色（底 / 描边色 / 描边宽）都走 180ms 过渡——几何不变，选中与取消选中不再突变。
+ *
+ * [highlightedFill] = false 时只换描边、不抬底色（2026-10-22）：卡片本身就是页面底色里的
+ * 一块，抬高底色会把「卡边高亮」又变成一层卡片。默认 true 保持既有调用点的观感。
  */
 @Composable
 fun AppCard(
@@ -77,6 +80,7 @@ fun AppCard(
     /** 只影响点击：false = 卡片可见但不可点（如开水卡在出水过程中不许再进页面）。 */
     enabled: Boolean = true,
     highlighted: Boolean = false,
+    highlightedFill: Boolean = true,
     contentPadding: PaddingValues = AppCardDefaults.Padding,
     verticalArrangement: Arrangement.Vertical = Arrangement.Top,
     content: @Composable ColumnScope.() -> Unit,
@@ -84,7 +88,7 @@ fun AppCard(
     // 触感实例在这里取（与列表行同口径：每行一份 AppHaptics，内部按开关短路）
     val haptics = rememberAppHaptics()
     val containerColor by animateColorAsState(
-        targetValue = if (highlighted) {
+        targetValue = if (highlighted && highlightedFill) {
             MaterialTheme.colorScheme.surfaceContainerHigh
         } else {
             MaterialTheme.colorScheme.surface
