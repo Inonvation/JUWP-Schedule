@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.data.qiekj.BalanceData
 import edu.jxslu.schedule.data.qiekj.DeviceItem
 import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
+import edu.jxslu.schedule.data.qiekj.QiekjDailySignInResult
 import edu.jxslu.schedule.data.qiekj.QiekjRepository
 import edu.jxslu.schedule.data.qiekj.QiekjWateringSession
 import edu.jxslu.schedule.data.qiekj.QiekjWateringStore
@@ -24,6 +25,7 @@ import edu.jxslu.schedule.Graph
 import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.widget.WaterWidgetSync
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -75,6 +77,10 @@ data class WaterUiState(
     val serverOrdersLoaded: Boolean = false,
     /** 正在查看的服务端账单明细（点了单笔后拉到）；null 表示没有打开的明细。 */
     val serverOrderDetail: UnlockResult? = null,
+    // ── 每日签到（2026-10-23）：手动或打开软件自动触发；当天已签不再发写请求 ──
+    val signInRunning: Boolean = false,
+    val signInResult: QiekjDailySignInResult? = null,
+    val signInError: String? = null,
 )
 
 sealed interface WaterEvent {
@@ -309,6 +315,42 @@ class WaterViewModel(
                 notice(it.message ?: "查询余额失败", NoticeTone.Error)
             }
         }
+    }
+
+    /**
+     * 每日签到：只跑签到，不碰任务/领奖。重复点由仓库层幂等处理
+     * （服务端返回 33001 按「今天已签」展示）。成功后顺手把余额推给桌面小组件。
+     */
+    fun runDailySignIn() = viewModelScope.launch {
+        if (!_uiState.value.loggedIn) return@launch
+        if (_uiState.value.signInRunning) return@launch
+        _uiState.update { it.copy(signInRunning = true, signInError = null) }
+        runCatching { repo.runDailySignIn() }
+            .onSuccess { result ->
+                _uiState.update {
+                    it.copy(
+                        signInRunning = false,
+                        signInResult = result,
+                        balance = result.balance ?: it.balance,
+                        balanceLoaded = it.balanceLoaded || result.balance != null,
+                    )
+                }
+                result.balance?.let { balance ->
+                    runCatching { WaterWidgetSync.pushQiekjBalance(Graph.appContext, balance) }
+                }
+                notice("签到已完成", NoticeTone.Success)
+            }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                _uiState.update {
+                    it.copy(signInRunning = false, signInError = error.message ?: "签到失败")
+                }
+                if (error is TokenExpiredException) {
+                    handleTokenExpired()
+                } else {
+                    notice(error.message ?: "签到失败", NoticeTone.Error)
+                }
+            }
     }
 
     /** 最近一次设备列表请求的 Job：直达开水要等它回来才知道选哪台，不补发重复请求。 */

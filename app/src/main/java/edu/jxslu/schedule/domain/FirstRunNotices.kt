@@ -8,7 +8,7 @@ package edu.jxslu.schedule.domain
  * - [UserNotice]：事实性告知——这个 App 是什么、数据去哪、接口有什么限制（锁 3 秒）；
  * - [Disclaimer]：法律条款与责任——禁止事项、风险自负（锁 5 秒，正文取自 [Disclaimer]）。
  *
- * 两份**不重复**：「严禁刷积分/绕过付费」「后果自负」这类条款只在免责声明里说一次，
+ * 两份**不重复**：「严禁绕过付费」「后果自负」这类条款只在免责声明里说一次，
  * 用户须知不再抄一遍——同一个承诺说两遍等于稀释。
  *
  * **充值风险不在首启**：首启的用户还没登录、没余额、没充过值，此刻弹等于白发。真正
@@ -31,7 +31,7 @@ object FirstRunNotices {
      * 文案版本号。**改任何一份的任何一个字都要 +1**——落盘的同意记录按版本比对
      * （`domain/NoticeConsent.isConsented`），不 bump 就等于"改了文案但用户不必重看"。
      */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** 弹出顺序：先说自己是什么，再说责任。 */
     val ORDER: List<FirstRunNotice> = listOf(FirstRunNotice.UserNotice, FirstRunNotice.Disclaimer)

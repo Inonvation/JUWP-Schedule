@@ -10,6 +10,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -32,6 +33,13 @@ object QiekjJson {
         encodeDefaults = true
     }
 }
+
+/**
+ * 服务端可能把对象字段回成空串 / null（见 [QiekjJson] 的脏数据说明）：
+ * 只有真正的 JSON 对象才按目标 DTO 解码，其余一律当作没有 data。
+ */
+fun <T> JsonElement?.decodeObjectOrNull(serializer: KSerializer<T>): T? =
+    (this as? JsonObject)?.let { QiekjJson.json.decodeFromJsonElement(serializer, it) }
 
 /** 任何 JsonPrimitive 都按其文本内容当作字符串读；数组/对象返回 null（等价 LenientStringJsonAdapter）。 */
 object LenientStringSerializer : KSerializer<String?> {

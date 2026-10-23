@@ -81,6 +81,7 @@ class ScheduleRepository(
         val dynamicColor: Boolean,
         val haptics: Boolean,
         val waterDouble: Boolean,
+        val qiekjAutoSignIn: Boolean,
     )
 
     /** 共享单车相关偏好的收拢切片（DESIGN §3.9；combine 参数上限的同款处理）。 */
@@ -154,8 +155,9 @@ class ScheduleRepository(
             prefs.dynamicColor,
             prefs.hapticsEnabled,
             prefs.waterRequireDoubleClick,
-        ) { theme, dynamicColor, haptics, waterDouble ->
-            GlobalPrefs(theme, dynamicColor, haptics, waterDouble)
+            prefs.qiekjAutoSignIn,
+        ) { theme, dynamicColor, haptics, waterDouble, qiekjAutoSignIn ->
+            GlobalPrefs(theme, dynamicColor, haptics, waterDouble, qiekjAutoSignIn)
         },
         // 共享单车切片（DESIGN §3.9）：三个流合成一层，再并入最外层 combine
         combine(
@@ -187,6 +189,7 @@ class ScheduleRepository(
             hapticsEnabled = global.haptics,
             fontScaleLocked = misc.fontScaleLocked,
             waterRequireDoubleClick = global.waterDouble,
+            qiekjAutoSignIn = global.qiekjAutoSignIn,
             ebikeAutoSave = ebike.autoSave,
             ebikeRecentIds = ebike.recentIds,
             ebikeUseMode = ebike.useMode,
@@ -451,6 +454,9 @@ class ScheduleRepository(
 
     /** 开水双击确认（全局，默认开）。 */
     suspend fun setWaterRequireDoubleClick(value: Boolean) = prefs.setWaterRequireDoubleClick(value)
+
+    /** 胖乖「打开软件自动签到」（全局，默认关）。 */
+    suspend fun setQiekjAutoSignIn(value: Boolean) = prefs.setQiekjAutoSignIn(value)
 
     /** 日历同步提前提醒分钟数（全局，0 = 不提醒），供设置页与同步动作共用（DESIGN §4.12）。 */
     val calendarReminderMinutes: Flow<Int> = prefs.calendarReminderMinutes

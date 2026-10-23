@@ -7,6 +7,7 @@ import edu.jxslu.schedule.data.session.SessionService
 import edu.jxslu.schedule.domain.DiagnosisResult
 import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +24,7 @@ import java.util.concurrent.TimeUnit
 class NotLoggedInException(message: String = "请先登录") : Exception(message)
 
 /**
- * 胖乖生活仓库：登录态、余额、历史设备与开水全流程（DESIGN §4.10）。
+ * 胖乖生活仓库：登录态、余额、历史设备、开水全流程与每日签到（DESIGN §4.10）。
  *
  * 开水调用链的顺序以参考实现 light-life unlockDevice 为准，**不可调整**：
  * latestUsed → skus → sync(预检，可失败) → details(imei / 机型能力) → 积分风控 → 开后付 →
@@ -47,23 +48,38 @@ class QiekjRepository(
     private val expiry: SessionExpiryStore? = null,
 ) {
     private val api: QiekjApi
+    /** 签到专用：Version=1.123.0 + 官方 `&` 拼接；与开水链路的 1.60.3 无分隔签名隔离。 */
+    private val pointsApi: QiekjApi
 
     init {
         // BASIC 级日志只打请求行不打 header，token/sign 不会进 Logcat（DESIGN 5 隐私要求）
         val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
         // 共享池派生：只叠自己的头部注入与日志拦截器
         val client = AppHttp.withInterceptors(
-            QiekjHeaderInterceptor { tokenStore.readToken() },
+            QiekjHeaderInterceptor(tokenProvider = { tokenStore.readToken() }),
             logging,
             *listOfNotNull(debugDumpDir?.let { QiekjDebugDumpInterceptor(it) }).toTypedArray(),
         ).newBuilder().build()
-        api = Retrofit.Builder()
+        api = buildApi(client)
+        val pointsClient = AppHttp.withInterceptors(
+            QiekjHeaderInterceptor(
+                tokenProvider = { tokenStore.readToken() },
+                version = QiekjApiConfig.POINTS_VERSION,
+                signPathSeparator = "&",
+            ),
+            logging,
+            *listOfNotNull(debugDumpDir?.let { QiekjDebugDumpInterceptor(it) }).toTypedArray(),
+        ).newBuilder().build()
+        pointsApi = buildApi(pointsClient)
+    }
+
+    private fun buildApi(client: OkHttpClient): QiekjApi =
+        Retrofit.Builder()
             .baseUrl(QiekjApiConfig.BASE_URL)
             .client(client)
             .addConverterFactory(QiekjJson.json.asConverterFactory("application/json".toMediaType()))
             .build()
             .create(QiekjApi::class.java)
-    }
 
     // ── 登录态 ──
 
@@ -140,6 +156,55 @@ class QiekjRepository(
         val resp = api.queryBalance(requireToken())
         resp.throwIfFailed()
         return resp.requireData()
+    }
+
+    /**
+     * 每日签到（2026-10-23）：只做签到 + 余额，不碰任务/领奖。
+     *
+     * - `signin/todaySignIn` 先判今天是否已签；
+     * - 未签才走 `signin/signInAcList` 取活动 id，再 `signin/doUserSignIn`；
+     *   `code=33001` 是服务端幂等结果（今天已签），按成功处理。
+     *
+     * 由用户手动触发，或由「打开软件自动签到」在当天首次前台时触发；
+     * 不循环、不批量，验证码/风控不绕过。
+     */
+    suspend fun runDailySignIn(includeBalance: Boolean = true): QiekjDailySignInResult {
+        val token = requireToken()
+
+        val today = pointsApi.todaySignIn(token)
+        today.throwIfFailed()
+        val todayData = today.data.decodeObjectOrNull(TodaySignInData.serializer())
+        val signInText = if (todayData?.isSignIn == true) {
+            "签到：今天已签过"
+        } else {
+            val activity = pointsApi.signInActivities(token)
+            activity.throwIfFailed()
+            val activityData = activity.data.decodeObjectOrNull(SignInActivityData.serializer())
+            val activityId = activityData?.id?.takeIf { it.isNotBlank() } ?: "600001"
+            val result = pointsApi.doUserSignIn(token = token, activityId = activityId)
+            when (result.code) {
+                0, 200 -> {
+                    val resultData = result.data.decodeObjectOrNull(SignInResultData.serializer())
+                    "签到成功：activityId=$activityId，累计积分 ${resultData?.totalIntegral ?: "-"}"
+                }
+                33001 -> "签到：服务端确认今天已签"
+                else -> {
+                    result.throwIfFailed()
+                    "签到：未知状态"
+                }
+            }
+        }
+
+        val balance = if (!includeBalance) null else try {
+            queryBalance()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TokenExpiredException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
+        return QiekjDailySignInResult(signInText = signInText, balance = balance)
     }
 
     suspend fun latestDevices(): List<DeviceItem> {

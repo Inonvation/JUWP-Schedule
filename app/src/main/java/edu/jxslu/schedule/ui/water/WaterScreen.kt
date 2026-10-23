@@ -292,6 +292,13 @@ fun WaterScreen(
                         onToggleShowPhone = { viewModel.toggleShowPhone() },
                     )
 
+                    DailySignInSection(
+                        state = state,
+                        autoSignIn = prefsState.displayPrefs.qiekjAutoSignIn,
+                        onRun = { viewModel.runDailySignIn() },
+                        onSetAutoSignIn = prefsViewModel::setQiekjAutoSignIn,
+                    )
+
                     // 设备行（与趣智页同构：一行 AppCardRow，右侧「更换 ›」）
                     DeviceRow(
                         state = state,
@@ -598,6 +605,67 @@ private fun BalanceRow(state: WaterUiState, onRecharge: () -> Unit, onToggleShow
                 "小程序按支付宝的登录态进账号，充值前先核对它与本 App 登录的手机号一致，避免充错账户。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+/**
+ * 每日签到卡（2026-10-23）：只做签到，不碰任务/领奖。
+ *
+ * 「打开软件自动签到」默认关闭；开启后只在每天首次前台检查一次，已签到就不再请求。
+ * 手动按钮与自动签到共用仓库的同一条签到链路，结果留在页面上。
+ */
+@Composable
+private fun DailySignInSection(
+    state: WaterUiState,
+    autoSignIn: Boolean,
+    onRun: () -> Unit,
+    onSetAutoSignIn: (Boolean) -> Unit,
+) {
+    SettingsSection(
+        title = "每日签到",
+        subtitle = "每天签到一次；打开软件自动签到默认关闭。",
+    ) {
+        state.signInResult?.let { result ->
+            Text(result.signInText, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(10.dp))
+        }
+        state.signInError?.let { error ->
+            Text(
+                error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+        Button(
+            onClick = onRun,
+            enabled = !state.signInRunning,
+            modifier = Modifier.fillMaxWidth().height(44.dp),
+        ) {
+            if (state.signInRunning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("正在签到…")
+            } else {
+                Text("签到一次")
+            }
+        }
+        SettingSwitchRow(
+            title = "打开软件自动签到",
+            subtitle = "默认关闭；每天首次打开 App 时检查一次，已签到就不再请求",
+            checked = autoSignIn,
+            onCheckedChange = onSetAutoSignIn,
+        )
+        Text(
+            "不会绕过广告、验证码、付费或风控；平台规则与账号风险自担。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             modifier = Modifier.padding(top = 8.dp),
         )
     }

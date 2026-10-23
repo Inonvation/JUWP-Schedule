@@ -465,6 +465,11 @@ class MeViewModel(private val repo: ScheduleRepository) : ViewModel() {
         viewModelScope.launch { repo.setWaterRequireDoubleClick(value) }
     }
 
+    /** 胖乖「打开软件自动签到」（全局；默认关）。 */
+    fun setQiekjAutoSignIn(value: Boolean) {
+        viewModelScope.launch { repo.setQiekjAutoSignIn(value) }
+    }
+
     // ---- 显示设置子页写入口（2026-09-19 起全部写全局，见 DESIGN §4.9 / §3.3） ----
 
     fun setShowSaturday(value: Boolean) = viewModelScope.launch { repo.setShowSaturday(value) }

@@ -41,6 +41,26 @@ class QiekjSignTest {
     }
 
     @Test
+    fun `sign 积分口径在 version 与 path 之间保留 &`() {
+        val pointsVersion = "1.123.0"
+        val pointsPath = "/signin/todaySignIn"
+        val raw = "appSecret=$appSecret&channel=$channel&timestamp=$timestamp&token=$token" +
+            "&version=$pointsVersion&$pointsPath"
+        assertEquals(
+            sha256Hex(raw),
+            QiekjSign.sign(
+                appSecret,
+                channel,
+                timestamp,
+                token,
+                pointsVersion,
+                pointsPath,
+                pathSeparator = "&",
+            ),
+        )
+    }
+
+    @Test
     fun `sign 逐字段变化会改变结果`() {
         val base = QiekjSign.sign(appSecret, channel, timestamp, token, version, path)
         assertTrue(base != QiekjSign.sign(appSecret, channel, timestamp, token, version, "/user/balance"))

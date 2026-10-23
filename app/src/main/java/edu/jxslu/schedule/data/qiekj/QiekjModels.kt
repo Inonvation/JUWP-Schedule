@@ -66,6 +66,29 @@ data class BalanceData(
         get() = integralAmount?.toDoubleOrNull()?.takeIf { it >= 0.005 }?.let { "%.2f".format(it) }
 }
 
+// ── 每日签到（2026-10-23）──
+
+@Serializable
+data class TodaySignInData(
+    @kotlinx.serialization.Serializable(LenientBooleanSerializer::class) val isSignIn: Boolean? = null,
+)
+
+@Serializable
+data class SignInActivityData(
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val id: String? = null,
+)
+
+@Serializable
+data class SignInResultData(
+    @kotlinx.serialization.Serializable(LenientStringSerializer::class) val totalIntegral: String? = null,
+)
+
+/** 一次「每日签到」运行的结果；失败由仓库抛异常，这里只留展示文本与最新余额。 */
+data class QiekjDailySignInResult(
+    val signInText: String,
+    val balance: BalanceData? = null,
+)
+
 // ── 设备 ──
 
 @Serializable

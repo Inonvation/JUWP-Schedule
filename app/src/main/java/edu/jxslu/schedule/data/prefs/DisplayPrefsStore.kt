@@ -624,6 +624,16 @@ class DisplayPrefsStore(internal val context: Context) {
         p[KEY_WATER_REQUIRE_DOUBLE_CLICK] ?: true
     }
 
+    /** 胖乖「打开软件自动签到」。全局项，**默认关**。 */
+    val qiekjAutoSignIn: Flow<Boolean> = context.displayDataStore.data.map { p ->
+        p[KEY_QIEKJ_AUTO_SIGN_IN] ?: false
+    }.distinctUntilChanged()
+
+    /** 上次自动签到的日期（ISO `yyyy-MM-dd`）；空串 = 没跑过。仅供自动签到期闸读。 */
+    val qiekjAutoSignInLastDate: Flow<String> = context.displayDataStore.data.map { p ->
+        p[KEY_QIEKJ_AUTO_SIGN_IN_LAST_DATE].orEmpty()
+    }.distinctUntilChanged()
+
     /** 上课提醒开关（DESIGN §3.7）。全局项，默认关：通知是打扰型能力，用户显式开启。 */
     val reminderEnabled: Flow<Boolean> = context.displayDataStore.data.map { p ->
         p[KEY_REMINDER_ENABLED] ?: false
@@ -1266,6 +1276,17 @@ class DisplayPrefsStore(internal val context: Context) {
 
     suspend fun setWaterRequireDoubleClick(value: Boolean) {
         context.displayDataStore.edit { it[KEY_WATER_REQUIRE_DOUBLE_CLICK] = value }
+    }
+
+    suspend fun setQiekjAutoSignIn(value: Boolean) {
+        context.displayDataStore.edit { it[KEY_QIEKJ_AUTO_SIGN_IN] = value }
+    }
+
+    suspend fun setQiekjAutoSignInLastDate(value: String) {
+        context.displayDataStore.edit {
+            if (value.isBlank()) it.remove(KEY_QIEKJ_AUTO_SIGN_IN_LAST_DATE)
+            else it[KEY_QIEKJ_AUTO_SIGN_IN_LAST_DATE] = value
+        }
     }
 
     /** 保存日历提醒分钟数（0 = 不提醒）；夹取到 0–120。 */

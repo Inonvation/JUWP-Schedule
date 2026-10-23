@@ -21,7 +21,7 @@
 1) 路线 D：全新 Compose，不 fork 拾光仓库
 2) 不重造轮子：图标 HugeIcons；能用官方/主流库就不要自研
 3) 课表 JSON 字段对齐拾光互通模型（见 DESIGN.md 4.3）
-4) 胖乖 API 以本地 F:\light-life-v3.0 为准，禁止实现刷积分
+4) 胖乖 API 以本地 F:\light-life-v3.0 为准；只做每日签到，不绕过广告/验证码/付费
 5) 改导航或课表领域模型：写代码 → 编译/装机 → 最后同步 DESIGN.md 对应章节
 6) 改完代码要能说明如何在 Android Studio 跑起来
 7) 配色默认晴空蓝；界面颜色只从 MaterialTheme.colorScheme 取，禁止写死品牌色/十六进制
@@ -132,7 +132,7 @@
 2. user/balance 余额展示（积分、可抵扣金额、小票若有）
 3. goods/latestUsed 拉历史设备；选中设备一键 goods/water/unlock（含 light-life 中 unlock 前必要的风控/通道调用，以参考代码为准）
 4. goods/water/sync 与 order/detail 尽力而为；本地保存订单快照列表
-5. 设置项：自动打开 App 时是否静默尝试签到（默认关闭）；不要做刷积分
+5. 每日签到：手动触发，或「打开软件自动签到」（默认关）；不绕过广告/验证码/付费
 6. UI：WaterScreen + 我的页入口卡片 + 今日页「一键开水」快捷入口
 7. 免责声明字符串资源
 

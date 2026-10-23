@@ -7,7 +7,9 @@ import java.security.MessageDigest
  *
  * 根因：服务端对带 token 的业务接口校验 `sign` 头，拼接顺序固定为
  * `appSecret -> channel -> timestamp -> token -> version` 后直接接请求路径；
- * 登录类接口（common 与 user/reg 路径）不签名。算法是整串小写 SHA-256 hex。
+ * 积分写接口按官方 1.123.0 口径在 version 与 path 之间多一个 `&`
+ * （[sign] 的 `pathSeparator = "&"`）。登录类接口（common 与 user/reg 路径）不签名。
+ * 算法是整串小写 SHA-256 hex。
  *
  * 抽成纯函数（参数全部显式传入、不依赖 data 层配置）有两个目的：
  * JVM 单测可逐字节对齐 light-life 参考实现；Interceptor 只做装配不做计算。
@@ -27,7 +29,8 @@ object QiekjSign {
         token: String,
         version: String,
         path: String,
+        pathSeparator: String = "",
     ): String = sha256Hex(
-        "appSecret=$appSecret&channel=$channel&timestamp=$timestamp&token=$token&version=$version$path",
+        "appSecret=$appSecret&channel=$channel&timestamp=$timestamp&token=$token&version=$version$pathSeparator$path",
     )
 }

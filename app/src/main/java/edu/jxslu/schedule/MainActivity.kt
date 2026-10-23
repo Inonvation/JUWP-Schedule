@@ -81,6 +81,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import edu.jxslu.schedule.data.prefs.DisplayPrefs
+import edu.jxslu.schedule.data.qiekj.QiekjAutoSignInRunner
 import edu.jxslu.schedule.data.xg.XgUrls
 import edu.jxslu.schedule.data.prefs.OnboardingSyncOutcome
 import edu.jxslu.schedule.domain.FloatingBall
@@ -231,6 +232,14 @@ class MainActivity : ComponentActivity() {
         // 30 分钟内不重复打接口，闸门在 DormRepairSync 里；用 applicationContext 不持有 Activity。
         Graph.appScope.launch {
             DormRepairReminder.checkOnAppOpen(applicationContext)
+        }
+        // 胖乖每日签到（默认关）：开关开着时每天首次回到前台检查一次；
+        // 已签到 / 未登录 / 开关关都内部跳过，失败不写日期，下次打开还能重试。
+        Graph.appScope.launch {
+            QiekjAutoSignInRunner.runIfDue(
+                prefs = Graph.displayPrefs(applicationContext),
+                repo = Graph.qiekj(applicationContext),
+            )
         }
     }
 

@@ -1,12 +1,14 @@
 package edu.jxslu.schedule.data.qiekj
 
+import kotlinx.serialization.json.JsonElement
 import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.POST
 
 /**
- * 胖乖生活 Retrofit 接口，端点与参考实现 light-life DeviceApi.kt 一致（DESIGN 4.5）。
- * 全部 Form POST；调用顺序约束见 QiekjRepository.unlockDevice 注释，禁止调整。
+ * 胖乖生活 Retrofit 接口：开水链路与参考实现 light-life DeviceApi.kt 一致（DESIGN 4.5）；
+ * 签到端点取自 1.123.0 反编译（2026-10-23）。全部 Form POST；
+ * 调用顺序约束见 QiekjRepository.unlockDevice / runDailySignIn 注释，禁止调整。
  */
 interface QiekjApi {
     @FormUrlEncoded
@@ -27,6 +29,24 @@ interface QiekjApi {
     @FormUrlEncoded
     @POST("user/balance")
     suspend fun queryBalance(@Field("token") token: String): ApiEnvelope<BalanceData>
+
+    // ── 每日签到（2026-10-23）──
+    // 这些端点走 pointsApi（Version=1.123.0 + 官方 & 拼接），不开水链路共用。
+
+    @FormUrlEncoded
+    @POST("signin/todaySignIn")
+    suspend fun todaySignIn(@Field("token") token: String): ApiEnvelope<JsonElement>
+
+    @FormUrlEncoded
+    @POST("signin/signInAcList")
+    suspend fun signInActivities(@Field("token") token: String): ApiEnvelope<JsonElement>
+
+    @FormUrlEncoded
+    @POST("signin/doUserSignIn")
+    suspend fun doUserSignIn(
+        @Field("token") token: String,
+        @Field("activityId") activityId: String,
+    ): ApiEnvelope<JsonElement>
 
     @FormUrlEncoded
     @POST("goods/latestUsed")

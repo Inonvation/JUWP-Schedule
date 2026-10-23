@@ -12,9 +12,12 @@ import edu.jxslu.schedule.data.qiekj.OrderHistoryItem
 import edu.jxslu.schedule.data.qiekj.QIEKJ_EMPTY_DATA_ABORT_STREAK
 import edu.jxslu.schedule.data.qiekj.QIEKJ_EMPTY_DATA_SETTLE_STREAK
 import edu.jxslu.schedule.data.qiekj.QiekjJson
+import edu.jxslu.schedule.data.qiekj.SignInActivityData
 import edu.jxslu.schedule.data.qiekj.ServerOrderItem
 import edu.jxslu.schedule.data.qiekj.SyncData
+import edu.jxslu.schedule.data.qiekj.TodaySignInData
 import edu.jxslu.schedule.data.qiekj.TokenExpiredException
+import edu.jxslu.schedule.data.qiekj.decodeObjectOrNull
 import edu.jxslu.schedule.data.qiekj.isSessionFinished
 import edu.jxslu.schedule.data.qiekj.noDataPollAction
 import edu.jxslu.schedule.data.qiekj.shouldRequestRemoteEnd
@@ -23,6 +26,7 @@ import edu.jxslu.schedule.domain.PromotionLine
 import edu.jxslu.schedule.domain.UnlockResult
 import edu.jxslu.schedule.domain.calculateActualCost
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -115,6 +119,42 @@ class QiekjModelsTest {
         assertEquals("-", balance.ticketText)
         assertEquals("-", balance.pointsText)
         assertNull(balance.pointsDeductText)
+    }
+
+    // ── 每日签到（2026-10-23）──
+
+    @Test
+    fun todaySignIn_布尔与数字形态都能读() {
+        val bool = QiekjJson.json.decodeFromString<ApiEnvelope<TodaySignInData>>(
+            """{"code":0,"data":{"isSignIn":true}}""",
+        )
+        assertEquals(true, bool.requireData().isSignIn)
+
+        val number = QiekjJson.json.decodeFromString<ApiEnvelope<TodaySignInData>>(
+            """{"code":0,"data":{"isSignIn":1}}""",
+        )
+        assertEquals(true, number.requireData().isSignIn)
+    }
+
+    @Test
+    fun signInActivity_id裸数字按字符串读() {
+        val data = QiekjJson.json.decodeFromString<ApiEnvelope<SignInActivityData>>(
+            """{"code":0,"data":{"id":900001}}""",
+        )
+        assertEquals("900001", data.requireData().id)
+    }
+
+    @Test
+    fun signInData_空串按空对象处理() {
+        val today = QiekjJson.json.decodeFromString<ApiEnvelope<JsonElement>>(
+            """{"code":0,"data":""}""",
+        )
+        assertNull(today.data.decodeObjectOrNull(TodaySignInData.serializer()))
+
+        val activity = QiekjJson.json.decodeFromString<ApiEnvelope<JsonElement>>(
+            """{"code":0,"data":""}""",
+        )
+        assertNull(activity.data.decodeObjectOrNull(SignInActivityData.serializer()))
     }
 
     @Test

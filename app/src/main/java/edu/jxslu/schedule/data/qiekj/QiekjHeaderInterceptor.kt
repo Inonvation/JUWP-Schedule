@@ -14,6 +14,10 @@ import okhttp3.Response
  */
 class QiekjHeaderInterceptor(
     private val tokenProvider: () -> String?,
+    /** 签到接口用 1.123.0；开水链路保持 1.60.3。 */
+    private val version: String = QiekjApiConfig.VERSION,
+    /** 官方积分口径在 version 与 path 之间多一个 `&`；开水链路保持无分隔。 */
+    private val signPathSeparator: String = "",
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val timestamp = System.currentTimeMillis().toString()
@@ -22,7 +26,7 @@ class QiekjHeaderInterceptor(
         val channel = if (isLoginApi) QiekjApiConfig.LOGIN_CHANNEL else QiekjApiConfig.API_CHANNEL
 
         val builder = chain.request().newBuilder()
-            .header("Version", QiekjApiConfig.VERSION)
+            .header("Version", version)
             .header("channel", channel)
             .header("phoneBrand", QiekjApiConfig.PHONE_BRAND)
             .header("User-Agent", QiekjApiConfig.USER_AGENT)
@@ -43,8 +47,9 @@ class QiekjHeaderInterceptor(
                         channel = channel,
                         timestamp = timestamp,
                         token = token,
-                        version = QiekjApiConfig.VERSION,
+                        version = version,
                         path = path,
+                        pathSeparator = signPathSeparator,
                     ),
                 )
             }

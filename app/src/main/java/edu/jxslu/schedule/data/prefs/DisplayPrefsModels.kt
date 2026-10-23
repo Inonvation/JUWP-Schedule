@@ -73,6 +73,13 @@ data class DisplayPrefs(
      */
     val waterRequireDoubleClick: Boolean = true,
     /**
+     * 胖乖「打开软件自动签到」。全局项，**默认关**。
+     *
+     * 只做每日签到，不碰任务/领奖；开启后每天首次回到前台检查一次，
+     * 已签到就不再发写请求。平台规则与账号风险自担。
+     */
+    val qiekjAutoSignIn: Boolean = false,
+    /**
      * 【遗留】周末显示单开关。语义 = [showSaturday] && [showSunday]，由 setter 保持同步。
      *
      * 根因：这里**不能**写成 `val showWeekend get() = ...` 的派生属性——

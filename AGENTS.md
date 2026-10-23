@@ -275,7 +275,7 @@ data/repo     ScheduleRepository（备份模型在 ScheduleBackup）+ 各业务 
 data/prefs    DataStore 显示偏好（DisplayPrefsStore + 按功能拆出的扩展文件）
 data/jw       强智教务：URL / 课表 / 考试 / 成绩 / 学业 / 培养方案 / 教材 / 选课 / 日历 / 评教
 data/xg       学工表单与宿舍报修（只读）
-data/qiekj    胖乖生活（登录/开水/余额/订单）
+data/qiekj    胖乖生活（登录/开水/余额/订单/每日签到）
 data/ykt      一卡通（登录/付款码/流水；凭证与 token 口径见 rules/login-session.md）
 data/kqcx     快趣出行（附近车辆/账号用车/图层缓存）
 data/power    寝室电费（新开普；读数/账单/充值）
@@ -297,7 +297,7 @@ JuwApplication ensureDefaults（节次/学期；课表不预置）+ 小组件冷
 
 ## 硬性禁止
 
-- 刷积分/绕过付费/伪造官方身份：**App 与上架模块（`data/qiekj/` 等）仍一律禁止**——App 不接签到/任务/领奖，只保留开水/余额/订单。`.re-tmp/` 已 gitignore（2026-10-23 复核），允许在其中写**个人账号的研究脚本**（自查自用：签到、查活动与积分、复现 App 自身的任务流程）；不用于他人账号，不进 App，不入文档口径
+- 刷积分/绕过付费/伪造官方身份：**App 允许个人账号的每日签到**（2026-10-23 用户授权）——当前只接签到，不接任务列表、任务完成上报/领奖。仍然禁止：绕过验证码/广告核验/付费/风控，批量账号，内置他人 token，后台静默刷取。签到接口的版本与签名口径见 `.agents/rules/life-power.md`；token 仍只走 EncryptedSharedPreferences，禁止进日志/git
 - 禁止把学号/密码/token 写进 git（`scripts/credentials.local.json`、`local.properties`、`release.jks`、`keystore.properties` 已 ignore）
 - 提交与文档中不得出现真实学号、姓名、手机号、token（转私不改这条卫生习惯）；新增抓取产物目录前先确认 `.gitignore` 已覆盖
 - **提交不带个人信息**：提交信息、代码、注释、测试 fixture 里不出现真实学号、姓名、手机号、寝室房号、真实邮箱；作者身份用 noreply 邮箱

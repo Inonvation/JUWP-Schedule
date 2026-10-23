@@ -6,8 +6,16 @@
 ## 胖乖（P4）开水
 
 - 参考 `F:\light-life-v3.0`；Base `https://userapi.qiekj.com/`
-- 只做：登录、开水、余额、订单、充值深链；签到默认关；禁止刷积分
+- 做：登录、开水、余额、订单、充值深链、每日签到；签到只作用于当前登录账号，由用户手动触发或开启「打开软件自动签到」，不绕过广告、验证码、付费与风控
 - 实现在 `data/qiekj/` + `ui/water/`；Token 走 EncryptedSharedPreferences，禁止进日志
+- **每日签到（2026-10-23 用户授权）**：入口在胖乖页「每日签到」卡，用户点「签到一次」才发请求；
+  也可在卡内打开「打开软件自动签到」（**默认关**）。只做签到 + 余额，不碰任务/领奖；
+  不循环、不批量、不做后台定时。`QiekjRepository`
+  单独建 `pointsApi`：`Version=1.123.0` + 官方 `&` 拼接（`QiekjSign.sign(..., pathSeparator="&")`），
+  开水链路仍是 1.60.3 / 无分隔。调用顺序：`signin/todaySignIn` → 未签才 `signin/signInAcList`
+  → `signin/doUserSignIn`；`doUserSignIn` 的 `code=33001` 是今天已签。自动签到每天首次
+  回到前台触发一次，成功才写日期，失败下次打开还能重试（`QiekjAutoSignInRunner` /
+  `QiekjAutoSignInRules`）。验证码、风控、付费都不绕过。
 - **「出水中」跨窗口口径**（2026-10-21）：`Graph.qiekjWatering`（`QiekjWateringStore`，落盘
   SharedPreferences + StateFlow）。`WaterViewModel.unlock()` 流程首次进入 `Working` 时 `begin`
   （设备名 / 起水时刻），结算 `Success`、流程失败、165 秒超时收尾时 `clear`；5 分钟未清视为

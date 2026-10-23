@@ -3,11 +3,14 @@ package edu.jxslu.schedule.data.qiekj
 /**
  * 胖乖生活（轻乖/qiekj）接口配置。
  * 全部取自参考实现 light-life v3.0（ApiConfig.kt），版本号与 secret 变更时只改这里（DESIGN 7.2）。
- * 禁止在本模块实现刷积分（AGENTS 硬性禁止）。
+ *
+ * 每日签到走独立的 [POINTS_VERSION]：`doUserSignIn` 有版本门槛，旧版本会回
+ * 「版本过低，请升级APP后再使用」；开水链路继续用 [VERSION]。
  */
 object QiekjApiConfig {
     const val BASE_URL = "https://userapi.qiekj.com/"
     const val VERSION = "1.60.3"
+    const val POINTS_VERSION = "1.123.0"
     const val LOGIN_CHANNEL = "android_app"
     const val API_CHANNEL = "android_app"
     const val PHONE_BRAND = "Redmi"
