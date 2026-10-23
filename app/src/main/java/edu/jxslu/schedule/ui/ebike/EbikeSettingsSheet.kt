@@ -304,7 +304,7 @@ private fun RideConfirmSettingsSection(prefs: EbikePrefsSnapshot) {
                 scope.launch { Graph.displayPrefs(context).setEbikeUnlockConfirm(checked) }
             },
         )
-        SettingsNote("还车与重试开锁始终要确认。")
+        SettingsNote("还车与重试开锁始终要确认；扫车身码自动开锁遵循此开关。")
     }
 }
 

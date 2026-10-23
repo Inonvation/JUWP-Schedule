@@ -13,6 +13,7 @@ import edu.jxslu.schedule.ui.ebike.KvcxSideEffects
 import edu.jxslu.schedule.ui.ebike.LocateResult
 import edu.jxslu.schedule.ui.ebike.UNLOCK_COOLDOWN_MS
 import edu.jxslu.schedule.ui.ebike.kvcxConfirmDialog
+import edu.jxslu.schedule.ui.ebike.kvcxNeedsConfirm
 import edu.jxslu.schedule.ui.ebike.rideElapsedSeconds
 import edu.jxslu.schedule.ui.ebike.unlockCooldownSecondsLeft
 import kotlinx.coroutines.CompletableDeferred
@@ -996,6 +997,21 @@ class KvcxRideControllerTest {
         assertTrue(kvcxConfirmDialog(KvcxAction.DIRECT_UNLOCK, "车 100000669")!!.allowSkip)
         assertFalse(kvcxConfirmDialog(KvcxAction.RETRY_UNLOCK, "车 100000669")!!.allowSkip)
         assertFalse(kvcxConfirmDialog(KvcxAction.RETURN, "车 100000669")!!.allowSkip)
+    }
+
+    @Test
+    fun `关掉开锁前确认后两个开锁入口都不再弹窗`() {
+        // 扫车身码自动开锁走 DIRECT_UNLOCK：只认 UNLOCK 的旧写法会让这条即使设置关了也每次弹窗
+        assertFalse(kvcxNeedsConfirm(KvcxAction.UNLOCK, unlockConfirm = false))
+        assertFalse(kvcxNeedsConfirm(KvcxAction.DIRECT_UNLOCK, unlockConfirm = false))
+        assertTrue(kvcxNeedsConfirm(KvcxAction.UNLOCK, unlockConfirm = true))
+        assertTrue(kvcxNeedsConfirm(KvcxAction.DIRECT_UNLOCK, unlockConfirm = true))
+        // 还车与重试开锁保留每次确认，不受这个偏好影响
+        assertTrue(kvcxNeedsConfirm(KvcxAction.RETURN, unlockConfirm = false))
+        assertTrue(kvcxNeedsConfirm(KvcxAction.RETRY_UNLOCK, unlockConfirm = false))
+        // 本来就不弹的动作同样不受影响
+        assertFalse(kvcxNeedsConfirm(KvcxAction.LOCK, unlockConfirm = true))
+        assertFalse(kvcxNeedsConfirm(KvcxAction.RESUME, unlockConfirm = true))
     }
 
     // ---------- 还车 ----------

@@ -87,6 +87,8 @@
        ——它是"用户对自己账号"的授权；还车涉及结算与调度费、重试开锁是异常路径，都保留每次
        确认（弹窗那行常显说明就是写给用户看的，别顺手把还车也做成可关）。
       关掉后 `RideScreen.requestKvcxAction` 走直发分支，**定位前置仍在它前面**（那一道不可关）；
+      **两个开锁入口同一口径**（`UNLOCK` 与 `DIRECT_UNLOCK`；扫车身码那条别只认 `UNLOCK`，
+      2026-10-23 用户报「关了开锁前确认还是每次都弹」），判据收在纯函数 `kvcxNeedsConfirm`；
       页面判定读的是 `EbikePrefsSnapshot.unlockConfirm`，它滞后时只会多弹一次确认，偏保守。
        **勾选不记忆**：每次打开弹窗都从没勾开始（勾选是这一次的明确决定）。
      - **弹窗的状态读取收在 `KvcxConfirmHost` 里**（2026-10-01）：`pendingAction` 用裸 state

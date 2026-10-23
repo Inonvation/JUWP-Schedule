@@ -409,11 +409,11 @@ fun RideScreen(
                 viewModel.cancelQueriesForRideAction()
                 viewModel.kvcx.resumeRide()
             }
-            // 开锁 / 完整开锁：原有二次确认闸不变（含设置里关掉确认后的直发），
+            // 开锁 / 完整开锁：确认闸按用户偏好（两个入口同一口径，见 [kvcxNeedsConfirm]），
             // 出来之后再走独立的卡券闸（见 [gateThenUnlock]）
             action == KvcxAction.UNLOCK || action == KvcxAction.DIRECT_UNLOCK -> {
                 carNum?.let { car ->
-                    if (action == KvcxAction.UNLOCK && !prefs.unlockConfirm) {
+                    if (!kvcxNeedsConfirm(action, prefs.unlockConfirm)) {
                         // 用户在开锁弹窗勾过「不再提醒」（或关了设置里的开关）：直接发指令。
                         // 这是四道闸里唯一允许用户自己关的一道，定位前置照旧在前面挡着；
                         // 免确认的后果（按一下就开始计费）在勾选那一刻已经写明。

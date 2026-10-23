@@ -1111,6 +1111,20 @@ internal fun kvcxConfirmDialog(
     )
 }
 
+/**
+ * 页面二次确认闸的判定（`RideScreen.requestKvcxAction` 用）：这一步要不要先弹确认框。
+ *
+ * **两个开锁入口同一口径**（[KvcxAction.UNLOCK] 与 [KvcxAction.DIRECT_UNLOCK]）：
+ * 用户关掉「开启前确认」后，地图 / 车号面板 / 「重新使用该车」与**扫车身码自动开锁**
+ * 都直接发指令——**别只认 `UNLOCK`**，那样扫码那条会一直弹窗。临时锁车 / 解锁继续骑 /
+ * 响铃 / 查锁本来就没有确认框（[kvcxConfirmDialog] 返回 null）；还车与重试开锁保留每次确认。
+ */
+internal fun kvcxNeedsConfirm(action: KvcxAction, unlockConfirm: Boolean): Boolean = when (action) {
+    KvcxAction.UNLOCK, KvcxAction.DIRECT_UNLOCK -> unlockConfirm
+    KvcxAction.RETRY_UNLOCK, KvcxAction.RETURN -> true
+    KvcxAction.LOCK, KvcxAction.RESUME, KvcxAction.RING, KvcxAction.QUERY_LOCK -> false
+}
+
 /** 快趣动作的失败文案（业务错误已是用户可读文本，见仓库层 `server {}`）。 */
 internal fun kvcxErrorText(error: Throwable): String = when (error) {
     is KvcBusinessError -> error.message ?: "操作失败"
