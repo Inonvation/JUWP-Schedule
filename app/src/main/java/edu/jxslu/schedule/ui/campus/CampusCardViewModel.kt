@@ -19,6 +19,9 @@ import edu.jxslu.schedule.data.ykt.YktRepository
 import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
 import edu.jxslu.schedule.domain.YktArrival
 import edu.jxslu.schedule.domain.BalanceAlertSource
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.ui.common.NoticeFeedback
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.reminder.BalanceAlertReminder
@@ -564,7 +567,7 @@ class CampusCardViewModel(
                     YktArrival.arrivalPollIntervalMs(System.currentTimeMillis() - startedAt),
                 )
                 round++
-                if (checkArrivalOnce(username, password, orderFen)) return@launch
+                if (checkArrivalOnce(username, password, orderFen, startedAt)) return@launch
                 // 流水同步降频：每 3 轮（15s）一次，减轻服务端压力
                 if (round % 3 == 0) {
                     if (checkTurnoverArrival(username, password, orderFen, startedAt)) return@launch
@@ -586,6 +589,7 @@ class CampusCardViewModel(
         username: String,
         password: String,
         orderFen: Long,
+        startedAt: Long,
     ): Boolean {
         try {
             if (_arrivalTarget != null) {
@@ -598,7 +602,7 @@ class CampusCardViewModel(
                     currentFen = current?.second,
                 )
                 if (arrivedFen != null) {
-                    markArrived(orderFen = orderFen, newBalanceFen = arrivedFen)
+                    markArrived(orderFen = orderFen, newBalanceFen = arrivedFen, startedAt = startedAt)
                     if (current != null) refreshBalanceSilently(username, password)
                     return true
                 }
@@ -613,7 +617,7 @@ class CampusCardViewModel(
                         cardBalances = cards.associate { it.account to it.cardBalanceFen },
                     )
                     if (arrivedFen != null) {
-                        markArrived(orderFen = orderFen, newBalanceFen = arrivedFen)
+                        markArrived(orderFen = orderFen, newBalanceFen = arrivedFen, startedAt = startedAt)
                         return true
                     }
                 }
@@ -636,8 +640,27 @@ class CampusCardViewModel(
         }
     }
 
-    /** 判定到账的三处动作只有这一份：置 Arrived、撤「正在确认」弹窗、清持久化等待记录。 */
-    private suspend fun markArrived(orderFen: Long, newBalanceFen: Long?) {
+    /**
+     * 判定到账的三处动作只有这一份：置 Arrived、撤「正在确认」弹窗、清持久化等待记录。
+     *
+     * [startedAt] = 本次充值流程起点（下单时刻）：收件箱留痕键（`InboxKeys.YKT_RECHARGE_PREFIX`）
+     * 由它构成——进程被杀后恢复等待态走的也是同一个值，同一次充值的重查同键落更新。
+     */
+    private suspend fun markArrived(orderFen: Long, newBalanceFen: Long?, startedAt: Long) {
+        // 充值到账留痕收件箱（2026-10-22）：「钱进了卡」是可回查的事实，静默入箱不点红点。
+        // post 内部吞错（旁路纪律），留痕失败不影响到账收尾。
+        Graph.inboxRepository(appContext).post(
+            kind = InboxKind.YKT_RECHARGE,
+            dedupeKey = InboxKeys.YKT_RECHARGE_PREFIX + startedAt,
+            title = "一卡通充值到账",
+            body = buildString {
+                append("充值 ¥").append("%.2f".format(orderFen / 100.0))
+                newBalanceFen?.let { append(" · 余额 ¥%.2f".format(it / 100.0)) }
+            },
+            // 落点 = 消费流水页（充值记录以收入行在那里可回查）；静默留痕不点红点
+            route = SubpageScreen.CAMPUS_STATEMENT.name,
+            silent = true,
+        )
         _arrivalState.value = ArrivalState.Arrived(orderFen = orderFen, newBalanceFen = newBalanceFen)
         _pendingConfirmVisible.value = false
         prefs.clearPendingRecharge()
@@ -675,7 +698,7 @@ class CampusCardViewModel(
                             .orEmpty(),
                     )
                 }
-                markArrived(orderFen = orderFen, newBalanceFen = newBalanceFen)
+                markArrived(orderFen = orderFen, newBalanceFen = newBalanceFen, startedAt = startedAt)
                 return true
             }
         } catch (e: CancellationException) {
@@ -717,7 +740,7 @@ class CampusCardViewModel(
             if (_arrivalState.value !is ArrivalState.Watching) {
                 _arrivalState.value = ArrivalState.Watching(orderFen = orderFen, startedAt = startedAt)
             }
-            if (checkArrivalOnce(saved.username, saved.password, orderFen)) return@launch // 成功弹窗已就位
+            if (checkArrivalOnce(saved.username, saved.password, orderFen, startedAt)) return@launch // 成功弹窗已就位
             // 未立即到账：给出「正在确认」反馈弹窗——延迟一拍（等返回动画/窗口稳定），
             // 避免回到前台瞬间弹窗引发顶栏 insets 重算跳动（2026-09-21 实测）
             if (pending != null && !pending.confirmShown) {

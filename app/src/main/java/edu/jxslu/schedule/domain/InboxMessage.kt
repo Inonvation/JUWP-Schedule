@@ -32,6 +32,12 @@ enum class InboxKind {
     QZXY_SESSION,
     /** U净 洗衣完成（`UjingRepository.refreshOrder` 对比出状态过渡，2026-10-21）。 */
     UJING_ORDER,
+    /** 一卡通充值到账（`CampusCardViewModel.markArrived` 三路到账判定收口处，2026-10-22）。 */
+    YKT_RECHARGE,
+    /** 一卡通付款码消费（`PayCodeViewModel.startPayWatch` 检测命中处，2026-10-22）。 */
+    YKT_PAYMENT,
+    /** 寝室电费充值扣款成功（`LifeViewModel` 查单 `status==1` 处，2026-10-22）。 */
+    POWER_RECHARGE,
 }
 
 /** 收件箱消息的领域模型（`InboxMessageEntity` 的镜像，纯逻辑层可测）。 */
@@ -122,6 +128,21 @@ object InboxKeys {
 
     /** U净 洗衣完成：`ujing|done|` + 订单 id。按单条订单去重，与报修办结同构。 */
     const val UJING_DONE_PREFIX = "ujing|done|"
+
+    /**
+     * 一卡通充值到账：`ykt|recharge|` + 本次充值流程起点时刻（epoch 毫秒，`startedAt`）。
+     *
+     * 时刻来自下单/发起充值那一拍，**进程被杀后恢复等待态用的也是同一个值**
+     * （`pendingRecharge.startedAt` / `ArrivalState.Watching.startedAt`）——同一次充值的
+     * 重查落更新不重复；两笔充值（哪怕同金额）是两个事实，键不同。
+     */
+    const val YKT_RECHARGE_PREFIX = "ykt|recharge|"
+
+    /** 一卡通付款码消费：`ykt|pay|` + 服务端订单号（[edu.jxslu.schedule.domain.YktPayment.orderId]）。 */
+    const val YKT_PAYMENT_PREFIX = "ykt|pay|"
+
+    /** 电费充值扣款成功：`power|recharge|` + 平台订单号（下单响应的 `orderid`）。 */
+    const val POWER_RECHARGE_PREFIX = "power|recharge|"
 }
 
 /**

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.SubpageScreen
 import edu.jxslu.schedule.data.power.PowerException
 import edu.jxslu.schedule.data.power.PowerEntryState
 import edu.jxslu.schedule.data.power.PowerOrderState
@@ -18,6 +19,8 @@ import edu.jxslu.schedule.data.power.PowerSnapshot
 import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
+import edu.jxslu.schedule.domain.InboxKind
+import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.ui.common.NoticeTone
 import edu.jxslu.schedule.ui.widget.LifeWidgetSync
 import kotlinx.coroutines.CancellationException
@@ -411,6 +414,10 @@ class LifeViewModel(
         if (!silent) _powerRecharge.update { it.copy(busy = true, error = null, bankNote = null) }
         viewModelScope.launch {
             val state = powerOrderState(credentials.username, credentials.password, orderId)
+            // 扣款事实先留痕（旁路），再判会话——弹层被关掉也不吞「钱已扣」
+            if (state?.status == 1) {
+                postPowerRechargeInbox(orderId, _powerRecharge.value.amountYuan)
+            }
             if (!isCurrentSession(session)) return@launch
             if (state?.status == 1) {
                 _powerRecharge.update {
@@ -559,6 +566,10 @@ class LifeViewModel(
             for (attempt in 0 until ENTRY_CONFIRM_ATTEMPTS) {
                 delay(if (attempt == 0) PAID_CONFIRM_DELAY_MS else ENTRY_CONFIRM_DELAY_MS)
                 val state = powerOrderState(username, password, orderId) ?: return@launch
+                // 扣款事实先留痕（旁路），再判会话——弹层被关掉也不吞「钱已扣」
+                if (state.status == 1) {
+                    postPowerRechargeInbox(orderId, _powerRecharge.value.amountYuan)
+                }
                 if (!isCurrentSession(session)) return@launch
                 if (state.status == 1) {
                     _powerRecharge.update { it.copy(paidStatus = 1, entryStatus = state.entry) }
@@ -583,6 +594,31 @@ class LifeViewModel(
         } catch (e: Exception) {
             null
         }
+
+    /**
+     * 电费充值扣款留痕收件箱（2026-10-22）：调用点在查单 `status==1`（平台确认已记账）
+     * 处——金额在 [amountYuan]（弹层状态里的本次充值金额）。**在 `isCurrentSession` 判定
+     * 之前调用**：用户中途关掉弹层、会话号已变时，钱扣了的事实仍然成立，不能被吞；
+     * 同一订单两路确认（密码步查单 / 农行查单）先后到达时按订单号同键落更新。
+     * 金额取不到（弹层已重置）就不写金额，宁缺勿错。落点 = 缴费账单页。
+     */
+    private fun postPowerRechargeInbox(orderId: String, amountYuan: String?) {
+        viewModelScope.launch {
+            runCatching {
+                Graph.inboxRepository(Graph.appContext).post(
+                    kind = InboxKind.POWER_RECHARGE,
+                    dedupeKey = InboxKeys.POWER_RECHARGE_PREFIX + orderId,
+                    title = "电费充值成功",
+                    body = buildString {
+                        amountYuan?.takeIf { it.isNotBlank() }?.let { append("充值 ¥").append(it).append(" · ") }
+                        append("平台已确认扣款")
+                    },
+                    route = SubpageScreen.POWER_BILL.name,
+                    silent = true,
+                )
+            }
+        }
+    }
 
     /** 关闭/取消充值弹层（未支付订单 30 分钟自动失效，DESIGN §4.24）。 */
     fun dismissPowerRecharge() {

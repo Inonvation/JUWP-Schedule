@@ -383,6 +383,9 @@ private val NOTICE_WORTHY_EXCLUDED_KINDS = setOf(
     InboxKind.WATER_SESSION.name,
     InboxKind.QZXY_SESSION.name,
     InboxKind.UJING_ORDER.name,
+    InboxKind.YKT_RECHARGE.name,
+    InboxKind.YKT_PAYMENT.name,
+    InboxKind.POWER_RECHARGE.name,
 )
 
 /** 今日卡最多铺多少行（消息行 + 报修状态行合计，2026-10-21 用户口径 3 行）。 */

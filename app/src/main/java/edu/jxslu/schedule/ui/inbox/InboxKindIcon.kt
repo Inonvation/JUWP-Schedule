@@ -9,11 +9,14 @@ import me.rerere.hugeicons.stroke.BookEdit
 import me.rerere.hugeicons.stroke.Calendar01
 import me.rerere.hugeicons.stroke.Droplet
 import me.rerere.hugeicons.stroke.Exchange01
+import me.rerere.hugeicons.stroke.Flash
 import me.rerere.hugeicons.stroke.GraduationScroll
 import me.rerere.hugeicons.stroke.HeartHandshake
 import me.rerere.hugeicons.stroke.Repair
+import me.rerere.hugeicons.stroke.ShoppingBag01
 import me.rerere.hugeicons.stroke.ShowerHead
 import me.rerere.hugeicons.stroke.Wallet01
+import me.rerere.hugeicons.stroke.WalletAdd01
 import me.rerere.hugeicons.stroke.WashingMachine
 
 /**
@@ -35,4 +38,7 @@ internal fun inboxKindIcon(kind: String): ImageVector = when (
     InboxKind.WATER_SESSION -> HugeIcons.Droplet
     InboxKind.QZXY_SESSION -> HugeIcons.ShowerHead
     InboxKind.UJING_ORDER -> HugeIcons.WashingMachine
+    InboxKind.YKT_RECHARGE -> HugeIcons.WalletAdd01
+    InboxKind.YKT_PAYMENT -> HugeIcons.ShoppingBag01
+    InboxKind.POWER_RECHARGE -> HugeIcons.Flash
 }
