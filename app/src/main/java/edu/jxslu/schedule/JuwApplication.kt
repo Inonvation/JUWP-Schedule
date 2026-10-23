@@ -5,7 +5,6 @@ import android.app.NotificationManager
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.os.StrictMode
-import edu.jxslu.schedule.data.media.GalleryMigration
 import edu.jxslu.schedule.data.repo.CrashReporter
 import edu.jxslu.schedule.data.repo.ScheduleRepository
 import edu.jxslu.schedule.data.repo.UpdateCheckClient
@@ -131,20 +130,6 @@ class JuwApplication : Application() {
             // ——免扰期间积下的通知在启动时放行。队列为空 / 不在免扰出口点时是空跑，
             // 纯本地 IO 无网络；失败不挡启动链。
             QuietHoursGate.flushIfDue(this@JuwApplication, appScope)
-        }
-        // 相册目录改名（2026-10-23）：旧图 Pictures/水贝贝 → Pictures/JUWPHub。
-        // 后台跑，不挡首帧；失败留旧目录，24h 后再试。API 29+ 只改 MediaStore
-        // RELATIVE_PATH（URI 不变），26–28 走 File 移动并改写在案的待焚毁绝对路径。
-        appScope.launch {
-            delay(STARTUP_GALLERY_MIGRATION_DEFER_MILLIS)
-            runCatching {
-                GalleryMigration.migrateIfNeeded(
-                    this@JuwApplication,
-                    Graph.displayPrefs(this@JuwApplication),
-                )
-            }.onFailure {
-                CrashReporter.logCoroutine(this@JuwApplication, "galleryMigration", it)
-            }
         }
         // 冷启动先把 CAS 会话建起来（DESIGN §4.27）：三个 WebView 入口（导入 / 学工 / 签章）
         // 落到登录页时，自动填表提交能立刻成功，用户少等一轮；OkHttp 那条链
@@ -355,7 +340,6 @@ private const val ATTACHMENT_SWEEP_INTERVAL_MILLIS = 24L * 60 * 60 * 1000
  */
 private const val STARTUP_CAS_DEFER_MILLIS = 2_000L
 private const val STARTUP_CALENDAR_DEFER_MILLIS = 3_000L
-private const val STARTUP_GALLERY_MIGRATION_DEFER_MILLIS = 2_000L
 private const val STARTUP_UPDATE_DEFER_MILLIS = 3_000L
 
 /** 更新检查失败退避：网络或镜像源可能长期不可达，失败后一天内不再自动重试。 */

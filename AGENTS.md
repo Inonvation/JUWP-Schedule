@@ -273,7 +273,6 @@ domain/       纯 JVM 逻辑：课程/作息/学期/成绩/考试/调课差异/�
 data/local    Room v20（表清单见「工程实况」；迁移只加不删，实体索引必须与迁移对齐）
 data/repo     ScheduleRepository（备份模型在 ScheduleBackup）+ 各业务 Repository / Sync
 data/prefs    DataStore 显示偏好（DisplayPrefsStore + 按功能拆出的扩展文件）
-data/media    相册目录迁移（GalleryMigration：Pictures/水贝贝 → Pictures/JUWPHub）
 data/jw       强智教务：URL / 课表 / 考试 / 成绩 / 学业 / 培养方案 / 教材 / 选课 / 日历 / 评教
 data/xg       学工表单与宿舍报修（只读）
 data/qiekj    胖乖生活（登录/开水/余额/订单）

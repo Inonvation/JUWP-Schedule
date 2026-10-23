@@ -1279,7 +1279,7 @@ colorType 留成未知，`LOG_ALWAYS_FATAL("unknown bitmap configuration")` **�
 **不要把 `src.config` 原样转发给 `createBitmap`**——10-bit / HDR 照片在 API 34+ 会解成
 RGBA_F16 / RGBA_1010102 这类非常规配置，不该漏给出图侧。
 
-**出口**：保存到相册走 `ui/common/BitmapSave`（MediaStore `Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移）；
+**出口**：保存到相册走 `ui/common/BitmapSave`（MediaStore `Pictures/JUWPHub`；旧图留在 `Pictures/水贝贝`，不迁移）；
 分享复用课表导出的 `ScheduleShareStore` 机制、目录换 `toolbox_share/`
 （`Graph.toolboxShareStore`，FileProvider 根已登记；两边各自裁到 5 份）。
 格式统一 **JPEG q92**：产物多为截图 / 照片，PNG 会把体积放大一个量级；课表导出是纯色块

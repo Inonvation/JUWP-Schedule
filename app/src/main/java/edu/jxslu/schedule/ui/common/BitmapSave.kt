@@ -36,7 +36,7 @@ fun saveBitmapToGallery(
     displayName: String,
     format: Bitmap.CompressFormat = Bitmap.CompressFormat.PNG,
     quality: Int = 100,
-    // 当前相册目录；旧目录 `Pictures/水贝贝` 由 GalleryMigration 首次冷启动迁移。
+    // 当前相册目录；旧图留在 `Pictures/水贝贝`，不迁移。
     subDir: String = GalleryPaths.CURRENT_SUBDIR,
 ): GallerySaveResult {
     return try {

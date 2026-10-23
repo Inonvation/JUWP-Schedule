@@ -32,7 +32,7 @@ object EbikeQrBitmaps {
         edu.jxslu.schedule.ui.common.CodeBitmaps.render(matrix, dark)
 
     /**
-     * 保存到系统相册（`Pictures/JUWPHub`；旧目录由 GalleryMigration 首次冷启动迁移）。
+     * 保存到系统相册（`Pictures/JUWPHub`；旧图留在 `Pictures/水贝贝`，不迁移）。
      * API 29+ 走 MediaStore，无需权限；
      * 26–28 走公共目录 File 直写（manifest 已声明 legacy 外存权限）。
      * 成功返回 [SaveResult.Saved]（附待焚毁 key，扫完即焚用）；失败返回 [SaveResult.Failed]。
@@ -64,7 +64,7 @@ object EbikeQrBitmaps {
     /** 本功能落盘的相盘子目录（与 [saveToGallery] 同源，删除校验用）。 */
     private const val GALLERY_SUBDIR = GalleryPaths.CURRENT_SUBDIR
 
-    /** 旧目录：迁移失败或旧 key 残留时仍要能删。 */
+    /** 旧目录：旧图仍留在那里，旧 key 删除校验仍要认。 */
     private const val LEGACY_GALLERY_SUBDIR = GalleryPaths.LEGACY_SUBDIR
 
     /**
@@ -98,7 +98,7 @@ object EbikeQrBitmaps {
                     val currentDir = File(pictures, GALLERY_SUBDIR).canonicalPath
                     val legacyDir = File(pictures, LEGACY_GALLERY_SUBDIR).canonicalPath
                     // 只删自己目录下的文件（canonicalPath 兼防 ../ 穿越写法）；
-                    // 同时认旧目录，迁移失败或旧 key 残留时仍能焚毁。
+                    // 同时认旧目录，旧图留在那里时仍能焚毁。
                     val isCurrent = path.startsWith("$currentDir${File.separatorChar}")
                     val isLegacy = path.startsWith("$legacyDir${File.separatorChar}")
                     if (!isCurrent && !isLegacy) {

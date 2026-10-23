@@ -4,7 +4,7 @@
 
 <h1 align="center">JUWPHub</h1>
 
-> 2026-10-23 起显示名、仓库名与 APK 文件名改为「JUWPHub」；包名与 App 数据不变，相册旧图首次启动自动迁移到 `Pictures/JUWPHub`。
+> 2026-10-23 起显示名、仓库名与 APK 文件名改为「JUWPHub」；包名与 App 数据不变；相册旧图留在 `Pictures/水贝贝`，新图写 `Pictures/JUWPHub`。
 
 <p align="center">
   江西水利电力大学校园生活 App —— 从教务一键导入课表，查询成绩与考试安排；顺手把学生每天要开的那些应用、网页和小程序收进一个应用里。免费、无广告、无内购。
