@@ -62,7 +62,10 @@ class CampusCardViewModel(
     private val credentialStore = Graph.yktCredentialStore(appContext)
     private val repo = Graph.yktRepository(appContext)
     private val db = edu.jxslu.schedule.data.local.JuwDatabase.get(appContext)
-    private val syncer = edu.jxslu.schedule.data.ykt.YktTurnoverSyncer(repo, db)
+    private val syncer = edu.jxslu.schedule.data.ykt.YktTurnoverSyncer(repo, db) {
+        // 到账核对轮询拉到的新扣款顺带入箱（2026-10-23，与流水页/付款码页同一挂点）
+        postYktPaymentInbox(appContext, it)
+    }
 
     val hasSavedAccount: Boolean get() = credentialStore.read() != null
 

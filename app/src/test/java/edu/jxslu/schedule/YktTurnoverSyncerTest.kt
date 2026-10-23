@@ -1,7 +1,10 @@
 package edu.jxslu.schedule
 
 import edu.jxslu.schedule.data.ykt.YktTurnover
+import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
+import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer.Companion.paymentInboxCandidates
 import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer.Companion.toEntity
+import edu.jxslu.schedule.domain.YktTurnoverRow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -69,5 +72,38 @@ class YktTurnoverSyncerTest {
         val entity = record("2026-09-19 10:00:00", fen = 10000, orderId = "PO-2")
             .copy(income = true).toEntity()
         assertTrue(entity.income)
+    }
+
+    // ------------------------------------------------------------------
+    // 新消费入收件箱的候选判定（2026-10-23，paymentInboxCandidates）
+    // ------------------------------------------------------------------
+
+    private fun row(orderId: String, income: Boolean) = YktTurnoverRow(
+        orderId = orderId,
+        epochMs = 1_000L,
+        timeText = "2026-10-23 12:00:00",
+        amountFen = 1_500,
+        income = income,
+        typeText = "消费",
+        locationName = "第一食堂",
+        balanceAfterFen = 10_000,
+    )
+
+    @Test
+    fun `库里有数据时新支出是候选、收入不是`() {
+        val fresh = listOf(row("PO-A", income = false), row("PO-B", income = true))
+        val candidates = paymentInboxCandidates(hadData = true, fresh = fresh)
+        assertEquals(listOf("PO-A"), candidates.map { it.orderId })
+    }
+
+    @Test
+    fun `空库首同步不投任何候选（历史回灌不倾泻收件箱）`() {
+        val fresh = listOf(row("PO-A", income = false), row("PO-B", income = false))
+        assertTrue(paymentInboxCandidates(hadData = false, fresh = fresh).isEmpty())
+    }
+
+    @Test
+    fun `无新记录返回空`() {
+        assertTrue(paymentInboxCandidates(hadData = true, fresh = emptyList()).isEmpty())
     }
 }

@@ -2,8 +2,21 @@ package edu.jxslu.schedule.data.ykt
 
 import edu.jxslu.schedule.data.local.JuwDatabase
 import edu.jxslu.schedule.data.local.YktTurnoverEntity
+import edu.jxslu.schedule.domain.YktTurnoverRow
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+
+/** 流水实体 → 判定/展示行（`domain/YktPayment` 的 [YktTurnoverRow]，消费检测与入箱共用）。 */
+fun YktTurnoverEntity.toWatchRow() = YktTurnoverRow(
+    orderId = orderId,
+    epochMs = jndatetime,
+    timeText = jndatetimeStr,
+    amountFen = tranamtFen,
+    income = income,
+    typeText = turnoverType,
+    locationName = locationName,
+    balanceAfterFen = balanceAfterFen,
+)
 
 /**
  * 流水同步的频率闸门（DESIGN §4.24「请求节流」）。
@@ -43,10 +56,18 @@ object YktSyncGate {
  * 字段随服务端重算更新）。`orderId` 为空的记录用「时间原文+金额」合成键兜底。
  *
  * 同步结果由调用方感知（Room 流自动刷新 UI），本类只做「拉 → 转换 → 落库」。
+ *
+ * **新消费入收件箱**（2026-10-23）：[postInbox] 非 null 时，本次同步**新见到的**
+ * 支出记录在同步收尾逐条回调（食堂 POS 直刷等非付款码场景的消费事实也由此入箱，
+ * 与 `PayCodeViewModel` 扫码命中处同一 `YKT_PAYMENT` 口径）。守卫与过滤见
+ * [paymentInboxCandidates]；回调转发给 `InboxRepository.post`（内部吞错），
+ * 留痕失败不影响同步主链。
  */
 class YktTurnoverSyncer(
     private val repo: YktRepository,
     private val db: JuwDatabase,
+    /** 本次同步新见到的支出记录逐条投递（null = 不投，兼容不接收件箱的调用）。 */
+    private val postInbox: (suspend (YktTurnoverRow) -> Unit)? = null,
 ) {
 
     /** 同步结果概要（供日志/测试断言）。 */
@@ -70,6 +91,10 @@ class YktTurnoverSyncer(
         if (!YktSyncGate.shouldSync(force)) return null
         val dao = db.yktTurnoverDao()
         val knownIds = dao.allOrderIds().toHashSet()
+        // 空库 = 首装首同步，会把近 10 个月历史全拉进来——全部算「既有」，不投收件箱
+        //（否则首装当天流水倾泻一屏历史账单）。守卫在同步前判定，同步后 knownIds 已被填满。
+        val hadData = knownIds.isNotEmpty()
+        val fresh = mutableListOf<YktTurnoverEntity>()
         var page = 1
         var pages = 0
         var records = 0
@@ -81,6 +106,8 @@ class YktTurnoverSyncer(
             val entities = data.records.map { it.toEntity() }
             dao.upsertAll(entities)
             records += entities.size
+            // 新见到的记录在停页判定**之前**收集：遇旧即停的那一页可能混有排序抖动出的新记录
+            fresh += entities.filter { it.orderId !in knownIds }
             // 增量停止：本页出现任何已入库订单（含 upsert 前检查的 knownIds）→ 之后的页全是旧数据
             if (entities.any { it.orderId in knownIds }) {
                 stoppedEarly = true
@@ -91,11 +118,27 @@ class YktTurnoverSyncer(
             page++
         }
         YktSyncGate.markSynced()
+        if (postInbox != null) {
+            paymentInboxCandidates(hadData, fresh.map { it.toWatchRow() })
+                .forEach { postInbox(it) }
+        }
         return Result(fetchedPages = pages, fetchedRecords = records, stoppedEarly = stoppedEarly)
     }
 
     companion object {
         private val SERVER_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+        /**
+         * 哪些新流水该入收件箱（纯函数，单测钉住）：**库里此前有数据**（否则是首装
+         * 全量回灌，见上）且方向是**支出**——收入（充值/退款）有专门的
+         * `YKT_RECHARGE` 链路（`CampusCardViewModel.markArrived`，键口径不同），
+         * 在这里再投一遍会以不同键重复入箱。守卫失败宁可漏投：收件箱是旁路留痕，
+         * 宁漏勿错（同「失败不落日期」纪律）。
+         */
+        fun paymentInboxCandidates(
+            hadData: Boolean,
+            fresh: List<YktTurnoverRow>,
+        ): List<YktTurnoverRow> = if (hadData) fresh.filter { !it.income } else emptyList()
 
         /** 流水记录 → 实体（jndatetime 解析失败为 0 沉底；orderId 空用合成键）。 */
         fun YktTurnover.toEntity(now: Long = System.currentTimeMillis()): YktTurnoverEntity {

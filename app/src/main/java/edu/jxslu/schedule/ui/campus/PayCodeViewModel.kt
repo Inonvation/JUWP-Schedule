@@ -6,20 +6,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import edu.jxslu.schedule.Graph
-import edu.jxslu.schedule.SubpageScreen
-import edu.jxslu.schedule.data.local.YktTurnoverEntity
 import edu.jxslu.schedule.data.jw.JwVpnDetector
 import edu.jxslu.schedule.data.prefs.DisplayPrefsStore
 import edu.jxslu.schedule.data.session.NetworkHint
 import edu.jxslu.schedule.data.ykt.YktTurnoverSyncer
+import edu.jxslu.schedule.data.ykt.toWatchRow
 import edu.jxslu.schedule.data.ykt.YktBarcodeData
 import edu.jxslu.schedule.data.ykt.YktCard
 import edu.jxslu.schedule.data.ykt.YktCredentialStore
 import edu.jxslu.schedule.data.ykt.YktException
 import edu.jxslu.schedule.data.ykt.YktRepository
 import edu.jxslu.schedule.domain.ThemeMode
-import edu.jxslu.schedule.domain.InboxKind
-import edu.jxslu.schedule.domain.InboxKeys
 import edu.jxslu.schedule.domain.YktPayWatch
 import edu.jxslu.schedule.domain.YktPayCode
 import edu.jxslu.schedule.domain.YktPayment
@@ -99,7 +96,7 @@ class PayCodeViewModel(
     private val db: edu.jxslu.schedule.data.local.JuwDatabase,
 ) : ViewModel() {
 
-    private val syncer = YktTurnoverSyncer(repo, db)
+    private val syncer = YktTurnoverSyncer(repo, db) { postYktPaymentInbox(appContext, it) }
 
     /** 取码失败时的排查提示按它分支（口径见 `NetworkHint`）。 */
     private val isVpnActive: () -> Boolean = { JwVpnDetector.isVpnActive(appContext) }
@@ -310,9 +307,9 @@ class PayCodeViewModel(
                         val payment = watch.inspect(rows)
                         if (payment != null) {
                             _payment.value = payment
-                            // 消费留痕收件箱（2026-10-22）：「刚才扫码扣了款」是可回查的事实，
-                            // 静默入箱不点红点（旁路纪律：post 内部吞错，不影响弹窗主链）。
-                            postPaymentInbox(payment)
+                            // 消费留痕收件箱（2026-10-22 建，2026-10-23 收口）：入箱改由
+                            // `YktTurnoverSyncer` 的新流水回调统一投递（上方 syncTurnovers
+                            // 那轮已把这笔投过，同键幂等）——这里只剩弹窗总线与振动。
                             PayCodeResultBus.publish(payment)
                             // 命中一刻直接震（2026-10-07）：轮询特意不跟页面可见性，付款码页
                             // 可能锁屏停留，用户不一定在看手机；页面里的 LaunchedEffect 会被
@@ -342,38 +339,6 @@ class PayCodeViewModel(
     } catch (e: Exception) {
         false
     }
-
-    /**
-     * 扫码消费入收件箱（2026-10-22）：调用点在 `YktPayWatch` 命中处——金额 / 商户 /
-     * 交易后余额都已到手。键按服务端订单号（[YktPayment.orderId]），同一次扣款的重复
-     * 到达同键落更新；缺的字段各段缺省，不编数据。落点 = 消费流水页。
-     */
-    private suspend fun postPaymentInbox(payment: YktPayment) {
-        Graph.inboxRepository(appContext).post(
-            kind = InboxKind.YKT_PAYMENT,
-            dedupeKey = InboxKeys.YKT_PAYMENT_PREFIX + payment.orderId,
-            title = "一卡通消费",
-            body = buildString {
-                payment.merchant?.takeIf { it.isNotBlank() }?.let { append(it).append(" · ") }
-                append("扣款 ¥%.2f".format(payment.amountFen / 100.0))
-                payment.balanceAfterFen?.let { append(" · 余额 ¥%.2f".format(it / 100.0)) }
-            },
-            route = SubpageScreen.CAMPUS_STATEMENT.name,
-            silent = true,
-        )
-    }
-
-    /** 本地流水实体 → 判定模型（字段足够判定与展示即可）。 */
-    private fun YktTurnoverEntity.toWatchRow() = YktTurnoverRow(
-        orderId = orderId,
-        epochMs = jndatetime,
-        timeText = jndatetimeStr,
-        amountFen = tranamtFen,
-        income = income,
-        typeText = turnoverType,
-        locationName = locationName,
-        balanceAfterFen = balanceAfterFen,
-    )
 
     /** 展示下一个备用码（批内递增 + 本地渲染）；批内耗尽时重新取一批。 */
     fun next() {

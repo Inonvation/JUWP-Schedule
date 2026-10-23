@@ -137,7 +137,9 @@ class StatementViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatementUiState())
 
-    private val syncer = YktTurnoverSyncer(repo, db)
+    // postInbox：同步拉到的新扣款静默入箱（2026-10-23，覆盖食堂 POS 直刷等非付款码
+    // 消费场景；键与文案在 postYktPaymentInbox 唯一，与扫码命中处同键幂等）。
+    private val syncer = YktTurnoverSyncer(repo, db) { postYktPaymentInbox(appContext, it) }
 
     init {
         // 进页即增量同步（凭证缺失走 UI 引导；失败保持本地数据并给一次性提示）。
