@@ -461,6 +461,7 @@ P2——找一台空闲机器走 下单 → 支付宝付款 → 订单卡倒计�
 | `SelectionAlertReminder` 核对到期点处 | 与通知共用同一份文案（`reminderCopy`，两处各写迟早漂）。已发键在「通知真发出」或「通知被系统整体关闭」时都落（后者事实已进收件箱，且不落键会让重排闹钟把这个已过去的点反复排成立即触发的空转）；只有「通知开着但发送异常」留给下一轮 |
 | `BalanceAlertReminder.checkPower/checkYkt` | 低于阈值入箱（状态型）、回升消解；正文与系统通知同一份 |
 | `WenquActivityAlertReminder.check` 发现新活动处（2026-10-08） | 键 `wenqu\|activity\|<本批最大 id>`：一次核对只留一条痕，之后再出现更新的活动才算新事实。通知被 ROM 吞掉时它是唯一兜底 |
+| 账单类静默留痕七例（2026-10-21 / 10-22 / 10-23） | 全部 `silent = true`（插入即已读、重投保持已读，不点红点；今日卡标题计数仍含它们）。快趣骑行 / 胖乖开水 / 趣智用水 / U净洗衣 / 充电到账（`markArrived`，键 `ykt\|recharge\|<startedAt>`）/ 电费充值（`LifeViewModel` 查单 `status==1`，键 = 平台订单号）挂各自业务链收口处；**一卡通消费挂 `YktTurnoverSyncer` 新流水回调**（2026-10-23 收口，键 = 服务端订单号）：同步收尾把「库里此前有数据 & 本次新见到的支出」逐条投 `postYktPaymentInbox`（唯一实现），流水页 / 付款码 payWatch / 生活页到账核对三个调用方共享，**食堂 POS 直刷等非付款码消费随之入箱**；空库首同步不投（历史回灌不倾泻）、只投支出（充值有专门键）——守卫在 `paymentInboxCandidates`，单测钉住 |
 
 **通知总开关的口径（2026-10-06 修正）**：`ScoreAlertReminder.check` 与
 `BalanceAlertReminder.check` 原先在入口处 `areNotificationsEnabled()` 早退——通知全关

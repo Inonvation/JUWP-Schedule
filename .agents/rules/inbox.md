@@ -7,7 +7,8 @@
 - **今日页收件箱列表**（`ui/today/InboxTodayCard`，2026-10-22 起**不包 `AppCard`**：直接铺在
   页面底色上，标题行 + 发丝线分隔的行；标题行**不摆行首图标**，分割线与列表同宽、左右对称）
   是唯一展示入口：常驻（今天没消息也渲染
-  单行空态），只列**今天**的消息（按 `timeGroupOf` 的 TODAY 桶本地日期过滤），标题行
+  单行空态——**空态文案在标题行里**「收件箱 · 今天没有新消息」，2026-10-23 用户要求
+  不在底部占独立行），只列**今天**的消息（按 `timeGroupOf` 的 TODAY 桶本地日期过滤），标题行
   「查看更多」进收件箱页（完整列表 + 一键已读 + 多选删除）。空态页（未开学 / 课表为空）
   贴底也挂——余额预警这类消息不依赖学期。
   **别把 `AppCard` 包回来**：用户口径「列表式，不包裹在气泡里」。
@@ -45,16 +46,21 @@
 - 范围边界：时刻型提醒（上课/作业/洗衣/免费时长）**不入箱**（过期即无用）；
   教务公告没有抓取链路，不收。接新来源时先回答「这条消息三个月后还有回查价值吗」。
 - **账单类静默留痕**（2026-10-21；2026-10-22 扩展）：快趣骑行结算 / 胖乖开水 / 趣智用水 /
-  U净 洗衣完成 / **一卡通充值到账（`YKT_RECHARGE`）/ 一卡通付款码消费（`YKT_PAYMENT`）/
+  U净 洗衣完成 / **一卡通充值到账（`YKT_RECHARGE`）/ 一卡通消费（`YKT_PAYMENT`）/
   电费充值扣款成功（`POWER_RECHARGE`）**七类
   `post(..., silent = true)`——插入即已读、静默重投（`refreshSilent`）保持已读，**不产生未读红点**；
   它们是可回查的流水，不是待办（红点只属于待办类）。**今日卡标题「今日 N 条」数今天全部消息**
   （2026-10-21 二次修正：只数待办类会出现「今日 1 条」却铺着 5 行的矛盾，数字必须和列表对得上）。
   落点：快趣 → `KVCX`（本机骑行记录），胖乖 → `WATER`，趣智 → `QZXY`，
   U净 → `UJING_HISTORY`（历史账单），一卡通两笔与电费 → `CAMPUS_STATEMENT` / `POWER_BILL`。
-  新三类挂点：充值在 `CampusCardViewModel.markArrived`（三路到账判定收口，键 = `startedAt`）；
-  消费在 `PayCodeViewModel.startPayWatch` 命中处（键 = 服务端订单号；**只覆盖付款码出码场景**，
-  食堂 POS 直刷没有检测链路、不入箱）；电费在 `LifeViewModel` 查单 `status==1` 两处
+  挂点：充值在 `CampusCardViewModel.markArrived`（三路到账判定收口，键 = `startedAt`）；
+  **一卡通消费在 `YktTurnoverSyncer` 的新流水回调**（2026-10-23 收口，键 = 服务端订单号）——
+  同步收尾把「库里此前有数据 & 本次新见到的支出」逐条回调 `postYktPaymentInbox`（唯一实现，
+  `ui/campus/YktStatementInbox.kt`），三个调用方（流水页 / 付款码页 payWatch / 生活页到账核对）
+  都已接上，**食堂 POS 直刷等非付款码消费随之覆盖**；守卫与过滤在
+  `paymentInboxCandidates`（单测钉住：空库首同步不投——历史回灌不倾泻；只投支出——充值有
+  `YKT_RECHARGE` 专门键，别重复入箱）。payWatch 命中处只发弹窗总线与振动，不再重复投递。
+  电费在 `LifeViewModel` 查单 `status==1` 两处
   （密码步 `confirmPowerPaid` + 农行 `checkBankPaid`，都在 `isCurrentSession` 之前——弹层关了
   不吞「钱已扣」；键 = 平台订单号）。
 - 今日页收件箱列表固定铺 **3 行**（`TODAY_PREVIEW_LIMIT`，2026-10-21 用户口径），
