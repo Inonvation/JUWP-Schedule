@@ -23,7 +23,7 @@
 | 续期 | 启动/后台静默 `wx.login` → `appletLogin` 换发新 token；`mobile` 变了会强制登出。**账号密码模式无此路径**，过期后用本地凭证重登 |
 | 过期 | `kvc_token` 对象带过期时间字段（`before(timestamp(e...))` 判断），具体 TTL 未知 |
 
-**结论：水贝贝可以像胖乖/一卡通那样做应用内账号密码登录**——接口、参数、加密方式全部明确，
+**结论：JUWPHub 可以像胖乖/一卡通那样做应用内账号密码登录**——接口、参数、加密方式全部明确，
 token 与小程序同一体系，登录后 queryUnderwayOrder / endTheOrder / createOrder 全部可用。
 待真机验证两点：① token TTL（决定自动重登频率）；② `client-type: 1` 头对 App 侧请求是否无感。
 

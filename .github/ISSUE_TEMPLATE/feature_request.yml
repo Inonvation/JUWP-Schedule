@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        > 本项目只适配**江西水利电力大学**，暂无适配其他学校的计划。想给自己学校做定制版，请先看 [DEVELOPER.md](https://github.com/Inonvation/JUWP-Schedule/blob/main/DEVELOPER.md) 的「换一所学校：适配指南」。
+        > 本项目只适配**江西水利电力大学**，暂无适配其他学校的计划。想给自己学校做定制版，请先看 [DEVELOPER.md](https://github.com/Inonvation/JUWPHub/blob/main/DEVELOPER.md) 的「换一所学校：适配指南」。
 
   - type: textarea
     id: problem
