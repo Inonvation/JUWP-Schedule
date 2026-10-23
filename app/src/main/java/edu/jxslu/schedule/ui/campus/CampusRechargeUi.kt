@@ -158,7 +158,7 @@ fun RechargeSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("20", "50", "100", "200").forEach { preset ->
+                listOf("20", "30", "50", "100", "200").forEach { preset ->
                     androidx.compose.material3.OutlinedButton(
                         onClick = { amount = preset },
                         modifier = Modifier.weight(1f),
