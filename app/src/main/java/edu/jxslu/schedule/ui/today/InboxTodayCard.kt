@@ -133,6 +133,9 @@ fun InboxTodayCard(
             if (todays.isEmpty()) {
                 // 空态副文放标题旁（2026-10-23 用户要求：不占独立一行压在列表底部）；
                 // 口径与「今日 N 条」同位——数字出现的位置就是这行字的默认位置。
+                // **weight 必须 fill（默认 true）**：fill=false 时子项量完比份额小的部分
+                // 会留在行尾，把「查看更多」挤离右缘（实测踩过）；文字在份额盒内仍是
+                // 左对齐，超长省略不受影响。
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "今天没有新消息",
@@ -140,7 +143,7 @@ fun InboxTodayCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f),
                 )
             } else if (headlineCount > 0) {
                 Spacer(Modifier.width(8.dp))
