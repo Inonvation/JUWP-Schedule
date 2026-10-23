@@ -64,8 +64,9 @@ import me.rerere.hugeicons.stroke.Repair
  *    超出 3 行预览的部分**不再铺「还有 N 条」行**（2026-10-22 用户口径），要看全量走标题行
  *    「查看更多」（完整列表：昨天 / 本周 / 更早 + 一键已读 + 多选删除）。
  *
- * 今天没有消息时消息区收成一行：「今天没有新消息」+ 查看更多（收件箱可能有更早的消息，
- * 入口不能断——这也是它必须常驻而不是按天显隐的原因）。
+ * 今天没有消息时标题行里跟一行「今天没有新消息」副文（2026-10-23 用户要求：放标题旁、
+ * 不在底部占独立行），列表区只剩报修行（若有）；「查看更多」入口不断——收件箱可能有
+ * 更早的消息，这也是它必须常驻而不是按天显隐的原因。
  */
 @Composable
 fun InboxTodayCard(
@@ -129,7 +130,19 @@ fun InboxTodayCard(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
-            if (headlineCount > 0) {
+            if (todays.isEmpty()) {
+                // 空态副文放标题旁（2026-10-23 用户要求：不占独立一行压在列表底部）；
+                // 口径与「今日 N 条」同位——数字出现的位置就是这行字的默认位置。
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "今天没有新消息",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            } else if (headlineCount > 0) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "今日 $headlineCount 条",
@@ -161,30 +174,19 @@ fun InboxTodayCard(
             InboxListDivider()
         }
 
-        // 今天有消息才铺行；没有时收成一行副文（入口不能断）
-        if (todays.isEmpty()) {
-            Text(
-                text = "今天没有新消息",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 30.dp, top = 8.dp, bottom = 8.dp),
+        // 今天的消息逐行铺（空态已在标题旁交代，不再占列表行）
+        selected.forEachIndexed { index, msg ->
+            if (index > 0) InboxListDivider()
+            InboxTodayRow(
+                msg = msg,
+                onClick = {
+                    scope.launch { repo.markRead(msg.id) }
+                    val target = SubpageScreen.entries.firstOrNull { it.name == msg.route }
+                    if (target != null) {
+                        SubpageActivity.start(context, target, focusItemId = msg.focusItemId)
+                    }
+                },
             )
-        } else {
-            selected.forEachIndexed { index, msg ->
-                if (index > 0) InboxListDivider()
-                InboxTodayRow(
-                    msg = msg,
-                    onClick = {
-                        scope.launch { repo.markRead(msg.id) }
-                        val target = SubpageScreen.entries.firstOrNull { it.name == msg.route }
-                        if (target != null) {
-                            SubpageActivity.start(context, target, focusItemId = msg.focusItemId)
-                        }
-                    },
-                )
-            }
         }
     }
 }
