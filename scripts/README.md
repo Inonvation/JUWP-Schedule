@@ -21,6 +21,9 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 
 # 3) 抓取（--term 均可省略；所有脚本顶层 term = 实际爬到的学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_all.py           # 一条命令顺序抓全套（共享会话，只登录一次）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_all.py --only exams,scores   # 只跑指定步骤
+.\.venv-scraper\Scripts\python.exe scripts\fetch_all.py --skip-fresh 600     # 产出 10 分钟内更新过就跳过（重跑只补失败项）
+.\.venv-scraper\Scripts\python.exe scripts\fetch_all.py --pause 1.0          # 步骤间等待调回保守节奏
 .\.venv-scraper\Scripts\python.exe scripts\fetch_courses.py       # 理论课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_lab_courses.py   # 实验课表（缺省当前学期）
 .\.venv-scraper\Scripts\python.exe scripts\fetch_exams.py         # 考试安排（缺省当前学期）
@@ -61,7 +64,7 @@ copy scripts\credentials.local.json.example scripts\credentials.local.json
 | 文件 | 职责 | 备注 |
 |------|------|------|
 | `jw_session.py` | 共享登录：CAS → 教务 SSO → 会话校验；**会话持久化**（见 §3.1） | 其余抓取脚本都依赖它 |
-| `fetch_all.py` | 一条命令顺序抓全套教务数据 | 逐个调用下面六个脚本，会话经 §3.1 复用，只有全灭时才真登录一次 |
+| `fetch_all.py` | 一条命令顺序抓全套教务数据 | 逐个调用下面七个脚本，会话经 §3.1 复用，只有全灭时才真登录一次；`--only/--skip/--skip-fresh` 控流程，**步骤串行**（不并发，避免 CAS 验证码/限流） |
 | `fetch_courses.py` | 学期理论课表 → JSON | 纯解析，不做登录 |
 | `fetch_lab_courses.py` | 实验课表 → JSON（含周次聚合） | 纯解析，不做登录 |
 | `fetch_exams.py` | 考试安排 → JSON | layui JSON 接口，不解析 HTML |
