@@ -15,9 +15,9 @@ import me.rerere.hugeicons.stroke.ExternalLink
  * （电脑版 / 手机版、统一认证、返回先关弹层、错误态），不再另起一套 WebView。
  */
 @Composable
-fun JwWebActionButton(title: String, url: String) {
+fun JwWebActionButton(title: String, url: String, description: String? = null) {
     val context = LocalContext.current
     IconButton(onClick = { JwImportActivity.startBrowse(context, title, url) }) {
-        Icon(HugeIcons.ExternalLink, contentDescription = "在教务网页核对$title")
+        Icon(HugeIcons.ExternalLink, contentDescription = description ?: "在教务网页核对$title")
     }
 }

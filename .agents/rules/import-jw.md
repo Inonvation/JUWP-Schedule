@@ -28,8 +28,9 @@
   提醒」）。通道是 `ui/jwvw/JwImportResultBus`，**不再有「导入完成」弹窗**——留着它，用户
   点完「完成」就 finish，反馈停在他看不见的那个窗口里。
 - **七个落点**各调一次 `JwImportOutcomeEffect(snackbar)`：课表页 / 今日页 / 成绩页 /
-  学校统一认证页 / 课表中心页 / 考试设置页 / 教务 Tab（2026-10-20 加；后四个
-  是本页的「导入课表」「导入成绩」「导入考试安排」「导入」入口，导入窗口 finish
+  学校统一认证页 / 课表中心页 / 考试设置页 / 教务 Tab（2026-10-20 加；教务 Tab 顶栏
+  的「导入」入口 2026-10-24 改成「教务主页」浏览图标（`JwWebActionButton` → Browse），
+  导入入口只剩今日 / 课表 / 成绩 / 考试页，本 Tab 仍是落点，导入窗口 finish
   后落回的就是它们）。新增落点页面时别忘了同时补 `AppSnackbarHost`；`JwAccountScreen` 的
   Scaffold 把 `contentWindowInsets` 归零了，提示条要自己 `navigationBarsPadding()`。
 - 四条别改坏：① 课表/考试与成绩两条路径都发，文案各自拼（成绩不报课表名）；

@@ -1484,7 +1484,7 @@ internal fun JuwApp(
                         )
                     }
                     // 教务 Tab（2026-10-20）：入口汇总；每个入口落到原生二级页。
-                    // 网页核对按钮已经收进各业务页顶栏，首页不再重复挂「网页」入口。
+                    // 顶栏只留教务主页的网页图标；网页核对按钮收在各业务页顶栏。
                     composable(Routes.JW) {
                         JwHubScreen(
                             onOpenTheorySchedule = {
@@ -1511,7 +1511,6 @@ internal fun JuwApp(
                             onOpenCalendar = {
                                 openSubpage(context, SubpageRequest(screen = SubpageScreen.CAMPUS_CALENDAR))
                             },
-                            onOpenImport = { JwImportActivity.start(context) },
                         )
                     }
                 }

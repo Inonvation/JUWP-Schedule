@@ -23,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.jxslu.schedule.Graph
+import edu.jxslu.schedule.data.jw.JwUrls
 import edu.jxslu.schedule.data.repo.ExamSnapshotStore
 import edu.jxslu.schedule.domain.CourseKind
 import edu.jxslu.schedule.domain.ScheduleCalculator
@@ -53,6 +53,7 @@ import edu.jxslu.schedule.ui.common.pinnedStatusBars
 import edu.jxslu.schedule.ui.common.rememberAppHaptics
 import edu.jxslu.schedule.ui.common.rememberResumeTick
 import edu.jxslu.schedule.ui.jwvw.JwImportOutcomeEffect
+import edu.jxslu.schedule.ui.jwvw.JwWebActionButton
 import java.time.LocalDate
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Analytics01
@@ -90,12 +91,11 @@ fun JwHubScreen(
     onOpenLeave: () -> Unit,
     onOpenRepair: () -> Unit,
     onOpenCalendar: () -> Unit,
-    onOpenImport: () -> Unit,
 ) {
     val clearance = LocalBottomBarClearance.current
     val stats = rememberJwHubStats()
     val snackbar = remember { SnackbarHostState() }
-    // 从本页顶栏「导入」回来的结果气泡落在这里（与今日 / 课表 / 成绩 / 考试同一条通道）。
+    // 导入窗口 finish 后结果气泡落回主界面；本 Tab 也是落点之一（导入入口在今日 / 课表 / 成绩 / 考试页）。
     JwImportOutcomeEffect(snackbar)
 
     val quickEntries = listOf(
@@ -150,9 +150,7 @@ fun JwHubScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = onOpenImport) {
-                        Text("导入")
-                    }
+                    JwWebActionButton("教务主页", JwUrls.STUDENT_HOME, description = "打开教务网页主页")
                 },
             )
         },
